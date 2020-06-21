@@ -1,7 +1,7 @@
 typedef struct {
   void *next;
   char *bump;
-  size_t len;
+  uint64_t len;
 } BucketList;
 
 // if ptr != NULL, then ptr is the aligned bump pointer value to return, and
@@ -12,7 +12,7 @@ typedef struct {
 } Bump;
 
 // align must be a power of 2
-Bump bump_ptr(void *bump_, void *end, size_t size) {
+Bump bump_ptr(void *bump_, void *end, uint64_t size) {
   char *bump = (char *)(((((size_t)bump_ - 1) >> 3) + 1) << 3);
   Bump result = {NULL, NULL};
   result.next_bump = bump + size;
@@ -24,7 +24,7 @@ Bump bump_ptr(void *bump_, void *end, size_t size) {
   return result;
 }
 
-void *alloc(BucketList *list, size_t size) {
+void *bump_alloc(BucketList *list, uint64_t size) {
   char *array_begin = (char *)(list + 1), *bucket_end = array_begin + list->len;
 
   Bump result = bump_ptr(list->bump, bucket_end, size);
@@ -34,9 +34,9 @@ void *alloc(BucketList *list, size_t size) {
   }
 
   if (list->next != NULL)
-    return alloc(list->next, size);
+    return bump_alloc(list->next, size);
 
-  size_t next_len = list->len / 2 + list->len;
+  uint64_t next_len = list->len / 2 + list->len;
   if (next_len < size)
     next_len = size;
 
@@ -51,13 +51,21 @@ void *alloc(BucketList *list, size_t size) {
   return ptr;
 }
 
+BucketList *bump_new(void) {
+  BucketList *list = malloc(sizeof(BucketList) + 1024);
+  list->next = NULL;
+  list->bump = (char *)(list + 1);
+  list->len = 1024;
+  return list;
+}
+
 typedef struct {
   char *begin;
-  size_t end;
-  size_t capacity;
+  uint64_t end;
+  uint64_t capacity;
 } StringDynArray;
 
-void char_array_add(StringDynArray *arr, char *buf, size_t len) {
+void char_array_add(StringDynArray *arr, char *buf, uint32_t len) {
   if (arr->begin == NULL) {
     arr->begin = malloc(256);
     arr->capacity = 256;
@@ -73,7 +81,7 @@ void char_array_add(StringDynArray *arr, char *buf, size_t len) {
   }
 }
 
-void finalize(StringDynArray *arr) {
+void char_array_finalize(StringDynArray *arr) {
   if (arr->capacity == arr->end)
     arr->begin = realloc(arr->begin, ++arr->capacity);
   arr->begin[arr->end++] = '\0';
@@ -81,7 +89,7 @@ void finalize(StringDynArray *arr) {
 
 typedef struct {
   char *str;
-  size_t len;
+  uint64_t len;
 } String;
 
 char *read_file(char *name) {
@@ -97,6 +105,6 @@ char *read_file(char *name) {
     char_array_add(&arr, buf, count);
   }
   fclose(file);
-  finalize(&arr);
+  char_array_finalize(&arr);
   return arr.begin;
 }

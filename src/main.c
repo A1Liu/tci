@@ -1,3 +1,5 @@
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,5 +14,9 @@ int main(int argc, char **argv) {
     return 0;
 
   char *file_contents = read_file(argv[1]);
-  printf("%s\n", file_contents);
+  Lexer lex = lexer_new(file_contents);
+
+  Token tok = lexer_next(&lex);
+  BucketList *list = bump_new();
+  printf("%s\n", lexer_token_str(list, &tok));
 }
