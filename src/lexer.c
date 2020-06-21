@@ -65,6 +65,8 @@ Token lexer_next(Lexer *lex) {
       tok.type = If;
     } else if (!strncmp(tok.begin, "else", tok.len)) {
       tok.type = Else;
+    } else if (!strncmp(tok.begin, "return", tok.len)) {
+      tok.type = Return;
     } else if (!strncmp(tok.begin, "int", tok.len)) {
       tok.type = Int;
     } else {

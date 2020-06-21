@@ -7,6 +7,7 @@
 // clang-format off
 #include "util.c"
 #include "lexer.c"
+#include "parser.c"
 // clang-format on
 
 int main(int argc, char **argv) {
@@ -18,5 +19,6 @@ int main(int argc, char **argv) {
 
   Token tok = lexer_next(&lex);
   BucketList *list = bump_new();
+
   printf("%s\n", lexer_token_str(list, &tok));
 }
