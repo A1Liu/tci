@@ -91,7 +91,7 @@ char *read_file(char *name) {
 
   StringDynArray arr = {NULL, 0, 0};
 
-  char buf[257];
+  char buf[256];
   size_t count;
   while ((count = fread(buf, 1, 256, file))) {
     char_array_add(&arr, buf, count);

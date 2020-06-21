@@ -6,3 +6,7 @@ The goals of this compiler are:
    information
 3. Output warnings when the user is doing something they shouldn't be.
 
+
+## Building this Project
+
+Run `gcc src/main.c` to build, and then `./a.out` to run the program.
