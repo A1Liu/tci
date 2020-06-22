@@ -1,24 +1,37 @@
 typedef enum {
-  Function,
-  ParseReturn,
-} ParseNodeType;
+  ASTFunction,
+  ASTReturn,
+} ASTNodeStmtType;
+
+typedef enum {
+  ASTIntLiteral,
+} ASTNodeExprType;
+
+typedef enum {
+  ASTInt,
+} ASTNodeTypeType;
 
 typedef struct {
-  ParseNodeType type;
+  ASTNodeExprType type;
+  uint32_t len;
   Token token;
   char *begin;
-  uint32_t len;
-} ParseNodeExpression;
+} ASTNodeExpr;
 
 typedef struct {
-  ParseNodeType type;
-  Token token;
-  char *begin;
+  ASTNodeTypeType type;
   uint32_t len;
+  char *begin;
+} ASTNodeType;
+
+typedef struct {
+  ASTNodeStmtType type;
+  uint32_t len;
+  char *begin;
   union {
-    ParseNodeExpression *return_expression;
+    ASTNodeExpr *return_expr;
   };
-} ParseNode;
+} ASTNodeStmt;
 
 typedef struct {
   BucketList *list;

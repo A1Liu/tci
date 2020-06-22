@@ -4,6 +4,12 @@ typedef struct {
 
 typedef enum {
   Ident,
+  IntLiteral,
+  LongLiteral,
+  UIntLiteral,
+  ULongLiteral,
+  FloatLiteral,
+  DoubleLiteral,
 
   If,
   Else,
@@ -106,6 +112,8 @@ Token lexer_next(Lexer *lex) {
   case ')':
     tok.type = RightParen;
     break;
+  default:
+    tok.type = Invalid;
   }
 
   lex->str = tok.begin + tok.len;
