@@ -1,31 +1,31 @@
 typedef enum {
   ASTFunction,
   ASTReturn,
-} ASTNodeStmtType;
+} ASTNodeStmtKind;
 
 typedef enum {
   ASTIntLiteral,
-} ASTNodeExprType;
+} ASTNodeExprKind;
 
 typedef enum {
   ASTInt,
-} ASTNodeTypeType;
+} ASTNodeTypeKind;
 
 typedef struct {
-  ASTNodeExprType type;
+  ASTNodeExprKind kind;
   uint32_t len;
   Token token;
   char *begin;
 } ASTNodeExpr;
 
 typedef struct {
-  ASTNodeTypeType type;
+  ASTNodeTypeKind kind;
   uint32_t len;
   char *begin;
 } ASTNodeType;
 
 typedef struct {
-  ASTNodeStmtType type;
+  ASTNodeStmtKind kind;
   uint32_t len;
   char *begin;
   union {
@@ -33,14 +33,19 @@ typedef struct {
   };
 } ASTNodeStmt;
 
+typedef enum {
+  Function,
+} ASTNodeOuterDeclKind;
+
+typedef struct {
+  ASTNodeOuterDeclKind kind;
+} ASTNodeOuterDecl;
+
 typedef struct {
   BucketList *list;
   Lexer lex;
   Token current;
 } Parser;
-
-ASTNodeStmtExpr *parser_parse_stmt(Parser *);
-ASTNodeExpr *parser_parse_atom(Parser *);
 
 Parser parser_new(BucketList *list, char *data) {
   Parser parser;
@@ -58,15 +63,32 @@ Token parser_pop(Parser *parser) {
 
 Token parser_peek(Parser *parser) { return parser->current; }
 
+ASTNodeType *parser_parse_type(Parser *);
+ASTNodeStmt *parser_parse_stmt(Parser *);
+ASTNodeExpr *parser_parse_atom(Parser *);
+
+ASTNodeType *parser_parse_type(Parser *parser) {
+  Token tok = parser_peek(parser);
+  if (tok.kind != TokInt) {
+    return NULL;
+  }
+
+  ASTNodeType *type = bump_alloc(parser->list, sizeof(ASTNodeType));
+  type->kind = ASTInt;
+  type->begin = tok.begin;
+  type->len = tok.len;
+  return type;
+}
+
 ASTNodeStmt *parser_parse_stmt(Parser *parser) {
   Token tok = parser_peek(parser);
-  if (tok.type != Return) {
+  if (tok.kind != TokReturn) {
     return NULL;
   }
 
   parser_pop(parser);
   ASTNodeStmt *stmt = bump_alloc(parser->list, sizeof(ASTNodeStmt));
-  stmt->type = ASTReturn;
+  stmt->kind = ASTReturn;
   stmt->begin = tok.begin;
   if ((stmt->return_expr = parser_parse_atom(parser)) == NULL) {
     return NULL;
@@ -79,12 +101,12 @@ ASTNodeStmt *parser_parse_stmt(Parser *parser) {
 
 ASTNodeExpr *parser_parse_atom(Parser *parser) {
   Token tok = lexer_next(&parser->lex);
-  if (tok.type != Int) {
+  if (tok.kind != TokInt) {
     return NULL;
   }
 
   ASTNodeExpr *expr = bump_alloc(parser->list, sizeof(ASTNodeExpr));
-  expr->type = ASTIntLiteral;
+  expr->kind = ASTIntLiteral;
   expr->token = tok;
   expr->len = tok.len;
   expr->begin = tok.begin;

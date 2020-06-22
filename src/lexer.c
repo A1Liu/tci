@@ -3,30 +3,31 @@ typedef struct {
 } Lexer;
 
 typedef enum {
-  Ident,
-  IntLiteral,
-  LongLiteral,
-  UIntLiteral,
-  ULongLiteral,
-  FloatLiteral,
-  DoubleLiteral,
+  TokIdent,
+  TokIntLiteral,
+  TokLongLiteral,
+  TokUIntLiteral,
+  TokULongLiteral,
+  TokFloatLiteral,
+  TokDoubleLiteral,
 
-  If,
-  Else,
-  Return,
+  TokIf,
+  TokElse,
+  TokReturn,
 
-  Int,
+  TokInt,
 
-  LeftBrace,
-  RightBrace,
-  LeftParen,
-  RightParen,
+  TokLeftBrace,
+  TokRightBrace,
+  TokLeftParen,
+  TokRightParen,
+  TokSemicolon,
 
-  Invalid,
-} TokenType;
+  TokInvalid,
+} TokenKind;
 
 typedef struct {
-  TokenType type;
+  TokenKind kind;
   char *begin;
   uint32_t len;
   union {
@@ -68,15 +69,15 @@ Token lexer_next(Lexer *lex) {
       ;
 
     if (!strncmp(tok.begin, "if", tok.len)) {
-      tok.type = If;
+      tok.kind = TokIf;
     } else if (!strncmp(tok.begin, "else", tok.len)) {
-      tok.type = Else;
+      tok.kind = TokElse;
     } else if (!strncmp(tok.begin, "return", tok.len)) {
-      tok.type = Return;
+      tok.kind = TokReturn;
     } else if (!strncmp(tok.begin, "int", tok.len)) {
-      tok.type = Int;
+      tok.kind = TokInt;
     } else {
-      tok.type = Ident;
+      tok.kind = TokIdent;
     }
 
     lex->str = tok.begin + tok.len;
@@ -101,19 +102,19 @@ Token lexer_next(Lexer *lex) {
 
   switch (cur) {
   case '{':
-    tok.type = LeftBrace;
+    tok.kind = TokLeftBrace;
     break;
   case '}':
-    tok.type = RightBrace;
+    tok.kind = TokRightBrace;
     break;
   case '(':
-    tok.type = LeftParen;
+    tok.kind = TokLeftParen;
     break;
   case ')':
-    tok.type = RightParen;
+    tok.kind = TokRightParen;
     break;
   default:
-    tok.type = Invalid;
+    tok.kind = TokInvalid;
   }
 
   lex->str = tok.begin + tok.len;
