@@ -63,9 +63,15 @@ Token parser_pop(Parser *parser) {
 
 Token parser_peek(Parser *parser) { return parser->current; }
 
+ASTNodeOuterDecl *parser_parse_outer_decl(Parser *);
 ASTNodeType *parser_parse_type(Parser *);
 ASTNodeStmt *parser_parse_stmt(Parser *);
 ASTNodeExpr *parser_parse_atom(Parser *);
+
+ASTNodeOuterDecl *parser_parse_outer_decl(Parser *parser) {
+  ASTNodeType *type = parser_parse_type(parser);
+  return NULL;
+}
 
 ASTNodeType *parser_parse_type(Parser *parser) {
   Token tok = parser_peek(parser);

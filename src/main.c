@@ -16,6 +16,7 @@ int main(int argc, char **argv) {
 
   char *file_contents = read_file(argv[1]);
   Lexer lex = lexer_new(file_contents);
+  printf("---\n%s\n---\n", file_contents);
 
   Token tok = lexer_next(&lex);
   BucketList *list = bump_new();
