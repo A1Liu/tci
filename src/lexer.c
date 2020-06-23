@@ -1,5 +1,18 @@
 typedef struct {
+  uint32_t begin;
+  uint32_t len;
+} Range;
+
+typedef struct {
+  Range *begin;
+  uint32_t end;
+  uint32_t capacity;
+} RangeDynArray;
+
+typedef struct {
   char *str;
+  CharDynArray symbol_values;
+  RangeDynArray symbols;
 } Lexer;
 
 typedef enum {
@@ -24,6 +37,7 @@ typedef enum {
   TokSemicolon,
 
   TokInvalid,
+  TokEnd,
 } TokenKind;
 
 typedef struct {
@@ -32,12 +46,42 @@ typedef struct {
   uint32_t len;
   union {
     uint32_t int_value;
+    uint32_t ident_symbol;
   };
 } Token;
+
+Range range_new(uint32_t begin, uint32_t len) {
+  Range r = {begin, len};
+  return r;
+}
+
+RangeDynArray range_array_new() {
+  RangeDynArray arr = {NULL, 0, 0};
+  return arr;
+}
+
+uint64_t range_array_add(RangeDynArray *arr, Range r) {
+  if (arr->begin == NULL) {
+    arr->begin = malloc(32 * sizeof(r));
+    arr->capacity = 32;
+  }
+
+  if (arr->capacity == arr->end) {
+    arr->capacity = arr->capacity / 2 + arr->capacity;
+    arr->begin = realloc(arr->begin, arr->capacity * sizeof(r));
+  }
+
+  uint64_t begin = arr->end;
+  arr->begin[arr->end++] = r;
+  return begin;
+}
 
 Lexer lexer_new(char *data) {
   Lexer lex;
   lex.str = data;
+  lex.symbol_values = char_array_new();
+  lex.symbols = range_array_new();
+
   return lex;
 }
 
@@ -58,6 +102,12 @@ Token lexer_next(Lexer *lex) {
        tok.begin++)
     ;
 
+  if (tok.begin == '\0') {
+    tok.kind = TokEnd;
+    tok.len = 0;
+    return tok;
+  }
+
   char cur = *tok.begin;
   tok.len = 1;
 
@@ -77,7 +127,12 @@ Token lexer_next(Lexer *lex) {
     } else if (!strncmp(tok.begin, "int", tok.len)) {
       tok.kind = TokInt;
     } else {
+      uint32_t idx = char_array_add(&lex->symbol_values, tok.begin, tok.len);
+      uint32_t symbol = range_array_add(&lex->symbols, range_new(idx, tok.len));
+
       tok.kind = TokIdent;
+      tok.ident_symbol = symbol;
+      printf("%d\n", tok.ident_symbol);
     }
 
     lex->str = tok.begin + tok.len;

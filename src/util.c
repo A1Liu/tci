@@ -1,3 +1,8 @@
+
+typedef char bool;
+#define true 1
+#define false 0
+
 typedef struct {
   void *next;
   char *bump;
@@ -63,7 +68,7 @@ typedef struct {
   char *begin;
   uint64_t end;
   uint64_t capacity;
-} StringDynArray;
+} CharDynArray;
 
 typedef struct {
   char *str;
@@ -72,12 +77,12 @@ typedef struct {
 
 char CHAR_ARRAY[1024];
 
-StringDynArray char_array_new(void) {
-  StringDynArray arr = {NULL, 0, 0};
+CharDynArray char_array_new(void) {
+  CharDynArray arr = {NULL, 0, 0};
   return arr;
 }
 
-uint64_t char_array_add(StringDynArray *arr, char *buf, uint32_t len) {
+uint64_t char_array_add(CharDynArray *arr, char *buf, uint32_t len) {
   if (arr->begin == NULL) {
     arr->begin = malloc(256);
     arr->capacity = 256;
@@ -96,13 +101,13 @@ uint64_t char_array_add(StringDynArray *arr, char *buf, uint32_t len) {
   return begin;
 }
 
-void char_array_finalize(StringDynArray *arr) {
+void char_array_finalize(CharDynArray *arr) {
   if (arr->capacity == arr->end)
     arr->begin = realloc(arr->begin, ++arr->capacity);
   arr->begin[arr->end++] = '\0';
 }
 
-uint64_t char_array_add_string(StringDynArray *arr, String str) {
+uint64_t char_array_add_string(CharDynArray *arr, String str) {
   return char_array_add(arr, str.str, str.len);
 }
 
@@ -121,7 +126,7 @@ char *read_file(char *name) {
   if (file == NULL)
     return NULL;
 
-  StringDynArray arr = {NULL, 0, 0};
+  CharDynArray arr = {NULL, 0, 0};
 
   char buf[256];
   size_t count;

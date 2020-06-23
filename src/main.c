@@ -15,11 +15,14 @@ int main(int argc, char **argv) {
     return 0;
 
   char *file_contents = read_file(argv[1]);
-  Lexer lex = lexer_new(file_contents);
   printf("---\n%s\n---\n", file_contents);
 
-  Token tok = lexer_next(&lex);
   BucketList *list = bump_new();
+  Parser parser = parser_new(list, file_contents);
+  ASTNodeProgram prog = parser_parse(&parser);
 
-  printf("%s\n", lexer_token_str(list, &tok));
+  CharDynArray arr = char_array_new();
+  String str = ast_node_program_str(&arr, &prog);
+
+  printf("%.*s\n", (uint32_t)str.len, str.str);
 }
