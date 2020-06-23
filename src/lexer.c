@@ -31,7 +31,7 @@ typedef struct {
   char *begin;
   uint32_t len;
   union {
-    int32_t int_value;
+    uint32_t int_value;
   };
 } Token;
 

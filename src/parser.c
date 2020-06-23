@@ -1,9 +1,8 @@
 typedef enum {
-  Function,
+  ASTFunction,
 } ASTNodeOuterDeclKind;
 
 typedef enum {
-  ASTFunction,
   ASTReturn,
 } ASTNodeStmtKind;
 
@@ -18,8 +17,10 @@ typedef enum {
 typedef struct {
   ASTNodeExprKind kind;
   uint32_t len;
-  Token token;
   char *begin;
+  union {
+    uint32_t int_value;
+  };
 } ASTNodeExpr;
 
 typedef struct {
@@ -63,15 +64,12 @@ Token parser_pop(Parser *parser) {
 
 Token parser_peek(Parser *parser) { return parser->current; }
 
+// PRINTING THE PARSE TREE
+
 String ast_node_outer_decl_str(StringDynArray *, ASTNodeOuterDecl *);
 String ast_node_type_str(StringDynArray *, ASTNodeType *);
 String ast_node_stmt_str(StringDynArray *, ASTNodeStmt *);
 String ast_node_expr_str(StringDynArray *, ASTNodeExpr *);
-
-ASTNodeOuterDecl *parser_parse_outer_decl(Parser *);
-ASTNodeType *parser_parse_type(Parser *);
-ASTNodeStmt *parser_parse_stmt(Parser *);
-ASTNodeExpr *parser_parse_atom(Parser *);
 
 String ast_node_outer_decl_str(StringDynArray *arr, ASTNodeOuterDecl *node) {
   String s;
@@ -80,24 +78,41 @@ String ast_node_outer_decl_str(StringDynArray *arr, ASTNodeOuterDecl *node) {
 String ast_node_type_str(StringDynArray *arr, ASTNodeType *node) {
   switch (node->kind) {
   case ASTInt: {
-    String s;
     uint64_t begin = char_array_add_string(arr, string_new("int"));
-    s.str = &arr->begin[begin];
-    s.len = arr->end - begin;
-    return s;
-  } break;
+    return string_from_parts(&arr->begin[begin], arr->end - begin);
+  }
+  }
+}
+String ast_node_stmt_str(StringDynArray *arr, ASTNodeStmt *node) {
+  switch (node->kind) {
+  case ASTReturn: {
+    uint64_t begin = char_array_add_string(arr, string_new("Return("));
+    ast_node_expr_str(arr, node->return_expr);
+    char_array_add_string(arr, string_new(")"));
+    return string_from_parts(&arr->begin[begin], arr->end - begin);
+  }
+  }
+}
+String ast_node_expr_str(StringDynArray *arr, ASTNodeExpr *node) {
+  switch (node->kind) {
+  case ASTIntLiteral: {
+    uint32_t length = snprintf(NULL, 0, "%d", node->int_value);
+    snprintf(CHAR_ARRAY, length, "%d", node->int_value);
+    uint64_t begin =
+        char_array_add_string(arr, string_from_parts(CHAR_ARRAY, length));
+    return string_from_parts(&arr->begin[begin], arr->end - begin);
+  }
   }
   String s;
   return s;
 }
-String ast_node_stmt_str(StringDynArray *arr, ASTNodeStmt *node) {
-  String s;
-  return s;
-}
-String ast_node_expr_str(StringDynArray *arr, ASTNodeExpr *node) {
-  String s;
-  return s;
-}
+
+// PARSING TOKENS INTO A TREE
+
+ASTNodeOuterDecl *parser_parse_outer_decl(Parser *);
+ASTNodeType *parser_parse_type(Parser *);
+ASTNodeStmt *parser_parse_stmt(Parser *);
+ASTNodeExpr *parser_parse_atom(Parser *);
 
 ASTNodeOuterDecl *parser_parse_outer_decl(Parser *parser) {
   ASTNodeType *type = parser_parse_type(parser);
@@ -145,7 +160,7 @@ ASTNodeExpr *parser_parse_atom(Parser *parser) {
 
   ASTNodeExpr *expr = bump_alloc(parser->list, sizeof(ASTNodeExpr));
   expr->kind = ASTIntLiteral;
-  expr->token = tok;
+  expr->int_value = tok.int_value;
   expr->len = tok.len;
   expr->begin = tok.begin;
   return expr;

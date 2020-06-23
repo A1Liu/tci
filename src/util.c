@@ -70,6 +70,8 @@ typedef struct {
   uint64_t len;
 } String;
 
+char CHAR_ARRAY[1024];
+
 StringDynArray char_array_new(void) {
   StringDynArray arr = {NULL, 0, 0};
   return arr;
@@ -107,6 +109,11 @@ uint64_t char_array_add_string(StringDynArray *arr, String str) {
 String string_new(char *str) {
   String string = {str, strlen(str)};
   return string;
+}
+
+String string_from_parts(char *str, uint64_t len) {
+  String s = {str, len};
+  return s;
 }
 
 char *read_file(char *name) {
