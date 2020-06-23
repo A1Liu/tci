@@ -1,4 +1,8 @@
 typedef enum {
+  Function,
+} ASTNodeOuterDeclKind;
+
+typedef enum {
   ASTFunction,
   ASTReturn,
 } ASTNodeStmtKind;
@@ -33,10 +37,6 @@ typedef struct {
   };
 } ASTNodeStmt;
 
-typedef enum {
-  Function,
-} ASTNodeOuterDeclKind;
-
 typedef struct {
   ASTNodeOuterDeclKind kind;
 } ASTNodeOuterDecl;
@@ -63,13 +63,45 @@ Token parser_pop(Parser *parser) {
 
 Token parser_peek(Parser *parser) { return parser->current; }
 
+String ast_node_outer_decl_str(StringDynArray *, ASTNodeOuterDecl *);
+String ast_node_type_str(StringDynArray *, ASTNodeType *);
+String ast_node_stmt_str(StringDynArray *, ASTNodeStmt *);
+String ast_node_expr_str(StringDynArray *, ASTNodeExpr *);
+
 ASTNodeOuterDecl *parser_parse_outer_decl(Parser *);
 ASTNodeType *parser_parse_type(Parser *);
 ASTNodeStmt *parser_parse_stmt(Parser *);
 ASTNodeExpr *parser_parse_atom(Parser *);
 
+String ast_node_outer_decl_str(StringDynArray *arr, ASTNodeOuterDecl *node) {
+  String s;
+  return s;
+}
+String ast_node_type_str(StringDynArray *arr, ASTNodeType *node) {
+  switch (node->kind) {
+  case ASTInt: {
+    String s;
+    uint64_t begin = char_array_add_string(arr, string_new("int"));
+    s.str = &arr->begin[begin];
+    s.len = arr->end - begin;
+    return s;
+  } break;
+  }
+  String s;
+  return s;
+}
+String ast_node_stmt_str(StringDynArray *arr, ASTNodeStmt *node) {
+  String s;
+  return s;
+}
+String ast_node_expr_str(StringDynArray *arr, ASTNodeExpr *node) {
+  String s;
+  return s;
+}
+
 ASTNodeOuterDecl *parser_parse_outer_decl(Parser *parser) {
   ASTNodeType *type = parser_parse_type(parser);
+
   return NULL;
 }
 

@@ -65,7 +65,17 @@ typedef struct {
   uint64_t capacity;
 } StringDynArray;
 
-void char_array_add(StringDynArray *arr, char *buf, uint32_t len) {
+typedef struct {
+  char *str;
+  uint64_t len;
+} String;
+
+StringDynArray char_array_new(void) {
+  StringDynArray arr = {NULL, 0, 0};
+  return arr;
+}
+
+uint64_t char_array_add(StringDynArray *arr, char *buf, uint32_t len) {
   if (arr->begin == NULL) {
     arr->begin = malloc(256);
     arr->capacity = 256;
@@ -76,9 +86,12 @@ void char_array_add(StringDynArray *arr, char *buf, uint32_t len) {
     arr->begin = realloc(arr->begin, arr->capacity);
   }
 
+  uint64_t begin = arr->end;
   for (int i = 0; i < len; i++, arr->end++) {
     arr->begin[arr->end] = buf[i];
   }
+
+  return begin;
 }
 
 void char_array_finalize(StringDynArray *arr) {
@@ -87,10 +100,14 @@ void char_array_finalize(StringDynArray *arr) {
   arr->begin[arr->end++] = '\0';
 }
 
-typedef struct {
-  char *str;
-  uint64_t len;
-} String;
+uint64_t char_array_add_string(StringDynArray *arr, String str) {
+  return char_array_add(arr, str.str, str.len);
+}
+
+String string_new(char *str) {
+  String string = {str, strlen(str)};
+  return string;
+}
 
 char *read_file(char *name) {
   FILE *file = fopen(name, "r");
