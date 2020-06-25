@@ -42,6 +42,7 @@ typedef enum {
   TokDouble,
   TokShort,
 
+  TokDot,
   TokNot,
   TokTilde,
   TokStar,
@@ -251,6 +252,9 @@ Token lexer_next(Lexer *lex) {
     break;
   case '~':
     tok.kind = TokTilde;
+    break;
+  case '.':
+    tok.kind = TokDot;
     break;
 
   case '+': {
