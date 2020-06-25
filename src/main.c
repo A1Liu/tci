@@ -19,7 +19,11 @@ int main(int argc, char **argv) {
 
   BucketList *list = bump_new();
   Parser parser = parser_new(list, file_contents);
-  ASTNodeProgram prog = parser_parse(&parser);
+  ASTNodeProgram prog = program_new();
+  bool result = parser_parse(&parser, &prog);
+  if (result) {
+    printf("FAILED\n");
+  }
 
   CharDynArray arr = char_array_new();
   String str = ast_node_program_str(&arr, &prog);

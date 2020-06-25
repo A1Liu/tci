@@ -137,3 +137,15 @@ char *read_file(char *name) {
   char_array_finalize(&arr);
   return arr.begin;
 }
+
+bool streq(String s, char *val) {
+  size_t len = strlen(val);
+  if (s.len != len)
+    return false;
+
+  for (size_t i = 0; i < len; i++)
+    if (s.str[i] != val[i])
+      return false;
+
+  return true;
+}

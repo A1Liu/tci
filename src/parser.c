@@ -8,33 +8,41 @@ typedef enum {
 
 typedef enum {
   ASTIntLiteral,
+  ASTIdent,
 } ASTNodeExprKind;
 
 typedef enum {
   ASTInt,
 } ASTNodeTypeKind;
 
-typedef struct {
+struct astNodeExpr;
+struct astNodeType;
+struct astNodeStmt;
+struct astNodeDecl;
+
+typedef struct astNodeExpr {
   ASTNodeExprKind kind;
   uint32_t len;
   char *begin;
   union {
     uint32_t int_value;
+    uint32_t ident_symbol;
   };
 } ASTNodeExpr;
 
-typedef struct {
+typedef struct astNodeType {
   ASTNodeTypeKind kind;
   uint32_t len;
   char *begin;
 } ASTNodeType;
 
-typedef struct {
+typedef struct astNodeStmt {
   ASTNodeStmtKind kind;
   uint32_t len;
   char *begin;
   union {
     ASTNodeExpr *return_expr;
+    struct astNodeDecl *decl;
   };
 } ASTNodeStmt;
 
@@ -44,7 +52,7 @@ typedef struct {
   uint32_t capacity;
 } ASTNodeStmtDynArray;
 
-typedef struct {
+typedef struct astNodeDecl {
   ASTNodeDeclKind kind;
   union {
     struct {
@@ -162,15 +170,21 @@ String ast_node_stmt_str(CharDynArray *arr, ASTNodeStmt *node) {
 String ast_node_expr_str(CharDynArray *arr, ASTNodeExpr *node) {
   switch (node->kind) {
   case ASTIntLiteral: {
-    uint32_t length = snprintf(NULL, 0, "%d", node->int_value);
-    snprintf(CHAR_ARRAY, length + 1, "%d", node->int_value);
+    uint32_t length = snprintf(NULL, 0, "%u", node->int_value);
+    snprintf(CHAR_ARRAY, length + 1, "%u", node->int_value);
     uint64_t begin =
         char_array_add_string(arr, string_from_parts(CHAR_ARRAY, length));
     return string_from_parts(&arr->begin[begin], arr->end - begin);
   }
+  case ASTIdent: {
+    uint64_t begin = char_array_add_string(arr, string_new("<symbol "));
+    uint32_t length = snprintf(NULL, 0, "%u", node->ident_symbol);
+    snprintf(CHAR_ARRAY, length + 1, "%u", node->ident_symbol);
+    char_array_add_string(arr, string_from_parts(CHAR_ARRAY, length));
+    char_array_add_string(arr, string_new(">"));
+    return string_from_parts(&arr->begin[begin], arr->end - begin);
   }
-  String s;
-  return s;
+  }
 }
 
 // BASIC PARSER FUNCTIONALITY
@@ -192,6 +206,7 @@ Parser parser_new(BucketList *list, char *data) {
 Token parser_pop(Parser *parser) {
   Token tok = parser->current;
   parser->current = lexer_next(&parser->lex);
+  printf("%s\n", lexer_token_str(parser->list, &tok));
   return tok;
 }
 
@@ -199,23 +214,21 @@ Token parser_peek(Parser *parser) { return parser->current; }
 
 // PARSING TOKENS INTO A TREE
 
-ASTNodeProgram parser_parse(Parser *);
+bool parser_parse(Parser *, ASTNodeProgram *);
 bool parser_parse_decl(Parser *, ASTNodeDecl *);
 bool parser_parse_type(Parser *, ASTNodeType *);
 bool parser_parse_stmt(Parser *, ASTNodeStmt *);
 bool parser_parse_atom(Parser *, ASTNodeExpr *);
 
-ASTNodeProgram parser_parse(Parser *parser) {
-  ASTNodeProgram prog = program_new();
-
+bool parser_parse(Parser *parser, ASTNodeProgram *prog) {
   while (parser_peek(parser).kind != TokEnd &&
          parser_peek(parser).kind != TokInvalid) {
-    if (parser_parse_decl(parser, program_allocate_element(&prog))) {
-      return prog;
+    if (parser_parse_decl(parser, program_allocate_element(prog))) {
+      return true;
     }
   }
 
-  return prog;
+  return false;
 }
 
 bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
@@ -268,8 +281,8 @@ bool parser_parse_type(Parser *parser, ASTNodeType *type) {
   }
 
   type->kind = ASTInt;
-  type->begin = tok.begin;
-  type->len = tok.len;
+  type->begin = tok.str.str;
+  type->len = tok.str.len;
   return false;
 }
 
@@ -281,9 +294,10 @@ bool parser_parse_stmt(Parser *parser, ASTNodeStmt *stmt) {
 
   parser_pop(parser);
   stmt->kind = ASTReturn;
-  stmt->begin = tok.begin;
+  stmt->begin = tok.str.str;
   stmt->return_expr = bump_alloc(parser->list, sizeof(ASTNodeExpr));
   if (parser_parse_atom(parser, stmt->return_expr)) {
+    printf("Hello\n");
     return true;
   }
 
@@ -297,14 +311,24 @@ bool parser_parse_stmt(Parser *parser, ASTNodeStmt *stmt) {
 }
 
 bool parser_parse_atom(Parser *parser, ASTNodeExpr *expr) {
-  Token tok = lexer_next(&parser->lex);
-  if (tok.kind != TokInt) {
+  Token tok = parser_pop(parser);
+  switch (tok.kind) {
+  case TokInt: {
+    expr->kind = ASTIntLiteral;
+    expr->int_value = tok.int_value;
+    expr->len = tok.str.len;
+    expr->begin = tok.str.str;
+    return false;
+  } break;
+  case TokIdent: {
+    expr->kind = ASTIdent;
+    expr->ident_symbol = tok.ident_symbol;
+    expr->len = tok.str.len;
+    expr->begin = tok.str.str;
+    return false;
+  } break;
+  default:
+    // printf("%d\n", tok.kind);
     return true;
   }
-
-  expr->kind = ASTIntLiteral;
-  expr->int_value = tok.int_value;
-  expr->len = tok.len;
-  expr->begin = tok.begin;
-  return false;
 }
