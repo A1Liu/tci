@@ -26,14 +26,59 @@ typedef enum {
 
   TokIf,
   TokElse,
+  TokDo,
+  TokWhile,
+  TokFor,
+  TokBreak,
+  TokContinue,
   TokReturn,
 
+  TokVoid,
+  TokChar,
   TokInt,
+  TokUnsigned,
+  TokLong,
+  TokFloat,
+  TokDouble,
+  TokShort,
+
+  TokNot,
+  TokTilde,
+  TokStar,
+  TokSlash,
+  TokPlus,
+  TokDash,
+  TokPercent,
+  TokPlusPlus,
+  TokDashDash,
+  TokEq,
+  TokEqEq,
+  TokNeq,
+  TokLeq,
+  TokLt,
+  TokGeq,
+  TokGt,
+  TokAmp,
+  TokAmpAmp,
+  TokLine,
+  TokLineLine,
+  TokCaret,
+  TokAmpEq,
+  TokLineEq,
+  TokCaretEq,
+  TokPlusEq,
+  TokDashEq,
+  TokSlashEq,
+  TokStarEq,
+  TokPercentEq,
 
   TokLeftBrace,
   TokRightBrace,
   TokLeftParen,
   TokRightParen,
+  TokLeftBracket,
+  TokRightBracket,
+
   TokSemicolon,
 
   TokInvalid,
@@ -45,7 +90,13 @@ typedef struct {
   char *begin;
   uint32_t len;
   union {
-    uint32_t int_value;
+    int32_t int_value;
+    uint32_t uint_value;
+    int64_t long_value;
+    uint64_t ulong_value;
+    float float_value;
+    double double_value;
+
     uint32_t ident_symbol;
   };
 } Token;
@@ -122,10 +173,34 @@ Token lexer_next(Lexer *lex) {
       tok.kind = TokIf;
     } else if (!strncmp(tok.begin, "else", tok.len)) {
       tok.kind = TokElse;
+    } else if (!strncmp(tok.begin, "do", tok.len)) {
+      tok.kind = TokDo;
+    } else if (!strncmp(tok.begin, "while", tok.len)) {
+      tok.kind = TokWhile;
+    } else if (!strncmp(tok.begin, "for", tok.len)) {
+      tok.kind = TokFor;
+    } else if (!strncmp(tok.begin, "break", tok.len)) {
+      tok.kind = TokBreak;
+    } else if (!strncmp(tok.begin, "continue", tok.len)) {
+      tok.kind = TokContinue;
     } else if (!strncmp(tok.begin, "return", tok.len)) {
       tok.kind = TokReturn;
+    } else if (!strncmp(tok.begin, "void", tok.len)) {
+      tok.kind = TokVoid;
+    } else if (!strncmp(tok.begin, "char", tok.len)) {
+      tok.kind = TokChar;
     } else if (!strncmp(tok.begin, "int", tok.len)) {
       tok.kind = TokInt;
+    } else if (!strncmp(tok.begin, "short", tok.len)) {
+      tok.kind = TokShort;
+    } else if (!strncmp(tok.begin, "long", tok.len)) {
+      tok.kind = TokLong;
+    } else if (!strncmp(tok.begin, "unsigned", tok.len)) {
+      tok.kind = TokUnsigned;
+    } else if (!strncmp(tok.begin, "float", tok.len)) {
+      tok.kind = TokFloat;
+    } else if (!strncmp(tok.begin, "double", tok.len)) {
+      tok.kind = TokDouble;
     } else {
       uint32_t idx = char_array_add(&lex->symbol_values, tok.begin, tok.len);
       uint32_t symbol = range_array_add(&lex->symbols, range_new(idx, tok.len));
@@ -168,6 +243,138 @@ Token lexer_next(Lexer *lex) {
   case ')':
     tok.kind = TokRightParen;
     break;
+  case '[':
+    tok.kind = TokLeftBracket;
+    break;
+  case ']':
+    tok.kind = TokLeftBracket;
+    break;
+  case '~':
+    tok.kind = TokTilde;
+    break;
+
+  case '+': {
+    cur = tok.begin[tok.len];
+    if (cur == '+') {
+      tok.len++;
+      tok.kind = TokPlusPlus;
+    } else if (cur == '=') {
+      tok.len++;
+      tok.kind = TokPlusEq;
+    } else {
+      tok.kind = TokPlus;
+    }
+  } break;
+  case '-': {
+    cur = tok.begin[tok.len];
+    if (cur == '-') {
+      tok.len++;
+      tok.kind = TokDashDash;
+    } else if (cur == '=') {
+      tok.len++;
+      tok.kind = TokDashEq;
+    } else {
+      tok.kind = TokDash;
+    }
+  } break;
+  case '/': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokSlashEq;
+    } else {
+      tok.kind = TokSlash;
+    }
+  } break;
+  case '*': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokStarEq;
+    } else {
+      tok.kind = TokStar;
+    }
+  } break;
+  case '%': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokPercentEq;
+    } else {
+      tok.kind = TokPercent;
+    }
+  } break;
+
+  case '>': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokGeq;
+    } else {
+      tok.kind = TokGt;
+    }
+  } break;
+  case '<': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokLeq;
+    } else {
+      tok.kind = TokLt;
+    }
+  } break;
+  case '!': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokNeq;
+    } else {
+      tok.kind = TokNot;
+    }
+  } break;
+  case '=': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokEqEq;
+    } else {
+      tok.kind = TokEq;
+    }
+  } break;
+
+  case '|': {
+    cur = tok.begin[tok.len];
+    if (cur == '|') {
+      tok.len++;
+      tok.kind = TokLineLine;
+    } else if (cur == '=') {
+      tok.len++;
+      tok.kind = TokLineEq;
+    } else {
+      tok.kind = TokLine;
+    }
+  } break;
+  case '&': {
+    cur = tok.begin[tok.len];
+    if (cur == '&') {
+      tok.len++;
+      tok.kind = TokAmpAmp;
+    } else if (cur == '=') {
+      tok.len++;
+      tok.kind = TokAmpEq;
+    } else {
+      tok.kind = TokAmp;
+    }
+  } break;
+  case '^': {
+    cur = tok.begin[tok.len];
+    if (cur == '=') {
+      tok.len++;
+      tok.kind = TokAmpEq;
+    } else {
+      tok.kind = TokAmp;
+    }
+  } break;
   default:
     tok.kind = TokInvalid;
   }
