@@ -192,25 +192,39 @@ String ast_node_expr_str(CharDynArray *arr, ASTNodeExpr *node) {
 typedef struct {
   BucketList *list;
   Lexer lex;
-  Token current;
+  Token *begin;
+  uint32_t end;
+  uint32_t capacity;
 } Parser;
 
 Parser parser_new(BucketList *list, char *data) {
   Parser parser;
   parser.list = list;
   parser.lex = lexer_new(data);
-  parser.current = lexer_next(&parser.lex);
+  parser.begin = NULL;
+  parser.end = 0;
+  parser.capacity = 0;
   return parser;
 }
 
 Token parser_pop(Parser *parser) {
-  Token tok = parser->current;
-  parser->current = lexer_next(&parser->lex);
-  printf("%s\n", lexer_token_str(parser->list, &tok));
-  return tok;
+  if (parser->end) {
+    Token tok = parser->begin[parser->end];
+    parser->end--;
+    return tok;
+  }
+
+  return lexer_next(&parser->lex);
 }
 
-Token parser_peek(Parser *parser) { return parser->current; }
+void parser_push(Parser *parser, Token tok) {
+  if (parser->begin == NULL || parser->end == parser->capacity) {
+    parser->capacity = parser->capacity / 2 + parser->capacity + 16;
+    parser->begin = realloc(parser->begin, parser->capacity * sizeof(Token));
+  }
+
+  parser->begin[parser->end++] = tok;
+}
 
 // PARSING TOKENS INTO A TREE
 
@@ -221,11 +235,13 @@ bool parser_parse_stmt(Parser *, ASTNodeStmt *);
 bool parser_parse_atom(Parser *, ASTNodeExpr *);
 
 bool parser_parse(Parser *parser, ASTNodeProgram *prog) {
-  while (parser_peek(parser).kind != TokEnd &&
-         parser_peek(parser).kind != TokInvalid) {
+  Token tok = parser_pop(parser);
+  while (tok.kind != TokEnd && tok.kind != TokInvalid) {
+    parser_push(parser, tok);
     if (parser_parse_decl(parser, program_allocate_element(prog))) {
       return true;
     }
+    tok = parser_pop(parser);
   }
 
   return false;
@@ -260,16 +276,20 @@ bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
     return true;
   }
 
-  for (tok = parser_peek(parser); tok.kind != TokRightBrace &&
-                                  tok.kind != TokInvalid && tok.kind != TokEnd;
-       tok = parser_peek(parser)) {
+  for (tok = parser_pop(parser); tok.kind != TokRightBrace &&
+                                 tok.kind != TokInvalid && tok.kind != TokEnd;
+       tok = parser_pop(parser)) {
+    parser_push(parser, tok);
     if (parser_parse_stmt(parser,
                           stmt_array_allocate_element(&decl->function.stmts))) {
       return true;
     }
   }
 
-  parser_pop(parser);
+  if (tok.kind != TokRightBrace) {
+    parser_push(parser, tok);
+    return true;
+  }
 
   return false;
 }
@@ -287,12 +307,12 @@ bool parser_parse_type(Parser *parser, ASTNodeType *type) {
 }
 
 bool parser_parse_stmt(Parser *parser, ASTNodeStmt *stmt) {
-  Token tok = parser_peek(parser);
+  Token tok = parser_pop(parser);
   if (tok.kind != TokReturn) {
+    parser_push(parser, tok);
     return true;
   }
 
-  parser_pop(parser);
   stmt->kind = ASTReturn;
   stmt->begin = tok.str.str;
   stmt->return_expr = bump_alloc(parser->list, sizeof(ASTNodeExpr));

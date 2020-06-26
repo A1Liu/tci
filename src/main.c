@@ -1,10 +1,10 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 // clang-format off
+#include "debug_allocator.c"
 #include "util.c"
 #include "lexer.c"
 #include "parser.c"
@@ -23,10 +23,12 @@ int main(int argc, char **argv) {
   bool result = parser_parse(&parser, &prog);
   if (result) {
     printf("FAILED\n");
+    return 1;
   }
 
   CharDynArray arr = char_array_new();
   String str = ast_node_program_str(&arr, &prog);
 
   printf("%.*s\n", (uint32_t)str.len, str.str);
+  return 0;
 }
