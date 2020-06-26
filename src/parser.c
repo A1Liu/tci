@@ -209,8 +209,7 @@ Parser parser_new(BucketList *list, char *data) {
 
 Token parser_pop(Parser *parser) {
   if (parser->end) {
-    Token tok = parser->begin[parser->end];
-    parser->end--;
+    Token tok = parser->begin[--parser->end];
     return tok;
   }
 
@@ -317,7 +316,6 @@ bool parser_parse_stmt(Parser *parser, ASTNodeStmt *stmt) {
   stmt->begin = tok.str.str;
   stmt->return_expr = bump_alloc(parser->list, sizeof(ASTNodeExpr));
   if (parser_parse_atom(parser, stmt->return_expr)) {
-    printf("Hello\n");
     return true;
   }
 
@@ -348,7 +346,6 @@ bool parser_parse_atom(Parser *parser, ASTNodeExpr *expr) {
     return false;
   } break;
   default:
-    // printf("%d\n", tok.kind);
     return true;
   }
 }

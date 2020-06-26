@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define debug(args...) (printf("%s:%u: ", __FILE__, __LINE__), printf(args))
+
 // clang-format off
 #include "debug_allocator.c"
 #include "util.c"
@@ -20,8 +22,8 @@ int main(int argc, char **argv) {
   BucketList *list = bump_new();
   Parser parser = parser_new(list, file_contents);
   ASTNodeProgram prog = program_new();
-  bool result = parser_parse(&parser, &prog);
-  if (result) {
+  bool failed = parser_parse(&parser, &prog);
+  if (failed) {
     printf("FAILED\n");
     return 1;
   }

@@ -257,7 +257,7 @@ Token lexer_next(Lexer *lex) {
     tok.kind = TokDot;
     break;
   case ';':
-    tok.kind = TokDot;
+    tok.kind = TokSemicolon;
     break;
 
   case '+': {
