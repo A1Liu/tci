@@ -1,10 +1,10 @@
 typedef struct {
-  uint32_t str;
+  uint32_t begin;
   uint32_t len;
 } Range;
 
 typedef struct {
-  Range *str;
+  Range *begin;
   uint32_t end;
   uint32_t capacity;
 } RangeDynArray;
@@ -47,7 +47,6 @@ typedef enum {
   TokFloat,
   TokDouble,
   TokShort,
-  TokTypename,
 
   TokDot,
   TokNot,
@@ -108,8 +107,8 @@ typedef struct {
   };
 } Token;
 
-Range range_new(uint32_t str, uint32_t len) {
-  Range r = {str, len};
+Range range_new(uint32_t begin, uint32_t len) {
+  Range r = {begin, len};
   return r;
 }
 
@@ -118,20 +117,20 @@ RangeDynArray range_array_new() {
   return arr;
 }
 
-uint64_t range_array_add(RangeDynArray *arr, Range r) {
-  if (arr->str == NULL) {
-    arr->str = malloc(32 * sizeof(r));
+uint32_t range_array_add(RangeDynArray *arr, Range r) {
+  if (arr->begin == NULL) {
+    arr->begin = malloc(32 * sizeof(r));
     arr->capacity = 32;
   }
 
   if (arr->capacity == arr->end) {
     arr->capacity = arr->capacity / 2 + arr->capacity;
-    arr->str = realloc(arr->str, arr->capacity * sizeof(r));
+    arr->begin = realloc(arr->begin, arr->capacity * sizeof(r));
   }
 
-  uint64_t str = arr->end;
-  arr->str[arr->end++] = r;
-  return str;
+  uint32_t begin = arr->end;
+  arr->begin[arr->end++] = r;
+  return begin;
 }
 
 Lexer lexer_new(char *data) {
@@ -169,25 +168,7 @@ Token lexer_next(Lexer *lex) {
   char cur = *tok.str.str;
   tok.str.len = 1;
 
-  if (cur >= 'A' && cur <= 'Z') {
-    for (cur = tok.str.str[tok.str.len];
-         (cur <= 'A' && cur >= 'Z') || (cur >= 'a' && cur <= 'z') ||
-         (cur == '_') || (cur >= '0' && cur <= '9');
-         tok.str.len++, cur = tok.str.str[tok.str.len])
-      ;
-
-    uint32_t idx = char_array_add_string(&lex->symbol_values, tok.str);
-    uint32_t symbol =
-        range_array_add(&lex->symbols, range_new(idx, tok.str.len));
-
-    tok.kind = TokTypename;
-    tok.ident_symbol = symbol;
-
-    lex->str = tok.str.str + tok.str.len;
-    return tok;
-  }
-
-  if (cur >= 'a' && cur <= 'z') {
+  if ((cur >= 'A' && cur <= 'Z') || (cur >= 'a' && cur <= 'z')) {
     for (cur = tok.str.str[tok.str.len];
          (cur <= 'A' && cur >= 'Z') || (cur >= 'a' && cur <= 'z') ||
          (cur == '_') || (cur >= '0' && cur <= '9');

@@ -17,8 +17,4 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - Anonymous structs aren't supported.
 - Implicit types on functions aren't supported.
 - Implicit function declarations aren't supported.
-- Type names must start with an uppercase leter, and variable names must start
-  with a lowercase letter.
 - Higher order functions without a typedef are not supported without
-- Declarations can only be done using `declare(type, name)` for normal
-  variables and `declare_array(type, name)` for arrays.

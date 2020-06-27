@@ -21,16 +21,6 @@ int main(int argc, char **argv) {
 
   BumpList *list = bump_new();
   Parser parser = parser_new(list, file_contents);
-  ASTNodeProgram prog = program_new();
-  bool failed = parser_parse(&parser, &prog);
-  if (failed) {
-    printf("FAILED\n");
-    return 1;
-  }
 
-  CharDynArray arr = char_array_new();
-  String str = ast_node_program_str(&arr, &prog);
-
-  printf("%.*s\n", (uint32_t)str.len, str.str);
   return 0;
 }

@@ -150,3 +150,9 @@ bool streq(String s, char *val) {
 
   return true;
 }
+
+String t_itoa(uint32_t val) {
+  uint32_t length = snprintf(NULL, 0, "%u", val);
+  snprintf(CHAR_ARRAY, length + 1, "%u", val);
+  return string_from_parts(CHAR_ARRAY, length);
+}
