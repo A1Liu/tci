@@ -8,10 +8,11 @@ The goals of this compiler are:
 
 
 ## Building this Project
-
-Run `gcc src/main.c` to build, and then `./a.out` to run the program.
+Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 
 ## Restrictions and Incompatibilities
 
 - Casting in the C style is not supported. Instead, a builtin `cast(expr, type)`
   is provided.
+- Anonymous structs aren't supported.
+- Implicit function declarations are not allowed.

@@ -52,14 +52,16 @@ typedef struct {
   uint32_t capacity;
 } ASTNodeStmtDynArray;
 
+typedef struct {
+  struct astNodeType *return_type;
+  uint32_t name;
+  ASTNodeStmtDynArray stmts;
+} ASTNodeFunction;
+
 typedef struct astNodeDecl {
   ASTNodeDeclKind kind;
   union {
-    struct {
-      ASTNodeType *return_type;
-      uint32_t name;
-      ASTNodeStmtDynArray stmts;
-    } function;
+    ASTNodeFunction function;
   };
 } ASTNodeDecl;
 
@@ -126,7 +128,6 @@ String ast_node_program_str(CharDynArray *arr, ASTNodeProgram *node) {
 }
 
 String ast_node_decl_str(CharDynArray *arr, ASTNodeDecl *node) {
-  debug("%d\n", node->kind);
   switch (node->kind) {
   case ASTFunction: {
     uint64_t begin = char_array_add_string(arr, string_new("Function(ret="));
@@ -226,11 +227,17 @@ void parser_push(Parser *parser, Token tok) {
   parser->begin[parser->end++] = tok;
 }
 
+Token parser_peek(Parser *parser) {
+  Token tok = parser_pop(parser);
+  parser_push(parser, tok);
+  return tok;
+}
+
 // PARSING TOKENS INTO A TREE
 
 bool parser_parse(Parser *, ASTNodeProgram *);
 bool parser_parse_decl(Parser *, ASTNodeDecl *);
-bool parser_parse_type(Parser *, ASTNodeType *);
+bool try_parser_parse_type(Parser *, ASTNodeType *);
 bool parser_parse_stmt(Parser *, ASTNodeStmt *);
 bool parser_parse_atom(Parser *, ASTNodeExpr *);
 
@@ -249,18 +256,19 @@ bool parser_parse(Parser *parser, ASTNodeProgram *prog) {
 
 bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
   ASTNodeType *type = bump_alloc(parser->list, sizeof(ASTNodeType));
-  if (parser_parse_type(parser, type)) {
+  if (try_parser_parse_type(parser, type)) {
+    return true;
+  }
+
+  Token tok = parser_pop(parser);
+  if (tok.kind != TokIdent) {
+    parser_push(parser, tok);
     return true;
   }
 
   decl->kind = ASTFunction;
   decl->function.stmts = stmt_array_new();
   decl->function.return_type = type;
-
-  Token tok = parser_pop(parser);
-  if (tok.kind != TokIdent) {
-    return true;
-  }
 
   decl->function.name = tok.ident_symbol;
 
@@ -297,9 +305,10 @@ bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
   return false;
 }
 
-bool parser_parse_type(Parser *parser, ASTNodeType *type) {
+bool try_parser_parse_type(Parser *parser, ASTNodeType *type) {
   Token tok = parser_pop(parser);
   if (tok.kind != TokInt) {
+    parser_push(parser, tok);
     return true;
   }
 
@@ -312,7 +321,6 @@ bool parser_parse_type(Parser *parser, ASTNodeType *type) {
 bool parser_parse_stmt(Parser *parser, ASTNodeStmt *stmt) {
   Token tok = parser_pop(parser);
   if (tok.kind != TokReturn) {
-    parser_push(parser, tok);
     return true;
   }
 
