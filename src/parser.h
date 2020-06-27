@@ -1,5 +1,6 @@
 typedef enum {
   ASTFunction,
+  ASTVarDecl,
 } ASTNodeDeclKind;
 
 typedef enum {
@@ -58,10 +59,16 @@ typedef struct {
   ASTNodeStmtDynArray stmts;
 } ASTNodeFunction;
 
+typedef struct {
+  ASTNodeType *variable_type;
+  uint32_t ident_symbol;
+} ASTNodeVarDecl;
+
 typedef struct astNodeDecl {
   ASTNodeDeclKind kind;
   union {
     ASTNodeFunction function;
+    ASTNodeVarDecl declaration;
   };
 } ASTNodeDecl;
 
@@ -146,6 +153,17 @@ String ast_node_decl_str(CharDynArray *arr, ASTNodeDecl *node) {
     char_array_add_string(arr, string_new("])"));
     return string_from_parts(&arr->begin[begin], arr->end - begin);
   }
+  case ASTVarDecl: {
+    uint64_t begin = char_array_add_string(arr, string_new("Declare(type="));
+    ast_node_type_str(arr, node->declaration.variable_type);
+
+    char_array_add_string(arr, string_new(",name="));
+    uint32_t sym_length = snprintf(NULL, 0, "%d", node->function.name);
+    snprintf(CHAR_ARRAY, sym_length + 1, "%d", node->function.name);
+    char_array_add_string(arr, string_from_parts(CHAR_ARRAY, sym_length));
+    char_array_add_string(arr, string_new(")"));
+    return string_from_parts(&arr->begin[begin], arr->end - begin);
+  } break;
   }
 }
 
@@ -262,30 +280,22 @@ bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
 
   Token tok = parser_pop(parser);
   if (tok.kind != TokIdent) {
-    parser_push(parser, tok);
     return true;
   }
 
   decl->kind = ASTFunction;
   decl->function.stmts = stmt_array_new();
   decl->function.return_type = type;
-
   decl->function.name = tok.ident_symbol;
 
-  tok = parser_pop(parser);
-  if (tok.kind != TokLeftParen) {
+  if (parser_pop(parser).kind != TokLeftParen)
     return true;
-  }
 
-  tok = parser_pop(parser);
-  if (tok.kind != TokRightParen) {
+  if (parser_pop(parser).kind != TokRightParen)
     return true;
-  }
 
-  tok = parser_pop(parser);
-  if (tok.kind != TokLeftBrace) {
+  if (parser_pop(parser).kind != TokLeftBrace)
     return true;
-  }
 
   for (tok = parser_pop(parser); tok.kind != TokRightBrace &&
                                  tok.kind != TokInvalid && tok.kind != TokEnd;
@@ -298,7 +308,6 @@ bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
   }
 
   if (tok.kind != TokRightBrace) {
-    parser_push(parser, tok);
     return true;
   }
 
