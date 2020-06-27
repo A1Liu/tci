@@ -133,6 +133,7 @@ char *read_file(char *name) {
   while ((count = fread(buf, 1, 256, file))) {
     char_array_add(&arr, buf, count);
   }
+
   fclose(file);
   char_array_finalize(&arr);
   return arr.begin;

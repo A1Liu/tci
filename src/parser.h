@@ -251,6 +251,7 @@ bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
   if (parser_parse_type(parser, type)) {
     return true;
   }
+  decl->function.stmts = stmt_array_new();
   decl->function.return_type = type;
 
   Token tok = parser_pop(parser);

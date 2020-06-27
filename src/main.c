@@ -6,10 +6,10 @@
 #define debug(args...) (printf("%s:%u: ", __FILE__, __LINE__), printf(args))
 
 // clang-format off
-#include "debug_allocator.c"
-#include "util.c"
-#include "lexer.c"
-#include "parser.c"
+#include "debug_allocator.h"
+#include "util.h"
+#include "lexer.h"
+#include "parser.h"
 // clang-format on
 
 int main(int argc, char **argv) {
