@@ -15,4 +15,7 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - Casting in the C style is not supported. Instead, a builtin `cast(expr, type)`
   is provided.
 - Anonymous structs aren't supported.
-- Implicit function declarations are not allowed.
+- Implicit types on functions aren't supported.
+- Implicit function declarations aren't supported.
+- Type names must start with an uppercase leter, and variable names must start
+  with a lowercase letter.

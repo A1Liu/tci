@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
   char *file_contents = read_file(argv[1]);
   printf("---\n%s\n---\n", file_contents);
 
-  BucketList *list = bump_new();
+  BumpList *list = bump_new();
   Parser parser = parser_new(list, file_contents);
   ASTNodeProgram prog = program_new();
   bool failed = parser_parse(&parser, &prog);

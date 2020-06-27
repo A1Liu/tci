@@ -32,6 +32,9 @@ typedef enum {
   TokBreak,
   TokContinue,
   TokReturn,
+  TokStruct,
+  TokUnion,
+  TokTypedef,
 
   TokSizeof,
   TokCast,
@@ -44,6 +47,7 @@ typedef enum {
   TokFloat,
   TokDouble,
   TokShort,
+  TokTypename,
 
   TokDot,
   TokNot,
@@ -139,7 +143,7 @@ Lexer lexer_new(char *data) {
   return lex;
 }
 
-char *lexer_token_str(BucketList *list, Token *tok) {
+char *lexer_token_str(BumpList *list, Token *tok) {
   char *bump = bump_alloc(list, tok->str.len + 3);
   *bump = '<';
   bump[tok->str.len + 1] = '>';
@@ -165,7 +169,25 @@ Token lexer_next(Lexer *lex) {
   char cur = *tok.str.str;
   tok.str.len = 1;
 
-  if ((cur <= 'A' && cur >= 'Z') || (cur >= 'a' && cur <= 'z')) {
+  if (cur >= 'A' && cur <= 'Z') {
+    for (cur = tok.str.str[tok.str.len];
+         (cur <= 'A' && cur >= 'Z') || (cur >= 'a' && cur <= 'z') ||
+         (cur == '_') || (cur >= '0' && cur <= '9');
+         tok.str.len++, cur = tok.str.str[tok.str.len])
+      ;
+
+    uint32_t idx = char_array_add_string(&lex->symbol_values, tok.str);
+    uint32_t symbol =
+        range_array_add(&lex->symbols, range_new(idx, tok.str.len));
+
+    tok.kind = TokTypename;
+    tok.ident_symbol = symbol;
+
+    lex->str = tok.str.str + tok.str.len;
+    return tok;
+  }
+
+  if (cur >= 'a' && cur <= 'z') {
     for (cur = tok.str.str[tok.str.len];
          (cur <= 'A' && cur >= 'Z') || (cur >= 'a' && cur <= 'z') ||
          (cur == '_') || (cur >= '0' && cur <= '9');
@@ -188,6 +210,12 @@ Token lexer_next(Lexer *lex) {
       tok.kind = TokContinue;
     } else if (streq(tok.str, "return")) {
       tok.kind = TokReturn;
+    } else if (streq(tok.str, "struct")) {
+      tok.kind = TokStruct;
+    } else if (streq(tok.str, "union")) {
+      tok.kind = TokUnion;
+    } else if (streq(tok.str, "typedef")) {
+      tok.kind = TokTypedef;
     } else if (streq(tok.str, "void")) {
       tok.kind = TokVoid;
     } else if (streq(tok.str, "char")) {
@@ -209,8 +237,7 @@ Token lexer_next(Lexer *lex) {
     } else if (streq(tok.str, "double")) {
       tok.kind = TokDouble;
     } else {
-      uint32_t idx =
-          char_array_add(&lex->symbol_values, tok.str.str, tok.str.len);
+      uint32_t idx = char_array_add_string(&lex->symbol_values, tok.str);
       uint32_t symbol =
           range_array_add(&lex->symbols, range_new(idx, tok.str.len));
 

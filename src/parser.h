@@ -192,14 +192,14 @@ String ast_node_expr_str(CharDynArray *arr, ASTNodeExpr *node) {
 // BASIC PARSER FUNCTIONALITY
 
 typedef struct {
-  BucketList *list;
+  BumpList *list;
   Lexer lex;
   Token *begin;
   uint32_t end;
   uint32_t capacity;
 } Parser;
 
-Parser parser_new(BucketList *list, char *data) {
+Parser parser_new(BumpList *list, char *data) {
   Parser parser;
   parser.list = list;
   parser.lex = lexer_new(data);

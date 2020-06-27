@@ -7,7 +7,7 @@ typedef struct {
   void *next;
   char *bump;
   uint64_t len;
-} BucketList;
+} BumpList;
 
 // if ptr != NULL, then ptr is the aligned bump pointer value to return, and
 // next_bump is the next value of the bump pointer
@@ -29,7 +29,7 @@ Bump bump_ptr(void *bump_, void *end, uint64_t size) {
   return result;
 }
 
-void *bump_alloc(BucketList *list, uint64_t size) {
+void *bump_alloc(BumpList *list, uint64_t size) {
   char *array_begin = (char *)(list + 1), *bucket_end = array_begin + list->len;
 
   Bump result = bump_ptr(list->bump, bucket_end, size);
@@ -47,7 +47,7 @@ void *bump_alloc(BucketList *list, uint64_t size) {
 
   list->next = malloc(sizeof(*list) + next_len);
 
-  BucketList *next = list->next;
+  BumpList *next = list->next;
   next->len = next_len;
   next->next = NULL;
   char *ptr = (char *)(next + 1);
@@ -56,8 +56,8 @@ void *bump_alloc(BucketList *list, uint64_t size) {
   return ptr;
 }
 
-BucketList *bump_new(void) {
-  BucketList *list = malloc(sizeof(BucketList) + 1024);
+BumpList *bump_new(void) {
+  BumpList *list = malloc(sizeof(BumpList) + 1024);
   list->next = NULL;
   list->bump = (char *)(list + 1);
   list->len = 1024;
