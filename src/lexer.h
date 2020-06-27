@@ -33,6 +33,9 @@ typedef enum {
   TokContinue,
   TokReturn,
 
+  TokSizeof,
+  TokCast,
+
   TokVoid,
   TokChar,
   TokInt,
@@ -177,27 +180,31 @@ Token lexer_next(Lexer *lex) {
       tok.kind = TokDo;
     } else if (streq(tok.str, "while")) {
       tok.kind = TokWhile;
-    } else if (!strncmp(tok.str.str, "for", tok.str.len)) {
+    } else if (streq(tok.str, "for")) {
       tok.kind = TokFor;
-    } else if (!strncmp(tok.str.str, "break", tok.str.len)) {
+    } else if (streq(tok.str, "break")) {
       tok.kind = TokBreak;
-    } else if (!strncmp(tok.str.str, "continue", tok.str.len)) {
+    } else if (streq(tok.str, "continue")) {
       tok.kind = TokContinue;
-    } else if (!strncmp(tok.str.str, "return", tok.str.len)) {
+    } else if (streq(tok.str, "return")) {
       tok.kind = TokReturn;
-    } else if (!strncmp(tok.str.str, "void", tok.str.len)) {
+    } else if (streq(tok.str, "void")) {
       tok.kind = TokVoid;
-    } else if (!strncmp(tok.str.str, "char", tok.str.len)) {
+    } else if (streq(tok.str, "char")) {
       tok.kind = TokChar;
-    } else if (!strncmp(tok.str.str, "int", tok.str.len)) {
+    } else if (streq(tok.str, "int")) {
       tok.kind = TokInt;
-    } else if (!strncmp(tok.str.str, "short", tok.str.len)) {
+    } else if (streq(tok.str, "short")) {
       tok.kind = TokShort;
-    } else if (!strncmp(tok.str.str, "long", tok.str.len)) {
+    } else if (streq(tok.str, "long")) {
       tok.kind = TokLong;
-    } else if (!strncmp(tok.str.str, "unsigned", tok.str.len)) {
+    } else if (streq(tok.str, "unsigned")) {
       tok.kind = TokUnsigned;
-    } else if (!strncmp(tok.str.str, "float", tok.str.len)) {
+    } else if (streq(tok.str, "cast")) {
+      tok.kind = TokCast;
+    } else if (streq(tok.str, "sizeof")) {
+      tok.kind = TokSizeof;
+    } else if (streq(tok.str, "float")) {
       tok.kind = TokFloat;
     } else if (streq(tok.str, "double")) {
       tok.kind = TokDouble;
@@ -216,6 +223,7 @@ Token lexer_next(Lexer *lex) {
   }
 
   if (cur >= '0' && cur <= '9') {
+    tok.kind = TokInt;
     if (cur >= '1' && cur <= '9') { // Decimal
       tok.int_value = cur - '0';
       for (cur = tok.str.str[tok.str.len]; cur >= '0' && cur <= '9';

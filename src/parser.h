@@ -126,6 +126,7 @@ String ast_node_program_str(CharDynArray *arr, ASTNodeProgram *node) {
 }
 
 String ast_node_decl_str(CharDynArray *arr, ASTNodeDecl *node) {
+  debug("%d\n", node->kind);
   switch (node->kind) {
   case ASTFunction: {
     uint64_t begin = char_array_add_string(arr, string_new("Function(ret="));
@@ -251,6 +252,8 @@ bool parser_parse_decl(Parser *parser, ASTNodeDecl *decl) {
   if (parser_parse_type(parser, type)) {
     return true;
   }
+
+  decl->kind = ASTFunction;
   decl->function.stmts = stmt_array_new();
   decl->function.return_type = type;
 
