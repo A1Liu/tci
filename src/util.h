@@ -65,50 +65,16 @@ BumpList *bump_new(void) {
 }
 
 typedef struct {
-  char *begin;
-  uint64_t end;
-  uint64_t capacity;
-} CharDynArray;
-
-typedef struct {
   char *str;
   uint64_t len;
 } String;
 
 char CHAR_ARRAY[1024];
 
-CharDynArray char_array_new(void) {
-  CharDynArray arr = {NULL, 0, 0};
-  return arr;
-}
+void char_array_finalize(char **arr) { dyn_array_add(arr, '\0'); }
 
-uint64_t char_array_add(CharDynArray *arr, char *buf, uint32_t len) {
-  if (arr->begin == NULL) {
-    arr->begin = malloc(256);
-    arr->capacity = 256;
-  }
-
-  if (arr->capacity - arr->end < len) {
-    arr->capacity = arr->capacity / 2 + arr->capacity + len;
-    arr->begin = realloc(arr->begin, arr->capacity);
-  }
-
-  uint64_t begin = arr->end;
-  for (int i = 0; i < len; i++, arr->end++) {
-    arr->begin[arr->end] = buf[i];
-  }
-
-  return begin;
-}
-
-void char_array_finalize(CharDynArray *arr) {
-  if (arr->capacity == arr->end)
-    arr->begin = realloc(arr->begin, ++arr->capacity);
-  arr->begin[arr->end++] = '\0';
-}
-
-uint64_t char_array_add_string(CharDynArray *arr, String str) {
-  return char_array_add(arr, str.str, str.len);
+uint64_t char_array_add_string(char **arr, String str) {
+  return dyn_array_add_from(arr, str.str, str.len);
 }
 
 String string_new(char *str) {
@@ -126,17 +92,16 @@ char *read_file(char *name) {
   if (file == NULL)
     return NULL;
 
-  CharDynArray arr = {NULL, 0, 0};
+  dyn_array_declare(arr, char);
 
   char buf[256];
   size_t count;
   while ((count = fread(buf, 1, 256, file))) {
-    char_array_add(&arr, buf, count);
+    dyn_array_add_from(&arr, buf, count);
   }
-
   fclose(file);
   char_array_finalize(&arr);
-  return arr.begin;
+  return arr;
 }
 
 bool streq(String s, char *val) {

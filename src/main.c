@@ -6,6 +6,7 @@
 #define debug(args...) (printf("%s:%u: ", __FILE__, __LINE__), printf(args))
 
 // clang-format off
+#include "dyn_array_ptr.h"
 #include "debug_allocator.h"
 #include "util.h"
 #include "lexer.h"
