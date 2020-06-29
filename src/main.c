@@ -9,6 +9,7 @@
 #include "dyn_array_ptr.h"
 #include "debug_allocator.h"
 #include "util.h"
+#include "ast.h"
 #include "lexer.h"
 #include "parser.h"
 // clang-format on

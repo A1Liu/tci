@@ -1,4 +1,3 @@
-
 // BASIC PARSER FUNCTIONALITY
 
 typedef struct {
