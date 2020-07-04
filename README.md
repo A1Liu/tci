@@ -13,10 +13,9 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 ## Restrictions and Incompatibilities
 
 - Casting in the C style is not supported. Instead, a builtin `cast(expr, type)`
-  is provided.
-- Anonymous structs aren't supported.
-- Implicit types on functions aren't supported.
-- Implicit function declarations aren't supported.
+  is provided
+- Implicit types on functions aren't supported
+- Implicit function declarations aren't supported
 - Higher order functions without a typedef aren't supported
 - No support for multithreading
-- Macros must be valid statements or expressions.
+- Macros must be valid statements or expressions

@@ -47,13 +47,21 @@ Token parser_peek(Parser *parser) {
   return tok;
 }
 
-ASTNodeStmt parser_parse_global_decl(Parser *parser) {
-  ASTNodeStmt stmt;
-  Token tok = parser_peek(parser);
+ASTNodeStmt parser_parse_global_decl(Parser *parser);
+ASTNodeType parser_parse_type_prefix(Parser *parser);
 
+ASTNodeStmt parser_parse_global_decl(Parser *parser) {
+  Token tok = parser_peek(parser);
+  ASTNodeStmt stmt;
+  ASTNodeType type;
+
+  bool typedef_var = false;
   switch (tok.kind) {
   case TokTypedef:
-    break;
+    typedef_var = true;
+
+  case TokStruct:
+  case TokUnion:
 
   case TokIdent:
   case TokVoid:
@@ -64,8 +72,7 @@ ASTNodeStmt parser_parse_global_decl(Parser *parser) {
   case TokFloat:
   case TokDouble:
   case TokShort:
-  case TokStruct:
-  case TokUnion:
+    type = parser_parse_type_prefix(parser);
     break;
 
   default:
@@ -75,8 +82,23 @@ ASTNodeStmt parser_parse_global_decl(Parser *parser) {
     error_array_add(
         &stmt.err, tok.range,
         string_new("this token is not allowed in the global context"));
-    break;
+    return stmt;
+  }
+
+  // process stmt here
+  if (typedef_var) {
+    // Expect identifier
+
+    // parse type suffix
+
+    // Combine into type
+    return stmt;
   }
 
   return stmt;
+}
+
+ASTNodeType parser_parse_type_prefix(Parser *parser) {
+  ASTNodeType type;
+  return type;
 }
