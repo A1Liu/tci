@@ -46,3 +46,8 @@ Token parser_peek(Parser *parser) {
   parser_push(parser, tok);
   return tok;
 }
+
+ASTNodeStmt parser_parse_global_decl(Parser *parser) {
+  ASTNodeStmt stmt;
+  return stmt;
+}

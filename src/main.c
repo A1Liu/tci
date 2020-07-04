@@ -13,7 +13,7 @@
 #include "errors.h"
 #include "ast.h"
 #include "lexer.h"
-#include "parser.h"
+#include "parser_1.h"
 // clang-format on
 
 int main(int argc, char **argv) {
