@@ -18,3 +18,4 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - Implicit types on functions aren't supported.
 - Implicit function declarations aren't supported.
 - Higher order functions without a typedef are not supported without
+- No support for multithreading

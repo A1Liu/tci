@@ -1,6 +1,6 @@
-typedef enum { ASTReturn, ASTFunction, ASTDecl } ASTNodeStmtKind;
-typedef enum { ASTIntLiteral, ASTIdent } ASTNodeExprKind;
-typedef enum { ASTInt } ASTNodeTypeKind;
+typedef enum { ASTStmtError, ASTRet, ASTFuncBlock, ASTDecl } ASTNodeStmtKind;
+typedef enum { ASTExprError, ASTIntLiteral, ASTIdent } ASTNodeExprKind;
+typedef enum { ASTTypeError, ASTInt } ASTNodeTypeKind;
 
 struct astNodeExpr;
 struct astNodeType;
@@ -8,7 +8,10 @@ struct astNodeStmt;
 
 typedef struct astNodeExpr {
   ASTNodeExprKind kind;
-  String str;
+  union {
+    String str;
+    Error err;
+  };
   union {
     uint32_t int_value;
     uint32_t ident_symbol;
@@ -17,7 +20,10 @@ typedef struct astNodeExpr {
 
 typedef struct astNodeType {
   ASTNodeTypeKind kind;
-  String str;
+  union {
+    String str;
+    Error err;
+  };
 } ASTNodeType;
 
 typedef struct {
@@ -34,9 +40,12 @@ typedef struct {
 
 typedef struct astNodeStmt {
   ASTNodeStmtKind kind;
-  String str;
   union {
-    ASTNodeExpr *return_expr;
+    String str;
+    Error err;
+  };
+  union {
+    ASTNodeExpr return_expr;
     ASTNodeFunction func;
     ASTNodeDecl decl;
   };
@@ -50,6 +59,10 @@ String ast_node_expr_str(char **, ASTNodeExpr *);
 
 String ast_node_type_str(char **arr, ASTNodeType *node) {
   switch (node->kind) {
+  case ASTTypeError:
+    debug("tried to print type with error in it");
+    exit(1);
+    break;
   case ASTInt: {
     uint64_t begin = char_array_add_string(arr, string_new("int"));
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
@@ -59,13 +72,17 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
 
 String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
   switch (node->kind) {
-  case ASTReturn: {
+  case ASTStmtError:
+    debug("tried to print stmt with error in it");
+    exit(1);
+    break;
+  case ASTRet: {
     uint64_t begin = char_array_add_string(arr, string_new("Return("));
-    ast_node_expr_str(arr, node->return_expr);
+    ast_node_expr_str(arr, &node->return_expr);
     char_array_add_string(arr, string_new(")"));
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
   }
-  case ASTFunction: {
+  case ASTFuncBlock: {
     uint64_t begin = char_array_add_string(arr, string_new("Function(ret="));
     ast_node_type_str(arr, node->func.return_type);
 
@@ -98,6 +115,9 @@ String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
 
 String ast_node_expr_str(char **arr, ASTNodeExpr *node) {
   switch (node->kind) {
+  case ASTExprError:
+    debug("tried to print expr with error in it");
+    exit(1);
   case ASTIntLiteral: {
     uint64_t begin = char_array_add_string(arr, t_itoa(node->int_value));
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);

@@ -29,25 +29,25 @@ Bump bump_ptr(void *bump_, void *end, uint64_t size) {
   return result;
 }
 
-void *bump_alloc(BumpList *list, uint64_t size) {
-  char *array_begin = (char *)(list + 1), *bucket_end = array_begin + list->len;
+void *bump_alloc(BumpList *bump, uint64_t size) {
+  char *array_begin = (char *)(bump + 1), *bucket_end = array_begin + bump->len;
 
-  Bump result = bump_ptr(list->bump, bucket_end, size);
+  Bump result = bump_ptr(bump->bump, bucket_end, size);
   if (result.ptr != NULL) {
-    list->bump = result.next_bump;
+    bump->bump = result.next_bump;
     return result.ptr;
   }
 
-  if (list->next != NULL)
-    return bump_alloc(list->next, size);
+  if (bump->next != NULL)
+    return bump_alloc(bump->next, size);
 
-  uint64_t next_len = list->len / 2 + list->len;
+  uint64_t next_len = bump->len / 2 + bump->len;
   if (next_len < size)
     next_len = size;
 
-  list->next = malloc(sizeof(*list) + next_len);
+  bump->next = malloc(sizeof(*bump) + next_len);
 
-  BumpList *next = list->next;
+  BumpList *next = bump->next;
   next->len = next_len;
   next->next = NULL;
   char *ptr = (char *)(next + 1);
@@ -57,11 +57,11 @@ void *bump_alloc(BumpList *list, uint64_t size) {
 }
 
 BumpList *bump_new(void) {
-  BumpList *list = malloc(sizeof(BumpList) + 1024);
-  list->next = NULL;
-  list->bump = (char *)(list + 1);
-  list->len = 1024;
-  return list;
+  BumpList *bump = malloc(sizeof(BumpList) + 1024);
+  bump->next = NULL;
+  bump->bump = (char *)(bump + 1);
+  bump->len = 1024;
+  return bump;
 }
 
 typedef struct {
@@ -95,9 +95,9 @@ char *read_file(char *name) {
   dyn_array_declare(arr, char);
 
   char buf[256];
-  size_t count;
-  while ((count = fread(buf, 1, 256, file))) {
-    dyn_array_add_from(&arr, buf, count);
+  size_t char_count;
+  while ((char_count = fread(buf, 1, 256, file))) {
+    dyn_array_add_from(&arr, buf, char_count);
   }
   fclose(file);
   char_array_finalize(&arr);

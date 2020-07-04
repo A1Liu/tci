@@ -1,14 +1,16 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define debug(args...) (printf("%s:%u: ", __FILE__, __LINE__), printf(args))
 
 // clang-format off
-#include "dyn_array_ptr.h"
 #include "debug_allocator.h"
+#include "dyn_array_ptr.h"
 #include "util.h"
+#include "errors.h"
 #include "ast.h"
 #include "lexer.h"
 #include "parser.h"

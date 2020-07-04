@@ -1,15 +1,4 @@
 typedef struct {
-  uint32_t begin;
-  uint32_t len;
-} Range;
-
-typedef struct {
-  Range *begin;
-  uint32_t end;
-  uint32_t capacity;
-} RangeDynArray;
-
-typedef struct {
   char *str;
   String *symbols;
 } Lexer;
@@ -105,11 +94,6 @@ typedef struct {
     uint32_t ident_symbol;
   };
 } Token;
-
-Range range_new(uint32_t begin, uint32_t len) {
-  Range r = {begin, len};
-  return r;
-}
 
 Lexer lexer_new(char *data) {
   Lexer lex;
