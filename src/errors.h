@@ -27,6 +27,3 @@ void error_array_add(Error *err, Range code_loc, String message) {
   ErrorMessage err_msg = {code_loc, message};
   dyn_array_add(&err->highlights, err_msg);
 }
-
-#define error_add_messages(error, code_loc, message, args...)                  \
-  (error_array_add(error, code_loc, message), error_add_messages(error, args))

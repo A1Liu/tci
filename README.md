@@ -17,5 +17,6 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - Anonymous structs aren't supported.
 - Implicit types on functions aren't supported.
 - Implicit function declarations aren't supported.
-- Higher order functions without a typedef are not supported without
+- Higher order functions without a typedef aren't supported
 - No support for multithreading
+- Macros must be valid statements or expressions.

@@ -1,5 +1,6 @@
 typedef struct {
   char *str;
+  size_t current;
   String *symbols;
 } Lexer;
 
@@ -12,21 +13,6 @@ typedef enum {
   TokFloatLiteral,
   TokDoubleLiteral,
 
-  TokIf,
-  TokElse,
-  TokDo,
-  TokWhile,
-  TokFor,
-  TokBreak,
-  TokContinue,
-  TokReturn,
-  TokStruct,
-  TokUnion,
-  TokTypedef,
-
-  TokSizeof,
-  TokCast,
-
   TokVoid,
   TokChar,
   TokInt,
@@ -35,6 +21,21 @@ typedef enum {
   TokFloat,
   TokDouble,
   TokShort,
+  TokStruct,
+  TokUnion,
+
+  TokIf,
+  TokElse,
+  TokDo,
+  TokWhile,
+  TokFor,
+  TokBreak,
+  TokContinue,
+  TokReturn,
+  TokTypedef,
+
+  TokSizeof,
+  TokCast,
 
   TokDot,
   TokNot,
@@ -82,7 +83,7 @@ typedef enum {
 
 typedef struct {
   TokenKind kind;
-  String str;
+  Range range;
   union {
     int32_t int_value;
     uint32_t uint_value;
@@ -98,93 +99,96 @@ typedef struct {
 Lexer lexer_new(char *data) {
   Lexer lex;
   lex.str = data;
+  lex.current = 0;
   lex.symbols = dyn_array_new(String);
 
   return lex;
 }
 
-char *lexer_token_str(BumpList *list, Token *tok) {
-  char *bump = bump_alloc(list, tok->str.len + 3);
+char *lexer_token_str(Lexer *lex, BumpList *list, Token *tok) {
+  char *bump = bump_alloc(list, tok->range.len + 3);
   *bump = '<';
-  bump[tok->str.len + 1] = '>';
-  bump[tok->str.len + 2] = '\0';
-  strncpy(bump + 1, tok->str.str, tok->str.len);
+  strncpy(bump + 1, &lex->str[tok->range.begin], tok->range.len);
+  bump[tok->range.len + 1] = '>';
+  bump[tok->range.len + 2] = '\0';
   return bump;
 }
 
 Token lexer_next(Lexer *lex) {
   Token tok;
 
-  for (tok.str.str = lex->str;
-       *tok.str.str == ' ' || *tok.str.str == '\t' || *tok.str.str == '\n';
-       tok.str.str++)
+  char cur;
+  for (tok.range.begin = lex->current, cur = lex->str[tok.range.begin];
+       cur == ' ' || cur == '\t' || cur == '\n';
+       tok.range.begin++, cur = lex->str[tok.range.begin])
     ;
 
-  if (tok.str.str == '\0') {
+  if (cur == '\0') {
     tok.kind = TokEnd;
-    tok.str.len = 0;
+    lex->current = tok.range.begin;
+    tok.range.len = 0;
     return tok;
   }
 
-  char cur = *tok.str.str;
-  tok.str.len = 1;
+  tok.range.len = 1;
 
   if ((cur >= 'A' && cur <= 'Z') || (cur >= 'a' && cur <= 'z')) {
-    for (cur = tok.str.str[tok.str.len];
+    for (cur = lex->str[tok.range.begin + tok.range.len];
          (cur <= 'A' && cur >= 'Z') || (cur >= 'a' && cur <= 'z') ||
          (cur == '_') || (cur >= '0' && cur <= '9');
-         tok.str.len++, cur = tok.str.str[tok.str.len])
+         tok.range.len++, cur = lex->str[tok.range.begin + tok.range.len])
       ;
 
-    if (streq(tok.str, "if")) {
+    String str = string_from_parts(&lex->str[tok.range.begin], tok.range.len);
+    if (streq(str, "if")) {
       tok.kind = TokIf;
-    } else if (streq(tok.str, "else")) {
+    } else if (streq(str, "else")) {
       tok.kind = TokElse;
-    } else if (streq(tok.str, "do")) {
+    } else if (streq(str, "do")) {
       tok.kind = TokDo;
-    } else if (streq(tok.str, "while")) {
+    } else if (streq(str, "while")) {
       tok.kind = TokWhile;
-    } else if (streq(tok.str, "for")) {
+    } else if (streq(str, "for")) {
       tok.kind = TokFor;
-    } else if (streq(tok.str, "break")) {
+    } else if (streq(str, "break")) {
       tok.kind = TokBreak;
-    } else if (streq(tok.str, "continue")) {
+    } else if (streq(str, "continue")) {
       tok.kind = TokContinue;
-    } else if (streq(tok.str, "return")) {
+    } else if (streq(str, "return")) {
       tok.kind = TokReturn;
-    } else if (streq(tok.str, "struct")) {
+    } else if (streq(str, "struct")) {
       tok.kind = TokStruct;
-    } else if (streq(tok.str, "union")) {
+    } else if (streq(str, "union")) {
       tok.kind = TokUnion;
-    } else if (streq(tok.str, "typedef")) {
+    } else if (streq(str, "typedef")) {
       tok.kind = TokTypedef;
-    } else if (streq(tok.str, "void")) {
+    } else if (streq(str, "void")) {
       tok.kind = TokVoid;
-    } else if (streq(tok.str, "char")) {
+    } else if (streq(str, "char")) {
       tok.kind = TokChar;
-    } else if (streq(tok.str, "int")) {
+    } else if (streq(str, "int")) {
       tok.kind = TokInt;
-    } else if (streq(tok.str, "short")) {
+    } else if (streq(str, "short")) {
       tok.kind = TokShort;
-    } else if (streq(tok.str, "long")) {
+    } else if (streq(str, "long")) {
       tok.kind = TokLong;
-    } else if (streq(tok.str, "unsigned")) {
+    } else if (streq(str, "unsigned")) {
       tok.kind = TokUnsigned;
-    } else if (streq(tok.str, "cast")) {
+    } else if (streq(str, "cast")) {
       tok.kind = TokCast;
-    } else if (streq(tok.str, "sizeof")) {
+    } else if (streq(str, "sizeof")) {
       tok.kind = TokSizeof;
-    } else if (streq(tok.str, "float")) {
+    } else if (streq(str, "float")) {
       tok.kind = TokFloat;
-    } else if (streq(tok.str, "double")) {
+    } else if (streq(str, "double")) {
       tok.kind = TokDouble;
     } else {
-      uint64_t symbol = dyn_array_add(&lex->symbols, tok.str);
+      uint64_t symbol = dyn_array_add(&lex->symbols, str);
       tok.kind = TokIdent;
       tok.ident_symbol = symbol;
     }
 
-    lex->str = tok.str.str + tok.str.len;
+    lex->current = tok.range.begin + tok.range.len;
     return tok;
   }
 
@@ -192,8 +196,9 @@ Token lexer_next(Lexer *lex) {
     tok.kind = TokInt;
     if (cur >= '1' && cur <= '9') { // Decimal
       tok.int_value = cur - '0';
-      for (cur = tok.str.str[tok.str.len]; cur >= '0' && cur <= '9';
-           tok.str.len++, cur = tok.str.str[tok.str.len]) {
+      for (cur = lex->str[tok.range.begin + tok.range.len];
+           cur >= '0' && cur <= '9';
+           tok.range.len++, cur = lex->str[tok.range.begin + tok.range.len]) {
         tok.int_value *= 10;
         tok.int_value += cur - '0';
       }
@@ -201,7 +206,7 @@ Token lexer_next(Lexer *lex) {
       tok.int_value = 0;
     }
 
-    lex->str = tok.str.str + tok.str.len;
+    lex->current = tok.range.begin + tok.range.len;
     return tok;
   }
 
@@ -235,51 +240,51 @@ Token lexer_next(Lexer *lex) {
     break;
 
   case '+': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '+') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokPlusPlus;
     } else if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokPlusEq;
     } else {
       tok.kind = TokPlus;
     }
   } break;
   case '-': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '-') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokDashDash;
     } else if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokDashEq;
     } else {
       tok.kind = TokDash;
     }
   } break;
   case '/': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokSlashEq;
     } else {
       tok.kind = TokSlash;
     }
   } break;
   case '*': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokStarEq;
     } else {
       tok.kind = TokStar;
     }
   } break;
   case '%': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokPercentEq;
     } else {
       tok.kind = TokPercent;
@@ -287,36 +292,36 @@ Token lexer_next(Lexer *lex) {
   } break;
 
   case '>': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokGeq;
     } else {
       tok.kind = TokGt;
     }
   } break;
   case '<': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokLeq;
     } else {
       tok.kind = TokLt;
     }
   } break;
   case '!': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokNeq;
     } else {
       tok.kind = TokNot;
     }
   } break;
   case '=': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokEqEq;
     } else {
       tok.kind = TokEq;
@@ -324,33 +329,33 @@ Token lexer_next(Lexer *lex) {
   } break;
 
   case '|': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '|') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokLineLine;
     } else if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokLineEq;
     } else {
       tok.kind = TokLine;
     }
   } break;
   case '&': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '&') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokAmpAmp;
     } else if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokAmpEq;
     } else {
       tok.kind = TokAmp;
     }
   } break;
   case '^': {
-    cur = tok.str.str[tok.str.len];
+    cur = lex->str[tok.range.begin + tok.range.len];
     if (cur == '=') {
-      tok.str.len++;
+      tok.range.len++;
       tok.kind = TokAmpEq;
     } else {
       tok.kind = TokAmp;
@@ -360,6 +365,6 @@ Token lexer_next(Lexer *lex) {
     tok.kind = TokInvalid;
   }
 
-  lex->str = tok.str.str + tok.str.len;
+  lex->current = tok.range.begin + tok.range.len;
   return tok;
 }

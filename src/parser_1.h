@@ -49,5 +49,34 @@ Token parser_peek(Parser *parser) {
 
 ASTNodeStmt parser_parse_global_decl(Parser *parser) {
   ASTNodeStmt stmt;
+  Token tok = parser_peek(parser);
+
+  switch (tok.kind) {
+  case TokTypedef:
+    break;
+
+  case TokIdent:
+  case TokVoid:
+  case TokChar:
+  case TokInt:
+  case TokUnsigned:
+  case TokLong:
+  case TokFloat:
+  case TokDouble:
+  case TokShort:
+  case TokStruct:
+  case TokUnion:
+    break;
+
+  default:
+    stmt.kind = ASTStmtError;
+    stmt.err = error_new(string_new("found unrecognized token"));
+
+    error_array_add(
+        &stmt.err, tok.range,
+        string_new("this token is not allowed in the global context"));
+    break;
+  }
+
   return stmt;
 }

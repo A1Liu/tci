@@ -99,6 +99,7 @@ char *read_file(char *name) {
   while ((char_count = fread(buf, 1, 256, file))) {
     dyn_array_add_from(&arr, buf, char_count);
   }
+
   fclose(file);
   char_array_finalize(&arr);
   return arr;
