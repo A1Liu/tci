@@ -45,7 +45,7 @@ void *bump_alloc(BumpList *bump, uint64_t size) {
   if (next_len < size)
     next_len = size;
 
-  bump->next = malloc(sizeof(*bump) + next_len);
+  bump->next = __debug_alloc(sizeof(*bump) + next_len, __FILE__, __LINE__);
 
   BumpList *next = bump->next;
   next->len = next_len;
@@ -57,7 +57,7 @@ void *bump_alloc(BumpList *bump, uint64_t size) {
 }
 
 BumpList *bump_new(void) {
-  BumpList *bump = malloc(sizeof(BumpList) + 1024);
+  BumpList *bump = __debug_alloc(sizeof(BumpList) + 1024, __FILE__, __LINE__);
   bump->next = NULL;
   bump->bump = (char *)(bump + 1);
   bump->len = 1024;
