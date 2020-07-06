@@ -16,6 +16,7 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
   is provided
 - Implicit types on functions aren't supported
 - Implicit function declarations aren't supported
-- Higher order functions without a typedef aren't supported
+- Higher order functions and function pointers aren't supported
 - No support for multithreading
 - Macros must be valid statements or expressions
+
