@@ -1,9 +1,4 @@
 typedef struct {
-  uint32_t begin;
-  uint32_t len;
-} Range;
-
-typedef struct {
   Range range;
   String message;
 } ErrorMessage;
@@ -12,11 +7,6 @@ typedef struct {
   String message;
   ErrorMessage *highlights;
 } Error;
-
-Range range_new(uint32_t begin, uint32_t len) {
-  Range r = {begin, len};
-  return r;
-}
 
 Error error_new(String message) {
   Error err = {message, NULL};

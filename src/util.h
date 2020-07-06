@@ -65,6 +65,16 @@ BumpList *bump_new(void) {
 }
 
 typedef struct {
+  uint32_t begin;
+  uint32_t end;
+} Range;
+
+Range range_new(uint32_t begin, uint32_t end) {
+  Range r = {begin, end};
+  return r;
+}
+
+typedef struct {
   char *str;
   uint64_t len;
 } String;
@@ -84,6 +94,11 @@ String string_new(char *str) {
 
 String string_from_parts(char *str, uint64_t len) {
   String s = {str, len};
+  return s;
+}
+
+String string_from_range(char *str, Range range) {
+  String s = {&str[range.begin], range.end - range.begin};
   return s;
 }
 
