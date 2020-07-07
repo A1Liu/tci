@@ -120,6 +120,24 @@ char *read_file(char *name) {
   return arr;
 }
 
+bool string_equals(String str1, String str2) {
+  if (str1.len != str2.len) {
+    return false;
+  }
+
+  if (str1.str == str2.str)
+    return true;
+
+  if (str1.str == NULL || str2.str == NULL)
+    return false;
+
+  for (uint64_t i = 0; i < str1.len; i++)
+    if (str1.str[i] != str2.str[i])
+      return false;
+
+  return true;
+}
+
 bool streq(String s, char *val) {
   size_t len = strlen(val);
   if (s.len != len)

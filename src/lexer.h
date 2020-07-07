@@ -180,9 +180,18 @@ Token lexer_next(Lexer *lex) {
     } else if (streq(str, "double")) {
       tok.kind = TokDouble;
     } else {
-      uint64_t symbol = dyn_array_add(&lex->symbols, str);
       tok.kind = TokIdent;
-      tok.ident_symbol = symbol;
+      uint64_t sym_len = dyn_array_len(lex->symbols);
+
+      for (uint32_t i = 0; i < sym_len; i++) {
+        if (string_equals(str, lex->symbols[i])) {
+          tok.ident_symbol = i;
+          lex->current = tok.range.end;
+          return tok;
+        }
+      }
+
+      tok.ident_symbol = dyn_array_add(&lex->symbols, str);
     }
 
     lex->current = tok.range.end;
