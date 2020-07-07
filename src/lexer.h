@@ -76,6 +76,7 @@ typedef enum {
   TokRightBracket,
 
   TokSemicolon,
+  TokComma,
 
   TokInvalid,
   TokEnd,
@@ -237,6 +238,9 @@ Token lexer_next(Lexer *lex) {
     break;
   case ';':
     tok.kind = TokSemicolon;
+    break;
+  case ',':
+    tok.kind = TokComma;
     break;
 
   case '+': {

@@ -59,8 +59,9 @@ typedef struct astNodeDecl {
 typedef struct {
   ASTNodeType return_type;
   uint32_t ident;
-  bool is_decl;
-  struct astNodeStmt *stmts;
+  bool is_defn;
+  struct astNodeStmt *params;
+  Token *body;
 } ASTNodeFunction;
 
 typedef struct astNodeStmt {
@@ -134,10 +135,10 @@ String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
     char_array_add_string(arr, string_new(",name="));
     char_array_add_string(arr, t_itoa(node->func.ident));
 
-    char_array_add_string(arr, string_new(",stmts=["));
-    uint64_t len = dyn_array_len(node->func.stmts);
+    char_array_add_string(arr, string_new(",params=["));
+    uint64_t len = dyn_array_len(node->func.params);
     for (uint32_t i = 0; i < len; i++) {
-      ast_node_stmt_str(arr, &node->func.stmts[i]);
+      ast_node_stmt_str(arr, &node->func.params[i]);
       char_array_add_string(arr, string_new(","));
     }
 

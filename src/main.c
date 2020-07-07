@@ -11,8 +11,8 @@
 #include "dyn_array_ptr.h"
 #include "util.h"
 #include "errors.h"
-#include "ast.h"
 #include "lexer.h"
+#include "ast.h"
 #include "parser_1.h"
 // clang-format on
 

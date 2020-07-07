@@ -65,8 +65,70 @@ ASTNodeStmt parser_parse_global_decl(Parser *parser) {
     stmt.kind = ASTFuncBlock;
     stmt.func.return_type = decl.type;
     stmt.func.ident = decl.ident;
-    stmt.func.is_decl = false;
-    stmt.func.stmts = dyn_array_new(ASTNodeStmt);
+    stmt.func.params = dyn_array_new(ASTNodeStmt);
+    stmt.func.body = dyn_array_new(Token);
+
+    Token tok = parser_peek(parser);
+    if (tok.kind != TokRightParen) {
+      ASTNodeStmt param = parser_parse_simple_decl(parser);
+      if (param.kind == ASTStmtError)
+        return param;
+      dyn_array_add(&stmt.func.params, param);
+      tok = parser_peek(parser);
+      while (tok.kind == TokComma) {
+        parser_pop(parser);
+        ASTNodeStmt param = parser_parse_simple_decl(parser);
+        if (param.kind == ASTStmtError)
+          return param;
+        dyn_array_add(&stmt.func.params, param);
+        tok = parser_peek(parser);
+      }
+
+      if (tok.kind != TokRightParen) {
+        stmt.kind = ASTStmtError;
+        stmt.err = error_new(
+            string_new("unexpected token when parsing end of parameter"));
+        error_array_add(&stmt.err, tok.range,
+                        string_new("this token is invalid in this context"));
+        return stmt;
+      }
+    }
+
+    parser_pop(parser);
+    tok = parser_pop(parser);
+
+    if (tok.kind == TokSemicolon) {
+      stmt.func.is_defn = false;
+      return stmt;
+    }
+
+    if (tok.kind != TokLeftBrace) {
+      stmt.kind = ASTStmtError;
+      stmt.err = error_new(string_new(
+          "unexpected token when parsing beginning of function body"));
+      error_array_add(&stmt.err, tok.range,
+                      string_new("this token is invalid in this context"));
+      return stmt;
+    }
+
+    tok = parser_pop(parser);
+    for (uint32_t brace_count = 1;
+         brace_count > 0 && tok.kind != TokInvalid && tok.kind != TokEnd;
+         tok = parser_peek(parser)) {
+      parser_pop(parser);
+      switch (tok.kind) {
+      case TokLeftBrace:
+        brace_count++;
+        dyn_array_add(&stmt.func.body, tok);
+        break;
+      case TokRightBrace:
+        brace_count--;
+        dyn_array_add(&stmt.func.body, tok);
+        break;
+      default:
+        dyn_array_add(&stmt.func.body, tok);
+      }
+    }
 
     return stmt;
   }
