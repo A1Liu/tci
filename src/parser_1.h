@@ -47,84 +47,85 @@ ASTNodeStmt parser_parse_global_decl(Parser *parser) {
   if (tok.kind == TokSemicolon)
     return stmt;
 
-  if (tok.kind == TokLeftParen && stmt.kind == ASTDecl) {
-    ASTNodeDecl decl = stmt.decl;
-    stmt.kind = ASTFuncBlock;
-    stmt.func.return_type = decl.type;
-    stmt.func.ident = decl.ident;
-    stmt.func.params = dyn_array_new(ASTNodeStmt);
-    stmt.func.body = dyn_array_new(Token);
+  if (tok.kind != TokLeftParen || stmt.kind != ASTDecl) {
+    stmt.kind = ASTStmtError;
+    stmt.err =
+        error_new(string_new("unexpected token when parsing end of statement"));
+    error_array_add(&stmt.err, tok.range,
+                    string_new("this token is invalid in this context"));
+    return stmt;
+  }
 
-    Token tok = parser_peek(parser);
-    if (tok.kind != TokRightParen) {
+  ASTNodeDecl decl = stmt.decl;
+  stmt.kind = ASTFuncBlock;
+  stmt.func.return_type = decl.type;
+  stmt.func.ident = decl.ident;
+  stmt.func.params = dyn_array_new(ASTNodeStmt);
+  stmt.func.body = dyn_array_new(Token);
+
+  tok = parser_peek(parser);
+  if (tok.kind != TokRightParen) {
+    ASTNodeStmt param = parser_parse_simple_decl(parser);
+    if (param.kind == ASTStmtError)
+      return param;
+    dyn_array_add(&stmt.func.params, param);
+    tok = parser_peek(parser);
+    while (tok.kind == TokComma) {
+      parser_pop(parser);
       ASTNodeStmt param = parser_parse_simple_decl(parser);
       if (param.kind == ASTStmtError)
         return param;
       dyn_array_add(&stmt.func.params, param);
       tok = parser_peek(parser);
-      while (tok.kind == TokComma) {
-        parser_pop(parser);
-        ASTNodeStmt param = parser_parse_simple_decl(parser);
-        if (param.kind == ASTStmtError)
-          return param;
-        dyn_array_add(&stmt.func.params, param);
-        tok = parser_peek(parser);
-      }
-
-      if (tok.kind != TokRightParen) {
-        stmt.kind = ASTStmtError;
-        stmt.err = error_new(
-            string_new("unexpected token when parsing end of parameter"));
-        error_array_add(&stmt.err, tok.range,
-                        string_new("this token is invalid in this context"));
-        return stmt;
-      }
     }
 
-    parser_pop(parser);
-    tok = parser_pop(parser);
-
-    if (tok.kind == TokSemicolon) {
-      stmt.func.is_defn = false;
-      return stmt;
-    }
-
-    if (tok.kind != TokLeftBrace) {
+    if (tok.kind != TokRightParen) {
       stmt.kind = ASTStmtError;
-      stmt.err = error_new(string_new(
-          "unexpected token when parsing beginning of function body"));
+      stmt.err = error_new(
+          string_new("unexpected token when parsing end of parameter"));
       error_array_add(&stmt.err, tok.range,
                       string_new("this token is invalid in this context"));
       return stmt;
     }
+  }
 
-    tok = parser_pop(parser);
-    for (uint32_t brace_count = 1;
-         brace_count > 0 && tok.kind != TokInvalid && tok.kind != TokEnd;
-         tok = parser_peek(parser)) {
-      parser_pop(parser);
-      switch (tok.kind) {
-      case TokLeftBrace:
-        brace_count++;
-        dyn_array_add(&stmt.func.body, tok);
-        break;
-      case TokRightBrace:
-        brace_count--;
-        dyn_array_add(&stmt.func.body, tok);
-        break;
-      default:
-        dyn_array_add(&stmt.func.body, tok);
-      }
-    }
+  parser_pop(parser);
+  tok = parser_pop(parser);
 
+  if (tok.kind == TokSemicolon) {
+    stmt.func.is_defn = false;
     return stmt;
   }
 
-  stmt.kind = ASTStmtError;
-  stmt.err =
-      error_new(string_new("unexpected token when parsing end of statement"));
-  error_array_add(&stmt.err, tok.range,
-                  string_new("this token is invalid in this context"));
+  if (tok.kind != TokLeftBrace) {
+    stmt.kind = ASTStmtError;
+    stmt.err = error_new(
+        string_new("unexpected token when parsing beginning of function body"));
+    error_array_add(&stmt.err, tok.range,
+                    string_new("this token is invalid in this context"));
+    return stmt;
+  }
+
+  stmt.func.is_defn = true;
+  tok = parser_pop(parser);
+  for (uint32_t brace_count = 1;
+       brace_count > 0 && tok.kind != TokInvalid && tok.kind != TokEnd;
+       tok = parser_peek(parser)) {
+    parser_pop(parser);
+    switch (tok.kind) {
+    case TokLeftBrace:
+      brace_count++;
+      dyn_array_add(&stmt.func.body, tok);
+      break;
+    case TokRightBrace:
+      brace_count--;
+      dyn_array_add(&stmt.func.body, tok);
+      break;
+    default:
+      dyn_array_add(&stmt.func.body, tok);
+    }
+  }
+
   return stmt;
 }
 
@@ -231,6 +232,9 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
     return type;
   case TokInt:
     type.kind = ASTInt;
+    return type;
+  case TokVoid:
+    type.kind = ASTVoid;
     return type;
   default:
     type.kind = ASTTypeError;

@@ -15,6 +15,7 @@ typedef enum {
   ASTTypeError,
   ASTInt,
   ASTChar,
+  ASTVoid,
   ASTStruct,
   ASTTypeIdent
 } ASTNodeTypeKind;
@@ -107,6 +108,9 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
   } break;
   case ASTInt: {
     begin = char_array_add_string(arr, string_new("int"));
+  } break;
+  case ASTVoid: {
+    begin = char_array_add_string(arr, string_new("void"));
   } break;
   case ASTChar: {
     begin = char_array_add_string(arr, string_new("char"));

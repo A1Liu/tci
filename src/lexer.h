@@ -38,6 +38,7 @@ typedef enum {
   TokCast,
 
   TokDot,
+  TokArrow,
   TokNot,
   TokTilde,
   TokStar,
@@ -86,13 +87,7 @@ typedef struct {
   TokenKind kind;
   Range range;
   union {
-    int32_t int_value;
-    uint32_t uint_value;
-    int64_t long_value;
-    uint64_t ulong_value;
-    float float_value;
-    double double_value;
-
+    uint32_t int_value;
     uint32_t ident_symbol;
   };
 } Token;
@@ -263,6 +258,9 @@ Token lexer_next(Lexer *lex) {
     } else if (cur == '=') {
       tok.range.end++;
       tok.kind = TokDashEq;
+    } else if (cur == '>') {
+      tok.range.end++;
+      tok.kind = TokArrow;
     } else {
       tok.kind = TokDash;
     }
