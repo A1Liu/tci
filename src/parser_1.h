@@ -3,9 +3,7 @@
 typedef struct {
   BumpList *bump;
   Lexer lex;
-  Token *begin;
-  uint32_t end;
-  uint32_t capacity;
+  Token *tokens;
 } Parser;
 
 typedef struct {
@@ -17,34 +15,23 @@ Parser parser_new(BumpList *bump, char *data) {
   Parser parser;
   parser.bump = bump;
   parser.lex = lexer_new(data);
-  parser.begin = NULL;
-  parser.end = 0;
-  parser.capacity = 0;
+  parser.tokens = dyn_array_new(Token);
   return parser;
 }
 
 Token parser_pop(Parser *parser) {
-  if (parser->end) {
-    Token tok = parser->begin[--parser->end];
-    return tok;
+  if (dyn_array_len(parser->tokens) > 0) {
+    *__dyn_array_len_ptr(parser->tokens) = dyn_array_len(parser->tokens) - 1;
+    return parser->tokens[dyn_array_len(parser->tokens)];
   }
 
   return lexer_next(&parser->lex);
 }
 
-void parser_push(Parser *parser, Token tok) {
-  if (parser->begin == NULL || parser->end == parser->capacity) {
-    parser->capacity = parser->capacity / 2 + parser->capacity + 16;
-    parser->begin = realloc(parser->begin, parser->capacity * sizeof(Token));
-  }
-
-  parser->begin[parser->end++] = tok;
-}
-
 Token parser_peek(Parser *parser) {
-  Token tok = parser_pop(parser);
-  parser_push(parser, tok);
-  return tok;
+  if (dyn_array_len(parser->tokens) == 0)
+    dyn_array_add(&parser->tokens, lexer_next(&parser->lex));
+  return parser->tokens[dyn_array_len(parser->tokens) - 1];
 }
 
 ASTNodeStmt parser_parse_global_decl(Parser *parser);
@@ -152,13 +139,18 @@ ASTNodeStmt parser_parse_simple_decl(Parser *parser) {
     return stmt;
   }
 
+  while (parser_peek(parser).kind == TokStar) {
+    parser_pop(parser);
+    type.pointer_count++;
+  }
+
   tok = parser_peek(parser);
   if (tok.kind == TokIdent) {
     parser_pop(parser);
     stmt.kind = ASTDecl;
     uint32_t ident = tok.ident_symbol;
-    tok = parser_peek(parser);
 
+    tok = parser_peek(parser);
     if (tok.kind == TokEq) {
       parser_pop(parser);
       debug("assignment declarations not implemented yet\n");
@@ -166,7 +158,7 @@ ASTNodeStmt parser_parse_simple_decl(Parser *parser) {
     }
 
     stmt.decl.type = type;
-    stmt.decl.ident = tok.ident_symbol;
+    stmt.decl.ident = ident;
     stmt.decl.expr.kind = ASTUninit;
     stmt.range.end = tok.range.end;
     return stmt;
@@ -180,6 +172,7 @@ ASTNodeStmt parser_parse_simple_decl(Parser *parser) {
 
 ASTNodeType parser_parse_type_prefix(Parser *parser) {
   ASTNodeType type;
+  type.pointer_count = 0;
 
   Token tok = parser_pop(parser);
   type.range = tok.range;
@@ -232,6 +225,9 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
   case TokIdent:
     type.kind = ASTTypeIdent;
     type.ident_symbol = tok.ident_symbol;
+    return type;
+  case TokChar:
+    type.kind = ASTChar;
     return type;
   case TokInt:
     type.kind = ASTInt;

@@ -11,7 +11,13 @@ typedef enum {
   ASTIdent,
   ASTUninit
 } ASTNodeExprKind;
-typedef enum { ASTTypeError, ASTInt, ASTStruct, ASTTypeIdent } ASTNodeTypeKind;
+typedef enum {
+  ASTTypeError,
+  ASTInt,
+  ASTChar,
+  ASTStruct,
+  ASTTypeIdent
+} ASTNodeTypeKind;
 
 struct astNodeExpr;
 struct astNodeType;
@@ -45,6 +51,7 @@ typedef struct astNodeType {
         };
         uint32_t ident_symbol;
       };
+      uint32_t pointer_count;
     };
     Error err;
   };
@@ -87,23 +94,25 @@ String ast_node_stmt_str(char **, ASTNodeStmt *);
 String ast_node_expr_str(char **, ASTNodeExpr *);
 
 String ast_node_type_str(char **arr, ASTNodeType *node) {
+  uint64_t begin;
   switch (node->kind) {
   case ASTTypeError:
     debug("tried to print type with error in it\n");
     exit(1);
     break;
   case ASTTypeIdent: {
-    uint64_t begin = char_array_add_string(arr, string_new("<symbol "));
+    begin = char_array_add_string(arr, string_new("<symbol "));
     char_array_add_string(arr, t_itoa(node->ident_symbol));
     char_array_add_string(arr, string_new(">"));
-    return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
-  }
+  } break;
   case ASTInt: {
-    uint64_t begin = char_array_add_string(arr, string_new("int"));
-    return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
-  }
+    begin = char_array_add_string(arr, string_new("int"));
+  } break;
+  case ASTChar: {
+    begin = char_array_add_string(arr, string_new("char"));
+  } break;
   case ASTStruct: {
-    uint64_t begin = char_array_add_string(arr, string_new("struct("));
+    begin = char_array_add_string(arr, string_new("struct("));
     uint64_t len = dyn_array_len(node->struct_types);
     for (uint64_t i = 0; i < len; i++) {
       ast_node_type_str(arr, &node->struct_types[i].type);
@@ -111,9 +120,14 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
     }
 
     dyn_array_add(arr, ')');
-    return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
+  } break;
   }
+
+  for (uint32_t i = 0; i < node->pointer_count; i++) {
+    dyn_array_add(arr, '*');
   }
+
+  return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
 }
 
 String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
