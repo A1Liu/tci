@@ -183,6 +183,7 @@ Token lexer_next(Lexer *lex) {
       tok.kind = TokIdent;
       uint64_t sym_len = dyn_array_len(lex->symbols);
 
+      // TODO replace with hashtable
       for (uint32_t i = 0; i < sym_len; i++) {
         if (string_equals(str, lex->symbols[i])) {
           tok.ident_symbol = i;
@@ -199,7 +200,7 @@ Token lexer_next(Lexer *lex) {
   }
 
   if (cur >= '0' && cur <= '9') {
-    tok.kind = TokInt;
+    tok.kind = TokIntLiteral;
     if (cur >= '1' && cur <= '9') { // Decimal
       tok.int_value = cur - '0';
       for (cur = lex->str[tok.range.end]; cur >= '0' && cur <= '9';

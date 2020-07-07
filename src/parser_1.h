@@ -34,9 +34,11 @@ Token parser_peek(Parser *parser) {
   return parser->tokens[dyn_array_len(parser->tokens) - 1];
 }
 
-ASTNodeStmt parser_parse_global_decl(Parser *parser);
-ASTNodeStmt parser_parse_simple_decl(Parser *parser);
-ASTNodeType parser_parse_type_prefix(Parser *parser);
+ASTNodeStmt parser_parse_global_decl(Parser *);
+ASTNodeStmt parser_parse_simple_decl(Parser *);
+ASTNodeType parser_parse_type_prefix(Parser *);
+ASTNodeExpr parser_parse_expr(Parser *parser);
+ASTNodeExpr parser_parse_atom(Parser *);
 
 ASTNodeStmt parser_parse_global_decl(Parser *parser) {
   ASTNodeStmt stmt = parser_parse_simple_decl(parser);
@@ -151,16 +153,23 @@ ASTNodeStmt parser_parse_simple_decl(Parser *parser) {
     stmt.kind = ASTDecl;
     uint32_t ident = tok.ident_symbol;
 
+    stmt.decl.expr.kind = ASTUninit;
+
     tok = parser_peek(parser);
     if (tok.kind == TokEq) {
       parser_pop(parser);
-      debug("assignment declarations not implemented yet\n");
-      exit(1);
+      ASTNodeExpr expr = parser_parse_expr(parser);
+      if (expr.kind == ASTExprError) {
+        stmt.kind = ASTStmtError;
+        stmt.err = expr.err;
+        return stmt;
+      }
+
+      stmt.decl.expr = expr;
     }
 
     stmt.decl.type = type;
     stmt.decl.ident = ident;
-    stmt.decl.expr.kind = ASTUninit;
     stmt.range.end = tok.range.end;
     return stmt;
   }
@@ -246,4 +255,32 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
                                "in the global context"));
     return type;
   }
+}
+
+ASTNodeExpr parser_parse_expr(Parser *parser) {
+  return parser_parse_atom(parser);
+}
+
+ASTNodeExpr parser_parse_atom(Parser *parser) {
+  Token tok = parser_pop(parser);
+  ASTNodeExpr expr;
+  switch (tok.kind) {
+  case TokIntLiteral:
+    expr.kind = ASTIntLiteral;
+    expr.int_value = tok.int_value;
+    break;
+  case TokIdent:
+    expr.kind = ASTIdent;
+    expr.ident_symbol = tok.ident_symbol;
+    break;
+  default:
+    expr.kind = ASTExprError;
+    debug("%u\n", tok.kind);
+    expr.err =
+        error_new(string_new("found unexpected token when parsing expression"));
+    error_array_add(
+        &expr.err, tok.range,
+        string_new("this token is not allowed to be in an expression"));
+  }
+  return expr;
 }

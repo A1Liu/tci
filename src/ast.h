@@ -168,7 +168,12 @@ String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
     ast_node_type_str(arr, &node->decl.type);
 
     char_array_add_string(arr, string_new(",name="));
-    char_array_add_string(arr, t_itoa(node->func.ident));
+    char_array_add_string(arr, t_itoa(node->decl.ident));
+    if (node->decl.expr.kind != ASTUninit) {
+      char_array_add_string(arr, string_new(",expr="));
+      ast_node_expr_str(arr, &node->decl.expr);
+    }
+
     char_array_add_string(arr, string_new(")"));
 
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);

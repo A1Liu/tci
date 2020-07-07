@@ -1,3 +1,5 @@
+int a = 12;
+
 int hello_world(void);
 
 int hello_world(void) {
