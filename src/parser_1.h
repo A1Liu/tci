@@ -53,19 +53,29 @@ ASTNodeType parser_parse_type_prefix(Parser *parser);
 
 ASTNodeStmt parser_parse_global_decl(Parser *parser) {
   ASTNodeStmt stmt = parser_parse_simple_decl(parser);
-  if (stmt.kind == ASTStmtError) {
+  if (stmt.kind == ASTStmtError)
+    return stmt;
+
+  Token tok = parser_pop(parser);
+  if (tok.kind == TokSemicolon)
+    return stmt;
+
+  if (tok.kind == TokLeftParen && stmt.kind == ASTDecl) {
+    ASTNodeDecl decl = stmt.decl;
+    stmt.kind = ASTFuncBlock;
+    stmt.func.return_type = decl.type;
+    stmt.func.ident = decl.ident;
+    stmt.func.is_decl = false;
+    stmt.func.stmts = dyn_array_new(ASTNodeStmt);
+
     return stmt;
   }
 
-  Token tok = parser_pop(parser);
-  if (tok.kind != TokSemicolon) {
-    stmt.kind = ASTStmtError;
-    stmt.err =
-        error_new(string_new("unexpected token when parsing end of statement"));
-    error_array_add(&stmt.err, tok.range,
-                    string_new("this token is invalid in this context"));
-  }
-
+  stmt.kind = ASTStmtError;
+  stmt.err =
+      error_new(string_new("unexpected token when parsing end of statement"));
+  error_array_add(&stmt.err, tok.range,
+                  string_new("this token is invalid in this context"));
   return stmt;
 }
 

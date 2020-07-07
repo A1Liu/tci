@@ -1,7 +1,4 @@
 #include "debug_allocator.h"
-#undef malloc
-#undef free
-#undef realloc
 #undef check
 
 #include <stdio.h>
@@ -101,8 +98,8 @@ void __alloc_vec_append(void *ptr, size_t size, char *file, unsigned int line) {
   info->free_line = 0;
 }
 
-void __debug_fill_region(uint64_t *ptr, size_t size, uint64_t value) {
-  size_t blocs = size / 8;
+void __debug_fill_region(uint32_t *ptr, size_t size, uint64_t value) {
+  size_t blocs = size / sizeof(uint32_t);
   for (size_t i = 0; i < blocs; i++)
     ptr[i] = value;
 }
@@ -152,6 +149,15 @@ void *__debug_realloc(void *ptr, size_t size, char *file, unsigned int line) {
         stderr,
         "%s:%u: realloc'ing pointer at 0x%lx FAILED (coulnd't find pointer)\n",
         file, line, (size_t)ptr);
+    exit(1);
+  }
+
+  if (ptr != info->begin) {
+    fprintf(stderr,
+            "%s:%u: checking pointer at 0x%lx FAILED (malloc at %s:%u, "
+            "realloc called on 0x%lx, should've been called on 0x%lx)\n",
+            file, line, (size_t)ptr, info->malloc_file, info->malloc_line,
+            (size_t)ptr, (size_t)info->begin);
     exit(1);
   }
 

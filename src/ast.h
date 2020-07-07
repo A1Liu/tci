@@ -59,6 +59,7 @@ typedef struct astNodeDecl {
 typedef struct {
   ASTNodeType return_type;
   uint32_t ident;
+  bool is_decl;
   struct astNodeStmt *stmts;
 } ASTNodeFunction;
 
@@ -95,7 +96,7 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
     char_array_add_string(arr, t_itoa(node->ident_symbol));
     char_array_add_string(arr, string_new(">"));
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
-  } break;
+  }
   case ASTInt: {
     uint64_t begin = char_array_add_string(arr, string_new("int"));
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
@@ -110,7 +111,7 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
 
     dyn_array_add(arr, ')');
     return string_from_parts(&(*arr)[begin], dyn_array_len(*arr) - begin);
-  } break;
+  }
   }
 }
 
@@ -131,12 +132,15 @@ String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
     ast_node_type_str(arr, &node->func.return_type);
 
     char_array_add_string(arr, string_new(",name="));
-    uint32_t sym_length = snprintf(NULL, 0, "%d", node->func.ident);
-    snprintf(CHAR_ARRAY, sym_length + 1, "%d", node->func.ident);
-    char_array_add_string(arr, string_from_parts(CHAR_ARRAY, sym_length));
+    char_array_add_string(arr, t_itoa(node->func.ident));
+    debug("%llu: %.*s\n", dyn_array_len(*arr), (uint32_t)dyn_array_len(*arr),
+          *arr);
 
     char_array_add_string(arr, string_new(",stmts=["));
-    for (uint32_t i = 0; i < dyn_array_len(node->func.stmts); i++) {
+    debug("%llu: %.*s\n", dyn_array_len(*arr), (uint32_t)dyn_array_len(*arr),
+          *arr);
+    uint64_t len = dyn_array_len(node->func.stmts);
+    for (uint32_t i = 0; i < len; i++) {
       ast_node_stmt_str(arr, &node->func.stmts[i]);
       char_array_add_string(arr, string_new(","));
     }
