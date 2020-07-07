@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define debug(args...) (printf("%s:%u: ", __FILE__, __LINE__), printf(args))
-
 uint64_t *__dyn_array_capacity_ptr(void *arr) {
   char *capa_loc = ((char *)arr) - sizeof(uint64_t) * 2;
   return (uint64_t *)capa_loc;
@@ -20,53 +18,57 @@ void __dyn_array_ensure_add(void *arr_, size_t size) {
   void *buffer = *arr;
 
   if (buffer == NULL) {
-    uint64_t *buf_begin = malloc(size * 16);
-    buffer = *arr = buf_begin + 2;
+    uint64_t *buffer_begin =
+        __debug_alloc(size * 16 + sizeof(uint64_t) * 2, __FILE__, __LINE__);
+    buffer = *arr = buffer_begin + 2;
     *__dyn_array_capacity_ptr(buffer) = 16;
     *__dyn_array_len_ptr(buffer) = 0;
     return;
   }
 
-  uint64_t *buf_begin = __dyn_array_capacity_ptr(buffer);
+  uint64_t *buffer_begin = __dyn_array_capacity_ptr(buffer);
   uint64_t len = *__dyn_array_len_ptr(buffer);
-  uint64_t capacity = *buf_begin;
+  uint64_t capacity = *buffer_begin;
   if (len < capacity)
     return;
 
   capacity = capacity / 2 + capacity;
-  buf_begin = realloc(buf_begin, size * capacity);
-  *buf_begin = capacity;
-  *arr = buf_begin + 2;
+  buffer_begin =
+      __debug_realloc(buffer_begin, size * capacity + +sizeof(uint64_t) * 2,
+                      __FILE__, __LINE__);
+  *buffer_begin = capacity;
+  *arr = buffer_begin + 2;
 }
 
 uint64_t __dyn_array_add_from(void *arr_, size_t size, void *from, size_t len) {
   void **arr = (void **)arr_;
   char *buffer = *arr;
-  uint64_t begin;
+  uint64_t *buf_begin;
+  uint64_t initial_len;
 
   if (buffer == NULL) {
-    begin = 0;
-    uint64_t *buf_begin = malloc(size * (16 + len));
+    initial_len = 0;
+    buf_begin = __debug_alloc(size * (16 + len) + sizeof(uint64_t) * 2,
+                              __FILE__, __LINE__);
     buffer = *arr = buf_begin + 2;
     *__dyn_array_capacity_ptr(buffer) = 16 + len;
     *__dyn_array_len_ptr(buffer) = len;
   } else {
-    begin = *__dyn_array_len_ptr(buffer);
-    uint64_t *buf_begin = __dyn_array_capacity_ptr(buffer);
-    uint64_t array_len = *__dyn_array_len_ptr(buffer);
-    uint64_t capa = *buf_begin;
+    initial_len = *__dyn_array_len_ptr(buffer);
+    buf_begin = __dyn_array_capacity_ptr(buffer);
+    uint64_t capacity = *buf_begin;
 
-    if (array_len + len >= capa) {
-      debug("hello\n");
-      capa = capa / 2 + capa + len;
-      buf_begin = realloc(buf_begin, size * capa);
+    if (initial_len + len >= capacity) {
+      uint64_t capa = capacity / 2 + capacity + len;
+      buf_begin = __debug_realloc(buf_begin, size * capa + sizeof(uint64_t) * 2,
+                                  __FILE__, __LINE__);
       buffer = *arr = buf_begin + 2;
       *__dyn_array_capacity_ptr(buffer) = capa;
     }
 
-    *__dyn_array_len_ptr(buffer) = array_len + len;
+    *__dyn_array_len_ptr(buffer) = initial_len + len;
   }
 
-  memcpy(buffer + size * begin, from, size * len);
-  return begin;
+  memcpy(buffer + size * initial_len, from, size * len);
+  return initial_len;
 }

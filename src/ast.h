@@ -133,12 +133,8 @@ String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
 
     char_array_add_string(arr, string_new(",name="));
     char_array_add_string(arr, t_itoa(node->func.ident));
-    debug("%llu: %.*s\n", dyn_array_len(*arr), (uint32_t)dyn_array_len(*arr),
-          *arr);
 
     char_array_add_string(arr, string_new(",stmts=["));
-    debug("%llu: %.*s\n", dyn_array_len(*arr), (uint32_t)dyn_array_len(*arr),
-          *arr);
     uint64_t len = dyn_array_len(node->func.stmts);
     for (uint32_t i = 0; i < len; i++) {
       ast_node_stmt_str(arr, &node->func.stmts[i]);

@@ -36,9 +36,11 @@ int main(int argc, char **argv) {
 
   printf("%.*s\n", (uint32_t)out.len, out.str);
 
-  uint64_t *h = __debug_alloc(14, __FILE__, __LINE__);
-  h = __debug_realloc(h, 33, __FILE__, __LINE__);
-  printf("%s\n", h);
+  dyn_array_declare(a, char);
+  for (int i = 0; i < 15; i++)
+    dyn_array_add(&a, '1');
+
+  check(a + 15);
 
   return 0;
 }
