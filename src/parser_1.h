@@ -80,14 +80,16 @@ ASTNodeStmt parser_parse_simple_decl(Parser *parser) {
     return stmt;
   }
 
-  tok = parser_pop(parser);
+  tok = parser_peek(parser);
   if (tok.kind == TokIdent) {
+    parser_pop(parser);
     stmt.kind = ASTDecl;
     uint32_t ident = tok.ident_symbol;
-    tok = parser_pop(parser);
+    tok = parser_peek(parser);
 
     if (tok.kind == TokEq) {
-      debug("assignment declarations not implemented yet");
+      parser_pop(parser);
+      debug("assignment declarations not implemented yet\n");
       exit(1);
     }
 

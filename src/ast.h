@@ -87,7 +87,7 @@ String ast_node_expr_str(char **, ASTNodeExpr *);
 String ast_node_type_str(char **arr, ASTNodeType *node) {
   switch (node->kind) {
   case ASTTypeError:
-    debug("tried to print type with error in it");
+    debug("tried to print type with error in it\n");
     exit(1);
     break;
   case ASTTypeIdent: {
@@ -117,7 +117,7 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
 String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
   switch (node->kind) {
   case ASTStmtError:
-    debug("tried to print stmt with error in it");
+    debug("tried to print stmt with error in it\n");
     exit(1);
     break;
   case ASTRet: {
@@ -163,7 +163,7 @@ String ast_node_stmt_str(char **arr, ASTNodeStmt *node) {
 String ast_node_expr_str(char **arr, ASTNodeExpr *node) {
   switch (node->kind) {
   case ASTExprError:
-    debug("tried to print expr with error in it");
+    debug("tried to print expr with error in it\n");
     exit(1);
   case ASTIntLiteral: {
     uint64_t begin = char_array_add_string(arr, t_itoa(node->int_value));

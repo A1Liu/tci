@@ -25,6 +25,16 @@ int main(int argc, char **argv) {
 
   BumpList *list = bump_new();
   Parser parser = parser_new(list, file_contents);
+  ASTNodeStmt stmt = parser_parse_global_decl(&parser);
+
+  String out;
+  char *char_array = dyn_array_new(char);
+  if (stmt.kind == ASTStmtError) {
+    out = error_str(&char_array, stmt.err);
+  } else
+    out = ast_node_stmt_str(&char_array, &stmt);
+
+  printf("%.*s\n", (uint32_t)out.len, out.str);
 
   return 0;
 }

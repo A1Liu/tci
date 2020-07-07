@@ -88,8 +88,8 @@ uint64_t char_array_add_string(char **arr, String str) {
 }
 
 String string_new(char *str) {
-  String string = {str, strlen(str)};
-  return string;
+  String s = {str, strlen(str)};
+  return s;
 }
 
 String string_from_parts(char *str, uint64_t len) {

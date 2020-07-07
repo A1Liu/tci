@@ -1,1 +1,4 @@
-int main() { return d; }
+int main() {
+  int i = 1;
+  return d;
+}
