@@ -9,11 +9,13 @@
 // clang-format off
 #include "debug_allocator.h"
 #include "dyn_array_ptr.h"
+#include "hashtable.h"
 #include "util.h"
 #include "errors.h"
 #include "lexer.h"
 #include "ast.h"
 #include "parser_1.h"
+#include "type_checking_1.h"
 // clang-format on
 
 int main(int argc, char **argv) {
