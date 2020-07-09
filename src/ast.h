@@ -48,7 +48,8 @@ typedef struct astNodeType {
         struct {
           uint32_t struct_ident;
           bool struct_has_ident;
-          struct astNodeDecl *struct_types;
+          bool is_struct_decl;
+          struct astNodeStmt *struct_types;
         };
         uint32_t ident_symbol;
       };
@@ -116,11 +117,33 @@ String ast_node_type_str(char **arr, ASTNodeType *node) {
     begin = char_array_add_string(arr, string_new("char"));
   } break;
   case ASTStruct: {
-    begin = char_array_add_string(arr, string_new("struct("));
+    begin = char_array_add_string(arr, string_new("struct"));
+    if (node->struct_has_ident) {
+      dyn_array_add(arr, '[');
+      char_array_add_string(arr, t_itoa(node->struct_ident));
+      dyn_array_add(arr, ']');
+    }
+    dyn_array_add(arr, '(');
+
     uint64_t len = dyn_array_len(node->struct_types);
     for (uint64_t i = 0; i < len; i++) {
-      ast_node_type_str(arr, &node->struct_types[i].type);
-      dyn_array_add_from(arr, ",", 2);
+      ASTNodeStmt *stmt = &node->struct_types[i];
+
+      switch (stmt->kind) {
+      case ASTDecl:
+        ast_node_type_str(arr, &stmt->decl.type);
+        dyn_array_add(arr, '[');
+        char_array_add_string(arr, t_itoa(stmt->decl.ident));
+        dyn_array_add(arr, ']');
+        break;
+      case ASTTypeDecl:
+        ast_node_type_str(arr, &stmt->decl_type);
+        break;
+      default:
+        debug("invalid stmt inside of a struct definition");
+        exit(1);
+      }
+      dyn_array_add(arr, ',');
     }
 
     dyn_array_add(arr, ')');

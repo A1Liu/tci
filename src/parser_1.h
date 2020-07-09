@@ -190,11 +190,16 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
   switch (tok.kind) {
   case TokStruct: {
     type.kind = ASTStruct;
+    type.struct_types = dyn_array_new(ASTNodeStmt);
     Token ident_tok = parser_peek(parser);
     if (ident_tok.kind == TokIdent) {
       parser_pop(parser);
       type.struct_ident = ident_tok.ident_symbol;
       type.struct_has_ident = true;
+      if (parser_peek(parser).kind != TokLeftBrace) {
+        type.is_struct_decl = false;
+        return type;
+      }
     } else
       type.struct_has_ident = false;
 
@@ -207,7 +212,7 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
       return type;
     }
 
-    type.struct_types = dyn_array_new(ASTNodeDecl);
+    type.is_struct_decl = true;
     while (parser_peek(parser).kind != TokRightBrace) {
       ASTNodeStmt decl = parser_parse_simple_decl(parser);
       if (decl.kind == ASTStmtError) {
@@ -226,7 +231,7 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
         return type;
       }
 
-      dyn_array_add(&type.struct_types, decl.decl);
+      dyn_array_add(&type.struct_types, decl);
     }
 
     type.range.end = parser_pop(parser).range.end;
