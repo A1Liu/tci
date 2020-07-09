@@ -48,7 +48,8 @@ typedef struct astNodeType {
         struct {
           uint32_t struct_ident;
           bool struct_has_ident;
-          bool is_struct_decl;
+          bool struct_is_defn;
+          // Can only ever be ASTDecl or ASTTypeDecl
           struct astNodeStmt *struct_types;
         };
         uint32_t ident_symbol;

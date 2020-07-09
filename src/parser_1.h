@@ -197,7 +197,7 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
       type.struct_ident = ident_tok.ident_symbol;
       type.struct_has_ident = true;
       if (parser_peek(parser).kind != TokLeftBrace) {
-        type.is_struct_decl = false;
+        type.struct_is_defn = false;
         return type;
       }
     } else
@@ -212,7 +212,7 @@ ASTNodeType parser_parse_type_prefix(Parser *parser) {
       return type;
     }
 
-    type.is_struct_decl = true;
+    type.struct_is_defn = true;
     while (parser_peek(parser).kind != TokRightBrace) {
       ASTNodeStmt decl = parser_parse_simple_decl(parser);
       if (decl.kind == ASTStmtError) {
