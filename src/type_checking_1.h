@@ -1,16 +1,60 @@
 typedef struct {
-  Hash types;
-  Hash struct_types;
-  Hash functions;
-  Hash symbols;
+  ASTNodeType return_type;
+  ASTNodeType *params;
+} TCFunc;
+
+typedef struct {
+  Hash types;        // ASTNodeType (defn)
+  Hash struct_types; // ASTNodeType (defn)
+  Hash functions;    // TCFunc
+  Hash symbols;      // ASTNodeType (defn)
 } TypeChecker;
 
-ASTNodeTYpe type_check_member(TypeChecker *, ASTNodeType *, uint32_t, bool);
-ASTNodeType type_check_global_decl(TypeChecker *, ASTNodeStmt *);
-ASTNodeType type_check_expr(TypeChecker *, ASTNodeExpr *);
+TypeChecker type_checker_new(void);
+ASTNodeType type_checker_lookup_type(TypeChecker *, ASTNodeType *);
+ASTNodeType type_checker_check_member(TypeChecker *, ASTNodeType *, uint32_t,
+                                      bool);
+ASTNodeType type_checker_check_global_decl(TypeChecker *, ASTNodeStmt *);
+ASTNodeType type_checker_check_expr(TypeChecker *, ASTNodeExpr *);
 
-ASTNodeType type_check_member(TypeChecker *checker, ASTNodeType *type,
-                              uint32_t member, bool is_ptr) {
+ASTNodeType type_checker_lookup_type(TypeChecker *checker, ASTNodeType *type) {
+  ASTNodeType *out;
+  if (type->kind == ASTTypeIdent) {
+    out = hash_find(&checker->types, type->ident_symbol, sizeof(ASTNodeType));
+    if (out == NULL) {
+      ASTNodeType out_val;
+      out_val.kind = ASTTypeError;
+      out_val.err = error_new(string_new("couldn't find type"));
+      return out_val;
+    }
+
+    return *out;
+  }
+
+  if (type->kind != ASTStruct)
+    return *type;
+  if (type->struct_is_defn)
+    return *type;
+
+  if (type->struct_has_ident) {
+    out = hash_find(&checker->struct_types, type->struct_ident,
+                    sizeof(ASTNodeType));
+    if (out == NULL) {
+      ASTNodeType out_val;
+      out_val.kind = ASTTypeError;
+      out_val.err = error_new(string_new("couldn't find type"));
+      return out_val;
+    }
+
+    return *out;
+  }
+
+  debug("this shouldn't be possible");
+  exit(1);
+}
+
+ASTNodeType type_checker_check_member(TypeChecker *checker, ASTNodeType *type,
+                                      uint32_t member, bool is_ptr) {
   ASTNodeType out;
 
   if (is_ptr && type->pointer_count != 1) {
@@ -37,14 +81,31 @@ ASTNodeType type_check_member(TypeChecker *checker, ASTNodeType *type,
 
   uint32_t len = dyn_array_len(type->struct_types);
   for (uint32_t i = 0; i < len; i++) {
-    ASTNodeStmt *member = &type->struct_types[i];
-    switch (member->kind) {
-    case ASTDecl:
-      // look for the name
-    case ASTTYpeDecl:
-      // search within the type decl
+    ASTNodeStmt *type_member = &type->struct_types[i];
+    switch (type_member->kind) {
+    case ASTDecl: {
+      if (type_member->decl.ident == member)
+        return type_member->decl.type;
+    } break;
+    case ASTTypeDecl: {
+      ASTNodeType decl_type =
+          type_checker_lookup_type(checker, &type_member->decl_type);
+      if (decl_type.kind == ASTTypeError) {
+        return decl_type;
+      }
+
+      ASTNodeType result =
+          type_checker_check_member(checker, type, member, is_ptr);
+      if (result.kind != ASTTypeError)
+        return result;
+    } break;
+    default:
+      debug("invalid stmt inside of a struct definition");
+      exit(1);
     }
   }
 
-  return type;
+  out.kind = ASTTypeError;
+  out.err = error_new(string_new("couldn't find member"));
+  return out;
 }
