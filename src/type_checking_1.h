@@ -1,5 +1,6 @@
 typedef struct {
   ASTNodeType return_type;
+  bool defined;
   ASTNodeType *params;
 } TCFunc;
 
@@ -11,9 +12,23 @@ typedef struct {
 } TypeChecker;
 
 TypeChecker type_checker_new(void);
+
+// Returns type defintion of type, or ASTTypeError if doesn't exist
 ASTNodeType type_checker_lookup_type(TypeChecker *, ASTNodeType *);
+
+// Returns type definition of member, or ASTTypeError on error
 ASTNodeType type_checker_check_member(TypeChecker *, ASTNodeType *, uint32_t,
                                       bool);
+
+// Checks a type definition, and adds it to tables if possible, returning
+// whatever it added, or ASTTypeError if the type isn't valid
+ASTNodeType type_checker_add_type_defn(TypeChecker *, ASTNodeType *);
+
+// Checks a function declaration/definition and adds it to tables if possible,
+// returning whatever it added, or a TCFunc with an ASTTypeError in the return
+// type if the type isn't valid.
+TCFunc type_checker_add_function(TypeChecker *, ASTNodeType *);
+
 ASTNodeType type_checker_check_global_decl(TypeChecker *, ASTNodeStmt *);
 ASTNodeType type_checker_check_expr(TypeChecker *, ASTNodeExpr *);
 
@@ -85,7 +100,7 @@ ASTNodeType type_checker_check_member(TypeChecker *checker, ASTNodeType *type,
     switch (type_member->kind) {
     case ASTDecl: {
       if (type_member->decl.ident == member)
-        return type_member->decl.type;
+        return type_checker_lookup_type(checker, &type_member->decl.type);
     } break;
     case ASTTypeDecl: {
       ASTNodeType decl_type =
