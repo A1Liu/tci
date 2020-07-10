@@ -1,5 +1,7 @@
 int a = 12;
 
+struct a;
+
 struct a {
   int hello;
   char goodbye;
