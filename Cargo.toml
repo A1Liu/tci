@@ -1,0 +1,9 @@
+[package]
+name = "tcc"
+version = "0.1.0"
+authors = ["Albert Liu <albertymliu@gmail.com>"]
+edition = "2018"
+
+
+[dependencies]
+codespan-reporting = "0.9.3"
