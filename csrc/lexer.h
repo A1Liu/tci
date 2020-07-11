@@ -368,9 +368,9 @@ Token lexer_next(Lexer *lex) {
     cur = lex->str[tok.range.end];
     if (cur == '=') {
       tok.range.end++;
-      tok.kind = TokAmpEq;
+      tok.kind = TokCaretEq;
     } else {
-      tok.kind = TokAmp;
+      tok.kind = TokCaret;
     }
   } break;
   default:
