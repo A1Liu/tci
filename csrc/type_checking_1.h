@@ -8,7 +8,12 @@ typedef struct tcType {
     Error err;
     struct {
       union {
-        struct structMember *members;
+        Range range;
+        struct {
+          struct structMember *struct_members;
+          bool struct_has_defn;
+          bool struct_is_complete;
+        };
         uint32_t ident_symbol;
       };
       uint32_t pointer_count;
@@ -48,7 +53,7 @@ TCType type_checker_check_member(TypeChecker *, TCType *, uint32_t, bool);
 
 // Checks a type definition, and adds it to tables if possible, returning
 // whatever it added, or ASTTypeError if the type isn't valid
-TCType type_checker_add_type_defn(TypeChecker *, ASTNodeType *, uint32_t *);
+TCType type_checker_add_type_decl(TypeChecker *, ASTNodeType *, uint32_t *);
 
 // Checks a function declaration/definition and adds it to tables if possible,
 // returning whatever it added, or a TCFunc with an ASTTypeError in the return
@@ -146,9 +151,9 @@ TCType type_checker_check_member(TypeChecker *checker, TCType *expr_type,
     return type;
   }
 
-  uint32_t len = dyn_array_len(expr_type->members);
+  uint32_t len = dyn_array_len(expr_type->struct_members);
   for (uint32_t i = 0; i < len; i++) {
-    StructMember *type_member = &expr_type->members[i];
+    StructMember *type_member = &expr_type->struct_members[i];
     if (type_member->is_anonymous) {
       TCType result = type_checker_check_member(checker, &type_member->type,
                                                 member, is_ptr);
@@ -164,36 +169,3 @@ TCType type_checker_check_member(TypeChecker *checker, TCType *expr_type,
   type.err = error_new(string_new("couldn't find member"));
   return type;
 }
-
-/*
-ASTNodeType type_checker_add_type_defn(TypeChecker *checker, ASTNodeType *type,
-                                       uint32_t *ident) {
-  if (check(type)->kind == ASTStruct) {
-    if (!type->struct_is_defn) {
-      debug("trying to add type that isn't a defintion");
-      exit(1);
-    }
-
-    if (type->struct_has_ident) {
-      ASTNodeType *slot = hash_insert(&checker->struct_types,
-                                      type->struct_ident, sizeof(ASTNodeType));
-      *slot = *type;
-    }
-  }
-
-  if (ident == NULL)
-    return *type;
-
-  ASTNodeType *slot = hash_insert(&checker->types, *ident, sizeof(ASTNodeType));
-  *slot = *type;
-  return *type;
-}
-
-TCFunc type_checker_add_function(TypeChecker *checker, ASTNodeStmt *stmt) {
-  TCFunc type;
-  if (stmt->kind != ASTFuncBlock) {
-    debug("trying to add non-function to function symbol table");
-    exit(1);
-  }
-}
-*/
