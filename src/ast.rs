@@ -3,8 +3,8 @@ use core::ops::Range;
 
 #[derive(Debug)]
 pub enum ExprKind {
-    IntLiteral,
-    Ident,
+    IntLiteral(u32),
+    Ident(u32),
     Uninit,
 }
 

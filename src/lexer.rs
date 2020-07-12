@@ -86,10 +86,10 @@ impl Token {
 }
 
 pub struct Lexer<'a> {
-    data: &'a [u8],
-    current: usize,
-    symbols: Vec<&'a str>,
-    translate: HashMap<&'a str, u32>,
+    pub data: &'a [u8],
+    pub current: usize,
+    pub symbols: Vec<&'a str>,
+    pub translate: HashMap<&'a str, u32>,
 }
 
 impl<'a> Lexer<'a> {

@@ -1,4 +1,3 @@
-use codespan_reporting::diagnostic::Diagnostic;
 use std::ops::Range;
 
 pub struct Error {
@@ -7,7 +6,10 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn new(message: String, sections: Vec<(Range<u32>, String)>) -> Error {
-        Self { message, sections }
+    pub fn new(message: &str, sections: Vec<(Range<u32>, String)>) -> Error {
+        Self {
+            message: message.to_string(),
+            sections,
+        }
     }
 }

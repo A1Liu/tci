@@ -2,6 +2,8 @@ use crate::ast::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::{Lexer, Token, TokenKind};
+// use core::fmt;
+// use std::io;
 
 pub struct Parser<'a> {
     buckets: &'a mut BucketList<'a>,
@@ -48,7 +50,7 @@ impl<'a> Parser<'a> {
 
         if tok.kind != TokenKind::LParen || decl.ident.is_none() {
             return Err(Error::new(
-                "unexpected token when parsing function definition".to_string(),
+                "unexpected token when parsing function definition",
                 vec![
                     (
                         decl.range.clone(),
@@ -74,7 +76,7 @@ impl<'a> Parser<'a> {
             if comma_tok.kind != TokenKind::RParen {
                 let range = comma_tok.range.clone();
                 return Err(Error::new(
-                    "unexpected token when parsing end of function declaration".to_string(),
+                    "unexpected token when parsing end of function declaration",
                     vec![
                         (
                             params.pop().unwrap().range,
@@ -102,7 +104,7 @@ impl<'a> Parser<'a> {
 
         if end_decl_tok.kind != TokenKind::LBrace {
             return Err(Error::new(
-                "unexpected token when parsing ending of function declaration".to_string(),
+                "unexpected token when parsing ending of function declaration",
                 vec![
                     (
                         decl.range.start..end,
@@ -122,7 +124,7 @@ impl<'a> Parser<'a> {
                 TokenKind::LBrace => brace_count += 1,
                 TokenKind::End => {
                     return Err(Error::new(
-                        "unexpected end of file while parsing function".to_string(),
+                        "unexpected end of file while parsing function",
                         vec![
                             (decl.range.start..end, "function declared here".to_string()),
                             (tok.range, "missing closing brace here".to_string()),
@@ -162,7 +164,14 @@ impl<'a> Parser<'a> {
             let eq_tok = self.peek();
             if eq_tok.kind == TokenKind::Eq {
                 self.pop();
-                panic!("haven't handled expr case yet");
+
+                let expr = self.parse_expr()?;
+                return Ok(Decl {
+                    decl_type,
+                    ident: Some(id),
+                    value: Some(expr),
+                    range: start..tok.range.end,
+                });
             } else {
                 return Ok(Decl {
                     decl_type,
@@ -208,7 +217,7 @@ impl<'a> Parser<'a> {
             TokenKind::Struct => {}
             _ => {
                 return Err(Error::new(
-                    "unexpected token while parsing type".to_string(),
+                    "unexpected token while parsing type",
                     vec![(
                         tok.range.clone(),
                         format!("this was interpreted as {:?}", tok),
@@ -234,7 +243,7 @@ impl<'a> Parser<'a> {
         let lbrace_tok = self.pop();
         if lbrace_tok.kind != TokenKind::LBrace {
             return Err(Error::new(
-                "expected '{' token, got something else instead".to_string(),
+                "expected '{' token, got something else instead",
                 vec![(lbrace_tok.range, "should be a '{'".to_string())],
             ));
         }
@@ -246,7 +255,7 @@ impl<'a> Parser<'a> {
             let semi_tok = self.pop();
             if semi_tok.kind != TokenKind::Semicolon {
                 return Err(Error::new(
-                    "expected ';' token, got something else instead".to_string(),
+                    "expected ';' token, got something else instead",
                     vec![(semi_tok.range, "should be a '{'".to_string())],
                 ));
             }
@@ -260,5 +269,28 @@ impl<'a> Parser<'a> {
             range: tok.range.start..self.pop().range.end,
             pointer_count: 0,
         });
+    }
+
+    pub fn parse_expr(&mut self) -> Result<Expr, Error> {
+        return self.parse_atom();
+    }
+
+    pub fn parse_atom(&mut self) -> Result<Expr, Error> {
+        let tok = self.pop();
+        match tok.kind {
+            TokenKind::Ident(i) => {
+                return Ok(Expr {
+                    kind: ExprKind::Ident(i),
+                    range: tok.range,
+                })
+            }
+            TokenKind::IntLiteral(i) => {
+                return Ok(Expr {
+                    kind: ExprKind::IntLiteral(i),
+                    range: tok.range,
+                })
+            }
+            _ => return Err(Error::new("", vec![])),
+        }
     }
 }

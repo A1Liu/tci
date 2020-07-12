@@ -28,11 +28,13 @@ fn run_on_file<'a, 'b>(
 }
 
 fn run_on_string<'b>(
-    output: impl Write,
+    _stdout: impl Write,
     mut stderr: impl Write,
     file_id: usize,
     input: &str,
 ) -> Result<(), Diagnostic<usize>> {
+    write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
+
     let mut parser = parser::Parser::new(input);
     let mut parse_result = Vec::new();
     loop {
@@ -47,9 +49,14 @@ fn run_on_string<'b>(
                 ))
             }
         }
+        if parser.peek().kind == lexer::TokenKind::End {
+            break;
+        }
     }
 
-    write!(stderr, "{:?}\n\n", parse_result).expect("why did this fail?");
+    for stmt in parse_result {
+        write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
+    }
 
     return Ok(());
 }
