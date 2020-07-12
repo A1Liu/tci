@@ -31,10 +31,12 @@ pub struct TCType<'a> {
     decl_idx: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TCFunc<'a> {
     return_type: TCType<'a>,
     params: &'a [TCType<'a>],
+    range: Range<u32>,
+    decl_idx: u32,
 }
 
 impl<'a> PartialEq for TCDecl<'a> {
@@ -46,6 +48,12 @@ impl<'a> PartialEq for TCDecl<'a> {
 impl<'a> PartialEq for TCType<'a> {
     fn eq(&self, other: &Self) -> bool {
         return self.kind == other.kind && self.pointer_count == other.pointer_count;
+    }
+}
+
+impl<'a> PartialEq for TCFunc<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        return self.return_type == other.return_type && self.params == other.params;
     }
 }
 
@@ -136,8 +144,10 @@ impl<'a> TypeChecker1<'a> {
                                 vec![(t.range.clone(), "type is not complete yet".to_string())],
                             ));
                         }
+                        return Ok(t.clone());
                     }
-                    return Ok(t.clone());
+
+                    panic!("found incorrect type {:?} in struct_types", t);
                 }
 
                 return Err(Error::new(
@@ -165,13 +175,88 @@ impl<'a> TypeChecker1<'a> {
 
     pub fn add_decl(&mut self, stmt: &GlobalStmt<'a>) -> Result<(), Error> {
         match &stmt.kind {
+            GlobalStmtKind::FuncDecl {
+                return_type,
+                ident,
+                params,
+            } => {
+                let return_type = self.convert_add_type(return_type)?;
+                let mut type_params = Vec::new();
+                for param in *params {
+                    type_params.push(self.convert_add_type(&param.decl_type)?);
+                }
+
+                let type_params = self.parser.buckets.add_array(type_params);
+                let tc_func = TCFunc {
+                    return_type,
+                    params: type_params,
+                    range: stmt.range.clone(),
+                    decl_idx: self.decl_idx,
+                };
+                self.decl_idx += 1;
+
+                if let Some(func) = self.func_types.get(ident) {
+                    if &tc_func != func {
+                        return Err(Error::new(
+                            "function declaration doesn't match previous declaration",
+                            vec![
+                                (func.range.clone(), "previous declaration here".to_string()),
+                                (
+                                    stmt.range.clone(),
+                                    "mismatched declaration here".to_string(),
+                                ),
+                            ],
+                        ));
+                    }
+                }
+
+                self.func_types.insert(*ident, tc_func);
+            }
             GlobalStmtKind::Func {
                 return_type,
                 ident,
                 params,
                 body,
             } => {
-                if let Some(func) = self.func_types.get(ident) {};
+                let return_type = self.convert_add_type(return_type)?;
+                let mut type_params = Vec::new();
+                for param in *params {
+                    type_params.push(self.convert_add_type(&param.decl_type)?);
+                }
+
+                let type_params = self.parser.buckets.add_array(type_params);
+                let tc_func = TCFunc {
+                    return_type,
+                    params: type_params,
+                    range: stmt.range.clone(),
+                    decl_idx: self.decl_idx,
+                };
+                self.decl_idx += 1;
+
+                if let Some(func) = self.func_types.get(ident) {
+                    if let Some(_) = self.functions.get(ident) {
+                        return Err(Error::new(
+                            "function already defined",
+                            vec![
+                                (func.range.clone(), "function defined here".to_string()),
+                                (stmt.range.clone(), "second definition here".to_string()),
+                            ],
+                        ));
+                    }
+
+                    if &tc_func != func {
+                        return Err(Error::new(
+                            "function definition doesn't match previous declaration",
+                            vec![
+                                (func.range.clone(), "previous declaration here".to_string()),
+                                (stmt.range.clone(), "mismatched definition here".to_string()),
+                            ],
+                        ));
+                    }
+                }
+
+                self.func_types.insert(*ident, tc_func);
+                self.functions.insert(*ident, body);
             }
             _ => {}
         }
