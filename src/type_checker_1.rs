@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct TCDecl<'a> {
     decl_type: TCType<'a>,
-    ident: u32,
+    ident: Option<u32>,
     range: Range<u32>,
 }
 
@@ -94,21 +94,52 @@ impl<'a> TypeChecker1<'a> {
                 return Ok(out);
             }
             ASTTypeKind::StructDefn { ident, members } => {
-                let typed_members = self.parser.buckets.add_array(vec![]);
                 out.kind = TCTypeKind::Struct {
-                    members: typed_members,
+                    members: self.parser.buckets.add_array(Vec::new()),
                     complete: false,
                 };
 
+                let mut typed_members = Vec::new();
                 out.decl_idx = self.decl_idx;
                 self.decl_idx += 1;
+
+                if let Some(id) = ident {
+                    self.struct_types.insert(*id, out.clone());
+                }
+
+                for member in *members {
+                    let decl_type = self.convert_add_type(&member.decl_type)?;
+                    typed_members.push(TCDecl {
+                        decl_type,
+                        ident: member.ident,
+                        range: member.range.clone(),
+                    });
+                }
+
+                out.kind = TCTypeKind::Struct {
+                    members: self.parser.buckets.add_array(typed_members),
+                    complete: true,
+                };
+
+                if let Some(id) = ident {
+                    self.struct_types.insert(*id, out.clone());
+                }
 
                 return Ok(out);
             }
             ASTTypeKind::Struct { ident } => {
                 if let Some(t) = self.struct_types.get(ident) {
+                    if let TCTypeKind::Struct { members, complete } = t.kind {
+                        if !complete && t.pointer_count == 0 {
+                            return Err(Error::new(
+                                "type is not complete yet",
+                                vec![(t.range.clone(), "type is not complete yet".to_string())],
+                            ));
+                        }
+                    }
                     return Ok(t.clone());
                 }
+
                 return Err(Error::new(
                     "unrecognized type name",
                     vec![(
