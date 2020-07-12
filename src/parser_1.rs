@@ -4,9 +4,9 @@ use crate::errors::Error;
 use crate::lexer::{Lexer, Token, TokenKind};
 
 pub struct Parser1<'a> {
-    buckets: &'a mut BucketList<'a>,
-    lexer: Lexer<'a>,
-    token_stack: Vec<Token>,
+    pub buckets: &'a mut BucketList<'a>,
+    pub lexer: Lexer<'a>,
+    pub token_stack: Vec<Token>,
 }
 
 impl<'a> Parser1<'a> {
