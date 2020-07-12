@@ -109,7 +109,7 @@ ASTNodeStmt parser_parse_global_decl(Parser *parser) {
   }
 
   stmt.func.is_defn = true;
-  tok = parser_pop(parser);
+  tok = parser_peek(parser);
   for (uint32_t brace_count = 1;
        brace_count > 0 && tok.kind != TokInvalid && tok.kind != TokEnd;
        tok = parser_peek(parser)) {

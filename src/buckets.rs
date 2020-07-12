@@ -131,7 +131,7 @@ impl<'a> BucketList<'a> {
         }
     }
 
-    pub fn add_array<T>(&'a self, vec: Vec<T>) -> &'a mut [T] {
+    pub fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T] {
         unsafe {
             let len = vec.len();
             let layout =
@@ -146,7 +146,7 @@ impl<'a> BucketList<'a> {
         }
     }
 
-    pub fn add_slice<T>(&'a self, slice: &[T]) -> &'a mut [T]
+    pub fn add_slice<T>(&self, slice: &[T]) -> &'a mut [T]
     where
         T: Clone,
     {
@@ -162,7 +162,7 @@ impl<'a> BucketList<'a> {
         return unsafe { slice::from_raw_parts_mut(block, len) };
     }
 
-    pub fn add_str(&'a self, values: &str) -> &'a mut str {
+    pub fn add_str(&self, values: &str) -> &'a mut str {
         let values = values.as_bytes();
         return unsafe { str::from_utf8_unchecked_mut(self.add_slice(values)) };
     }
@@ -233,5 +233,5 @@ fn test_bucket_list() {
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
 
-    BucketList::dealloc(bucket_list);
+    BucketList::clear(bucket_list);
 }

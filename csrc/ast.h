@@ -80,7 +80,6 @@ typedef struct astNodeStmt {
     struct {
       Range range;
       union {
-        ASTNodeExpr return_expr;
         ASTNodeFunction func;
         ASTNodeDecl decl;
         ASTNodeType decl_type;

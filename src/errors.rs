@@ -1,8 +1,9 @@
+use codespan_reporting::diagnostic::Diagnostic;
 use std::ops::Range;
 
 pub struct Error {
-    message: String,
-    sections: Vec<(Range<u32>, String)>,
+    pub message: String,
+    pub sections: Vec<(Range<u32>, String)>,
 }
 
 impl Error {
