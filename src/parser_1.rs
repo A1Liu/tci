@@ -2,16 +2,14 @@ use crate::ast::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::{Lexer, Token, TokenKind};
-// use core::fmt;
-// use std::io;
 
-pub struct Parser<'a> {
+pub struct Parser1<'a> {
     buckets: &'a mut BucketList<'a>,
     lexer: Lexer<'a>,
     token_stack: Vec<Token>,
 }
 
-impl<'a> Parser<'a> {
+impl<'a> Parser1<'a> {
     pub fn new(data: &'a str) -> Self {
         Self {
             buckets: BucketList::new(),
@@ -166,11 +164,12 @@ impl<'a> Parser<'a> {
                 self.pop();
 
                 let expr = self.parse_expr()?;
+                let end = expr.range.end;
                 return Ok(Decl {
                     decl_type,
                     ident: Some(id),
                     value: Some(expr),
-                    range: start..tok.range.end,
+                    range: start..end,
                 });
             } else {
                 return Ok(Decl {

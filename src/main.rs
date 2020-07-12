@@ -8,7 +8,9 @@ mod ast;
 mod buckets;
 mod errors;
 mod lexer;
-mod parser;
+mod parser_1;
+mod type_checker_1;
+mod util;
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
@@ -35,7 +37,7 @@ fn run_on_string<'b>(
 ) -> Result<(), Diagnostic<usize>> {
     write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
 
-    let mut parser = parser::Parser::new(input);
+    let mut parser = parser_1::Parser1::new(input);
     let mut parse_result = Vec::new();
     loop {
         match parser.parse_global_decl() {
@@ -61,25 +63,32 @@ fn run_on_string<'b>(
     return Ok(());
 }
 
-// fn test_file_should_succeed(filename: &str) {
-//     let writer = StandardStream::stderr(ColorChoice::Always);
-//     let config = codespan_reporting::term::Config::default();
-//
-//     let mut files = SimpleFiles::new();
-//     let mut output = util::StringWriter::new();
-//
-//     match run_on_file(&mut output, util::Void::new(), &mut files, filename) {
-//         Err(diagnostic) => {
-//             codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
-//                 .expect("why did this fail?");
-//             panic!();
-//         }
-//         _ => {}
-//     }
-//
-//     let filename = String::from(filename);
-//     assert!(output.to_string() == read_to_string(filename + ".out").expect("why did this fail?"));
-// }
+fn test_file_should_succeed(filename: &str) {
+    let writer = StandardStream::stderr(ColorChoice::Always);
+    let config = codespan_reporting::term::Config::default();
+
+    let buckets = buckets::BucketList::new();
+    let mut files = SimpleFiles::new();
+    let mut output = util::StringWriter::new();
+
+    match run_on_file(
+        &mut output,
+        util::Void::new(),
+        buckets,
+        &mut files,
+        filename,
+    ) {
+        Err(diagnostic) => {
+            codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
+                .expect("why did this fail?");
+            panic!();
+        }
+        _ => {}
+    }
+
+    let filename = String::from(filename);
+    assert!(output.to_string() == read_to_string(filename + ".out").expect("why did this fail?"));
+}
 
 #[test]
 fn test_expr() {
