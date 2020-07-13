@@ -258,7 +258,12 @@ impl<'a> TypeChecker1<'a> {
                 self.func_types.insert(*ident, tc_func);
                 self.functions.insert(*ident, body);
             }
-            _ => {}
+            GlobalStmtKind::Decl(decl) => {
+                let decl_type = self.convert_add_type(&decl.decl_type)?;
+                if let Some(ident) = decl.ident {
+                    self.symbols.insert(ident, decl_type);
+                }
+            }
         }
         return Err(Error::new("", vec![]));
     }
