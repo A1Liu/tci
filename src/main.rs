@@ -38,11 +38,11 @@ fn run_on_string<'b>(
 ) -> Result<(), Diagnostic<usize>> {
     write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
 
-    let mut parser = parser_1::Parser1::new(input);
+    let mut type_checker = type_checker_1::TypeChecker1::new(input);
     let mut parse_result = Vec::new();
     loop {
-        match parser.parse_global_decl() {
-            Ok(x) => parse_result.push(x),
+        let decl = match type_checker.parser.parse_global_decl() {
+            Ok(x) => x,
             Err(e) => {
                 return Err(Diagnostic::error().with_message(e.message).with_labels(
                     e.sections
@@ -51,8 +51,27 @@ fn run_on_string<'b>(
                         .collect(),
                 ))
             }
+        };
+
+        match type_checker.add_decl(&decl) {
+            Ok(()) => {}
+            Err(e) => {
+                return Err(Diagnostic::error().with_message(e.message).with_labels(
+                    e.sections
+                        .into_iter()
+                        .map(|x| {
+                            let mut label =
+                                Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize));
+                            label.message = x.1.clone();
+                            label
+                        })
+                        .collect(),
+                ))
+            }
         }
-        if parser.peek().kind == lexer::TokenKind::End {
+        parse_result.push(decl);
+
+        if type_checker.parser.peek().kind == lexer::TokenKind::End {
             break;
         }
     }

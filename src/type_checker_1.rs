@@ -58,13 +58,13 @@ impl<'a> PartialEq for TCFunc<'a> {
 }
 
 pub struct TypeChecker1<'a> {
-    parser: Parser1<'a>,
-    struct_types: HashMap<u32, TCType<'a>>,
-    types: HashMap<u32, TCType<'a>>,
-    symbols: HashMap<u32, TCType<'a>>,
-    func_types: HashMap<u32, TCFunc<'a>>,
-    functions: HashMap<u32, &'a [Token]>,
-    decl_idx: u32,
+    pub parser: Parser1<'a>,
+    pub struct_types: HashMap<u32, TCType<'a>>,
+    pub types: HashMap<u32, TCType<'a>>,
+    pub symbols: HashMap<u32, TCType<'a>>,
+    pub func_types: HashMap<u32, TCFunc<'a>>,
+    pub functions: HashMap<u32, &'a [Token]>,
+    pub decl_idx: u32,
 }
 
 impl<'a> TypeChecker1<'a> {
@@ -80,13 +80,53 @@ impl<'a> TypeChecker1<'a> {
         }
     }
 
-    pub fn convert_add_type(&mut self, type_node: &ASTType<'a>) -> Result<TCType<'a>, Error> {
+    pub fn convert_add_type(
+        &mut self,
+        type_node: &ASTType<'a>,
+        is_type_decl: bool,
+    ) -> Result<TCType<'a>, Error> {
         let mut out = TCType {
             kind: TCTypeKind::Int,
             decl_idx: 0,
             range: type_node.range.clone(),
             pointer_count: type_node.pointer_count,
         };
+
+        if is_type_decl {
+            match type_node.kind {
+                ASTTypeKind::Struct { ident } => {
+                    if let Some(t) = self.struct_types.get(&ident) {
+                        if let TCTypeKind::Struct { members, complete } = t.kind {
+                            if !complete && t.pointer_count == 0 {
+                                return Err(Error::new(
+                                    "type is not complete yet",
+                                    vec![(t.range.clone(), "type is not complete yet".to_string())],
+                                ));
+                            }
+                            return Ok(t.clone());
+                        }
+
+                        panic!("found incorrect type {:?} in struct_types", t);
+                    }
+
+                    out.kind = TCTypeKind::Struct {
+                        members: self.parser.buckets.add_array(vec![]),
+                        complete: false,
+                    };
+
+                    self.struct_types.insert(ident, out.clone());
+
+                    return Ok(out);
+                }
+                ASTTypeKind::StructDefn { .. } => {}
+                _ => {
+                    return Err(Error::new(
+                        "Missing variable name in declaration",
+                        vec![(type_node.range.clone(), "declaration here".to_string())],
+                    ));
+                }
+            }
+        }
 
         match &type_node.kind {
             ASTTypeKind::Int => {
@@ -116,7 +156,13 @@ impl<'a> TypeChecker1<'a> {
                 }
 
                 for member in *members {
-                    let decl_type = self.convert_add_type(&member.decl_type)?;
+                    let is_type_defn = if let Some(id) = member.ident {
+                        false
+                    } else {
+                        true
+                    };
+
+                    let decl_type = self.convert_add_type(&member.decl_type, is_type_defn)?;
                     typed_members.push(TCDecl {
                         decl_type,
                         ident: member.ident,
@@ -162,6 +208,7 @@ impl<'a> TypeChecker1<'a> {
                 if let Some(t) = self.types.get(id) {
                     return Ok(t.clone());
                 }
+
                 return Err(Error::new(
                     "unrecognized type name",
                     vec![(
@@ -180,10 +227,10 @@ impl<'a> TypeChecker1<'a> {
                 ident,
                 params,
             } => {
-                let return_type = self.convert_add_type(return_type)?;
+                let return_type = self.convert_add_type(return_type, false)?;
                 let mut type_params = Vec::new();
                 for param in *params {
-                    type_params.push(self.convert_add_type(&param.decl_type)?);
+                    type_params.push(self.convert_add_type(&param.decl_type, false)?);
                 }
 
                 let type_params = self.parser.buckets.add_array(type_params);
@@ -211,6 +258,7 @@ impl<'a> TypeChecker1<'a> {
                 }
 
                 self.func_types.insert(*ident, tc_func);
+                return Ok(());
             }
             GlobalStmtKind::Func {
                 return_type,
@@ -218,10 +266,10 @@ impl<'a> TypeChecker1<'a> {
                 params,
                 body,
             } => {
-                let return_type = self.convert_add_type(return_type)?;
+                let return_type = self.convert_add_type(return_type, false)?;
                 let mut type_params = Vec::new();
                 for param in *params {
-                    type_params.push(self.convert_add_type(&param.decl_type)?);
+                    type_params.push(self.convert_add_type(&param.decl_type, false)?);
                 }
 
                 let type_params = self.parser.buckets.add_array(type_params);
@@ -257,14 +305,18 @@ impl<'a> TypeChecker1<'a> {
 
                 self.func_types.insert(*ident, tc_func);
                 self.functions.insert(*ident, body);
+                return Ok(());
             }
             GlobalStmtKind::Decl(decl) => {
-                let decl_type = self.convert_add_type(&decl.decl_type)?;
                 if let Some(ident) = decl.ident {
+                    let decl_type = self.convert_add_type(&decl.decl_type, false)?;
                     self.symbols.insert(ident, decl_type);
+                } else {
+                    self.convert_add_type(&decl.decl_type, true)?;
                 }
+
+                return Ok(());
             }
         }
-        return Err(Error::new("", vec![]));
     }
 }
