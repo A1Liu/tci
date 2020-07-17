@@ -286,11 +286,16 @@ impl<'a> Lexer<'a> {
             "void" => return Token::new(TokenKind::Void, begin..self.current),
             "int" => return Token::new(TokenKind::Int, begin..self.current),
             "char" => return Token::new(TokenKind::Char, begin..self.current),
-            x => {
-                let idx = self.symbols.len() as u32;
-                self.symbols.push(x);
-                self.translate.insert(x, idx);
-                return Token::new(TokenKind::Ident(idx), begin..self.current);
+            word => {
+                let id = if let Some(id) = self.translate.get(word) {
+                    *id
+                } else {
+                    let idx = self.symbols.len() as u32;
+                    self.symbols.push(word);
+                    self.translate.insert(word, idx);
+                    idx
+                };
+                return Token::new(TokenKind::Ident(id), begin..self.current);
             }
         }
     }
