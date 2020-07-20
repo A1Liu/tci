@@ -3,22 +3,42 @@ use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::{Lexer, Token, TokenKind};
 
-pub struct Parser1<'a> {
-    pub buckets: &'a mut BucketList<'a>,
-    pub lexer: Lexer<'a>,
+pub struct Parser1<'a, 'b> {
+    pub buckets: &'a mut BucketList<'b>,
+    pub lexer: Lexer<'b>,
     pub token_stack: Vec<Token>,
 }
 
-impl<'a> Parser1<'a> {
-    pub fn new(data: &'a str) -> Self {
-        Self {
-            buckets: BucketList::new(),
-            lexer: Lexer::new(data),
-            token_stack: Vec::new(),
-        }
+pub trait ExprParser {
+    fn peek(&mut self) -> Token;
+    fn pop(&mut self) -> Token;
+
+    fn parse_expr(&mut self) -> Result<Expr, Error> {
+        return self.parse_atom();
     }
 
-    pub fn peek(&mut self) -> Token {
+    fn parse_atom(&mut self) -> Result<Expr, Error> {
+        let tok = self.pop();
+        match tok.kind {
+            TokenKind::Ident(i) => {
+                return Ok(Expr {
+                    kind: ExprKind::Ident(i),
+                    range: tok.range,
+                })
+            }
+            TokenKind::IntLiteral(i) => {
+                return Ok(Expr {
+                    kind: ExprKind::IntLiteral(i),
+                    range: tok.range,
+                })
+            }
+            _ => return Err(Error::new("", vec![])),
+        }
+    }
+}
+
+impl<'a, 'b> ExprParser for Parser1<'a, 'b> {
+    fn peek(&mut self) -> Token {
         if self.token_stack.len() > 0 {
             return self.token_stack[self.token_stack.len() - 1].clone();
         }
@@ -28,14 +48,24 @@ impl<'a> Parser1<'a> {
         return tok;
     }
 
-    pub fn pop(&mut self) -> Token {
+    fn pop(&mut self) -> Token {
         match self.token_stack.pop() {
             Some(x) => x,
             None => self.lexer.next(),
         }
     }
+}
 
-    pub fn parse_global_decl(&mut self) -> Result<GlobalStmt<'a>, Error> {
+impl<'a, 'b> Parser1<'a, 'b> {
+    pub fn new(data: &'b str) -> Self {
+        Self {
+            buckets: BucketList::new(),
+            lexer: Lexer::new(data),
+            token_stack: Vec::new(),
+        }
+    }
+
+    pub fn parse_global_decl(&mut self) -> Result<GlobalStmt<'b>, Error> {
         let decl = self.parse_simple_decl()?;
         let tok = self.pop();
         if tok.kind == TokenKind::Semicolon {
@@ -145,7 +175,7 @@ impl<'a> Parser1<'a> {
         });
     }
 
-    pub fn parse_simple_decl(&mut self) -> Result<Decl<'a>, Error> {
+    pub fn parse_simple_decl(&mut self) -> Result<Decl<'b>, Error> {
         let tok = self.peek();
         let start = tok.range.start;
         let mut decl_type = self.parse_type_prefix()?;
@@ -189,7 +219,7 @@ impl<'a> Parser1<'a> {
         });
     }
 
-    pub fn parse_type_prefix(&mut self) -> Result<ASTType<'a>, Error> {
+    pub fn parse_type_prefix(&mut self) -> Result<ASTType<'b>, Error> {
         let tok = self.pop();
         match tok.kind {
             TokenKind::Int => {
@@ -268,28 +298,5 @@ impl<'a> Parser1<'a> {
             range: tok.range.start..self.pop().range.end,
             pointer_count: 0,
         });
-    }
-
-    pub fn parse_expr(&mut self) -> Result<Expr, Error> {
-        return self.parse_atom();
-    }
-
-    pub fn parse_atom(&mut self) -> Result<Expr, Error> {
-        let tok = self.pop();
-        match tok.kind {
-            TokenKind::Ident(i) => {
-                return Ok(Expr {
-                    kind: ExprKind::Ident(i),
-                    range: tok.range,
-                })
-            }
-            TokenKind::IntLiteral(i) => {
-                return Ok(Expr {
-                    kind: ExprKind::IntLiteral(i),
-                    range: tok.range,
-                })
-            }
-            _ => return Err(Error::new("", vec![])),
-        }
     }
 }

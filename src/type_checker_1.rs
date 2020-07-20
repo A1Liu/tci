@@ -57,18 +57,18 @@ impl<'a> PartialEq for TCFunc<'a> {
     }
 }
 
-pub struct TypeChecker1<'a> {
-    pub parser: Parser1<'a>,
-    pub struct_types: HashMap<u32, TCType<'a>>,
-    pub types: HashMap<u32, TCType<'a>>,
-    pub symbols: HashMap<u32, TCType<'a>>,
-    pub func_types: HashMap<u32, TCFunc<'a>>,
-    pub functions: HashMap<u32, &'a [Token]>,
+pub struct TypeChecker1<'a, 'b> {
+    pub parser: Parser1<'a, 'b>,
+    pub struct_types: HashMap<u32, TCType<'b>>,
+    pub types: HashMap<u32, TCType<'b>>,
+    pub symbols: HashMap<u32, TCType<'b>>,
+    pub func_types: HashMap<u32, TCFunc<'b>>,
+    pub functions: HashMap<u32, &'b [Token]>,
     pub decl_idx: u32,
 }
 
-impl<'a> TypeChecker1<'a> {
-    pub fn new(data: &'a str) -> Self {
+impl<'a, 'b> TypeChecker1<'a, 'b> {
+    pub fn new(data: &'b str) -> Self {
         Self {
             parser: Parser1::new(data),
             struct_types: HashMap::new(),
@@ -82,9 +82,9 @@ impl<'a> TypeChecker1<'a> {
 
     pub fn convert_add_type(
         &mut self,
-        type_node: &ASTType<'a>,
+        type_node: &ASTType<'b>,
         is_type_decl: bool,
-    ) -> Result<TCType<'a>, Error> {
+    ) -> Result<TCType<'b>, Error> {
         let mut out = TCType {
             kind: TCTypeKind::Int,
             decl_idx: 0,
@@ -220,7 +220,7 @@ impl<'a> TypeChecker1<'a> {
         }
     }
 
-    pub fn add_decl(&mut self, stmt: &GlobalStmt<'a>) -> Result<(), Error> {
+    pub fn add_decl(&mut self, stmt: &GlobalStmt<'b>) -> Result<(), Error> {
         match &stmt.kind {
             GlobalStmtKind::FuncDecl {
                 return_type,

@@ -6,16 +6,19 @@ use std::fs::read_to_string;
 use std::io::Write;
 
 mod ast;
+mod ast2;
 mod buckets;
 mod errors;
 mod lexer;
 mod parser_1;
+mod parser_2;
 mod type_checker_1;
 mod util;
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use parser_1::ExprParser;
 
 fn run_on_file<'a, 'b>(
     stdout: impl Write,
@@ -78,6 +81,12 @@ fn run_on_string<'b>(
 
     for stmt in parse_result {
         write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
+    }
+
+    let (functions, type_env) = parser_2::TypeEnv::new(type_checker);
+
+    for (function, tokens) in functions {
+        let parser = parser_2::Parser2::new(&type_env, tokens);
     }
 
     return Ok(());
