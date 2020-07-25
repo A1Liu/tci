@@ -1,8 +1,8 @@
-use crate::ast2::*;
+use crate::ast_2::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::Token;
-use crate::type_checker_1::*;
+use crate::type_checker::*;
 use std::collections::HashMap;
 
 pub struct TypeEnv<'a, 'b> {

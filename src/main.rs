@@ -6,19 +6,19 @@ use std::fs::read_to_string;
 use std::io::Write;
 
 mod ast;
-mod ast2;
+mod ast_2;
 mod buckets;
 mod errors;
 mod lexer;
-mod parser_1;
+mod parser;
 mod parser_2;
-mod type_checker_1;
+mod type_checker;
 mod util;
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
-use parser_1::ExprParser;
+use parser::ExprParser;
 
 fn run_on_file<'a, 'b>(
     stdout: impl Write,
@@ -41,7 +41,7 @@ fn run_on_string<'b>(
 ) -> Result<(), Diagnostic<usize>> {
     write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
 
-    let mut type_checker = type_checker_1::TypeChecker1::new(input);
+    let mut type_checker = type_checker::TypeChecker1::new(input);
     let mut parse_result = Vec::new();
     loop {
         let decl = match type_checker.parser.parse_global_decl() {

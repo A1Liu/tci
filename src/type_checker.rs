@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::errors::Error;
 use crate::lexer::Token;
-use crate::parser_1::Parser1;
+use crate::parser::Parser1;
 use core::ops::Range;
 use std::collections::HashMap;
 
