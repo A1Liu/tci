@@ -1,7 +1,8 @@
 use crate::ast_2::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
-use crate::lexer::Token;
+use crate::lexer::{Token, TokenKind};
+use crate::parser::ExprParser;
 use crate::type_checker::*;
 use std::collections::HashMap;
 
@@ -32,6 +33,25 @@ pub struct Parser2<'a, 'b> {
     buckets: &'a BucketList<'b>,
     env: &'a TypeEnv<'a, 'b>,
     toks: &'a [Token],
+    idx: usize,
+}
+
+impl<'a, 'b> ExprParser for Parser2<'a, 'b> {
+    fn peek(&mut self) -> Token {
+        if self.idx >= self.toks.len() {
+            return Token {
+                kind: TokenKind::End,
+                range: 0..0,
+            };
+        }
+        return self.toks[self.idx].clone();
+    }
+
+    fn pop(&mut self) -> Token {
+        let tok = self.peek();
+        self.idx += 1;
+        return tok;
+    }
 }
 
 impl<'a, 'b> Parser2<'a, 'b> {
@@ -40,6 +60,20 @@ impl<'a, 'b> Parser2<'a, 'b> {
             buckets: BucketList::new(),
             env,
             toks,
+            idx: 0,
         }
+    }
+
+    pub fn parse_stmt(&mut self) -> Result<Stmt, Error> {
+        let tok = self.peek();
+        match &tok.kind {
+            _ => {
+                return Err(Error::new(
+                    "unexpected token found while parsing statement",
+                    vec![(tok.range.clone(), "this is the token".to_string())],
+                ));
+            }
+        }
+        Err(Error::new("", vec![]))
     }
 }

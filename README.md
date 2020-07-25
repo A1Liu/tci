@@ -19,4 +19,5 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - Higher order functions and function pointers aren't supported
 - No support for multithreading
 - Macros must be valid statements or expressions
+- Declarations of types is not allowed inside functions
 
