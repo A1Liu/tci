@@ -21,4 +21,5 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - Declarations of types is not allowed inside functions
 - Struct literals and array literals are allowed inside places where expressions
   are expected, and are type inferred.
+- No support for Goto
 

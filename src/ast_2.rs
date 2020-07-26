@@ -5,6 +5,23 @@ pub enum StmtKind<'a> {
     Decl(Decl<'a>),
     Ret,
     RetVal(Expr),
+    Branch {
+        if_cond: Expr,
+        if_body: &'a [Stmt<'a>],
+        else_body: &'a [Stmt<'a>],
+    },
+    For {
+        at_start: Expr,
+        condition: Expr,
+        post_expr: Expr,
+        body: &'a [Stmt<'a>],
+    },
+    ForDecl {
+        at_start: Decl<'a>,
+        condition: Expr,
+        post_expr: Expr,
+        body: &'a [Stmt<'a>],
+    },
 }
 
 pub struct Stmt<'a> {
