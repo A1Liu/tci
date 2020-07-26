@@ -3,6 +3,8 @@ use core::ops::Range;
 
 pub enum StmtKind<'a> {
     Decl(Decl<'a>),
+    Ret,
+    RetVal(Expr),
 }
 
 pub struct Stmt<'a> {

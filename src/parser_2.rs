@@ -73,6 +73,25 @@ impl<'a, 'b> Parser2<'a, 'b> {
     pub fn parse_stmt(&mut self) -> Result<Stmt, Error> {
         let tok = self.peek();
         match &tok.kind {
+            TokenKind::Return => {
+                self.pop();
+
+                if self.peek().kind == TokenKind::Semicolon {
+                    self.pop();
+                    return Ok(Stmt {
+                        kind: StmtKind::Ret,
+                        range: tok.range,
+                    });
+                }
+
+                let expr = self.parse_expr()?;
+                Error::expect_semicolon(&self.pop())?;
+
+                return Ok(Stmt {
+                    kind: StmtKind::RetVal(expr),
+                    range: tok.range,
+                });
+            }
             _ => {
                 let decl = self.parse_simple_decl()?;
                 match &decl.decl_type().kind {

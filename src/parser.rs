@@ -216,7 +216,7 @@ impl<'a, 'b> Parser1<'a, 'b> {
 
         if tok.kind != TokenKind::LParen {
             return Err(Error::new(
-                "unexpected token when parsing function definition",
+                "unexpected token when parsing function declaration",
                 vec![
                     (
                         decl.range.clone(),
@@ -283,8 +283,26 @@ impl<'a, 'b> Parser1<'a, 'b> {
 
         let mut brace_count = 1;
         let mut body = Vec::new();
+
+        let mut tok = self.pop();
+        match tok.kind {
+            TokenKind::RBrace => brace_count -= 1,
+            TokenKind::LBrace => brace_count += 1,
+            TokenKind::End => {
+                return Err(Error::new(
+                    "unexpected end of file while parsing function",
+                    vec![
+                        (decl.range.start..end, "function declared here".to_string()),
+                        (tok.range, "missing closing brace here".to_string()),
+                    ],
+                ))
+            }
+            _ => {}
+        }
+
         while brace_count > 0 {
-            let tok = self.pop();
+            body.push(tok);
+            tok = self.pop();
             match tok.kind {
                 TokenKind::RBrace => brace_count -= 1,
                 TokenKind::LBrace => brace_count += 1,
@@ -299,7 +317,6 @@ impl<'a, 'b> Parser1<'a, 'b> {
                 }
                 _ => {}
             }
-            body.push(tok);
         }
         let body = self.buckets().add_array(body);
         return Ok(GlobalStmt {
