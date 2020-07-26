@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::errors::Error;
 use crate::lexer::Token;
-use crate::parser::Parser1;
+use crate::parser::{Parser, Parser1};
 use core::ops::Range;
 use std::collections::HashMap;
 
@@ -110,7 +110,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     }
 
                     out.kind = TCTypeKind::Struct {
-                        members: self.parser.buckets.add_array(vec![]),
+                        members: self.parser.buckets().add_array(vec![]),
                         complete: false,
                     };
 
@@ -143,7 +143,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
             }
             ASTTypeKind::StructDefn { ident, members } => {
                 out.kind = TCTypeKind::Struct {
-                    members: self.parser.buckets.add_array(Vec::new()),
+                    members: self.parser.buckets().add_array(Vec::new()),
                     complete: false,
                 };
 
@@ -171,7 +171,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 }
 
                 out.kind = TCTypeKind::Struct {
-                    members: self.parser.buckets.add_array(typed_members),
+                    members: self.parser.buckets().add_array(typed_members),
                     complete: true,
                 };
 
@@ -233,7 +233,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     type_params.push(self.convert_add_type(&param.decl_type, false)?);
                 }
 
-                let type_params = self.parser.buckets.add_array(type_params);
+                let type_params = self.parser.buckets().add_array(type_params);
                 let tc_func = TCFunc {
                     return_type,
                     params: type_params,
@@ -272,7 +272,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     type_params.push(self.convert_add_type(&param.decl_type, false)?);
                 }
 
-                let type_params = self.parser.buckets.add_array(type_params);
+                let type_params = self.parser.buckets().add_array(type_params);
                 let tc_func = TCFunc {
                     return_type,
                     params: type_params,

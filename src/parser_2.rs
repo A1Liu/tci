@@ -2,12 +2,12 @@ use crate::ast_2::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::{Token, TokenKind};
-use crate::parser::ExprParser;
+use crate::parser::{ExprParser, Parser, TypeParser};
 use crate::type_checker::*;
 use std::collections::HashMap;
 
 pub struct TypeEnv<'a, 'b> {
-    pub buckets: &'a mut BucketList<'b>,
+    pub _buckets: &'a mut BucketList<'b>,
     pub global_struct_types: HashMap<u32, TCType<'b>>,
     pub global_types: HashMap<u32, TCType<'b>>,
     pub global_symbols: HashMap<u32, TCType<'b>>,
@@ -17,7 +17,7 @@ pub struct TypeEnv<'a, 'b> {
 impl<'a, 'b> TypeEnv<'a, 'b> {
     pub fn new(checker: TypeChecker1<'a, 'b>) -> (HashMap<u32, &'b [Token]>, Self) {
         let env = Self {
-            buckets: checker.parser.buckets,
+            _buckets: checker.parser._buckets,
             global_struct_types: checker.struct_types,
             global_types: checker.types,
             global_symbols: checker.symbols,
@@ -28,15 +28,14 @@ impl<'a, 'b> TypeEnv<'a, 'b> {
     }
 }
 
-#[derive(Clone, Copy)]
 pub struct Parser2<'a, 'b> {
-    buckets: &'a BucketList<'b>,
+    _buckets: &'a mut BucketList<'b>,
     env: &'a TypeEnv<'a, 'b>,
     toks: &'a [Token],
     idx: usize,
 }
 
-impl<'a, 'b> ExprParser for Parser2<'a, 'b> {
+impl<'a, 'b> Parser<'b> for Parser2<'a, 'b> {
     fn peek(&mut self) -> Token {
         if self.idx >= self.toks.len() {
             return Token {
@@ -52,12 +51,19 @@ impl<'a, 'b> ExprParser for Parser2<'a, 'b> {
         self.idx += 1;
         return tok;
     }
+
+    fn buckets(&mut self) -> &mut BucketList<'b> {
+        return self._buckets;
+    }
 }
+
+impl<'a, 'b> ExprParser<'b> for Parser2<'a, 'b> {}
+impl<'a, 'b> TypeParser<'b> for Parser2<'a, 'b> {}
 
 impl<'a, 'b> Parser2<'a, 'b> {
     pub fn new(env: &'a TypeEnv<'a, 'b>, toks: &'a [Token]) -> Self {
         Self {
-            buckets: BucketList::new(),
+            _buckets: BucketList::new(),
             env,
             toks,
             idx: 0,
@@ -68,12 +74,25 @@ impl<'a, 'b> Parser2<'a, 'b> {
         let tok = self.peek();
         match &tok.kind {
             _ => {
-                return Err(Error::new(
-                    "unexpected token found while parsing statement",
-                    vec![(tok.range.clone(), "this is the token".to_string())],
-                ));
+                let decl = self.parse_simple_decl()?;
+                match decl.decl_type.kind {
+                    ASTTypeKind::StructDefn { .. } => {
+                        return Err(Error::new(
+                            "unexpected type defintion inside function body",
+                            vec![(
+                                decl.decl_type.range.clone(),
+                                "type definition found here".to_string(),
+                            )],
+                        ));
+                    }
+                    _ => {}
+                }
+
+                return Ok(Stmt {
+                    range: decl.range.clone(),
+                    kind: StmtKind::Decl(decl),
+                });
             }
         }
-        Err(Error::new("", vec![]))
     }
 }

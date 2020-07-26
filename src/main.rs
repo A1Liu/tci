@@ -18,7 +18,7 @@ mod util;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
-use parser::ExprParser;
+use parser::Parser;
 
 fn run_on_file<'a, 'b>(
     stdout: impl Write,
