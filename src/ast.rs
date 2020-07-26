@@ -5,7 +5,6 @@ use core::ops::Range;
 pub enum ExprKind {
     IntLiteral(u32),
     Ident(u32),
-    Uninit,
 }
 
 #[derive(Debug)]
@@ -15,11 +14,37 @@ pub struct Expr {
 }
 
 #[derive(Debug)]
+pub enum DeclKind<'a> {
+    Type(ASTType<'a>),
+    Uninit {
+        decl_type: ASTType<'a>,
+        ident: u32,
+    },
+    WithValue {
+        decl_type: ASTType<'a>,
+        ident: u32,
+        value: Expr,
+    },
+}
+
+#[derive(Debug)]
 pub struct Decl<'a> {
-    pub decl_type: ASTType<'a>,
-    pub ident: Option<u32>,
-    pub value: Option<Expr>,
+    pub kind: DeclKind<'a>,
     pub range: Range<u32>,
+}
+
+impl<'a> Decl<'a> {
+    pub fn decl_type(&self) -> &ASTType<'a> {
+        match &self.kind {
+            DeclKind::Type(decl_type) => decl_type,
+            DeclKind::Uninit { decl_type, ident } => decl_type,
+            DeclKind::WithValue {
+                decl_type,
+                ident,
+                value,
+            } => decl_type,
+        }
+    }
 }
 
 #[derive(Debug)]

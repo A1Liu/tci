@@ -91,26 +91,12 @@ pub trait TypeParser<'a>: ExprParser<'a> {
             ident = Some(id);
         }
 
-        let lbrace_tok = self.pop();
-        if lbrace_tok.kind != TokenKind::LBrace {
-            return Err(Error::new(
-                "expected '{' token, got something else instead",
-                vec![(lbrace_tok.range, "should be a '{'".to_string())],
-            ));
-        }
-
+        Error::expect_lbrace(&self.pop())?;
         let mut members = Vec::new();
 
         while self.peek().kind != TokenKind::RBrace {
             let decl = self.parse_simple_decl()?;
-            let semi_tok = self.pop();
-            if semi_tok.kind != TokenKind::Semicolon {
-                return Err(Error::new(
-                    "expected ';' token, got something else instead",
-                    vec![(semi_tok.range, "should be a '{'".to_string())],
-                ));
-            }
-
+            Error::expect_semicolon(&self.pop())?;
             members.push(decl);
         }
 
@@ -143,25 +129,26 @@ pub trait TypeParser<'a>: ExprParser<'a> {
                 let expr = self.parse_expr()?;
                 let end = expr.range.end;
                 return Ok(Decl {
-                    decl_type,
-                    ident: Some(id),
-                    value: Some(expr),
+                    kind: DeclKind::WithValue {
+                        decl_type,
+                        ident: id,
+                        value: expr,
+                    },
                     range: start..end,
                 });
             } else {
                 return Ok(Decl {
-                    decl_type,
-                    ident: Some(id),
-                    value: None,
+                    kind: DeclKind::Uninit {
+                        decl_type,
+                        ident: id,
+                    },
                     range: start..tok.range.end,
                 });
             }
         }
 
         return Ok(Decl {
-            decl_type,
-            ident: None,
-            value: None,
+            kind: DeclKind::Type(decl_type),
             range: start..tok.range.end,
         });
     }
@@ -204,16 +191,30 @@ impl<'a, 'b> Parser1<'a, 'b> {
 
     pub fn parse_global_decl(&mut self) -> Result<GlobalStmt<'b>, Error> {
         let decl = self.parse_simple_decl()?;
+
+        let (decl_type, ident) = match decl.kind {
+            DeclKind::Type(_) | DeclKind::WithValue { .. } => {
+                Error::expect_semicolon(&self.pop())?;
+                return Ok(GlobalStmt {
+                    range: decl.range.clone(),
+                    kind: GlobalStmtKind::Decl(decl),
+                });
+            }
+            DeclKind::Uninit { decl_type, ident } => (decl_type, ident),
+        };
+
         let tok = self.pop();
         if tok.kind == TokenKind::Semicolon {
-            let range = decl.range.clone();
             return Ok(GlobalStmt {
-                kind: GlobalStmtKind::Decl(decl),
-                range,
+                range: decl.range.clone(),
+                kind: GlobalStmtKind::Decl(Decl {
+                    kind: DeclKind::Uninit { decl_type, ident },
+                    range: decl.range,
+                }),
             });
         }
 
-        if tok.kind != TokenKind::LParen || decl.ident.is_none() {
+        if tok.kind != TokenKind::LParen {
             return Err(Error::new(
                 "unexpected token when parsing function definition",
                 vec![
@@ -259,8 +260,8 @@ impl<'a, 'b> Parser1<'a, 'b> {
         if end_decl_tok.kind == TokenKind::Semicolon {
             return Ok(GlobalStmt {
                 kind: GlobalStmtKind::FuncDecl {
-                    return_type: decl.decl_type,
-                    ident: decl.ident.unwrap(),
+                    return_type: decl_type,
+                    ident: ident,
                     params,
                 },
                 range: decl.range.start..end,
@@ -303,8 +304,8 @@ impl<'a, 'b> Parser1<'a, 'b> {
         let body = self.buckets().add_array(body);
         return Ok(GlobalStmt {
             kind: GlobalStmtKind::Func {
-                return_type: decl.decl_type,
-                ident: decl.ident.unwrap(),
+                return_type: decl_type,
+                ident: ident,
                 params,
                 body,
             },

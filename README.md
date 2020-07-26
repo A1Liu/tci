@@ -1,6 +1,5 @@
 # Teaching C Compiler
 The goals of this compiler are:
-
 1. Provide better error messages for new programmers
 2. Generate code that checks for segmentation faults at runtime and provides debug
    information
@@ -20,4 +19,6 @@ Run `gcc src/*.c` to build, and then `./a.out` to run the program.
 - No support for multithreading
 - Macros must be valid statements or expressions
 - Declarations of types is not allowed inside functions
+- Struct literals and array literals are allowed inside places where expressions
+  are expected, and are type inferred.
 

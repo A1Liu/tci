@@ -75,12 +75,12 @@ impl<'a, 'b> Parser2<'a, 'b> {
         match &tok.kind {
             _ => {
                 let decl = self.parse_simple_decl()?;
-                match decl.decl_type.kind {
+                match &decl.decl_type().kind {
                     ASTTypeKind::StructDefn { .. } => {
                         return Err(Error::new(
                             "unexpected type defintion inside function body",
                             vec![(
-                                decl.decl_type.range.clone(),
+                                decl.decl_type().range.clone(),
                                 "type definition found here".to_string(),
                             )],
                         ));
@@ -88,6 +88,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
                     _ => {}
                 }
 
+                Error::expect_semicolon(&self.pop())?;
                 return Ok(Stmt {
                     range: decl.range.clone(),
                     kind: StmtKind::Decl(decl),
