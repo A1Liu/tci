@@ -223,15 +223,15 @@ impl<'a, 'b> Parser2<'a, 'b> {
             TokenKind::LBrace => {
                 let (stmts, range) = self.parse_block()?;
                 if stmts.len() == 0 {
-                return Ok(Stmt {
-                    kind: StmtKind::Nop,
-                    range,
-                });
+                    return Ok(Stmt {
+                        kind: StmtKind::Nop,
+                        range,
+                    });
                 } else {
-                return Ok(Stmt {
-                    kind: StmtKind::Block(stmts),
-                    range,
-                });
+                    return Ok(Stmt {
+                        kind: StmtKind::Block(stmts),
+                        range,
+                    });
                 }
             }
             TokenKind::Return => {
