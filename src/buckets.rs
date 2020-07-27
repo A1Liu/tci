@@ -123,7 +123,7 @@ impl<'a> BucketList<'a> {
         }
     }
 
-    pub fn add<T>(&'a self, t: T) -> &'a mut T {
+    pub fn add<T>(&self, t: T) -> &'a mut T {
         unsafe {
             let location = self.data.alloc(Layout::new::<T>()) as *mut T;
             ptr::write(location, t);

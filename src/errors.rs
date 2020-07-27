@@ -24,6 +24,26 @@ impl Error {
         return Ok(());
     }
 
+    pub fn expect_rparen(tok: &Token) -> Result<(), Error> {
+        if tok.kind != TokenKind::RParen {
+            return Err(Self::new(
+                "expected ')' token, got something else instead",
+                vec![(tok.range.clone(), "should be a ')'".to_string())],
+            ));
+        }
+        return Ok(());
+    }
+
+    pub fn expect_lparen(tok: &Token) -> Result<(), Error> {
+        if tok.kind != TokenKind::LParen {
+            return Err(Self::new(
+                "expected '(' token, got something else instead",
+                vec![(tok.range.clone(), "should be a '('".to_string())],
+            ));
+        }
+        return Ok(());
+    }
+
     pub fn expect_semicolon(tok: &Token) -> Result<(), Error> {
         if tok.kind != TokenKind::Semicolon {
             return Err(Self::new(

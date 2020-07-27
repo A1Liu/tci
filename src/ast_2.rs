@@ -4,6 +4,7 @@ use core::ops::Range;
 pub enum StmtKind<'a> {
     Decl(Decl<'a>),
     Expr(Expr),
+    Nop,
     Ret,
     RetVal(Expr),
     Branch {

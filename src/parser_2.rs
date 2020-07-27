@@ -4,6 +4,8 @@ use crate::errors::Error;
 use crate::lexer::{Token, TokenKind};
 use crate::parser::{ExprParser, Parser, TypeParser};
 use crate::type_checker::*;
+use core::ops::Range;
+use core::slice;
 use std::collections::HashMap;
 
 pub struct TypeEnv<'a, 'b> {
@@ -87,11 +89,10 @@ impl<'a, 'b> Parser2<'a, 'b> {
         return Ok(decl);
     }
 
-    pub fn parse_stmt(&mut self) -> Result<Stmt<'a>, Error> {
-        let tok = self.peek();
-        match &tok.kind {
+    pub fn parse_block(&mut self) -> Result<(&'a [Stmt<'a>], Range<u32>), Error> {
+        let (stmts, range) = match self.peek().kind {
             TokenKind::LBrace => {
-                self.pop();
+                let start = self.pop().range.start;
 
                 let mut stmts = Vec::new();
                 while self.peek().kind != TokenKind::RBrace {
@@ -99,10 +100,139 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 }
                 let end = self.pop().range.end;
 
+                if stmts.len() == 1 {
+                    if let StmtKind::Block(stmts) = stmts[0].kind {
+                        (stmts, start..end)
+                    } else {
+                        (&*self.buckets().add_array(stmts), start..end)
+                    }
+                } else {
+                    (&*self.buckets().add_array(stmts), start..end)
+                }
+            }
+            _ => {
+                let stmt = self.parse_stmt()?;
+                let range = stmt.range.clone();
+                (slice::from_ref(self.buckets().add(stmt)), range)
+            }
+        };
+
+        return Ok((stmts, range));
+    }
+
+    pub fn parse_stmt(&mut self) -> Result<Stmt<'a>, Error> {
+        let tok = self.peek();
+        match &tok.kind {
+            TokenKind::For => {
+                let start = self.pop().range.start;
+
+                Error::expect_lparen(&self.pop())?;
+
+                let is_decl = match &self.peek().kind {
+                    TokenKind::Ident(id) => {
+                        if self.env.global_types.contains_key(id) {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    TokenKind::Char | TokenKind::Int | TokenKind::Void => true,
+                    _ => false,
+                };
+
+                let first_part = if is_decl {
+                    Ok(self.parse_simple_decl()?)
+                } else {
+                    Err(self.parse_expr()?)
+                };
+                Error::expect_semicolon(&self.pop())?;
+
+                let condition = self.parse_expr()?;
+                Error::expect_semicolon(&self.pop())?;
+
+                let post_expr = self.parse_expr()?;
+                Error::expect_semicolon(&self.pop())?;
+
+                Error::expect_rparen(&self.pop())?;
+
+                let (body, body_range) = self.parse_block()?;
+
+                match first_part {
+                    Ok(at_start) => {
+                        return Ok(Stmt {
+                            kind: StmtKind::ForDecl {
+                                at_start,
+                                condition,
+                                post_expr,
+                                body,
+                            },
+                            range: start..body_range.end,
+                        })
+                    }
+                    Err(at_start) => {
+                        return Ok(Stmt {
+                            kind: StmtKind::For {
+                                at_start,
+                                condition,
+                                post_expr,
+                                body,
+                            },
+                            range: start..body_range.end,
+                        })
+                    }
+                }
+            }
+            TokenKind::Semicolon => {
                 return Ok(Stmt {
-                    kind: StmtKind::Block(self.buckets().add_array(stmts)),
-                    range: tok.range.start..end,
+                    kind: StmtKind::Nop,
+                    range: self.pop().range,
                 });
+            }
+            TokenKind::If => {
+                let start = self.pop().range.start;
+
+                Error::expect_lparen(&self.pop())?;
+                let if_cond = self.parse_expr()?;
+                Error::expect_rparen(&self.pop())?;
+
+                let (if_body, if_body_range) = self.parse_block()?;
+
+                if self.peek().kind != TokenKind::Else {
+                    return Ok(Stmt {
+                        kind: StmtKind::Branch {
+                            if_cond,
+                            if_body,
+                            else_body: None,
+                        },
+                        range: start..if_body_range.end,
+                    });
+                }
+
+                self.pop();
+                let (else_body, else_body_range) = self.parse_block()?;
+
+                return Ok(Stmt {
+                    kind: StmtKind::Branch {
+                        if_cond,
+                        if_body,
+                        else_body: Some(else_body),
+                    },
+                    range: start..else_body_range.end,
+                });
+            }
+            TokenKind::LBrace => {
+                let (stmts, range) = self.parse_block()?;
+                if stmts.len() == 0 {
+                return Ok(Stmt {
+                    kind: StmtKind::Nop,
+                    range,
+                });
+                } else {
+                return Ok(Stmt {
+                    kind: StmtKind::Block(stmts),
+                    range,
+                });
+                }
             }
             TokenKind::Return => {
                 self.pop();
