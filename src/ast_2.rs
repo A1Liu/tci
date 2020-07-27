@@ -3,13 +3,15 @@ use core::ops::Range;
 
 pub enum StmtKind<'a> {
     Decl(Decl<'a>),
+    Expr(Expr),
     Ret,
     RetVal(Expr),
     Branch {
         if_cond: Expr,
         if_body: &'a [Stmt<'a>],
-        else_body: &'a [Stmt<'a>],
+        else_body: Option<&'a [Stmt<'a>]>,
     },
+    Block(&'a [Stmt<'a>]),
     For {
         at_start: Expr,
         condition: Expr,

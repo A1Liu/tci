@@ -29,10 +29,10 @@ impl<'a, 'b> TypeEnv<'a, 'b> {
 }
 
 pub struct Parser2<'a, 'b> {
-    _buckets: &'a mut BucketList<'b>,
-    env: &'a TypeEnv<'a, 'b>,
-    toks: &'a [Token],
-    idx: usize,
+    pub _buckets: &'a mut BucketList<'b>,
+    pub env: &'a TypeEnv<'a, 'b>,
+    pub toks: &'a [Token],
+    pub idx: usize,
 }
 
 impl<'a, 'b> Parser<'b> for Parser2<'a, 'b> {
@@ -70,9 +70,40 @@ impl<'a, 'b> Parser2<'a, 'b> {
         }
     }
 
-    pub fn parse_stmt(&mut self) -> Result<Stmt, Error> {
+    pub fn parse_local_decl(&mut self) -> Result<Decl<'a>, Error> {
+        let decl = self.parse_simple_decl()?;
+        match &decl.decl_type().kind {
+            ASTTypeKind::StructDefn { .. } => {
+                return Err(Error::new(
+                    "unexpected type defintion inside function body",
+                    vec![(
+                        decl.decl_type().range.clone(),
+                        "type definition found here".to_string(),
+                    )],
+                ));
+            }
+            _ => {}
+        }
+        return Ok(decl);
+    }
+
+    pub fn parse_stmt(&mut self) -> Result<Stmt<'a>, Error> {
         let tok = self.peek();
         match &tok.kind {
+            TokenKind::LBrace => {
+                self.pop();
+
+                let mut stmts = Vec::new();
+                while self.peek().kind != TokenKind::RBrace {
+                    stmts.push(self.parse_stmt()?);
+                }
+                let end = self.pop().range.end;
+
+                return Ok(Stmt {
+                    kind: StmtKind::Block(self.buckets().add_array(stmts)),
+                    range: tok.range.start..end,
+                });
+            }
             TokenKind::Return => {
                 self.pop();
 
@@ -92,25 +123,41 @@ impl<'a, 'b> Parser2<'a, 'b> {
                     range: tok.range,
                 });
             }
-            _ => {
-                let decl = self.parse_simple_decl()?;
-                match &decl.decl_type().kind {
-                    ASTTypeKind::StructDefn { .. } => {
-                        return Err(Error::new(
-                            "unexpected type defintion inside function body",
-                            vec![(
-                                decl.decl_type().range.clone(),
-                                "type definition found here".to_string(),
-                            )],
-                        ));
-                    }
-                    _ => {}
-                }
-
+            TokenKind::Int | TokenKind::Char | TokenKind::Void => {
+                let decl = self.parse_local_decl()?;
                 Error::expect_semicolon(&self.pop())?;
+
                 return Ok(Stmt {
                     range: decl.range.clone(),
                     kind: StmtKind::Decl(decl),
+                });
+            }
+            TokenKind::Ident(id) => {
+                if self.env.global_types.contains_key(id) {
+                    let decl = self.parse_local_decl()?;
+                    Error::expect_semicolon(&self.pop())?;
+
+                    return Ok(Stmt {
+                        range: decl.range.clone(),
+                        kind: StmtKind::Decl(decl),
+                    });
+                } else {
+                    let expr = self.parse_expr()?;
+                    Error::expect_semicolon(&self.pop())?;
+
+                    return Ok(Stmt {
+                        range: expr.range.clone(),
+                        kind: StmtKind::Expr(expr),
+                    });
+                }
+            }
+            _ => {
+                let expr = self.parse_expr()?;
+                Error::expect_semicolon(&self.pop())?;
+
+                return Ok(Stmt {
+                    range: expr.range.clone(),
+                    kind: StmtKind::Expr(expr),
                 });
             }
         }

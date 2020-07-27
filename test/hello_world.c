@@ -15,4 +15,7 @@ struct a b;
 
 struct d c;
 
-int main(int i, char **argv) { return 1; }
+int main(int i, char **argv) {
+  { return 12; }
+  return 1;
+}
