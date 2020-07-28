@@ -41,10 +41,11 @@ fn run_on_string<'b>(
 ) -> Result<(), Diagnostic<usize>> {
     write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
 
-    let mut type_checker = type_checker::TypeChecker1::new(input);
+    let mut parser = parser::Parser1::new(input);
+    let mut type_checker = type_checker::TypeChecker1::new();
     let mut parse_result = Vec::new();
     loop {
-        let decl = match type_checker.parser.parse_global_decl() {
+        let decl = match parser.parse_global_decl() {
             Ok(x) => x,
             Err(e) => {
                 return Err(Diagnostic::error().with_message(e.message).with_labels(
@@ -74,7 +75,7 @@ fn run_on_string<'b>(
         }
         parse_result.push(decl);
 
-        if type_checker.parser.peek().kind == lexer::TokenKind::End {
+        if parser.peek().kind == lexer::TokenKind::End {
             break;
         }
     }
@@ -83,7 +84,7 @@ fn run_on_string<'b>(
         write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
     }
 
-    let (functions, type_env) = parser_2::TypeEnv::new(type_checker);
+    let (functions, type_env) = (type_checker.functions, type_checker.env);
 
     for (function, tokens) in functions {
         let mut parser = parser_2::Parser2::new(&type_env, tokens);

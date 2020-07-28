@@ -6,29 +6,6 @@ use crate::parser::{ExprParser, Parser, TypeParser};
 use crate::type_checker::*;
 use core::ops::Range;
 use core::slice;
-use std::collections::HashMap;
-
-pub struct TypeEnv<'a, 'b> {
-    pub _buckets: &'a mut BucketList<'b>,
-    pub global_struct_types: HashMap<u32, TCType<'b>>,
-    pub global_types: HashMap<u32, TCType<'b>>,
-    pub global_symbols: HashMap<u32, TCType<'b>>,
-    pub global_func_types: HashMap<u32, TCFunc<'b>>,
-}
-
-impl<'a, 'b> TypeEnv<'a, 'b> {
-    pub fn new(checker: TypeChecker1<'a, 'b>) -> (HashMap<u32, &'b [Token]>, Self) {
-        let env = Self {
-            _buckets: checker.parser._buckets,
-            global_struct_types: checker.struct_types,
-            global_types: checker.types,
-            global_symbols: checker.symbols,
-            global_func_types: checker.func_types,
-        };
-
-        return (checker.functions, env);
-    }
-}
 
 pub struct Parser2<'a, 'b> {
     pub _buckets: &'a mut BucketList<'b>,
@@ -130,7 +107,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
 
                 let is_decl = match &self.peek().kind {
                     TokenKind::Ident(id) => {
-                        if self.env.global_types.contains_key(id) {
+                        if self.env.types.contains_key(id) {
                             true
                         } else {
                             false
@@ -263,7 +240,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 });
             }
             TokenKind::Ident(id) => {
-                if self.env.global_types.contains_key(id) {
+                if self.env.types.contains_key(id) {
                     let decl = self.parse_local_decl()?;
                     Error::expect_semicolon(&self.pop())?;
 

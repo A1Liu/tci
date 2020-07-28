@@ -1,7 +1,7 @@
 use crate::ast::*;
+use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::Token;
-use crate::parser::{Parser, Parser1};
 use core::ops::Range;
 use std::collections::HashMap;
 
@@ -57,30 +57,36 @@ impl<'a> PartialEq for TCFunc<'a> {
     }
 }
 
-pub struct TypeChecker1<'a, 'b> {
-    pub parser: Parser1<'a, 'b>,
+pub struct TypeEnv<'a, 'b> {
+    pub _buckets: &'a mut BucketList<'b>,
     pub struct_types: HashMap<u32, TCType<'b>>,
     pub types: HashMap<u32, TCType<'b>>,
     pub symbols: HashMap<u32, TCType<'b>>,
     pub func_types: HashMap<u32, TCFunc<'b>>,
+}
+
+pub struct TypeChecker1<'a, 'b> {
+    pub env: TypeEnv<'a, 'b>,
     pub functions: HashMap<u32, &'b [Token]>,
     pub decl_idx: u32,
 }
 
 impl<'a, 'b> TypeChecker1<'a, 'b> {
-    pub fn new(data: &'b str) -> Self {
+    pub fn new() -> Self {
         Self {
-            parser: Parser1::new(data),
-            struct_types: HashMap::new(),
-            types: HashMap::new(),
-            symbols: HashMap::new(),
-            func_types: HashMap::new(),
+            env: TypeEnv {
+                _buckets: BucketList::new(),
+                struct_types: HashMap::new(),
+                types: HashMap::new(),
+                symbols: HashMap::new(),
+                func_types: HashMap::new(),
+            },
             functions: HashMap::new(),
             decl_idx: 1,
         }
     }
 
-    pub fn convert_add_type_decl(&mut self, type_node: &ASTType<'b>) -> Result<TCType<'b>, Error> {
+    pub fn convert_add_type_decl(&mut self, type_node: &ASTType) -> Result<TCType<'b>, Error> {
         let mut out = TCType {
             kind: TCTypeKind::Int,
             decl_idx: 0,
@@ -90,7 +96,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
 
         match type_node.kind {
             ASTTypeKind::Struct { ident } => {
-                if let Some(t) = self.struct_types.get(&ident) {
+                if let Some(t) = self.env.struct_types.get(&ident) {
                     if let TCTypeKind::Struct { members, complete } = t.kind {
                         if !complete && t.pointer_count == 0 {
                             return Err(Error::new(
@@ -105,11 +111,11 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 }
 
                 out.kind = TCTypeKind::Struct {
-                    members: self.parser.buckets().add_array(vec![]),
+                    members: self.env._buckets.add_array(vec![]),
                     complete: false,
                 };
 
-                self.struct_types.insert(ident, out.clone());
+                self.env.struct_types.insert(ident, out.clone());
 
                 return Ok(out);
             }
@@ -125,7 +131,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
         }
     }
 
-    pub fn convert_add_type(&mut self, type_node: &ASTType<'b>) -> Result<TCType<'b>, Error> {
+    pub fn convert_add_type(&mut self, type_node: &ASTType) -> Result<TCType<'b>, Error> {
         let mut out = TCType {
             kind: TCTypeKind::Int,
             decl_idx: 0,
@@ -148,7 +154,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
             }
             ASTTypeKind::StructDefn { ident, members } => {
                 out.kind = TCTypeKind::Struct {
-                    members: self.parser.buckets().add_array(Vec::new()),
+                    members: self.env._buckets.add_array(Vec::new()),
                     complete: false,
                 };
 
@@ -157,7 +163,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 self.decl_idx += 1;
 
                 if let Some(id) = ident {
-                    self.struct_types.insert(*id, out.clone());
+                    self.env.struct_types.insert(*id, out.clone());
                 }
 
                 for member in *members {
@@ -177,18 +183,18 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 }
 
                 out.kind = TCTypeKind::Struct {
-                    members: self.parser.buckets().add_array(typed_members),
+                    members: self.env._buckets.add_array(typed_members),
                     complete: true,
                 };
 
                 if let Some(id) = ident {
-                    self.struct_types.insert(*id, out.clone());
+                    self.env.struct_types.insert(*id, out.clone());
                 }
 
                 return Ok(out);
             }
             ASTTypeKind::Struct { ident } => {
-                if let Some(t) = self.struct_types.get(ident) {
+                if let Some(t) = self.env.struct_types.get(ident) {
                     if let TCTypeKind::Struct { members, complete } = t.kind {
                         if !complete && t.pointer_count == 0 {
                             return Err(Error::new(
@@ -211,7 +217,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 ));
             }
             ASTTypeKind::Ident(id) => {
-                if let Some(t) = self.types.get(id) {
+                if let Some(t) = self.env.types.get(id) {
                     return Ok(t.clone());
                 }
 
@@ -226,7 +232,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
         }
     }
 
-    pub fn add_decl(&mut self, stmt: &GlobalStmt<'b>) -> Result<(), Error> {
+    pub fn add_decl(&mut self, stmt: &GlobalStmt) -> Result<(), Error> {
         match &stmt.kind {
             GlobalStmtKind::FuncDecl {
                 return_type,
@@ -239,7 +245,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     type_params.push(self.convert_add_type(param.decl_type())?);
                 }
 
-                let type_params = self.parser.buckets().add_array(type_params);
+                let type_params = self.env._buckets.add_array(type_params);
                 let tc_func = TCFunc {
                     return_type,
                     params: type_params,
@@ -248,7 +254,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 };
                 self.decl_idx += 1;
 
-                if let Some(func) = self.func_types.get(ident) {
+                if let Some(func) = self.env.func_types.get(ident) {
                     if &tc_func != func {
                         return Err(Error::new(
                             "function declaration doesn't match previous declaration",
@@ -263,7 +269,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     }
                 }
 
-                self.func_types.insert(*ident, tc_func);
+                self.env.func_types.insert(*ident, tc_func);
                 return Ok(());
             }
             GlobalStmtKind::Func {
@@ -278,7 +284,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     type_params.push(self.convert_add_type(param.decl_type())?);
                 }
 
-                let type_params = self.parser.buckets().add_array(type_params);
+                let type_params = self.env._buckets.add_array(type_params);
                 let tc_func = TCFunc {
                     return_type,
                     params: type_params,
@@ -287,7 +293,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 };
                 self.decl_idx += 1;
 
-                if let Some(func) = self.func_types.get(ident) {
+                if let Some(func) = self.env.func_types.get(ident) {
                     if let Some(_) = self.functions.get(ident) {
                         return Err(Error::new(
                             "function already defined",
@@ -309,8 +315,8 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     }
                 }
 
-                self.func_types.insert(*ident, tc_func);
-                self.functions.insert(*ident, body);
+                self.env.func_types.insert(*ident, tc_func);
+                self.functions.insert(*ident, self.env._buckets.add_slice(body));
                 return Ok(());
             }
             GlobalStmtKind::Decl(decl) => {
@@ -319,14 +325,16 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                         self.convert_add_type_decl(decl_type)?;
                     }
                     DeclKind::Uninit { decl_type, ident } => {
-                        let decl_type = self.convert_add_type(decl.decl_type())?;
-                        self.symbols.insert(*ident, decl_type);
+                        let decl_type = self.convert_add_type(decl_type)?;
+                        self.env.symbols.insert(*ident, decl_type);
                     }
                     DeclKind::WithValue {
                         decl_type,
                         ident,
                         value,
                     } => {
+                        let decl_type = self.convert_add_type(decl_type)?;
+                        self.env.symbols.insert(*ident, decl_type);
                         panic!("not implemented yet");
                     }
                 }
