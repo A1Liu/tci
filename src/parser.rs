@@ -95,7 +95,7 @@ pub trait ExprParser<'a>: Parser<'a> {
                 let (member, range) = Error::expect_ident(&self.pop())?;
 
                 return Ok(Expr {
-                    kind: ExprKind::Member {
+                    kind: ExprKind::PtrMember {
                         expr: self.buckets().add(operand),
                         member,
                     },
@@ -108,7 +108,7 @@ pub trait ExprParser<'a>: Parser<'a> {
                 let (member, range) = Error::expect_ident(&self.pop())?;
 
                 return Ok(Expr {
-                    kind: ExprKind::PtrMember {
+                    kind: ExprKind::Member {
                         expr: self.buckets().add(operand),
                         member,
                     },

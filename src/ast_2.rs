@@ -25,6 +25,10 @@ pub enum StmtKind<'a> {
         post_expr: Expr<'a>,
         body: &'a [Stmt<'a>],
     },
+    While {
+        condition: Expr<'a>,
+        body: &'a [Stmt<'a>],
+    },
 }
 
 pub struct Stmt<'a> {
