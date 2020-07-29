@@ -14,6 +14,27 @@ impl Error {
         }
     }
 
+    pub fn expect_ident(tok: &Token) -> Result<(u32, Range<u32>), Error> {
+        if let TokenKind::Ident(id) = tok.kind {
+            return Ok((id, tok.range.clone()));
+        } else {
+            return Err(Self::new(
+                "expected ']' token, got something else instead",
+                vec![(tok.range.clone(), "should be a ']'".to_string())],
+            ));
+        }
+    }
+
+    pub fn expect_rbracket(tok: &Token) -> Result<(), Error> {
+        if tok.kind != TokenKind::RBracket {
+            return Err(Self::new(
+                "expected ']' token, got something else instead",
+                vec![(tok.range.clone(), "should be a ']'".to_string())],
+            ));
+        }
+        return Ok(());
+    }
+
     pub fn expect_lbrace(tok: &Token) -> Result<(), Error> {
         if tok.kind != TokenKind::LBrace {
             return Err(Self::new(

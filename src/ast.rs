@@ -2,14 +2,32 @@ use crate::lexer::Token;
 use core::ops::Range;
 
 #[derive(Debug)]
-pub enum ExprKind {
+pub enum ExprKind<'a> {
     IntLiteral(u32),
     Ident(u32),
+    Call {
+        function: &'a Expr<'a>,
+        params: &'a [Expr<'a>],
+    },
+    Member {
+        expr: &'a Expr<'a>,
+        member: u32,
+    },
+    PtrMember {
+        expr: &'a Expr<'a>,
+        member: u32,
+    },
+    Index {
+        ptr: &'a Expr<'a>,
+        index: &'a Expr<'a>,
+    },
+    PostIncr(&'a Expr<'a>),
+    PostDecr(&'a Expr<'a>),
 }
 
 #[derive(Debug)]
-pub struct Expr {
-    pub kind: ExprKind,
+pub struct Expr<'a> {
+    pub kind: ExprKind<'a>,
     pub range: Range<u32>,
 }
 
@@ -23,7 +41,7 @@ pub enum DeclKind<'a> {
     WithValue {
         decl_type: ASTType<'a>,
         ident: u32,
-        value: Expr,
+        value: Expr<'a>,
     },
 }
 
