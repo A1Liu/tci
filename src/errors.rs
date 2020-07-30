@@ -1,3 +1,4 @@
+use crate::ast::{ASTType, ASTTypeKind};
 use crate::lexer::{Token, TokenKind};
 use std::ops::Range;
 
@@ -73,5 +74,17 @@ impl Error {
             ));
         }
         return Ok(());
+    }
+
+    pub fn expect_non_struct_defn(ast_type: &ASTType) -> Result<(), Error> {
+        match ast_type.kind {
+            ASTTypeKind::StructDefn { .. } => {
+                return Err(Error::new(
+                    "not allowed to define a struct in this context",
+                    vec![(ast_type.range.clone(), "struct defintion here".to_string())],
+                ));
+            }
+            _ => return Ok(()),
+        }
     }
 }

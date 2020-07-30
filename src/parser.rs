@@ -164,7 +164,7 @@ pub trait TypeParser<'a>: ExprParser<'a> {
                     pointer_count: 0,
                 })
             }
-            TokenKind::Struct => {}
+            TokenKind::Struct => { /* fallthrough */ }
             _ => {
                 return Err(Error::new(
                     "unexpected token while parsing type",

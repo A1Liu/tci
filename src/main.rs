@@ -43,7 +43,7 @@ fn run_on_string<'b>(
 
     let mut parser = parser::Parser1::new(input);
     let mut type_checker = type_checker::TypeChecker1::new();
-    let mut parse_result = Vec::new();
+    // let mut parse_result = Vec::new();
     loop {
         let decl = match parser.parse_global_decl() {
             Ok(x) => x,
@@ -57,53 +57,53 @@ fn run_on_string<'b>(
             }
         };
 
-        match type_checker.add_decl(&decl) {
-            Ok(()) => {}
-            Err(e) => {
-                return Err(Diagnostic::error().with_message(e.message).with_labels(
-                    e.sections
-                        .into_iter()
-                        .map(|x| {
-                            let mut label =
-                                Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize));
-                            label.message = x.1.clone();
-                            label
-                        })
-                        .collect(),
-                ))
-            }
-        }
-        parse_result.push(decl);
+        // match type_checker.add_decl(&decl) {
+        //     Ok(()) => {}
+        //     Err(e) => {
+        //         return Err(Diagnostic::error().with_message(e.message).with_labels(
+        //             e.sections
+        //                 .into_iter()
+        //                 .map(|x| {
+        //                     let mut label =
+        //                         Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize));
+        //                     label.message = x.1.clone();
+        //                     label
+        //                 })
+        //                 .collect(),
+        //         ))
+        //     }
+        // }
+        // parse_result.push(decl);
 
-        if parser.peek().kind == lexer::TokenKind::End {
-            break;
-        }
+        // if parser.peek().kind == lexer::TokenKind::End {
+        //     break;
+        // }
     }
 
-    for stmt in parse_result {
-        write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
-    }
+    // for stmt in parse_result {
+    //     write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
+    // }
 
-    let (functions, type_env) = (type_checker.functions, type_checker.env);
+    // let (functions, type_env) = (type_checker.functions, type_checker.env);
 
-    for (function, tokens) in functions {
-        let mut parser = parser_2::Parser2::new(&type_env, tokens);
-        while parser.peek().kind != lexer::TokenKind::End {
-            match parser.parse_stmt() {
-                Ok(x) => {}
-                Err(e) => {
-                    return Err(Diagnostic::error().with_message(e.message).with_labels(
-                        e.sections
-                            .iter()
-                            .map(|x| {
-                                Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
-                            })
-                            .collect(),
-                    ))
-                }
-            }
-        }
-    }
+    // for (function, tokens) in functions {
+    //     let mut parser = parser_2::Parser2::new(&type_env, tokens);
+    //     while parser.peek().kind != lexer::TokenKind::End {
+    //         match parser.parse_stmt() {
+    //             Ok(x) => {}
+    //             Err(e) => {
+    //                 return Err(Diagnostic::error().with_message(e.message).with_labels(
+    //                     e.sections
+    //                         .iter()
+    //                         .map(|x| {
+    //                             Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
+    //                         })
+    //                         .collect(),
+    //                 ))
+    //             }
+    //         }
+    //     }
+    // }
 
     return Ok(());
 }
