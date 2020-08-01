@@ -15,132 +15,8 @@ pub trait Parser<'a> {
     fn buckets(&mut self) -> &mut BucketList<'a>;
 }
 
-pub trait ExprParser<'a>: Parser<'a> {
-    fn parse_expr(&mut self) -> Result<Expr<'a>, Error> {
-        return self.parse_postfix();
-    }
-
-    fn parse_postfix(&mut self) -> Result<Expr<'a>, Error> {
-        let operand = self.parse_atom()?;
-        let start = operand.range.start;
-
-        match self.peek().kind {
-            TokenKind::LParen => {
-                self.pop();
-                let mut params = Vec::new();
-                let rparen_tok = self.peek();
-                if rparen_tok.kind != TokenKind::RParen {
-                    let param = self.parse_expr()?;
-                    params.push(param);
-                    let mut comma_tok = self.peek();
-                    while comma_tok.kind == TokenKind::Comma {
-                        self.pop();
-                        params.push(self.parse_expr()?);
-                        comma_tok = self.peek();
-                    }
-
-                    if comma_tok.kind != TokenKind::RParen {
-                        let range = comma_tok.range.clone();
-                        return Err(Error::new(
-                            "unexpected token when parsing end of function declaration",
-                            vec![
-                                (
-                                    params.pop().unwrap().range,
-                                    "interpreted as parameter declaration".to_string(),
-                                ),
-                                (range, format!("interpreted as {:?}", comma_tok)),
-                            ],
-                        ));
-                    }
-                }
-
-                let end = self.pop().range.end;
-                let params = self.buckets().add_array(params);
-                return Ok(Expr {
-                    kind: ExprKind::Call {
-                        function: self.buckets().add(operand),
-                        params,
-                    },
-                    range: start..end,
-                });
-            }
-            TokenKind::PlusPlus => {
-                return Ok(Expr {
-                    kind: ExprKind::PostIncr(self.buckets().add(operand)),
-                    range: start..self.pop().range.end,
-                })
-            }
-            TokenKind::DashDash => {
-                return Ok(Expr {
-                    kind: ExprKind::PostDecr(self.buckets().add(operand)),
-                    range: start..self.pop().range.end,
-                })
-            }
-            TokenKind::LBracket => {
-                self.pop();
-                let index = self.parse_expr()?;
-                let end = index.range.end;
-                Error::expect_rbracket(&self.pop())?;
-                return Ok(Expr {
-                    kind: ExprKind::Index {
-                        ptr: self.buckets().add(operand),
-                        index: self.buckets().add(index),
-                    },
-                    range: start..end,
-                });
-            }
-            TokenKind::Arrow => {
-                self.pop();
-
-                let (member, range) = Error::expect_ident(&self.pop())?;
-
-                return Ok(Expr {
-                    kind: ExprKind::PtrMember {
-                        expr: self.buckets().add(operand),
-                        member,
-                    },
-                    range: start..range.end,
-                });
-            }
-            TokenKind::Dot => {
-                self.pop();
-
-                let (member, range) = Error::expect_ident(&self.pop())?;
-
-                return Ok(Expr {
-                    kind: ExprKind::Member {
-                        expr: self.buckets().add(operand),
-                        member,
-                    },
-                    range: start..range.end,
-                });
-            }
-            _ => return Ok(operand),
-        }
-    }
-
-    fn parse_atom(&mut self) -> Result<Expr<'a>, Error> {
-        let tok = self.pop();
-        match tok.kind {
-            TokenKind::Ident(i) => {
-                return Ok(Expr {
-                    kind: ExprKind::Ident(i),
-                    range: tok.range,
-                })
-            }
-            TokenKind::IntLiteral(i) => {
-                return Ok(Expr {
-                    kind: ExprKind::IntLiteral(i),
-                    range: tok.range,
-                })
-            }
-            _ => return Err(Error::new("", vec![])),
-        }
-    }
-}
-
-pub trait TypeParser<'a>: ExprParser<'a> {
-    fn parse_type_prefix(&mut self) -> Result<ASTType<'a>, Error> {
+pub trait TypeParser<'a>: Parser<'a> {
+    fn parse_simple_type_prefix(&mut self) -> Result<ASTType, Error> {
         let tok = self.pop();
         match tok.kind {
             TokenKind::Int => {
@@ -164,91 +40,95 @@ pub trait TypeParser<'a>: ExprParser<'a> {
                     pointer_count: 0,
                 })
             }
-            TokenKind::Struct => { /* fallthrough */ }
-            _ => {
-                return Err(Error::new(
-                    "unexpected token while parsing type",
-                    vec![(
-                        tok.range.clone(),
-                        format!("this was interpreted as {:?}", tok),
-                    )],
-                ));
-            }
+            TokenKind::Struct => panic!("struct should be handled by another function"),
+            _ => return Err(Error::unexpected_token("type", &tok)),
         }
+    }
 
-        let ident_tok = self.peek();
-        let mut ident = None;
-        if let TokenKind::Ident(id) = ident_tok.kind {
+    fn parse_simple_decl(&mut self, mut decl_type: ASTType) -> Result<Decl<'a>, Error> {
+        while self.peek().kind == TokenKind::Star {
             self.pop();
-            if self.peek().kind != TokenKind::LBrace {
-                return Ok(ASTType {
-                    kind: ASTTypeKind::Struct { ident: id },
-                    range: tok.range.start..ident_tok.range.end,
-                    pointer_count: 0,
-                });
-            }
-            ident = Some(id);
+            decl_type.pointer_count += 1;
         }
 
-        Error::expect_lbrace(&self.pop())?;
-        let mut members = Vec::new();
+        let (ident, range) = Error::expect_ident(&self.pop())?;
 
-        while self.peek().kind != TokenKind::RBrace {
-            let decl = self.parse_simple_decl()?;
-            Error::expect_semicolon(&self.pop())?;
-            members.push(decl);
+        let eq_tok = self.peek();
+        if eq_tok.kind != TokenKind::Eq {
+            return Ok(Decl {
+                range: decl_type.range.start..range.end,
+                kind: DeclKind::Uninit { decl_type, ident },
+            });
         }
 
-        let members = self.buckets().add_array(members);
-        return Ok(ASTType {
-            kind: ASTTypeKind::StructDefn { ident, members },
-            range: tok.range.start..self.pop().range.end,
-            pointer_count: 0,
+        self.pop();
+
+        let mut toks = Vec::new();
+        let mut tok = self.pop();
+        while tok.kind != TokenKind::Semicolon && tok.kind != TokenKind::End {
+            toks.push(tok);
+            tok = self.pop();
+        }
+
+        if tok.kind == TokenKind::End {
+            return Err(Error::new("unexpected end of file", vec![]));
+        }
+
+        return Ok(Decl {
+            range: decl_type.range.start..tok.range.start,
+            kind: DeclKind::WithValue {
+                decl_type,
+                ident,
+                value: self.buckets().add_array(toks),
+            },
         });
     }
 
-    fn parse_simple_decl(&mut self) -> Result<Decl<'a>, Error> {
-        let tok = self.peek();
-        let start = tok.range.start;
-        let mut decl_type = self.parse_type_prefix()?;
+    fn parse_simple_decl_local(&mut self) -> Result<Decl<'a>, Error> {
+        let decl_type = match self.peek().kind {
+            TokenKind::Struct => {
+                let start = self.pop().range.start;
+                let (ident, range) = Error::expect_ident(&self.pop())?;
+                let tok = self.pop();
+
+                ASTType {
+                    kind: ASTTypeKind::Struct { ident },
+                    range: start..range.end,
+                    pointer_count: 0,
+                }
+            }
+            _ => self.parse_simple_type_prefix()?,
+        };
+
+        self.parse_simple_decl(decl_type)
+    }
+
+    fn parse_inner_struct_decl(&mut self) -> Result<InnerStructDecl, Error> {
+        let mut decl_type = match self.peek().kind {
+            TokenKind::Struct => {
+                let start = self.pop().range.start;
+                let (ident, range) = Error::expect_ident(&self.pop())?;
+
+                ASTType {
+                    kind: ASTTypeKind::Struct { ident },
+                    range: start..range.end,
+                    pointer_count: 0,
+                }
+            }
+            _ => self.parse_simple_type_prefix()?,
+        };
 
         while self.peek().kind == TokenKind::Star {
             self.pop();
             decl_type.pointer_count += 1;
         }
 
-        let tok = self.peek();
-        if let TokenKind::Ident(id) = tok.kind {
-            self.pop();
+        let (ident, range) = Error::expect_ident(&self.pop())?;
 
-            let eq_tok = self.peek();
-            if eq_tok.kind == TokenKind::Eq {
-                self.pop();
-
-                let expr = self.parse_expr()?;
-                let end = expr.range.end;
-                return Ok(Decl {
-                    kind: DeclKind::WithValue {
-                        decl_type,
-                        ident: id,
-                        value: expr,
-                    },
-                    range: start..end,
-                });
-            } else {
-                return Ok(Decl {
-                    kind: DeclKind::Uninit {
-                        decl_type,
-                        ident: id,
-                    },
-                    range: start..tok.range.end,
-                });
-            }
-        }
-
-        return Ok(Decl {
-            kind: DeclKind::Type(decl_type),
-            range: start..tok.range.end,
+        return Ok(InnerStructDecl {
+            range: decl_type.range.start..range.end,
+            decl_type,
+            ident,
         });
     }
 }
@@ -276,7 +156,6 @@ impl<'a, 'b> Parser<'b> for Parser1<'a, 'b> {
     }
 }
 
-impl<'a, 'b> ExprParser<'b> for Parser1<'a, 'b> {}
 impl<'a, 'b> TypeParser<'b> for Parser1<'a, 'b> {}
 
 impl<'a, 'b> Parser1<'a, 'b> {
@@ -289,10 +168,63 @@ impl<'a, 'b> Parser1<'a, 'b> {
     }
 
     pub fn parse_global_decl(&mut self) -> Result<GlobalStmt<'b>, Error> {
-        let decl = self.parse_simple_decl()?;
+        let decl_type = match self.peek().kind {
+            TokenKind::Struct => {
+                let start = self.pop().range.start;
+                let (ident, ident_range) = Error::expect_ident(&self.pop())?;
+                let tok = self.peek();
 
+                if tok.kind == TokenKind::LBrace {
+                    // parse as type definition
+                    self.pop();
+
+                    let mut decls = Vec::new();
+                    while self.peek().kind != TokenKind::RBrace {
+                        let decl = self.parse_inner_struct_decl()?;
+                        decls.push(decl);
+                        Error::expect_semicolon(&self.pop())?;
+                    }
+
+                    let end = self.pop().range.end;
+                    Error::expect_semicolon(&self.pop())?;
+
+                    return Ok(GlobalStmt {
+                        kind: GlobalStmtKind::StructDecl(StructDecl {
+                            ident,
+                            ident_range,
+                            range: start..end,
+                            members: Some(self.buckets().add_array(decls)),
+                        }),
+                        range: start..end,
+                    });
+                }
+
+                if tok.kind == TokenKind::Semicolon {
+                    self.pop();
+
+                    return Ok(GlobalStmt {
+                        range: start..ident_range.end,
+                        kind: GlobalStmtKind::StructDecl(StructDecl {
+                            ident,
+                            range: start..ident_range.end,
+                            ident_range,
+                            members: None,
+                        }),
+                    });
+                }
+
+                ASTType {
+                    kind: ASTTypeKind::Struct { ident },
+                    range: start..ident_range.end,
+                    pointer_count: 0,
+                }
+            }
+            _ => self.parse_simple_type_prefix()?,
+        };
+
+        let decl = self.parse_simple_decl(decl_type)?;
         let (decl_type, ident) = match decl.kind {
-            DeclKind::Type(_) | DeclKind::WithValue { .. } => {
+            DeclKind::WithValue { .. } => {
                 Error::expect_semicolon(&self.pop())?;
                 return Ok(GlobalStmt {
                     range: decl.range.clone(),
@@ -314,41 +246,24 @@ impl<'a, 'b> Parser1<'a, 'b> {
         }
 
         if tok.kind != TokenKind::LParen {
-            return Err(Error::new(
-                "unexpected token when parsing function declaration",
-                vec![
-                    (
-                        decl.range.clone(),
-                        "interpreted this as declaration".to_string(),
-                    ),
-                    (tok.range, "expected '(' here".to_string()),
-                ],
-            ));
+            return Err(Error::unexpected_token("function declaration", &tok));
         }
 
         let mut params = Vec::new();
         let rparen_tok = self.peek();
         if rparen_tok.kind != TokenKind::RParen {
-            let param = self.parse_simple_decl()?;
-            params.push(param);
+            params.push(self.parse_simple_decl_local()?);
             let mut comma_tok = self.peek();
             while comma_tok.kind == TokenKind::Comma {
                 self.pop();
-                params.push(self.parse_simple_decl()?);
+                params.push(self.parse_simple_decl_local()?);
                 comma_tok = self.peek();
             }
 
             if comma_tok.kind != TokenKind::RParen {
-                let range = comma_tok.range.clone();
-                return Err(Error::new(
-                    "unexpected token when parsing end of function declaration",
-                    vec![
-                        (
-                            params.pop().unwrap().range,
-                            "interpreted as parameter declaration".to_string(),
-                        ),
-                        (range, format!("interpreted as {:?}", comma_tok)),
-                    ],
+                return Err(Error::unexpected_token(
+                    "end of function declaration",
+                    &comma_tok,
                 ));
             }
         }
@@ -417,6 +332,7 @@ impl<'a, 'b> Parser1<'a, 'b> {
                 _ => {}
             }
         }
+
         let body = self.buckets().add_array(body);
         return Ok(GlobalStmt {
             kind: GlobalStmtKind::Func {

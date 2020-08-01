@@ -6,12 +6,12 @@ use std::fs::read_to_string;
 use std::io::Write;
 
 mod ast;
-mod ast_2;
+// mod ast_2;
 mod buckets;
 mod errors;
 mod lexer;
 mod parser;
-mod parser_2;
+// mod parser_2;
 mod type_checker;
 mod util;
 
@@ -51,7 +51,10 @@ fn run_on_string<'b>(
                 return Err(Diagnostic::error().with_message(e.message).with_labels(
                     e.sections
                         .iter()
-                        .map(|x| Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize)))
+                        .map(|x| {
+                            Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
+                                .with_message(&x.1)
+                        })
                         .collect(),
                 ))
             }
@@ -75,9 +78,9 @@ fn run_on_string<'b>(
         // }
         // parse_result.push(decl);
 
-        // if parser.peek().kind == lexer::TokenKind::End {
-        //     break;
-        // }
+        if parser.peek().kind == lexer::TokenKind::End {
+            break;
+        }
     }
 
     // for stmt in parse_result {

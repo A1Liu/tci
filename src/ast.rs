@@ -1,47 +1,61 @@
 use crate::lexer::Token;
 use core::ops::Range;
 
+// #[derive(Debug)]
+// pub enum ExprKind<'a> {
+//     IntLiteral(u32),
+//     Ident(u32),
+//     Call {
+//         function: &'a Expr<'a>,
+//         params: &'a [Expr<'a>],
+//     },
+//     Member {
+//         expr: &'a Expr<'a>,
+//         member: u32,
+//     },
+//     PtrMember {
+//         expr: &'a Expr<'a>,
+//         member: u32,
+//     },
+//     Index {
+//         ptr: &'a Expr<'a>,
+//         index: &'a Expr<'a>,
+//     },
+//     PostIncr(&'a Expr<'a>),
+//     PostDecr(&'a Expr<'a>),
+// }
+//
+// #[derive(Debug)]
+// pub struct Expr<'a> {
+//     pub kind: ExprKind<'a>,
+//     pub range: Range<u32>,
+// }
+
 #[derive(Debug)]
-pub enum ExprKind<'a> {
-    IntLiteral(u32),
-    Ident(u32),
-    Call {
-        function: &'a Expr<'a>,
-        params: &'a [Expr<'a>],
-    },
-    Member {
-        expr: &'a Expr<'a>,
-        member: u32,
-    },
-    PtrMember {
-        expr: &'a Expr<'a>,
-        member: u32,
-    },
-    Index {
-        ptr: &'a Expr<'a>,
-        index: &'a Expr<'a>,
-    },
-    PostIncr(&'a Expr<'a>),
-    PostDecr(&'a Expr<'a>),
+pub struct InnerStructDecl {
+    pub decl_type: ASTType,
+    pub ident: u32,
+    pub range: Range<u32>,
 }
 
 #[derive(Debug)]
-pub struct Expr<'a> {
-    pub kind: ExprKind<'a>,
+pub struct StructDecl<'a> {
+    pub ident: u32,
+    pub ident_range: Range<u32>,
+    pub members: Option<&'a [InnerStructDecl]>,
     pub range: Range<u32>,
 }
 
 #[derive(Debug)]
 pub enum DeclKind<'a> {
-    Type(ASTType<'a>),
     Uninit {
-        decl_type: ASTType<'a>,
+        decl_type: ASTType,
         ident: u32,
     },
     WithValue {
-        decl_type: ASTType<'a>,
+        decl_type: ASTType,
         ident: u32,
-        value: Expr<'a>,
+        value: &'a [Token],
     },
 }
 
@@ -52,15 +66,10 @@ pub struct Decl<'a> {
 }
 
 impl<'a> Decl<'a> {
-    pub fn decl_type(&self) -> &ASTType<'a> {
+    pub fn decl_type(&self) -> &ASTType {
         match &self.kind {
-            DeclKind::Type(decl_type) => decl_type,
-            DeclKind::Uninit { decl_type, ident } => decl_type,
-            DeclKind::WithValue {
-                decl_type,
-                ident,
-                value,
-            } => decl_type,
+            DeclKind::Uninit { decl_type, .. } => decl_type,
+            DeclKind::WithValue { decl_type, .. } => decl_type,
         }
     }
 }
@@ -68,16 +77,17 @@ impl<'a> Decl<'a> {
 #[derive(Debug)]
 pub enum GlobalStmtKind<'a> {
     Func {
-        return_type: ASTType<'a>,
+        return_type: ASTType,
         ident: u32,
         params: &'a [Decl<'a>],
         body: &'a [Token],
     },
     FuncDecl {
-        return_type: ASTType<'a>,
+        return_type: ASTType,
         ident: u32,
         params: &'a [Decl<'a>],
     },
+    StructDecl(StructDecl<'a>),
     Decl(Decl<'a>),
 }
 
@@ -88,23 +98,17 @@ pub struct GlobalStmt<'a> {
 }
 
 #[derive(Debug)]
-pub enum ASTTypeKind<'a> {
+pub enum ASTTypeKind {
     Int,
     Ident(u32),
-    Struct {
-        ident: u32,
-    },
-    StructDefn {
-        ident: Option<u32>,
-        members: &'a [Decl<'a>],
-    },
+    Struct { ident: u32 },
     Char,
     Void,
 }
 
 #[derive(Debug)]
-pub struct ASTType<'a> {
-    pub kind: ASTTypeKind<'a>,
+pub struct ASTType {
+    pub kind: ASTTypeKind,
     pub range: Range<u32>,
     pub pointer_count: u32,
 }

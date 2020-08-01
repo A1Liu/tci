@@ -2,7 +2,7 @@ use crate::ast_2::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::{Token, TokenKind};
-use crate::parser::{ExprParser, Parser, TypeParser};
+use crate::parser::{Parser, TypeParser};
 use crate::type_checker::*;
 use core::ops::Range;
 use core::slice;
@@ -36,7 +36,6 @@ impl<'a, 'b> Parser<'b> for Parser2<'a, 'b> {
     }
 }
 
-impl<'a, 'b> ExprParser<'b> for Parser2<'a, 'b> {}
 impl<'a, 'b> TypeParser<'b> for Parser2<'a, 'b> {}
 
 impl<'a, 'b> Parser2<'a, 'b> {
@@ -50,6 +49,8 @@ impl<'a, 'b> Parser2<'a, 'b> {
     }
 
     pub fn parse_local_decl(&mut self) -> Result<Decl<'a>, Error> {
+        let decl_type = match self.peek().kind {};
+
         let decl = self.parse_simple_decl()?;
         match &decl.decl_type().kind {
             ASTTypeKind::StructDefn { .. } => {
@@ -270,3 +271,129 @@ impl<'a, 'b> Parser2<'a, 'b> {
         }
     }
 }
+
+/*
+   pub trait ExprParser<'a>: Parser<'a> {
+   fn parse_expr(&mut self) -> Result<Expr<'a>, Error> {
+   return self.parse_postfix();
+   }
+
+   fn parse_postfix(&mut self) -> Result<Expr<'a>, Error> {
+   let operand = self.parse_atom()?;
+   let start = operand.range.start;
+
+   match self.peek().kind {
+   TokenKind::LParen => {
+   self.pop();
+   let mut params = Vec::new();
+   let rparen_tok = self.peek();
+   if rparen_tok.kind != TokenKind::RParen {
+   let param = self.parse_expr()?;
+   params.push(param);
+   let mut comma_tok = self.peek();
+   while comma_tok.kind == TokenKind::Comma {
+   self.pop();
+   params.push(self.parse_expr()?);
+   comma_tok = self.peek();
+   }
+
+   if comma_tok.kind != TokenKind::RParen {
+   let range = comma_tok.range.clone();
+   return Err(Error::new(
+   "unexpected token when parsing end of function declaration",
+   vec![
+   (
+   params.pop().unwrap().range,
+   "interpreted as parameter declaration".to_string(),
+   ),
+   (range, format!("interpreted as {:?}", comma_tok)),
+   ],
+   ));
+   }
+   }
+
+   let end = self.pop().range.end;
+   let params = self.buckets().add_array(params);
+   return Ok(Expr {
+   kind: ExprKind::Call {
+   function: self.buckets().add(operand),
+   params,
+   },
+   range: start..end,
+   });
+   }
+   TokenKind::PlusPlus => {
+   return Ok(Expr {
+   kind: ExprKind::PostIncr(self.buckets().add(operand)),
+   range: start..self.pop().range.end,
+   })
+   }
+   TokenKind::DashDash => {
+   return Ok(Expr {
+   kind: ExprKind::PostDecr(self.buckets().add(operand)),
+   range: start..self.pop().range.end,
+   })
+   }
+   TokenKind::LBracket => {
+   self.pop();
+   let index = self.parse_expr()?;
+   let end = index.range.end;
+   Error::expect_rbracket(&self.pop())?;
+   return Ok(Expr {
+   kind: ExprKind::Index {
+   ptr: self.buckets().add(operand),
+   index: self.buckets().add(index),
+},
+    range: start..end,
+    });
+}
+TokenKind::Arrow => {
+    self.pop();
+
+    let (member, range) = Error::expect_ident(&self.pop())?;
+
+    return Ok(Expr {
+        kind: ExprKind::PtrMember {
+            expr: self.buckets().add(operand),
+            member,
+        },
+        range: start..range.end,
+    });
+}
+TokenKind::Dot => {
+    self.pop();
+
+    let (member, range) = Error::expect_ident(&self.pop())?;
+
+    return Ok(Expr {
+        kind: ExprKind::Member {
+            expr: self.buckets().add(operand),
+            member,
+        },
+        range: start..range.end,
+    });
+}
+_ => return Ok(operand),
+  }
+}
+
+fn parse_atom(&mut self) -> Result<Expr<'a>, Error> {
+    let tok = self.pop();
+    match tok.kind {
+        TokenKind::Ident(i) => {
+            return Ok(Expr {
+                kind: ExprKind::Ident(i),
+                range: tok.range,
+            })
+        }
+        TokenKind::IntLiteral(i) => {
+            return Ok(Expr {
+                kind: ExprKind::IntLiteral(i),
+                range: tok.range,
+            })
+        }
+        _ => return Err(Error::new("", vec![])),
+    }
+}
+}
+*/

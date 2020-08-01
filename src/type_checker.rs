@@ -92,25 +92,14 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
     pub fn check_global_stmts(&mut self, stmts: &[GlobalStmt<'b>]) -> Result<(), Error> {
         for stmt in stmts {
             let decl_type = match &stmt.kind {
+                GlobalStmtKind::StructDecl(decl_type) => decl_type,
                 GlobalStmtKind::Decl(decl) => match &decl.kind {
-                    DeclKind::Type(decl_type) => decl_type,
-                    DeclKind::Uninit { decl_type, .. } => {
-                        Error::expect_non_struct_defn(decl_type)?;
-                        continue;
-                    }
-                    DeclKind::WithValue { decl_type, .. } => {
-                        Error::expect_non_struct_defn(decl_type)?;
-                        continue;
-                    }
+                    DeclKind::Uninit { decl_type, .. } => continue,
+
+                    DeclKind::WithValue { decl_type, .. } => continue,
                 },
-                GlobalStmtKind::Func { return_type, .. } => {
-                    Error::expect_non_struct_defn(return_type)?;
-                    continue;
-                }
-                GlobalStmtKind::FuncDecl { return_type, .. } => {
-                    Error::expect_non_struct_defn(return_type)?;
-                    continue;
-                }
+                GlobalStmtKind::Func { return_type, .. } => continue,
+                GlobalStmtKind::FuncDecl { return_type, .. } => continue,
             };
         }
 
@@ -118,161 +107,161 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
     }
 
     /*
-    pub fn convert_add_type_decl(&mut self, type_node: &ASTType) -> Result<TCType<'b>, Error> {
-        let mut out = TCType {
-            kind: TCTypeKind::Int,
-            pointer_count: type_node.pointer_count,
-        };
+           pub fn convert_add_type_decl(&mut self, type_node: &ASTType) -> Result<TCType<'b>, Error> {
+           let mut out = TCType {
+           kind: TCTypeKind::Int,
+           pointer_count: type_node.pointer_count,
+           };
 
-        match type_node.kind {
-            ASTTypeKind::Struct { ident } => {
-                if let Some(t) = self.env.struct_types.get(&ident) {
-                    match t.kind {
-                        TCTypeKind::Struct { .. } => return Ok(t.clone()),
-                        TCTypeKind::IncompleteStruct { range, .. } => {
-                            return Err(Error::new(
-                                "type is not complete yet",
-                                vec![(range, "type is not complete yet".to_string())],
-                            ))
-                        }
-                        _ => panic!("found incorrect type {:?} in struct_types", t),
-                    }
-                }
+           match type_node.kind {
+           ASTTypeKind::Struct { ident } => {
+           if let Some(t) = self.env.struct_types.get(&ident) {
+           match t.kind {
+           TCTypeKind::Struct { .. } => return Ok(t.clone()),
+           TCTypeKind::IncompleteStruct { range, .. } => {
+           return Err(Error::new(
+           "type is not complete yet",
+           vec![(range, "type is not complete yet".to_string())],
+           ))
+           }
+           _ => panic!("found incorrect type {:?} in struct_types", t),
+           }
+           }
 
-                out.kind = TCTypeKind::IncompleteStruct {
-                    range: type_node.range,
-                    decl_idx: self.decl_idx,
-                };
-                self.decl_idx += 1;
+           out.kind = TCTypeKind::IncompleteStruct {
+           range: type_node.range,
+           decl_idx: self.decl_idx,
+           };
+           self.decl_idx += 1;
 
-                self.env.struct_types.insert(ident, out.clone());
-                return Ok(out);
-            }
-            ASTTypeKind::StructDefn { .. } => return self.convert_add_type(type_node),
-            _ => {
-                return Err(Error::new(
-                    "Missing variable name in declaration",
-                    vec![(type_node.range.clone(), "declaration here".to_string())],
-                ));
-            }
-        }
+           self.env.struct_types.insert(ident, out.clone());
+           return Ok(out);
+           }
+           ASTTypeKind::StructDefn { .. } => return self.convert_add_type(type_node),
+           _ => {
+           return Err(Error::new(
+           "Missing variable name in declaration",
+           vec![(type_node.range.clone(), "declaration here".to_string())],
+           ));
+           }
+           }
+           }
+
+           pub fn convert_add_type(&mut self, type_node: &ASTType) -> Result<TCType<'b>, Error> {
+           let mut out = TCType {
+           kind: TCTypeKind::Int,
+           pointer_count: type_node.pointer_count,
+           };
+
+           match &type_node.kind {
+           ASTTypeKind::Int => {
+           out.kind = TCTypeKind::Int;
+           return Ok(out);
+           }
+           ASTTypeKind::Char => {
+           out.kind = TCTypeKind::Char;
+           return Ok(out);
+           }
+           ASTTypeKind::Void => {
+           out.kind = TCTypeKind::Void;
+           return Ok(out);
+           }
+           ASTTypeKind::StructDefn {
+           ident,
+           members,
+           ident_range,
+           } => {
+           let decl_idx = self.decl_idx;
+           self.decl_idx += 1;
+
+           out.kind = TCTypeKind::IncompleteStruct {
+           range: type_node.range.clone(),
+           decl_idx,
+    };
+
+    let mut typed_members = Vec::new();
+
+    if let Some(id) = ident {
+        self.env.struct_types.insert(*id, out.clone());
     }
 
-    pub fn convert_add_type(&mut self, type_node: &ASTType) -> Result<TCType<'b>, Error> {
-        let mut out = TCType {
-            kind: TCTypeKind::Int,
-            pointer_count: type_node.pointer_count,
+    for member in *members {
+        let (decl_type, ident) = match &member.kind {
+            DeclKind::Type(decl_type) => (self.convert_add_type_decl(decl_type)?, None),
+            DeclKind::Uninit { decl_type, ident } => {
+                (self.convert_add_type(decl_type)?, Some(*ident))
+            }
+            DeclKind::WithValue { value, .. } => {
+                return Err(Error::new(
+                        "default values for structs aren't supported",
+                        vec![(value.range, "value here".to_string())],
+                        ))
+            }
         };
 
-        match &type_node.kind {
-            ASTTypeKind::Int => {
-                out.kind = TCTypeKind::Int;
-                return Ok(out);
-            }
-            ASTTypeKind::Char => {
-                out.kind = TCTypeKind::Char;
-                return Ok(out);
-            }
-            ASTTypeKind::Void => {
-                out.kind = TCTypeKind::Void;
-                return Ok(out);
-            }
-            ASTTypeKind::StructDefn {
-                ident,
-                members,
-                ident_range,
-            } => {
-                let decl_idx = self.decl_idx;
-                self.decl_idx += 1;
+        typed_members.push(TCDecl {
+            decl_type,
+            ident: ident,
+            range: member.range.clone(),
+        });
+    }
 
-                out.kind = TCTypeKind::IncompleteStruct {
-                    range: type_node.range.clone(),
+    out.kind = TCTypeKind::Struct {
+        members: self.env._buckets.add_array(typed_members),
+        range: type_node.range.clone(),
+        decl_idx,
+    };
+
+    if let Some(id) = ident {
+        self.env.struct_types.insert(*id, out.clone());
+    }
+
+    return Ok(out);
+    }
+    ASTTypeKind::Struct { ident } => {
+        if let Some(t) = self.env.struct_types.get(ident) {
+            match t.kind {
+                TCTypeKind::Struct {
+                    members,
+                    range,
                     decl_idx,
-                };
-
-                let mut typed_members = Vec::new();
-
-                if let Some(id) = ident {
-                    self.env.struct_types.insert(*id, out.clone());
-                }
-
-                for member in *members {
-                    let (decl_type, ident) = match &member.kind {
-                        DeclKind::Type(decl_type) => (self.convert_add_type_decl(decl_type)?, None),
-                        DeclKind::Uninit { decl_type, ident } => {
-                            (self.convert_add_type(decl_type)?, Some(*ident))
-                        }
-                        DeclKind::WithValue { value, .. } => {
-                            return Err(Error::new(
-                                "default values for structs aren't supported",
-                                vec![(value.range, "value here".to_string())],
-                            ))
-                        }
-                    };
-
-                    typed_members.push(TCDecl {
-                        decl_type,
-                        ident: ident,
-                        range: member.range.clone(),
-                    });
-                }
-
-                out.kind = TCTypeKind::Struct {
-                    members: self.env._buckets.add_array(typed_members),
-                    range: type_node.range.clone(),
-                    decl_idx,
-                };
-
-                if let Some(id) = ident {
-                    self.env.struct_types.insert(*id, out.clone());
-                }
-
-                return Ok(out);
+                } => {}
             }
-            ASTTypeKind::Struct { ident } => {
-                if let Some(t) = self.env.struct_types.get(ident) {
-                    match t.kind {
-                        TCTypeKind::Struct {
-                            members,
-                            range,
-                            decl_idx,
-                        } => {}
-                    }
-                    if let TCTypeKind::Struct { members } = t.kind {
-                        if !complete && t.pointer_count == 0 {
-                            return Err(Error::new(
-                                "type is not complete yet",
-                                vec![(t.range.clone(), "type is not complete yet".to_string())],
+            if let TCTypeKind::Struct { members } = t.kind {
+                if !complete && t.pointer_count == 0 {
+                    return Err(Error::new(
+                            "type is not complete yet",
+                            vec![(t.range.clone(), "type is not complete yet".to_string())],
                             ));
-                        }
-                        return Ok(t.clone());
-                    }
-
-                    panic!("found incorrect type {:?} in struct_types", t);
                 }
-
-                return Err(Error::new(
-                    "unrecognized type name",
-                    vec![(
-                        type_node.range.clone(),
-                        "couldn't find this type name".to_string(),
-                    )],
-                ));
+                return Ok(t.clone());
             }
-            ASTTypeKind::Ident(id) => {
-                if let Some(t) = self.env.types.get(id) {
-                    return Ok(t.clone());
-                }
 
-                return Err(Error::new(
-                    "unrecognized type name",
-                    vec![(
-                        type_node.range.clone(),
-                        "couldn't find this type name".to_string(),
-                    )],
-                ));
-            }
+            panic!("found incorrect type {:?} in struct_types", t);
         }
+
+        return Err(Error::new(
+                "unrecognized type name",
+                vec![(
+                    type_node.range.clone(),
+                    "couldn't find this type name".to_string(),
+                    )],
+                ));
+    }
+    ASTTypeKind::Ident(id) => {
+        if let Some(t) = self.env.types.get(id) {
+            return Ok(t.clone());
+        }
+
+        return Err(Error::new(
+                "unrecognized type name",
+                vec![(
+                    type_node.range.clone(),
+                    "couldn't find this type name".to_string(),
+                    )],
+                ));
+    }
+    }
     }
 
     pub fn add_decl(&mut self, stmt: &GlobalStmt) -> Result<(), Error> {
@@ -300,15 +289,15 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 if let Some(func) = self.env.func_types.get(ident) {
                     if &tc_func != func {
                         return Err(Error::new(
-                            "function declaration doesn't match previous declaration",
-                            vec![
+                                "function declaration doesn't match previous declaration",
+                                vec![
                                 (func.range.clone(), "previous declaration here".to_string()),
                                 (
                                     stmt.range.clone(),
                                     "mismatched declaration here".to_string(),
                                 ),
-                            ],
-                        ));
+                                ],
+                                ));
                     }
                 }
 
@@ -339,22 +328,22 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 if let Some(func) = self.env.func_types.get(ident) {
                     if let Some(_) = self.functions.get(ident) {
                         return Err(Error::new(
-                            "function already defined",
-                            vec![
+                                "function already defined",
+                                vec![
                                 (func.range.clone(), "function defined here".to_string()),
                                 (stmt.range.clone(), "second definition here".to_string()),
-                            ],
-                        ));
+                                ],
+                                ));
                     }
 
                     if &tc_func != func {
                         return Err(Error::new(
-                            "function definition doesn't match previous declaration",
-                            vec![
+                                "function definition doesn't match previous declaration",
+                                vec![
                                 (func.range.clone(), "previous declaration here".to_string()),
                                 (stmt.range.clone(), "mismatched definition here".to_string()),
-                            ],
-                        ));
+                                ],
+                                ));
                     }
                 }
 

@@ -1,4 +1,3 @@
-use crate::ast::{ASTType, ASTTypeKind};
 use crate::lexer::{Token, TokenKind};
 use std::ops::Range;
 
@@ -15,13 +14,29 @@ impl Error {
         }
     }
 
+    pub fn unexpected_token(parsing_what: &str, tok: &Token) -> Error {
+        return Error {
+            message: "unexpected token while parsing ".to_string() + parsing_what,
+            sections: vec![(
+                tok.range.clone(),
+                format!("this was interpreted as {:?}", tok),
+            )],
+        };
+    }
+
     pub fn expect_ident(tok: &Token) -> Result<(u32, Range<u32>), Error> {
         if let TokenKind::Ident(id) = tok.kind {
             return Ok((id, tok.range.clone()));
         } else {
             return Err(Self::new(
-                "expected ']' token, got something else instead",
-                vec![(tok.range.clone(), "should be a ']'".to_string())],
+                "expected identifier token, got something else instead",
+                vec![(
+                    tok.range.clone(),
+                    format!(
+                        "this was interpreted as {:?} when it should be an identifier",
+                        tok
+                    ),
+                )],
             ));
         }
     }
@@ -30,7 +45,10 @@ impl Error {
         if tok.kind != TokenKind::RBracket {
             return Err(Self::new(
                 "expected ']' token, got something else instead",
-                vec![(tok.range.clone(), "should be a ']'".to_string())],
+                vec![(
+                    tok.range.clone(),
+                    format!("this was interpreted as {:?} when it should be a ']'", tok),
+                )],
             ));
         }
         return Ok(());
@@ -40,7 +58,10 @@ impl Error {
         if tok.kind != TokenKind::LBrace {
             return Err(Self::new(
                 "expected '{' token, got something else instead",
-                vec![(tok.range.clone(), "should be a '{'".to_string())],
+                vec![(
+                    tok.range.clone(),
+                    format!("this was interpreted as {:?} when it should be a '{{'", tok),
+                )],
             ));
         }
         return Ok(());
@@ -50,7 +71,10 @@ impl Error {
         if tok.kind != TokenKind::RParen {
             return Err(Self::new(
                 "expected ')' token, got something else instead",
-                vec![(tok.range.clone(), "should be a ')'".to_string())],
+                vec![(
+                    tok.range.clone(),
+                    format!("this was interpreted as {:?} when it should be a ')'", tok),
+                )],
             ));
         }
         return Ok(());
@@ -60,7 +84,10 @@ impl Error {
         if tok.kind != TokenKind::LParen {
             return Err(Self::new(
                 "expected '(' token, got something else instead",
-                vec![(tok.range.clone(), "should be a '('".to_string())],
+                vec![(
+                    tok.range.clone(),
+                    format!("this was interpreted as {:?} when it should be a '('", tok),
+                )],
             ));
         }
         return Ok(());
@@ -70,21 +97,12 @@ impl Error {
         if tok.kind != TokenKind::Semicolon {
             return Err(Self::new(
                 "expected ';' token, got something else instead",
-                vec![(tok.range.clone(), "should be a ';'".to_string())],
+                vec![(
+                    tok.range.clone(),
+                    format!("this was interpreted as {:?} when it should be a ';'", tok),
+                )],
             ));
         }
         return Ok(());
-    }
-
-    pub fn expect_non_struct_defn(ast_type: &ASTType) -> Result<(), Error> {
-        match ast_type.kind {
-            ASTTypeKind::StructDefn { .. } => {
-                return Err(Error::new(
-                    "not allowed to define a struct in this context",
-                    vec![(ast_type.range.clone(), "struct defintion here".to_string())],
-                ));
-            }
-            _ => return Ok(()),
-        }
     }
 }
