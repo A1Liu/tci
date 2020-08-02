@@ -234,6 +234,7 @@ impl<'a, 'b> Parser1<'a, 'b> {
             DeclKind::Uninit { decl_type, ident } => (decl_type, ident),
         };
 
+        let header_start = decl_type.range.start;
         let tok = self.pop();
         if tok.kind == TokenKind::Semicolon {
             return Ok(GlobalStmt {
@@ -252,11 +253,11 @@ impl<'a, 'b> Parser1<'a, 'b> {
         let mut params = Vec::new();
         let rparen_tok = self.peek();
         if rparen_tok.kind != TokenKind::RParen {
-            params.push(self.parse_simple_decl_local()?);
+            params.push(self.parse_inner_struct_decl()?);
             let mut comma_tok = self.peek();
             while comma_tok.kind == TokenKind::Comma {
                 self.pop();
-                params.push(self.parse_simple_decl_local()?);
+                params.push(self.parse_inner_struct_decl()?);
                 comma_tok = self.peek();
             }
 

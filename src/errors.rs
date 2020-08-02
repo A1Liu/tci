@@ -172,7 +172,46 @@ impl Error {
 
     pub fn variable_redefinition(original_range: &Range<u32>, range: &Range<u32>) -> Error {
         return Error::new(
-            "redefinition of struct",
+            "redefinition of variable",
+            vec![
+                (
+                    original_range.clone(),
+                    "original definition here".to_string(),
+                ),
+                (range.clone(), "second definition here".to_string()),
+            ],
+        );
+    }
+
+    pub fn parameter_redeclaration(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+        return Error::new(
+            "redeclaration of function parameter",
+            vec![
+                (
+                    original_range.clone(),
+                    "original declaration here".to_string(),
+                ),
+                (range.clone(), "second declaration here".to_string()),
+            ],
+        );
+    }
+
+    pub fn function_declaration_mismatch(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+        return Error::new(
+            "function declaration doesn't match previous declaration",
+            vec![
+                (
+                    original_range.clone(),
+                    "original declaration here".to_string(),
+                ),
+                (range.clone(), "second declaration here".to_string()),
+            ],
+        );
+    }
+
+    pub fn function_redefinition(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+        return Error::new(
+            "redefinition of function",
             vec![
                 (
                     original_range.clone(),

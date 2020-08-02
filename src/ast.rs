@@ -79,13 +79,13 @@ pub enum GlobalStmtKind<'a> {
     Func {
         return_type: ASTType,
         ident: u32,
-        params: &'a [Decl<'a>],
+        params: &'a [InnerStructDecl],
         body: &'a [Token],
     },
     FuncDecl {
         return_type: ASTType,
         ident: u32,
-        params: &'a [Decl<'a>],
+        params: &'a [InnerStructDecl],
     },
     StructDecl(StructDecl<'a>),
     Decl(Decl<'a>),

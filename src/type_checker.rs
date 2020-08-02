@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct TCStructMember {
     decl_type: TCType,
-    ident: Option<u32>,
+    ident: u32,
     range: Range<u32>,
 }
 
@@ -77,7 +77,7 @@ pub struct TypeEnv<'a, 'b> {
 pub struct TypeChecker1<'a, 'b> {
     pub env: TypeEnv<'a, 'b>,
     pub functions: HashMap<u32, &'b [Token]>,
-    pub values: HashMap<u32, Option<&'b [Token]>>,
+    pub values: HashMap<u32, &'b [Token]>,
 }
 
 impl<'a, 'b> TypeChecker1<'a, 'b> {
@@ -94,7 +94,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
         }
     }
 
-    pub fn check_global_stmts(&mut self, stmts: &[GlobalStmt<'b>]) -> Result<(), Error> {
+    pub fn check_global_stmts(&mut self, stmts: &[GlobalStmt]) -> Result<(), Error> {
         // Add all types to the type table
         for (decl_idx, stmt) in stmts.iter().enumerate() {
             let decl_type = match &stmt.kind {
@@ -140,7 +140,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 let member_type = self.convert_type(&member.decl_type);
                 typed_members.push(TCStructMember {
                     decl_type: member_type,
-                    ident: Some(member.ident),
+                    ident: member.ident,
                     range: member.range.clone(),
                 });
             }
@@ -211,7 +211,97 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                 ));
             }
 
-            self.values.insert(*ident, value);
+            if let Some(value) = value {
+                self.values
+                    .insert(*ident, self.env._buckets.add_slice(value));
+            }
+        }
+
+        for (decl_idx, stmt) in stmts.iter().enumerate() {
+            let (return_type, ident, params, func_body) = match &stmt.kind {
+                GlobalStmtKind::FuncDecl {
+                    return_type,
+                    ident,
+                    params,
+                } => (return_type, ident, params, None),
+                GlobalStmtKind::Func {
+                    return_type,
+                    ident,
+                    params,
+                    body,
+                } => (return_type, ident, params, Some(body)),
+                _ => continue,
+            };
+
+            let decl_idx = decl_idx as u32;
+            let type_range = return_type.range.clone();
+            let return_type = self.convert_type(return_type);
+            if let TCTypeKind::Struct { ident } = return_type.kind {
+                self.check_struct_type(
+                    ident,
+                    decl_idx,
+                    return_type.pointer_count,
+                    type_range.clone(),
+                )?;
+            }
+
+            let mut names = HashMap::new();
+            let mut typed_params = Vec::new();
+            for param in params.iter() {
+                if let Some(original_range) = names.get(&param.ident) {
+                    return Err(Error::parameter_redeclaration(original_range, &param.range));
+                } else {
+                    names.insert(param.ident, param.range.clone());
+                }
+
+                let param_type = self.convert_type(&param.decl_type);
+                if let TCTypeKind::Struct { ident } = return_type.kind {
+                    self.check_struct_type(
+                        ident,
+                        decl_idx,
+                        return_type.pointer_count,
+                        type_range.clone(),
+                    )?;
+                }
+
+                typed_params.push(TCStructMember {
+                    decl_type: param_type,
+                    ident: param.ident,
+                    range: param.range.clone(),
+                });
+            }
+
+            let typed_params = self.env._buckets.add_array(typed_params);
+            let tc_func_type = TCFunc {
+                return_type,
+                range: stmt.range.clone(),
+                params: typed_params,
+                decl_idx,
+            };
+
+            if let Some(prev_tc_func_type) = self.env.func_types.get(&ident) {
+                if prev_tc_func_type != &tc_func_type {
+                    return Err(Error::function_declaration_mismatch(
+                        &prev_tc_func_type.range,
+                        &tc_func_type.range,
+                    ));
+                }
+
+                if let Some(body) = self.functions.get(&ident) {
+                    if let Some(body) = func_body {
+                        return Err(Error::function_redefinition(
+                            &prev_tc_func_type.range,
+                            &tc_func_type.range,
+                        ));
+                    }
+                }
+            }
+
+            self.env.func_types.insert(*ident, tc_func_type);
+            if let Some(body) = func_body {
+                self.functions
+                    .insert(*ident, self.env._buckets.add_slice(body));
+            }
         }
 
         return Ok(());
