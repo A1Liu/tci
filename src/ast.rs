@@ -100,7 +100,6 @@ pub struct GlobalStmt<'a> {
 #[derive(Debug)]
 pub enum ASTTypeKind {
     Int,
-    Ident(u32),
     Struct { ident: u32 },
     Char,
     Void,

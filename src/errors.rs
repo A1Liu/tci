@@ -1,4 +1,6 @@
+use crate::ast::StructDecl;
 use crate::lexer::{Token, TokenKind};
+use crate::type_checker::TCStruct;
 use std::ops::Range;
 
 pub struct Error {
@@ -104,5 +106,66 @@ impl Error {
             ));
         }
         return Ok(());
+    }
+
+    pub fn struct_redefinition(original: &TCStruct, new: &StructDecl) -> Result<(), Error> {
+        if let Some((defn_idx, members)) = original.defn {
+            if let Some(new_members) = new.members {
+                return Err(Error::new(
+                    "redefinition of struct",
+                    vec![
+                        (
+                            original.range.clone(),
+                            "original definition here".to_string(),
+                        ),
+                        (new.range.clone(), "second definition here".to_string()),
+                    ],
+                ));
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub fn struct_member_redefinition(original: &Range<u32>, new: &Range<u32>) -> Error {
+        return Error::new(
+            "name redefined in struct",
+            vec![
+                (original.clone(), "first definition here".to_string()),
+                (new.clone(), "second definition here".to_string()),
+            ],
+        );
+    }
+
+    pub fn struct_member_incomplete_type(
+        member_type: &TCStruct,
+        member_range: &Range<u32>,
+    ) -> Error {
+        return Error::new(
+            "incomplete type used as member",
+            vec![
+                (
+                    member_type.range.clone(),
+                    "incomplete type is here".to_string(),
+                ),
+                (member_range.clone(), "type used is here".to_string()),
+            ],
+        );
+    }
+
+    pub fn struct_member_misordered_type(
+        member_type: &TCStruct,
+        member_range: &Range<u32>,
+    ) -> Error {
+        return Error::new(
+            "type defined later in file used as member",
+            vec![
+                (
+                    member_type.range.clone(),
+                    "type is defined here".to_string(),
+                ),
+                (member_range.clone(), "type is used here".to_string()),
+            ],
+        );
     }
 }

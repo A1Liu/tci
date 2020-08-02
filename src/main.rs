@@ -15,6 +15,9 @@ mod parser;
 mod type_checker;
 mod util;
 
+#[cfg(test)]
+mod test;
+
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
@@ -43,7 +46,7 @@ fn run_on_string<'b>(
 
     let mut parser = parser::Parser1::new(input);
     let mut type_checker = type_checker::TypeChecker1::new();
-    // let mut parse_result = Vec::new();
+    let mut parse_result = Vec::new();
     loop {
         let decl = match parser.parse_global_decl() {
             Ok(x) => x,
@@ -59,33 +62,33 @@ fn run_on_string<'b>(
                 ))
             }
         };
-
-        // match type_checker.add_decl(&decl) {
-        //     Ok(()) => {}
-        //     Err(e) => {
-        //         return Err(Diagnostic::error().with_message(e.message).with_labels(
-        //             e.sections
-        //                 .into_iter()
-        //                 .map(|x| {
-        //                     let mut label =
-        //                         Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize));
-        //                     label.message = x.1.clone();
-        //                     label
-        //                 })
-        //                 .collect(),
-        //         ))
-        //     }
-        // }
-        // parse_result.push(decl);
+        parse_result.push(decl);
 
         if parser.peek().kind == lexer::TokenKind::End {
             break;
         }
     }
 
-    // for stmt in parse_result {
-    //     write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
-    // }
+    for stmt in parse_result.iter() {
+        write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
+    }
+
+    match type_checker.check_global_stmts(&parse_result) {
+        Ok(()) => {}
+        Err(e) => {
+            return Err(Diagnostic::error().with_message(e.message).with_labels(
+                e.sections
+                    .into_iter()
+                    .map(|x| {
+                        let mut label =
+                            Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize));
+                        label.message = x.1.clone();
+                        label
+                    })
+                    .collect(),
+            ))
+        }
+    }
 
     // let (functions, type_env) = (type_checker.functions, type_checker.env);
 
@@ -109,38 +112,6 @@ fn run_on_string<'b>(
     // }
 
     return Ok(());
-}
-
-fn test_file_should_succeed(filename: &str) {
-    let writer = StandardStream::stderr(ColorChoice::Always);
-    let config = codespan_reporting::term::Config::default();
-
-    let buckets = buckets::BucketList::new();
-    let mut files = SimpleFiles::new();
-    let mut output = util::StringWriter::new();
-
-    match run_on_file(
-        &mut output,
-        util::Void::new(),
-        buckets,
-        &mut files,
-        filename,
-    ) {
-        Err(diagnostic) => {
-            codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
-                .expect("why did this fail?");
-            panic!();
-        }
-        _ => {}
-    }
-
-    let filename = String::from(filename);
-    // assert!(output.to_string() == read_to_string(filename + ".out").expect("why did this fail?"));
-}
-
-#[test]
-fn test_expr() {
-    test_file_should_succeed("test/hello_world.c");
 }
 
 fn main() {
