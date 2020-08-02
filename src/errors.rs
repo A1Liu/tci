@@ -137,34 +137,48 @@ impl Error {
         );
     }
 
-    pub fn struct_member_incomplete_type(
-        member_type: &TCStruct,
-        member_range: &Range<u32>,
-    ) -> Error {
+    pub fn struct_incomplete_type(member_type: &TCStruct, member_range: &Range<u32>) -> Error {
         return Error::new(
-            "incomplete type used as member",
+            "referenced incomplete type",
             vec![
                 (
                     member_type.range.clone(),
                     "incomplete type is here".to_string(),
                 ),
-                (member_range.clone(), "type used is here".to_string()),
+                (member_range.clone(), "type is used here".to_string()),
             ],
         );
     }
 
-    pub fn struct_member_misordered_type(
-        member_type: &TCStruct,
-        member_range: &Range<u32>,
-    ) -> Error {
+    pub fn struct_misordered_type(member_type: &TCStruct, member_range: &Range<u32>) -> Error {
         return Error::new(
-            "type defined later in file used as member",
+            "used type defined later in file",
             vec![
                 (
                     member_type.range.clone(),
                     "type is defined here".to_string(),
                 ),
                 (member_range.clone(), "type is used here".to_string()),
+            ],
+        );
+    }
+
+    pub fn struct_doesnt_exist(member_range: &Range<u32>) -> Error {
+        return Error::new(
+            "referenced struct that doesn't exist",
+            vec![(member_range.clone(), "struct is used here".to_string())],
+        );
+    }
+
+    pub fn variable_redefinition(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+        return Error::new(
+            "redefinition of struct",
+            vec![
+                (
+                    original_range.clone(),
+                    "original definition here".to_string(),
+                ),
+                (range.clone(), "second definition here".to_string()),
             ],
         );
     }

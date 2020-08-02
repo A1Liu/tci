@@ -26,25 +26,19 @@ fn test_file_should_succeed(filename: &str) {
 }
 
 fn test_file_should_fail(filename: &str) {
-    let writer = StandardStream::stderr(ColorChoice::Always);
+    let writer = StandardStream::stdout(ColorChoice::Always);
     let config = codespan_reporting::term::Config::default();
 
     let buckets = BucketList::new();
     let mut files = SimpleFiles::new();
-    let mut output = StringWriter::new();
 
-    match run_on_file(&mut output, Void::new(), buckets, &mut files, filename) {
+    match run_on_file(Void::new(), Void::new(), buckets, &mut files, filename) {
         Err(diagnostic) => {
             codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
                 .expect("why did this fail?");
         }
-        _ => {
-            panic!("should have failed");
-        }
+        _ => panic!("should have failed"),
     }
-
-    // let filename = String::from(filename);
-    // assert!(output.to_string() == read_to_string(filename + ".out").expect("why did this fail?"));
 }
 
 #[test]
@@ -55,4 +49,9 @@ fn test_expr() {
 #[test]
 fn test_recursive_struct() {
     test_file_should_fail("test/recursive_struct.c");
+}
+
+#[test]
+fn test_variable_redefinition() {
+    test_file_should_fail("test/var_redef.c");
 }
