@@ -42,16 +42,23 @@ pub struct TCValue {
 }
 
 #[derive(Debug, Clone)]
+pub struct TCFuncParam {
+    decl_type: TCType,
+    ident: u32,
+    range: Range<u32>,
+}
+
+#[derive(Debug, Clone)]
 pub struct TCFunc<'a> {
     return_type: TCType,
-    params: &'a [TCStructMember],
+    params: &'a [TCFuncParam],
     range: Range<u32>,
     decl_idx: u32,
 }
 
-impl PartialEq for TCStructMember {
+impl PartialEq for TCFuncParam {
     fn eq(&self, other: &Self) -> bool {
-        return self.decl_type == other.decl_type && self.ident == other.ident;
+        return self.decl_type == other.decl_type;
     }
 }
 
@@ -264,7 +271,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     )?;
                 }
 
-                typed_params.push(TCStructMember {
+                typed_params.push(TCFuncParam {
                     decl_type: param_type,
                     ident: param.ident,
                     range: param.range.clone(),
