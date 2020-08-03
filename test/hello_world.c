@@ -1,10 +1,11 @@
-int a;
-
 struct a;
 
 struct d {
   char b;
 };
+
+struct d b;
+struct d a = b = {'a'};
 
 struct a {
   int hello;
@@ -12,10 +13,6 @@ struct a {
   struct d c;
   struct d b;
 };
-
-struct a b;
-
-struct d c;
 
 int hello_world();
 

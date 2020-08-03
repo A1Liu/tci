@@ -48,27 +48,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
         }
     }
 
-    pub fn parse_local_decl(&mut self) -> Result<Decl<'a>, Error> {
-        let decl_type = match self.peek().kind {
-            TokenKind::Struct => {
-                let start = self.pop().range.start;
-                let (ident, range) = Error::expect_ident(&self.pop())?;
-                let tok = self.pop();
-
-                ASTType {
-                    kind: ASTTypeKind::Struct { ident },
-                    range: start..range.end,
-                    pointer_count: 0,
-                }
-            }
-            _ => self.parse_simple_type_prefix()?,
-        };
-
-        let decl = self.parse_simple_decl(decl_type)?;
-        return Ok(decl);
-    }
-
-    pub fn parse_block(&mut self) -> Result<(&'a [Stmt<'a>], Range<u32>), Error> {
+    pub fn parse_block(&mut self) -> Result<(&'b [Stmt<'b>], Range<u32>), Error> {
         let (stmts, range) = match self.peek().kind {
             TokenKind::LBrace => {
                 let start = self.pop().range.start;
@@ -99,13 +79,18 @@ impl<'a, 'b> Parser2<'a, 'b> {
         return Ok((stmts, range));
     }
 
-    pub fn parse_stmt(&mut self) -> Result<Stmt<'a>, Error> {
+    pub fn parse_decl(&mut self) -> Result<MultiDecl<'b>, Error> {
+        return Err(Error::new("", vec![]));
+    }
+
+    pub fn parse_stmt(&mut self) -> Result<Stmt<'b>, Error> {
         let tok = self.peek();
         match &tok.kind {
             TokenKind::For => {
                 let start = self.pop().range.start;
 
-                Error::expect_lparen(&self.pop())?;
+                let lparen_tok = self.pop();
+                Error::expect_lparen(&lparen_tok)?;
 
                 let is_decl = match &self.peek().kind {
                     TokenKind::Char | TokenKind::Int | TokenKind::Void => true,
@@ -113,7 +98,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 };
 
                 let first_part = if is_decl {
-                    Ok(self.parse_local_decl()?)
+                    Ok(self.parse_decl()?)
                 } else {
                     Err(self.parse_expr()?)
                 };
@@ -125,7 +110,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 let post_expr = self.parse_expr()?;
                 Error::expect_semicolon(&self.pop())?;
 
-                Error::expect_rparen(&self.pop())?;
+                Error::expect_rparen(&lparen_tok.range, &self.pop())?;
 
                 let (body, body_range) = self.parse_block()?;
 
@@ -163,9 +148,10 @@ impl<'a, 'b> Parser2<'a, 'b> {
             TokenKind::If => {
                 let start = self.pop().range.start;
 
+                let lparen_tok = self.pop();
                 Error::expect_lparen(&self.pop())?;
                 let if_cond = self.parse_expr()?;
-                Error::expect_rparen(&self.pop())?;
+                Error::expect_rparen(&lparen_tok.range, &self.pop())?;
 
                 let (if_body, if_body_range) = self.parse_block()?;
 
@@ -226,7 +212,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 });
             }
             TokenKind::Int | TokenKind::Char | TokenKind::Void => {
-                let decl = self.parse_local_decl()?;
+                let decl = self.parse_decl()?;
                 Error::expect_semicolon(&self.pop())?;
 
                 return Ok(Stmt {
@@ -255,11 +241,96 @@ impl<'a, 'b> Parser2<'a, 'b> {
         }
     }
 
-    fn parse_expr(&mut self) -> Result<Expr<'a>, Error> {
-        return self.parse_postfix();
+    pub fn parse_declaration_expression(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_assignment()
     }
 
-    fn parse_postfix(&mut self) -> Result<Expr<'a>, Error> {
+    #[inline]
+    pub fn parse_expr(&mut self) -> Result<Expr<'b>, Error> {
+        return self.parse_assignment();
+    }
+
+    pub fn parse_assignment(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_ternary()
+    }
+
+    pub fn parse_ternary(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_bool_or()
+    }
+
+    pub fn parse_bool_or(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_bool_and()
+    }
+
+    pub fn parse_bool_and(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_bit_or()
+    }
+
+    pub fn parse_bit_or(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_bit_xor()
+    }
+
+    pub fn parse_bit_xor(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_bit_and()
+    }
+
+    pub fn parse_bit_and(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_equality()
+    }
+
+    pub fn parse_equality(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_comparison()
+    }
+
+    pub fn parse_comparison(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_shift()
+    }
+
+    pub fn parse_shift(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_add()
+    }
+
+    pub fn parse_add(&mut self) -> Result<Expr<'b>, Error> {
+        let mut expr = self.parse_multiply()?;
+        loop {
+            let start = expr.range.start;
+            match self.peek().kind {
+                TokenKind::Plus => {
+                    self.pop();
+                    let right = self.parse_multiply()?;
+                    let end = right.range.end;
+                    let left = self.buckets().add(expr);
+                    let right = self.buckets().add(right);
+                    expr = Expr {
+                        kind: ExprKind::Add(left, right),
+                        range: start..end,
+                    };
+                }
+                TokenKind::Dash => {
+                    self.pop();
+                    let right = self.parse_multiply()?;
+                    let end = right.range.end;
+                    let left = self.buckets().add(expr);
+                    let right = self.buckets().add(right);
+                    expr = Expr {
+                        kind: ExprKind::Subtract(left, right),
+                        range: start..end,
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
+    }
+
+    pub fn parse_multiply(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_prefix()
+    }
+
+    pub fn parse_prefix(&mut self) -> Result<Expr<'b>, Error> {
+        self.parse_postfix()
+    }
+
+    pub fn parse_postfix(&mut self) -> Result<Expr<'b>, Error> {
         let operand = self.parse_atom()?;
         let start = operand.range.start;
 
@@ -358,7 +429,7 @@ impl<'a, 'b> Parser2<'a, 'b> {
         }
     }
 
-    fn parse_atom(&mut self) -> Result<Expr<'a>, Error> {
+    pub fn parse_atom(&mut self) -> Result<Expr<'b>, Error> {
         let tok = self.pop();
         match tok.kind {
             TokenKind::Ident(i) => {
@@ -372,6 +443,29 @@ impl<'a, 'b> Parser2<'a, 'b> {
                     kind: ExprKind::IntLiteral(i),
                     range: tok.range,
                 })
+            }
+            TokenKind::LParen => {
+                let mut expr = self.parse_expr()?;
+                let mut expr_list = Vec::new();
+                let start = expr.range.start;
+                while self.peek().kind == TokenKind::Comma {
+                    expr_list.push(expr);
+                    self.pop();
+                    expr = self.parse_expr()?;
+                }
+
+                Error::expect_rparen(&tok.range, &self.pop())?;
+
+                if expr_list.len() == 0 {
+                    return Ok(expr);
+                } else {
+                    let end = expr.range.end;
+                    expr_list.push(expr);
+                    return Ok(Expr {
+                        kind: ExprKind::List(self.buckets().add_array(expr_list)),
+                        range: start..end,
+                    });
+                }
             }
             _ => return Err(Error::new("", vec![])),
         }

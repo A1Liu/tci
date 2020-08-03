@@ -69,14 +69,17 @@ impl Error {
         return Ok(());
     }
 
-    pub fn expect_rparen(tok: &Token) -> Result<(), Error> {
+    pub fn expect_rparen(matching_tok: &Range<u32>, tok: &Token) -> Result<(), Error> {
         if tok.kind != TokenKind::RParen {
             return Err(Self::new(
                 "expected ')' token, got something else instead",
-                vec![(
-                    tok.range.clone(),
-                    format!("this was interpreted as {:?} when it should be a ')'", tok),
-                )],
+                vec![
+                    (
+                        tok.range.clone(),
+                        format!("this was interpreted as {:?} when it should be a ')'", tok),
+                    ),
+                    (matching_tok.clone(), "matching left paren here".to_string()),
+                ],
             ));
         }
         return Ok(());

@@ -144,7 +144,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     names.insert(member.ident, member.range.clone());
                 }
 
-                let member_type = self.convert_type(&member.decl_type);
+                let member_type = self.convert_type(&member.decl_type, member.pointer_count);
                 typed_members.push(TCStructMember {
                     decl_type: member_type,
                     ident: member.ident,
@@ -184,72 +184,69 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
             }
         }
 
+        // for (decl_idx, stmt) in stmts.iter().enumerate() {
+        //     let (decl_type, ident, range, value) = match &stmt.kind {
+        //         GlobalStmtKind::Decl(decl) => match &decl.kind {
+        //             DeclKind::Uninit { decl_type, ident } => {
+        //                 (decl_type, ident, decl.range.clone(), None)
+        //             }
+        //             DeclKind::WithValue {
+        //                 decl_type,
+        //                 ident,
+        //                 value,
+        //             } => (decl_type, ident, decl.range.clone(), Some(*value)),
+        //         },
+        //         _ => continue,
+        //     };
+
+        //     let decl_idx = decl_idx as u32;
+        //     let decl_type = self.convert_type(decl_type);
+        //     if let TCTypeKind::Struct { ident } = decl_type.kind {
+        //         self.check_struct_type(ident, decl_idx, decl_type.pointer_count, range.clone())?;
+        //     }
+
+        //     let value_type = TCValue {
+        //         decl_type,
+        //         decl_idx,
+        //         range: range.clone(),
+        //     };
+
+        //     if let Some(original_value_type) = self.env.symbols.insert(*ident, value_type) {
+        //         return Err(Error::variable_redefinition(
+        //             &original_value_type.range,
+        //             &range,
+        //         ));
+        //     }
+
+        //     if let Some(value) = value {
+        //         self.values
+        //             .insert(*ident, self.env._buckets.add_slice(value));
+        //     }
+        // }
+
         for (decl_idx, stmt) in stmts.iter().enumerate() {
-            let (decl_type, ident, range, value) = match &stmt.kind {
-                GlobalStmtKind::Decl(decl) => match &decl.kind {
-                    DeclKind::Uninit { decl_type, ident } => {
-                        (decl_type, ident, decl.range.clone(), None)
-                    }
-                    DeclKind::WithValue {
-                        decl_type,
-                        ident,
-                        value,
-                    } => (decl_type, ident, decl.range.clone(), Some(*value)),
-                },
-                _ => continue,
-            };
-
-            let decl_idx = decl_idx as u32;
-            let decl_type = self.convert_type(decl_type);
-            if let TCTypeKind::Struct { ident } = decl_type.kind {
-                self.check_struct_type(ident, decl_idx, decl_type.pointer_count, range.clone())?;
-            }
-
-            let value_type = TCValue {
-                decl_type,
-                decl_idx,
-                range: range.clone(),
-            };
-
-            if let Some(original_value_type) = self.env.symbols.insert(*ident, value_type) {
-                return Err(Error::variable_redefinition(
-                    &original_value_type.range,
-                    &range,
-                ));
-            }
-
-            if let Some(value) = value {
-                self.values
-                    .insert(*ident, self.env._buckets.add_slice(value));
-            }
-        }
-
-        for (decl_idx, stmt) in stmts.iter().enumerate() {
-            let (return_type, ident, params, func_body) = match &stmt.kind {
+            let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
                 GlobalStmtKind::FuncDecl {
                     return_type,
                     ident,
+                    pointer_count,
                     params,
-                } => (return_type, ident, params, None),
+                } => (return_type, pointer_count, ident, params, None),
                 GlobalStmtKind::Func {
                     return_type,
                     ident,
+                    pointer_count,
                     params,
                     body,
-                } => (return_type, ident, params, Some(body)),
+                } => (return_type, pointer_count, ident, params, Some(body)),
                 _ => continue,
             };
 
             let decl_idx = decl_idx as u32;
             let type_range = return_type.range.clone();
-            let return_type = self.convert_type(return_type);
+            let return_type = self.convert_type(return_type, *pointer_count);
             if let TCTypeKind::Struct { ident } = return_type.kind {
-                self.check_struct_type(
-                    ident,
-                    decl_idx,
-                    return_type.pointer_count,
-                    type_range.clone(),
-                )?;
+                self.check_struct_type(ident, decl_idx, *pointer_count, type_range.clone())?;
             }
 
             let mut names = HashMap::new();
@@ -261,7 +258,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     names.insert(param.ident, param.range.clone());
                 }
 
-                let param_type = self.convert_type(&param.decl_type);
+                let param_type = self.convert_type(&param.decl_type, *pointer_count);
                 if let TCTypeKind::Struct { ident } = return_type.kind {
                     self.check_struct_type(
                         ident,
@@ -336,10 +333,10 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
         return Ok(());
     }
 
-    pub fn convert_type(&mut self, type_node: &ASTType) -> TCType {
+    pub fn convert_type(&mut self, type_node: &ASTType, pointer_count: u32) -> TCType {
         let mut out = TCType {
             kind: TCTypeKind::Int,
-            pointer_count: type_node.pointer_count,
+            pointer_count: pointer_count,
         };
 
         match &type_node.kind {

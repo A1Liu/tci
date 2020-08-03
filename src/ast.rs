@@ -4,6 +4,7 @@ use core::ops::Range;
 #[derive(Debug)]
 pub struct InnerStructDecl {
     pub decl_type: ASTType,
+    pub pointer_count: u32,
     pub ident: u32,
     pub range: Range<u32>,
 }
@@ -17,48 +18,37 @@ pub struct StructDecl<'a> {
 }
 
 #[derive(Debug)]
-pub enum DeclKind<'a> {
-    Uninit {
-        decl_type: ASTType,
-        ident: u32,
-    },
-    WithValue {
-        decl_type: ASTType,
-        ident: u32,
-        value: &'a [Token],
-    },
-}
-
-#[derive(Debug)]
-pub struct Decl<'a> {
-    pub kind: DeclKind<'a>,
+pub struct DeclIdent {
+    pub pointer_count: u32,
+    pub ident: u32,
     pub range: Range<u32>,
-}
-
-impl<'a> Decl<'a> {
-    pub fn decl_type(&self) -> &ASTType {
-        match &self.kind {
-            DeclKind::Uninit { decl_type, .. } => decl_type,
-            DeclKind::WithValue { decl_type, .. } => decl_type,
-        }
-    }
 }
 
 #[derive(Debug)]
 pub enum GlobalStmtKind<'a> {
     Func {
         return_type: ASTType,
+        pointer_count: u32,
         ident: u32,
         params: &'a [InnerStructDecl],
         body: &'a [Token],
     },
     FuncDecl {
         return_type: ASTType,
+        pointer_count: u32,
         ident: u32,
         params: &'a [InnerStructDecl],
     },
     StructDecl(StructDecl<'a>),
-    Decl(Decl<'a>),
+    SingletonDecl {
+        decl_type: ASTType,
+        pointer_count: u32,
+        ident: u32,
+    },
+    Decl {
+        decl_type: ASTType,
+        tokens: &'a [Token],
+    },
 }
 
 #[derive(Debug)]
@@ -79,5 +69,4 @@ pub enum ASTTypeKind {
 pub struct ASTType {
     pub kind: ASTTypeKind,
     pub range: Range<u32>,
-    pub pointer_count: u32,
 }

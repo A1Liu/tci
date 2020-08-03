@@ -23,21 +23,18 @@ pub trait TypeParser<'a>: Parser<'a> {
                 return Ok(ASTType {
                     kind: ASTTypeKind::Int,
                     range: tok.range,
-                    pointer_count: 0,
                 })
             }
             TokenKind::Void => {
                 return Ok(ASTType {
                     kind: ASTTypeKind::Void,
                     range: tok.range,
-                    pointer_count: 0,
                 })
             }
             TokenKind::Char => {
                 return Ok(ASTType {
                     kind: ASTTypeKind::Char,
                     range: tok.range,
-                    pointer_count: 0,
                 })
             }
             TokenKind::Struct => panic!("struct should be handled by another function"),
@@ -45,88 +42,81 @@ pub trait TypeParser<'a>: Parser<'a> {
         }
     }
 
-    fn parse_simple_decl(&mut self, mut decl_type: ASTType) -> Result<Decl<'a>, Error> {
-        while self.peek().kind == TokenKind::Star {
-            self.pop();
-            decl_type.pointer_count += 1;
-        }
-
-        let (ident, range) = Error::expect_ident(&self.pop())?;
-
-        let eq_tok = self.peek();
-        if eq_tok.kind != TokenKind::Eq {
-            return Ok(Decl {
-                range: decl_type.range.start..range.end,
-                kind: DeclKind::Uninit { decl_type, ident },
-            });
-        }
-
-        self.pop();
-
+    // Vec returned is always non-empty
+    fn parse_simple_decl(&mut self) -> Result<Result<DeclIdent, Vec<Token>>, Error> {
+        let mut pointer_count: u32 = 0;
         let mut toks = Vec::new();
-        let mut tok = self.pop();
+        while self.peek().kind == TokenKind::Star {
+            toks.push(self.pop());
+            pointer_count += 1;
+        }
+
+        let tok = self.pop();
+        let (ident, range) = Error::expect_ident(&tok)?;
+        toks.push(tok);
+
+        let tok = self.peek();
+        if tok.kind == TokenKind::Comma {
+            self.pop();
+            let decl_var = DeclIdent {
+                pointer_count,
+                ident,
+                range,
+            };
+            return Ok(Ok(decl_var));
+        }
+
+        if tok.kind != TokenKind::Eq {
+            let decl_var = DeclIdent {
+                pointer_count,
+                ident,
+                range,
+            };
+            return Ok(Ok(decl_var));
+        }
+
+        let mut tok = self.peek();
         while tok.kind != TokenKind::Semicolon && tok.kind != TokenKind::End {
+            self.pop();
             toks.push(tok);
-            tok = self.pop();
+            tok = self.peek();
         }
 
         if tok.kind == TokenKind::End {
-            return Err(Error::new("unexpected end of file", vec![]));
+            return Err(Error::new(
+                "unexpected end of file",
+                vec![(tok.range.clone(), "end of file here".to_string())],
+            ));
         }
 
-        return Ok(Decl {
-            range: decl_type.range.start..tok.range.start,
-            kind: DeclKind::WithValue {
-                decl_type,
-                ident,
-                value: self.buckets().add_array(toks),
-            },
-        });
+        return Ok(Err(toks));
     }
 
-    fn parse_simple_decl_local(&mut self) -> Result<Decl<'a>, Error> {
+    fn parse_inner_struct_decl(&mut self) -> Result<InnerStructDecl, Error> {
         let decl_type = match self.peek().kind {
             TokenKind::Struct => {
                 let start = self.pop().range.start;
                 let (ident, range) = Error::expect_ident(&self.pop())?;
-                let tok = self.pop();
 
                 ASTType {
                     kind: ASTTypeKind::Struct { ident },
                     range: start..range.end,
-                    pointer_count: 0,
                 }
             }
             _ => self.parse_simple_type_prefix()?,
         };
 
-        self.parse_simple_decl(decl_type)
-    }
-
-    fn parse_inner_struct_decl(&mut self) -> Result<InnerStructDecl, Error> {
-        let mut decl_type = match self.peek().kind {
-            TokenKind::Struct => {
-                let start = self.pop().range.start;
-                let (ident, range) = Error::expect_ident(&self.pop())?;
-
-                ASTType {
-                    kind: ASTTypeKind::Struct { ident },
-                    range: start..range.end,
-                    pointer_count: 0,
-                }
-            }
-            _ => self.parse_simple_type_prefix()?,
-        };
-
+        let mut pointer_count: u32 = 0;
         while self.peek().kind == TokenKind::Star {
             self.pop();
-            decl_type.pointer_count += 1;
+            pointer_count += 1;
         }
 
         let (ident, range) = Error::expect_ident(&self.pop())?;
 
         return Ok(InnerStructDecl {
             range: decl_type.range.start..range.end,
+            pointer_count,
             decl_type,
             ident,
         });
@@ -216,33 +206,36 @@ impl<'a, 'b> Parser1<'a, 'b> {
                 ASTType {
                     kind: ASTTypeKind::Struct { ident },
                     range: start..ident_range.end,
-                    pointer_count: 0,
                 }
             }
             _ => self.parse_simple_type_prefix()?,
         };
 
-        let decl = self.parse_simple_decl(decl_type)?;
-        let (decl_type, ident) = match decl.kind {
-            DeclKind::WithValue { .. } => {
+        let decl = self.parse_simple_decl()?;
+        let (pointer_count, ident, ident_range) = match decl {
+            Ok(decl) => (decl.pointer_count, decl.ident, decl.range),
+            Err(tokens) => {
                 Error::expect_semicolon(&self.pop())?;
                 return Ok(GlobalStmt {
-                    range: decl.range.clone(),
-                    kind: GlobalStmtKind::Decl(decl),
+                    range: decl_type.range.start..tokens.last().unwrap().range.end,
+                    kind: GlobalStmtKind::Decl {
+                        decl_type,
+                        tokens: self.buckets().add_array(tokens),
+                    },
                 });
             }
-            DeclKind::Uninit { decl_type, ident } => (decl_type, ident),
         };
 
         let header_start = decl_type.range.start;
         let tok = self.pop();
         if tok.kind == TokenKind::Semicolon {
             return Ok(GlobalStmt {
-                range: decl.range.clone(),
-                kind: GlobalStmtKind::Decl(Decl {
-                    kind: DeclKind::Uninit { decl_type, ident },
-                    range: decl.range,
-                }),
+                range: decl_type.range.start..ident_range.end,
+                kind: GlobalStmtKind::SingletonDecl {
+                    pointer_count,
+                    decl_type,
+                    ident,
+                },
             });
         }
 
@@ -274,12 +267,13 @@ impl<'a, 'b> Parser1<'a, 'b> {
         let end_decl_tok = self.pop();
         if end_decl_tok.kind == TokenKind::Semicolon {
             return Ok(GlobalStmt {
+                range: decl_type.range.start..end,
                 kind: GlobalStmtKind::FuncDecl {
+                    pointer_count,
                     return_type: decl_type,
                     ident: ident,
                     params,
                 },
-                range: decl.range.start..end,
             });
         }
 
@@ -288,7 +282,7 @@ impl<'a, 'b> Parser1<'a, 'b> {
                 "unexpected token when parsing ending of function declaration",
                 vec![
                     (
-                        decl.range.start..end,
+                        decl_type.range.start..end,
                         "this was parsed as a function declaration".to_string(),
                     ),
                     (end_decl_tok.range, "expected a ';' or '{' here".to_string()),
@@ -307,7 +301,10 @@ impl<'a, 'b> Parser1<'a, 'b> {
                 return Err(Error::new(
                     "unexpected end of file while parsing function",
                     vec![
-                        (decl.range.start..end, "function declared here".to_string()),
+                        (
+                            decl_type.range.start..end,
+                            "function declared here".to_string(),
+                        ),
                         (tok.range, "missing closing brace here".to_string()),
                     ],
                 ))
@@ -325,7 +322,10 @@ impl<'a, 'b> Parser1<'a, 'b> {
                     return Err(Error::new(
                         "unexpected end of file while parsing function",
                         vec![
-                            (decl.range.start..end, "function declared here".to_string()),
+                            (
+                                decl_type.range.start..end,
+                                "function declared here".to_string(),
+                            ),
                             (tok.range, "missing closing brace here".to_string()),
                         ],
                     ))
@@ -336,13 +336,14 @@ impl<'a, 'b> Parser1<'a, 'b> {
 
         let body = self.buckets().add_array(body);
         return Ok(GlobalStmt {
+            range: decl_type.range.start..end,
             kind: GlobalStmtKind::Func {
                 return_type: decl_type,
+                pointer_count,
                 ident: ident,
                 params,
                 body,
             },
-            range: decl.range.start..end,
         });
     }
 }

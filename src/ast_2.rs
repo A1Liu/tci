@@ -1,10 +1,12 @@
-pub use crate::ast::{ASTType, ASTTypeKind, Decl};
+pub use crate::ast::{ASTType, ASTTypeKind};
 use core::ops::Range;
 
 #[derive(Debug)]
 pub enum ExprKind<'a> {
     IntLiteral(u32),
     Ident(u32),
+    Add(&'a Expr<'a>, &'a Expr<'a>),
+    Subtract(&'a Expr<'a>, &'a Expr<'a>),
     Call {
         function: &'a Expr<'a>,
         params: &'a [Expr<'a>],
@@ -21,8 +23,21 @@ pub enum ExprKind<'a> {
         ptr: &'a Expr<'a>,
         index: &'a Expr<'a>,
     },
+    List(&'a [Expr<'a>]),
     PostIncr(&'a Expr<'a>),
     PostDecr(&'a Expr<'a>),
+}
+
+pub struct Decl<'a> {
+    pub pointer_count: u32,
+    pub ident: u32,
+    pub expr: Option<Expr<'a>>,
+}
+
+pub struct MultiDecl<'a> {
+    pub decl_type: ASTType,
+    pub kind: &'a [Decl<'a>],
+    pub range: Range<u32>,
 }
 
 #[derive(Debug)]
@@ -32,7 +47,8 @@ pub struct Expr<'a> {
 }
 
 pub enum StmtKind<'a> {
-    Decl(Decl<'a>),
+    Decl(MultiDecl<'a>),
+    MultiDecl(&'a [Decl<'a>]),
     Expr(Expr<'a>),
     Nop,
     Ret,
@@ -50,7 +66,7 @@ pub enum StmtKind<'a> {
         body: &'a [Stmt<'a>],
     },
     ForDecl {
-        at_start: Decl<'a>,
+        at_start: MultiDecl<'a>,
         condition: Expr<'a>,
         post_expr: Expr<'a>,
         body: &'a [Stmt<'a>],
