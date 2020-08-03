@@ -49,21 +49,22 @@ impl<'a, 'b> Parser2<'a, 'b> {
     }
 
     pub fn parse_local_decl(&mut self) -> Result<Decl<'a>, Error> {
-        let decl_type = match self.peek().kind {};
+        let decl_type = match self.peek().kind {
+            TokenKind::Struct => {
+                let start = self.pop().range.start;
+                let (ident, range) = Error::expect_ident(&self.pop())?;
+                let tok = self.pop();
 
-        let decl = self.parse_simple_decl()?;
-        match &decl.decl_type().kind {
-            ASTTypeKind::StructDefn { .. } => {
-                return Err(Error::new(
-                    "unexpected type defintion inside function body",
-                    vec![(
-                        decl.decl_type().range.clone(),
-                        "type definition found here".to_string(),
-                    )],
-                ));
+                ASTType {
+                    kind: ASTTypeKind::Struct { ident },
+                    range: start..range.end,
+                    pointer_count: 0,
+                }
             }
-            _ => {}
-        }
+            _ => self.parse_simple_type_prefix()?,
+        };
+
+        let decl = self.parse_simple_decl(decl_type)?;
         return Ok(decl);
     }
 
@@ -107,19 +108,12 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 Error::expect_lparen(&self.pop())?;
 
                 let is_decl = match &self.peek().kind {
-                    TokenKind::Ident(id) => {
-                        if self.env.types.contains_key(id) {
-                            true
-                        } else {
-                            false
-                        }
-                    }
                     TokenKind::Char | TokenKind::Int | TokenKind::Void => true,
                     _ => false,
                 };
 
                 let first_part = if is_decl {
-                    Ok(self.parse_simple_decl()?)
+                    Ok(self.parse_local_decl()?)
                 } else {
                     Err(self.parse_expr()?)
                 };
@@ -241,23 +235,13 @@ impl<'a, 'b> Parser2<'a, 'b> {
                 });
             }
             TokenKind::Ident(id) => {
-                if self.env.types.contains_key(id) {
-                    let decl = self.parse_local_decl()?;
-                    Error::expect_semicolon(&self.pop())?;
+                let expr = self.parse_expr()?;
+                Error::expect_semicolon(&self.pop())?;
 
-                    return Ok(Stmt {
-                        range: decl.range.clone(),
-                        kind: StmtKind::Decl(decl),
-                    });
-                } else {
-                    let expr = self.parse_expr()?;
-                    Error::expect_semicolon(&self.pop())?;
-
-                    return Ok(Stmt {
-                        range: expr.range.clone(),
-                        kind: StmtKind::Expr(expr),
-                    });
-                }
+                return Ok(Stmt {
+                    range: expr.range.clone(),
+                    kind: StmtKind::Expr(expr),
+                });
             }
             _ => {
                 let expr = self.parse_expr()?;
@@ -270,130 +254,126 @@ impl<'a, 'b> Parser2<'a, 'b> {
             }
         }
     }
-}
 
-/*
-   pub trait ExprParser<'a>: Parser<'a> {
-   fn parse_expr(&mut self) -> Result<Expr<'a>, Error> {
-   return self.parse_postfix();
-   }
+    fn parse_expr(&mut self) -> Result<Expr<'a>, Error> {
+        return self.parse_postfix();
+    }
 
-   fn parse_postfix(&mut self) -> Result<Expr<'a>, Error> {
-   let operand = self.parse_atom()?;
-   let start = operand.range.start;
+    fn parse_postfix(&mut self) -> Result<Expr<'a>, Error> {
+        let operand = self.parse_atom()?;
+        let start = operand.range.start;
 
-   match self.peek().kind {
-   TokenKind::LParen => {
-   self.pop();
-   let mut params = Vec::new();
-   let rparen_tok = self.peek();
-   if rparen_tok.kind != TokenKind::RParen {
-   let param = self.parse_expr()?;
-   params.push(param);
-   let mut comma_tok = self.peek();
-   while comma_tok.kind == TokenKind::Comma {
-   self.pop();
-   params.push(self.parse_expr()?);
-   comma_tok = self.peek();
-   }
+        match self.peek().kind {
+            TokenKind::LParen => {
+                self.pop();
+                let mut params = Vec::new();
+                let rparen_tok = self.peek();
+                if rparen_tok.kind != TokenKind::RParen {
+                    let param = self.parse_expr()?;
+                    params.push(param);
+                    let mut comma_tok = self.peek();
+                    while comma_tok.kind == TokenKind::Comma {
+                        self.pop();
+                        params.push(self.parse_expr()?);
+                        comma_tok = self.peek();
+                    }
 
-   if comma_tok.kind != TokenKind::RParen {
-   let range = comma_tok.range.clone();
-   return Err(Error::new(
-   "unexpected token when parsing end of function declaration",
-   vec![
-   (
-   params.pop().unwrap().range,
-   "interpreted as parameter declaration".to_string(),
-   ),
-   (range, format!("interpreted as {:?}", comma_tok)),
-   ],
-   ));
-   }
-   }
+                    if comma_tok.kind != TokenKind::RParen {
+                        let range = comma_tok.range.clone();
+                        return Err(Error::new(
+                            "unexpected token when parsing end of function declaration",
+                            vec![
+                                (
+                                    params.pop().unwrap().range,
+                                    "interpreted as parameter declaration".to_string(),
+                                ),
+                                (range, format!("interpreted as {:?}", comma_tok)),
+                            ],
+                        ));
+                    }
+                }
 
-   let end = self.pop().range.end;
-   let params = self.buckets().add_array(params);
-   return Ok(Expr {
-   kind: ExprKind::Call {
-   function: self.buckets().add(operand),
-   params,
-   },
-   range: start..end,
-   });
-   }
-   TokenKind::PlusPlus => {
-   return Ok(Expr {
-   kind: ExprKind::PostIncr(self.buckets().add(operand)),
-   range: start..self.pop().range.end,
-   })
-   }
-   TokenKind::DashDash => {
-   return Ok(Expr {
-   kind: ExprKind::PostDecr(self.buckets().add(operand)),
-   range: start..self.pop().range.end,
-   })
-   }
-   TokenKind::LBracket => {
-   self.pop();
-   let index = self.parse_expr()?;
-   let end = index.range.end;
-   Error::expect_rbracket(&self.pop())?;
-   return Ok(Expr {
-   kind: ExprKind::Index {
-   ptr: self.buckets().add(operand),
-   index: self.buckets().add(index),
-},
-    range: start..end,
-    });
-}
-TokenKind::Arrow => {
-    self.pop();
+                let end = self.pop().range.end;
+                let params = self.buckets().add_array(params);
+                return Ok(Expr {
+                    kind: ExprKind::Call {
+                        function: self.buckets().add(operand),
+                        params,
+                    },
+                    range: start..end,
+                });
+            }
+            TokenKind::PlusPlus => {
+                return Ok(Expr {
+                    kind: ExprKind::PostIncr(self.buckets().add(operand)),
+                    range: start..self.pop().range.end,
+                })
+            }
+            TokenKind::DashDash => {
+                return Ok(Expr {
+                    kind: ExprKind::PostDecr(self.buckets().add(operand)),
+                    range: start..self.pop().range.end,
+                })
+            }
+            TokenKind::LBracket => {
+                self.pop();
+                let index = self.parse_expr()?;
+                let end = index.range.end;
+                Error::expect_rbracket(&self.pop())?;
+                return Ok(Expr {
+                    kind: ExprKind::Index {
+                        ptr: self.buckets().add(operand),
+                        index: self.buckets().add(index),
+                    },
+                    range: start..end,
+                });
+            }
+            TokenKind::Arrow => {
+                self.pop();
 
-    let (member, range) = Error::expect_ident(&self.pop())?;
+                let (member, range) = Error::expect_ident(&self.pop())?;
 
-    return Ok(Expr {
-        kind: ExprKind::PtrMember {
-            expr: self.buckets().add(operand),
-            member,
-        },
-        range: start..range.end,
-    });
-}
-TokenKind::Dot => {
-    self.pop();
+                return Ok(Expr {
+                    kind: ExprKind::PtrMember {
+                        expr: self.buckets().add(operand),
+                        member,
+                    },
+                    range: start..range.end,
+                });
+            }
+            TokenKind::Dot => {
+                self.pop();
 
-    let (member, range) = Error::expect_ident(&self.pop())?;
+                let (member, range) = Error::expect_ident(&self.pop())?;
 
-    return Ok(Expr {
-        kind: ExprKind::Member {
-            expr: self.buckets().add(operand),
-            member,
-        },
-        range: start..range.end,
-    });
-}
-_ => return Ok(operand),
-  }
-}
-
-fn parse_atom(&mut self) -> Result<Expr<'a>, Error> {
-    let tok = self.pop();
-    match tok.kind {
-        TokenKind::Ident(i) => {
-            return Ok(Expr {
-                kind: ExprKind::Ident(i),
-                range: tok.range,
-            })
+                return Ok(Expr {
+                    kind: ExprKind::Member {
+                        expr: self.buckets().add(operand),
+                        member,
+                    },
+                    range: start..range.end,
+                });
+            }
+            _ => return Ok(operand),
         }
-        TokenKind::IntLiteral(i) => {
-            return Ok(Expr {
-                kind: ExprKind::IntLiteral(i),
-                range: tok.range,
-            })
+    }
+
+    fn parse_atom(&mut self) -> Result<Expr<'a>, Error> {
+        let tok = self.pop();
+        match tok.kind {
+            TokenKind::Ident(i) => {
+                return Ok(Expr {
+                    kind: ExprKind::Ident(i),
+                    range: tok.range,
+                })
+            }
+            TokenKind::IntLiteral(i) => {
+                return Ok(Expr {
+                    kind: ExprKind::IntLiteral(i),
+                    range: tok.range,
+                })
+            }
+            _ => return Err(Error::new("", vec![])),
         }
-        _ => return Err(Error::new("", vec![])),
     }
 }
-}
-*/
