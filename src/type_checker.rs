@@ -30,30 +30,36 @@ pub struct TCStruct<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCType {
-    kind: TCTypeKind,
-    pointer_count: u32,
+    pub kind: TCTypeKind,
+    pub pointer_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TCGlobalValue {
+    pub decl_type: TCType,
+    pub range: Range<u32>,
+    pub decl_idx: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct TCValue {
-    decl_type: TCType,
-    range: Range<u32>,
-    decl_idx: u32,
+    pub decl_type: TCType,
+    pub range: Range<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TCFuncParam {
-    decl_type: TCType,
-    ident: u32,
-    range: Range<u32>,
+    pub decl_type: TCType,
+    pub ident: u32,
+    pub range: Range<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TCFunc<'a> {
-    return_type: TCType,
-    params: &'a [TCFuncParam],
-    range: Range<u32>,
-    decl_idx: u32,
+    pub return_type: TCType,
+    pub params: &'a [TCFuncParam],
+    pub range: Range<u32>,
+    pub decl_idx: u32,
 }
 
 impl PartialEq for TCFuncParam {
@@ -74,20 +80,103 @@ impl<'a> PartialEq for TCFunc<'a> {
     }
 }
 
+pub fn convert_type(type_node: &ASTType, pointer_count: u32) -> TCType {
+    let mut out = TCType {
+        kind: TCTypeKind::Int,
+        pointer_count: pointer_count,
+    };
+
+    match &type_node.kind {
+        ASTTypeKind::Int => {
+            out.kind = TCTypeKind::Int;
+            return out;
+        }
+        ASTTypeKind::Char => {
+            out.kind = TCTypeKind::Char;
+            return out;
+        }
+        ASTTypeKind::Void => {
+            out.kind = TCTypeKind::Void;
+            return out;
+        }
+        ASTTypeKind::Struct { ident } => {
+            out.kind = TCTypeKind::Struct { ident: *ident };
+            return out;
+        }
+    }
+}
+
 pub struct TypeEnv<'a, 'b> {
     pub _buckets: &'a mut BucketList<'b>,
     pub struct_types: HashMap<u32, TCStruct<'b>>,
-    pub symbols: HashMap<u32, TCValue>,
+    pub symbols: HashMap<u32, TCGlobalValue>,
     pub func_types: HashMap<u32, TCFunc<'b>>,
 }
 
-pub struct TypeChecker1<'a, 'b> {
+pub struct LocalTypeEnv {
+    pub symbols: HashMap<u32, TCValue>,
+    pub return_type: TCType,
+    pub parent: *const LocalTypeEnv,
+}
+
+impl LocalTypeEnv {
+    pub fn new(return_type: TCType) -> Self {
+        Self {
+            symbols: HashMap::new(),
+            return_type,
+            parent: core::ptr::null(),
+        }
+    }
+
+    pub fn child(&self) -> Self {
+        if self.symbols.is_empty() {
+            // for the case of chained if-else
+            Self {
+                symbols: HashMap::new(),
+                return_type: self.return_type.clone(),
+                parent: self.parent,
+            }
+        } else {
+            Self {
+                symbols: HashMap::new(),
+                return_type: self.return_type.clone(),
+                parent: self,
+            }
+        }
+    }
+
+    pub fn var(&self, id: u32) -> Option<&TCValue> {
+        if let Some(var_type) = self.symbols.get(&id) {
+            return Some(var_type);
+        }
+
+        if self.parent.is_null() {
+            return None;
+        }
+
+        return unsafe { &*self.parent }.var(id);
+    }
+
+    pub fn add_var(&mut self, decl_type: &ASTType, decl: &Decl) -> Result<(), Error> {
+        let tc_value = TCValue {
+            decl_type: convert_type(decl_type, decl.pointer_count),
+            range: decl.range.clone(),
+        };
+        if let Some(var_type) = self.symbols.insert(decl.ident, tc_value) {
+            return Err(Error::variable_redefinition(&var_type.range, &decl.range));
+        }
+
+        return Ok(());
+    }
+}
+
+pub struct TypeChecker<'a, 'b> {
     pub env: TypeEnv<'a, 'b>,
     pub functions: HashMap<u32, &'b [Token]>,
     pub values: HashMap<u32, &'b [Token]>,
 }
 
-impl<'a, 'b> TypeChecker1<'a, 'b> {
+impl<'a, 'b> TypeChecker<'a, 'b> {
     pub fn new() -> Self {
         Self {
             env: TypeEnv {
@@ -144,7 +233,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     names.insert(member.ident, member.range.clone());
                 }
 
-                let member_type = self.convert_type(&member.decl_type, member.pointer_count);
+                let member_type = convert_type(&member.decl_type, member.pointer_count);
                 typed_members.push(TCStructMember {
                     decl_type: member_type,
                     ident: member.ident,
@@ -193,7 +282,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
 
             for decl in decls.iter() {
                 let decl_idx = decl_idx as u32;
-                let decl_type = self.convert_type(decl_type, decl.pointer_count);
+                let decl_type = convert_type(decl_type, decl.pointer_count);
                 if let TCTypeKind::Struct { ident } = decl_type.kind {
                     self.check_struct_type(
                         ident,
@@ -203,7 +292,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     )?;
                 }
 
-                let value_type = TCValue {
+                let value_type = TCGlobalValue {
                     decl_type,
                     decl_idx,
                     range: decl.range.clone(),
@@ -241,7 +330,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
 
             let decl_idx = decl_idx as u32;
             let type_range = return_type.range.clone();
-            let return_type = self.convert_type(return_type, *pointer_count);
+            let return_type = convert_type(return_type, *pointer_count);
             if let TCTypeKind::Struct { ident } = return_type.kind {
                 self.check_struct_type(ident, decl_idx, *pointer_count, type_range.clone())?;
             }
@@ -255,7 +344,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
                     names.insert(param.ident, param.range.clone());
                 }
 
-                let param_type = self.convert_type(&param.decl_type, *pointer_count);
+                let param_type = convert_type(&param.decl_type, *pointer_count);
                 if let TCTypeKind::Struct { ident } = return_type.kind {
                     self.check_struct_type(
                         ident,
@@ -307,6 +396,94 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
         return Ok(());
     }
 
+    pub fn check_stmts(&self, env: &mut LocalTypeEnv, stmts: &[Stmt<'b>]) -> Result<(), Error> {
+        for stmt in stmts {
+            match &stmt.kind {
+                StmtKind::ForDecl {
+                    at_start_decl_type,
+                    at_start,
+                    condition,
+                    post_expr,
+                    body,
+                } => {
+                    let mut local_env = env.child();
+                    for decl in at_start.iter() {
+                        local_env.add_var(at_start_decl_type, decl)?;
+                    }
+
+                    if let TCType {
+                        kind: TCTypeKind::Struct { .. },
+                        ..
+                    } = self.check_expr(&local_env, condition)?
+                    {
+                        return Err(Error::truth_value_of_struct(condition));
+                    }
+
+                    self.check_expr(&local_env, post_expr)?;
+                    self.check_stmts(&mut local_env, body)?;
+                }
+                StmtKind::For {
+                    at_start,
+                    condition,
+                    post_expr,
+                    body,
+                } => {
+                    let mut local_env = env.child();
+                    self.check_expr(&local_env, at_start)?;
+
+                    if let TCType {
+                        kind: TCTypeKind::Struct { .. },
+                        ..
+                    } = self.check_expr(&local_env, condition)?
+                    {
+                        return Err(Error::truth_value_of_struct(condition));
+                    }
+
+                    self.check_expr(&local_env, post_expr)?;
+                    self.check_stmts(&mut local_env, body)?;
+                }
+
+                StmtKind::Branch {
+                    if_cond,
+                    if_body,
+                    else_body,
+                } => {
+                    if let TCType {
+                        kind: TCTypeKind::Struct { .. },
+                        ..
+                    } = self.check_expr(env, if_cond)?
+                    {
+                        return Err(Error::truth_value_of_struct(if_cond));
+                    }
+
+                    let mut local_env = env.child();
+                    self.check_stmts(&mut local_env, if_body)?;
+
+                    let mut local_env = env.child();
+                    if let Some(else_body) = else_body {
+                        self.check_stmts(&mut local_env, else_body)?;
+                    }
+                }
+
+                StmtKind::Expr(expr) => {
+                    self.check_expr(&env, expr)?;
+                }
+                StmtKind::Block(block) => {
+                    let mut local_env = env.child();
+                    self.check_stmts(&mut local_env, block)?;
+                }
+                StmtKind::Nop => {}
+
+                _ => panic!("unimplemented"),
+            }
+        }
+        return Ok(());
+    }
+
+    pub fn check_expr(&self, env: &LocalTypeEnv, expr: &Expr<'b>) -> Result<TCType, Error> {
+        return Err(Error::new("", vec![]));
+    }
+
     pub fn check_struct_type(
         &self,
         struct_ident: u32,
@@ -327,31 +504,5 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
         }
 
         return Ok(());
-    }
-
-    pub fn convert_type(&mut self, type_node: &ASTType, pointer_count: u32) -> TCType {
-        let mut out = TCType {
-            kind: TCTypeKind::Int,
-            pointer_count: pointer_count,
-        };
-
-        match &type_node.kind {
-            ASTTypeKind::Int => {
-                out.kind = TCTypeKind::Int;
-                return out;
-            }
-            ASTTypeKind::Char => {
-                out.kind = TCTypeKind::Char;
-                return out;
-            }
-            ASTTypeKind::Void => {
-                out.kind = TCTypeKind::Void;
-                return out;
-            }
-            ASTTypeKind::Struct { ident } => {
-                out.kind = TCTypeKind::Struct { ident: *ident };
-                return out;
-            }
-        }
     }
 }

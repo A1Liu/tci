@@ -5,13 +5,13 @@ use crate::lexer::{Lexer, Token, TokenKind};
 use core::ops::Range;
 use core::slice;
 
-pub struct Parser1<'a, 'b> {
+pub struct Parser<'a, 'b> {
     pub _buckets: &'a mut BucketList<'b>,
     pub lexer: Lexer<'b>,
     pub token_stack: Vec<Token>,
 }
 
-impl<'a, 'b> Parser1<'a, 'b> {
+impl<'a, 'b> Parser<'a, 'b> {
     pub fn new(data: &'b str) -> Self {
         Self {
             _buckets: BucketList::new(),

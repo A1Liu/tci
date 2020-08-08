@@ -43,8 +43,8 @@ fn run_on_string<'b>(
 ) -> Result<(), Diagnostic<usize>> {
     write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
 
-    let mut parser = parser::Parser1::new(input);
-    let mut type_checker = type_checker::TypeChecker1::new();
+    let mut parser = parser::Parser::new(input);
+    let mut type_checker = type_checker::TypeChecker::new();
     let mut parse_result = Vec::new();
     loop {
         let decl = match parser.parse_global_decl() {

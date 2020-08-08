@@ -1,4 +1,4 @@
-use crate::ast::StructDecl;
+use crate::ast::{Expr, StructDecl};
 use crate::lexer::{Token, TokenKind};
 use crate::type_checker::TCStruct;
 use std::ops::Range;
@@ -222,6 +222,13 @@ impl Error {
                 ),
                 (range.clone(), "second definition here".to_string()),
             ],
+        );
+    }
+
+    pub fn truth_value_of_struct(value: &Expr) -> Error {
+        return Error::new(
+            "tried to check truth value of struct",
+            vec![(value.range.clone(), "value is a struct type".to_string())],
         );
     }
 }
