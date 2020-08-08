@@ -6,12 +6,12 @@ use std::fs::read_to_string;
 use std::io::Write;
 
 mod ast;
-mod ast_2;
+// mod ast_2;
 mod buckets;
 mod errors;
 mod lexer;
 mod parser;
-mod parser_2;
+// mod parser_2;
 mod type_checker;
 mod util;
 
@@ -21,7 +21,6 @@ mod test;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
-use parser::Parser;
 
 fn run_on_file<'a, 'b>(
     stdout: impl Write,
@@ -96,24 +95,24 @@ fn run_on_string<'b>(
         type_checker.env,
     );
 
-    for (function, tokens) in functions {
-        let mut parser = parser_2::Parser2::new(&type_env, tokens);
-        while parser.peek().kind != lexer::TokenKind::End {
-            match parser.parse_stmt() {
-                Ok(x) => {}
-                Err(e) => {
-                    return Err(Diagnostic::error().with_message(e.message).with_labels(
-                        e.sections
-                            .iter()
-                            .map(|x| {
-                                Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
-                            })
-                            .collect(),
-                    ))
-                }
-            }
-        }
-    }
+    // for (function, tokens) in functions {
+    //     let mut parser = parser_2::Parser2::new(&type_env, tokens);
+    //     while parser.peek().kind != lexer::TokenKind::End {
+    //         match parser.parse_stmt() {
+    //             Ok(x) => {}
+    //             Err(e) => {
+    //                 return Err(Diagnostic::error().with_message(e.message).with_labels(
+    //                     e.sections
+    //                         .iter()
+    //                         .map(|x| {
+    //                             Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
+    //                         })
+    //                         .collect(),
+    //                 ))
+    //             }
+    //         }
+    //     }
+    // }
 
     return Ok(());
 }

@@ -5,7 +5,7 @@ struct d {
 };
 
 struct d b;
-struct d a = b = {'a'};
+struct d a;
 
 struct a {
   int hello;

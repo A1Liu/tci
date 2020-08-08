@@ -184,46 +184,43 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
             }
         }
 
-        // for (decl_idx, stmt) in stmts.iter().enumerate() {
-        //     let (decl_type, ident, range, value) = match &stmt.kind {
-        //         GlobalStmtKind::Decl(decl) => match &decl.kind {
-        //             DeclKind::Uninit { decl_type, ident } => {
-        //                 (decl_type, ident, decl.range.clone(), None)
-        //             }
-        //             DeclKind::WithValue {
-        //                 decl_type,
-        //                 ident,
-        //                 value,
-        //             } => (decl_type, ident, decl.range.clone(), Some(*value)),
-        //         },
-        //         _ => continue,
-        //     };
+        let mut values = HashMap::new();
+        for (decl_idx, stmt) in stmts.iter().enumerate() {
+            let (decl_type, decls) = match &stmt.kind {
+                GlobalStmtKind::Decl { decl_type, decls } => (decl_type, decls),
+                _ => continue,
+            };
 
-        //     let decl_idx = decl_idx as u32;
-        //     let decl_type = self.convert_type(decl_type);
-        //     if let TCTypeKind::Struct { ident } = decl_type.kind {
-        //         self.check_struct_type(ident, decl_idx, decl_type.pointer_count, range.clone())?;
-        //     }
+            for decl in decls.iter() {
+                let decl_idx = decl_idx as u32;
+                let decl_type = self.convert_type(decl_type, decl.pointer_count);
+                if let TCTypeKind::Struct { ident } = decl_type.kind {
+                    self.check_struct_type(
+                        ident,
+                        decl_idx,
+                        decl_type.pointer_count,
+                        decl.range.clone(),
+                    )?;
+                }
 
-        //     let value_type = TCValue {
-        //         decl_type,
-        //         decl_idx,
-        //         range: range.clone(),
-        //     };
+                let value_type = TCValue {
+                    decl_type,
+                    decl_idx,
+                    range: decl.range.clone(),
+                };
 
-        //     if let Some(original_value_type) = self.env.symbols.insert(*ident, value_type) {
-        //         return Err(Error::variable_redefinition(
-        //             &original_value_type.range,
-        //             &range,
-        //         ));
-        //     }
+                if let Some(original_value_type) = self.env.symbols.insert(decl.ident, value_type) {
+                    return Err(Error::variable_redefinition(
+                        &original_value_type.range,
+                        &decl.range,
+                    ));
+                }
 
-        //     if let Some(value) = value {
-        //         self.values
-        //             .insert(*ident, self.env._buckets.add_slice(value));
-        //     }
-        // }
+                values.insert(decl.ident, &decl.expr);
+            }
+        }
 
+        let mut functions = HashMap::new();
         for (decl_idx, stmt) in stmts.iter().enumerate() {
             let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
                 GlobalStmtKind::FuncDecl {
@@ -303,8 +300,7 @@ impl<'a, 'b> TypeChecker1<'a, 'b> {
 
             self.env.func_types.insert(*ident, tc_func_type);
             if let Some(body) = func_body {
-                self.functions
-                    .insert(*ident, self.env._buckets.add_slice(body));
+                functions.insert(*ident, body);
             }
         }
 
