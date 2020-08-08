@@ -1,3 +1,3 @@
-int a;
+int a, a;
 
 char a;

@@ -295,12 +295,11 @@ impl<'a, 'b> Parser1<'a, 'b> {
         let mut pointer_count: u32 = 0;
         while self.peek().kind == TokenKind::Star {
             pointer_count += 1;
+            self.pop();
         }
 
-        let tok = self.pop();
-        let (ident, range) = Error::expect_ident(&tok)?;
+        let (ident, range) = Error::expect_ident(&self.pop())?;
         let tok = self.peek();
-
         let expr;
         if tok.kind == TokenKind::Eq {
             self.pop();
@@ -352,13 +351,14 @@ impl<'a, 'b> Parser1<'a, 'b> {
 
     fn parse_multi_decl(&mut self) -> Result<(Vec<Decl<'b>>, Decl<'b>), Error> {
         let mut decl = self.parse_simple_decl()?;
-        let tok = self.peek();
+        let mut tok = self.peek();
         let mut decls = Vec::new();
 
         while tok.kind == TokenKind::Comma {
             self.pop();
             decls.push(decl);
             decl = self.parse_simple_decl()?;
+            tok = self.peek();
         }
 
         return Ok((decls, decl));

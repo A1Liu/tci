@@ -4,6 +4,7 @@ use std::collections::HashMap;
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TokenKind {
     Ident(u32),
+    TypeIdent(u32),
     IntLiteral(u32),
 
     Void,
@@ -119,10 +120,86 @@ impl<'a> Lexer<'a> {
         let begin = self.current;
         self.current += 1;
 
-        let is_word = match self.data[begin] {
-            x if (x >= b'a' && x <= b'z') || (x >= b'A' && x <= b'Z') => true,
+        match self.data[begin] {
+            x if (x >= b'a' && x <= b'z') => {
+                let mut cur = self.data[self.current];
 
-            b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => false,
+                while (cur >= b'a' && cur <= b'z')
+                    || (cur >= b'A' && cur <= b'Z')
+                    || cur == b'_'
+                    || (cur >= b'0' && cur <= b'9')
+                {
+                    self.current += 1;
+                    cur = self.data[self.current];
+                }
+
+                let word =
+                    unsafe { std::str::from_utf8_unchecked(&self.data[begin..self.current]) };
+                match word {
+                    "if" => return Token::new(TokenKind::If, begin..self.current),
+                    "else" => return Token::new(TokenKind::Else, begin..self.current),
+                    "do" => return Token::new(TokenKind::Do, begin..self.current),
+                    "while" => return Token::new(TokenKind::While, begin..self.current),
+                    "for" => return Token::new(TokenKind::For, begin..self.current),
+                    "break" => return Token::new(TokenKind::Break, begin..self.current),
+                    "continue" => return Token::new(TokenKind::Continue, begin..self.current),
+                    "return" => return Token::new(TokenKind::Return, begin..self.current),
+                    "struct" => return Token::new(TokenKind::Struct, begin..self.current),
+                    "typedef" => return Token::new(TokenKind::Typedef, begin..self.current),
+                    "void" => return Token::new(TokenKind::Void, begin..self.current),
+                    "int" => return Token::new(TokenKind::Int, begin..self.current),
+                    "char" => return Token::new(TokenKind::Char, begin..self.current),
+                    word => {
+                        let id = if let Some(id) = self.translate.get(word) {
+                            *id
+                        } else {
+                            let idx = self.symbols.len() as u32;
+                            self.symbols.push(word);
+                            self.translate.insert(word, idx);
+                            idx
+                        };
+
+                        return Token::new(TokenKind::Ident(id), begin..self.current);
+                    }
+                }
+            }
+
+            x if (x >= b'A' && x <= b'Z') => {
+                let mut cur = self.data[self.current];
+
+                while (cur >= b'a' && cur <= b'z')
+                    || (cur >= b'A' && cur <= b'Z')
+                    || cur == b'_'
+                    || (cur >= b'0' && cur <= b'9')
+                {
+                    self.current += 1;
+                    cur = self.data[self.current];
+                }
+
+                let word =
+                    unsafe { std::str::from_utf8_unchecked(&self.data[begin..self.current]) };
+
+                let id = if let Some(id) = self.translate.get(word) {
+                    *id
+                } else {
+                    let idx = self.symbols.len() as u32;
+                    self.symbols.push(word);
+                    self.translate.insert(word, idx);
+                    idx
+                };
+
+                return Token::new(TokenKind::TypeIdent(id), begin..self.current);
+            }
+
+            b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
+                let mut int_value: u32 = 0;
+                while self.data[self.current] >= b'0' && self.data[self.current] <= b'9' {
+                    self.current += 1;
+                    int_value *= 10;
+                    int_value += (self.data[self.current] - b'0') as u32;
+                }
+                return Token::new(TokenKind::IntLiteral(int_value), begin..self.current);
+            }
 
             b'{' => return Token::new(TokenKind::LBrace, begin..self.current),
             b'}' => return Token::new(TokenKind::RBrace, begin..self.current),
@@ -248,55 +325,6 @@ impl<'a> Lexer<'a> {
             }
 
             _ => return Token::new(TokenKind::Invalid, begin..self.current),
-        };
-
-        if !is_word {
-            let mut int_value: u32 = 0;
-            while self.data[self.current] >= b'0' && self.data[self.current] <= b'9' {
-                self.current += 1;
-                int_value *= 10;
-                int_value += (self.data[self.current] - b'0') as u32;
-            }
-            return Token::new(TokenKind::IntLiteral(int_value), begin..self.current);
-        }
-
-        let mut cur = self.data[self.current];
-        while (cur >= b'a' && cur <= b'z')
-            || (cur >= b'A' && cur <= b'Z')
-            || cur == b'_'
-            || (cur >= b'0' && cur <= b'9')
-        {
-            self.current += 1;
-            cur = self.data[self.current];
-        }
-
-        let word = unsafe { std::str::from_utf8_unchecked(&self.data[begin..self.current]) };
-
-        match word {
-            "if" => return Token::new(TokenKind::If, begin..self.current),
-            "else" => return Token::new(TokenKind::Else, begin..self.current),
-            "do" => return Token::new(TokenKind::Do, begin..self.current),
-            "while" => return Token::new(TokenKind::While, begin..self.current),
-            "for" => return Token::new(TokenKind::For, begin..self.current),
-            "break" => return Token::new(TokenKind::Break, begin..self.current),
-            "continue" => return Token::new(TokenKind::Continue, begin..self.current),
-            "return" => return Token::new(TokenKind::Return, begin..self.current),
-            "struct" => return Token::new(TokenKind::Struct, begin..self.current),
-            "typedef" => return Token::new(TokenKind::Typedef, begin..self.current),
-            "void" => return Token::new(TokenKind::Void, begin..self.current),
-            "int" => return Token::new(TokenKind::Int, begin..self.current),
-            "char" => return Token::new(TokenKind::Char, begin..self.current),
-            word => {
-                let id = if let Some(id) = self.translate.get(word) {
-                    *id
-                } else {
-                    let idx = self.symbols.len() as u32;
-                    self.symbols.push(word);
-                    self.translate.insert(word, idx);
-                    idx
-                };
-                return Token::new(TokenKind::Ident(id), begin..self.current);
-            }
         }
     }
 }
