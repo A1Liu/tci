@@ -1,15 +1,15 @@
 use crate::ast::{Expr, StructDecl};
+use crate::ast_typed::TCStruct;
 use crate::lexer::{Token, TokenKind};
-use crate::type_checker::TCStruct;
-use std::ops::Range;
+use crate::*;
 
 pub struct Error {
     pub message: String,
-    pub sections: Vec<(Range<u32>, String)>,
+    pub sections: Vec<(Range, String)>,
 }
 
 impl Error {
-    pub fn new(message: &str, sections: Vec<(Range<u32>, String)>) -> Error {
+    pub fn new(message: &str, sections: Vec<(Range, String)>) -> Error {
         Self {
             message: message.to_string(),
             sections,
@@ -26,7 +26,7 @@ impl Error {
         };
     }
 
-    pub fn expect_ident(tok: &Token) -> Result<(u32, Range<u32>), Error> {
+    pub fn expect_ident(tok: &Token) -> Result<(u32, Range), Error> {
         if let TokenKind::Ident(id) = tok.kind {
             return Ok((id, tok.range.clone()));
         } else {
@@ -69,7 +69,7 @@ impl Error {
         return Ok(());
     }
 
-    pub fn expect_rparen(matching_tok: &Range<u32>, tok: &Token) -> Result<(), Error> {
+    pub fn expect_rparen(matching_tok: &Range, tok: &Token) -> Result<(), Error> {
         if tok.kind != TokenKind::RParen {
             return Err(Self::new(
                 "expected ')' token, got something else instead",
@@ -130,7 +130,7 @@ impl Error {
         return Ok(());
     }
 
-    pub fn struct_member_redefinition(original: &Range<u32>, new: &Range<u32>) -> Error {
+    pub fn struct_member_redefinition(original: &Range, new: &Range) -> Error {
         return Error::new(
             "name redefined in struct",
             vec![
@@ -140,7 +140,7 @@ impl Error {
         );
     }
 
-    pub fn struct_incomplete_type(member_type: &TCStruct, member_range: &Range<u32>) -> Error {
+    pub fn struct_incomplete_type(member_type: &TCStruct, member_range: &Range) -> Error {
         return Error::new(
             "referenced incomplete type",
             vec![
@@ -153,7 +153,7 @@ impl Error {
         );
     }
 
-    pub fn struct_misordered_type(member_type: &TCStruct, member_range: &Range<u32>) -> Error {
+    pub fn struct_misordered_type(member_type: &TCStruct, member_range: &Range) -> Error {
         return Error::new(
             "used type defined later in file",
             vec![
@@ -166,14 +166,14 @@ impl Error {
         );
     }
 
-    pub fn struct_doesnt_exist(member_range: &Range<u32>) -> Error {
+    pub fn struct_doesnt_exist(member_range: &Range) -> Error {
         return Error::new(
             "referenced struct that doesn't exist",
             vec![(member_range.clone(), "struct is used here".to_string())],
         );
     }
 
-    pub fn variable_redefinition(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+    pub fn variable_redefinition(original_range: &Range, range: &Range) -> Error {
         return Error::new(
             "redefinition of variable",
             vec![
@@ -186,7 +186,7 @@ impl Error {
         );
     }
 
-    pub fn parameter_redeclaration(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+    pub fn parameter_redeclaration(original_range: &Range, range: &Range) -> Error {
         return Error::new(
             "redeclaration of function parameter",
             vec![
@@ -199,7 +199,7 @@ impl Error {
         );
     }
 
-    pub fn function_declaration_mismatch(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+    pub fn function_declaration_mismatch(original_range: &Range, range: &Range) -> Error {
         return Error::new(
             "function declaration doesn't match previous declaration",
             vec![
@@ -212,7 +212,7 @@ impl Error {
         );
     }
 
-    pub fn function_redefinition(original_range: &Range<u32>, range: &Range<u32>) -> Error {
+    pub fn function_redefinition(original_range: &Range, range: &Range) -> Error {
         return Error::new(
             "redefinition of function",
             vec![

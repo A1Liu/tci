@@ -6,12 +6,11 @@ use std::fs::read_to_string;
 use std::io::Write;
 
 mod ast;
-// mod ast_2;
+mod ast_typed;
 mod buckets;
 mod errors;
 mod lexer;
 mod parser;
-// mod parser_2;
 mod type_checker;
 mod util;
 
@@ -21,6 +20,8 @@ mod test;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+
+pub use util::{r, r_from, Range};
 
 fn run_on_file<'a, 'b>(
     stdout: impl Write,

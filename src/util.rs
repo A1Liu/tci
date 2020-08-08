@@ -1,4 +1,34 @@
+use core::fmt;
 use std::io::Write;
+
+#[derive(Clone, PartialEq, Copy)]
+pub struct Range {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl fmt::Debug for Range {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(fmt, "{}..{}", self.start, self.end)
+    }
+}
+
+impl fmt::Display for Range {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(fmt, "{}..{}", self.start, self.end)
+    }
+}
+
+pub fn r(start: u32, end: u32) -> Range {
+    Range { start, end }
+}
+
+pub fn r_from(range1: Range, range2: Range) -> Range {
+    Range {
+        start: range1.start,
+        end: range2.start,
+    }
+}
 
 pub struct StringWriter {
     buf: Vec<u8>,

@@ -106,11 +106,11 @@ impl BucketListInner {
 }
 
 impl<'a> BucketList<'a> {
-    pub fn new<'b>() -> &'b mut BucketList<'b> {
+    pub fn new<'b>() -> &'b mut BucketList<'a> {
         return Self::with_capacity(INITIAL_BUCKET_SIZE);
     }
 
-    pub fn with_capacity<'b>(capacity: usize) -> &'b mut BucketList<'b> {
+    pub fn with_capacity<'b>(capacity: usize) -> &'b mut BucketList<'a> {
         let bucket_align = mem::align_of::<BucketListInner>();
         let bucket_size = mem::size_of::<BucketListInner>() + capacity;
         unsafe {
@@ -213,7 +213,7 @@ impl<'a> BucketList<'a> {
             }
             bucket = next_bucket;
         }
-        return Self::with_capacity(total_size);
+        return BucketList::with_capacity(total_size);
     }
 }
 

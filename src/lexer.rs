@@ -1,4 +1,4 @@
-use core::ops::Range;
+use crate::*;
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -74,14 +74,14 @@ pub enum TokenKind {
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
-    pub range: Range<u32>,
+    pub range: Range,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, range: Range<usize>) -> Self {
+    pub fn new(kind: TokenKind, range: core::ops::Range<usize>) -> Self {
         Self {
             kind,
-            range: (range.start as u32)..(range.end as u32),
+            range: r(range.start as u32, range.end as u32),
         }
     }
 }

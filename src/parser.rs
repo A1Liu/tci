@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::buckets::BucketList;
 use crate::errors::Error;
 use crate::lexer::{Lexer, Token, TokenKind};
-use core::ops::Range;
+use crate::*;
 use core::slice;
 
 pub struct Parser<'a, 'b> {
@@ -96,7 +96,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                     expr = Expr {
                         kind: ExprKind::Add(left, right),
-                        range: start..end,
+                        range: r(start, end),
                     };
                 }
                 TokenKind::Dash => {
@@ -108,7 +108,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                     expr = Expr {
                         kind: ExprKind::Subtract(left, right),
-                        range: start..end,
+                        range: r(start, end),
                     };
                 }
                 _ => return Ok(expr),
@@ -165,19 +165,19 @@ impl<'a, 'b> Parser<'a, 'b> {
                         function: self._buckets.add(operand),
                         params,
                     },
-                    range: start..end,
+                    range: r(start, end),
                 });
             }
             TokenKind::PlusPlus => {
                 return Ok(Expr {
                     kind: ExprKind::PostIncr(self._buckets.add(operand)),
-                    range: start..self.pop().range.end,
+                    range: r(start, self.pop().range.end),
                 })
             }
             TokenKind::DashDash => {
                 return Ok(Expr {
                     kind: ExprKind::PostDecr(self._buckets.add(operand)),
-                    range: start..self.pop().range.end,
+                    range: r(start, self.pop().range.end),
                 })
             }
             TokenKind::LBracket => {
@@ -190,7 +190,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         ptr: self._buckets.add(operand),
                         index: self._buckets.add(index),
                     },
-                    range: start..end,
+                    range: r(start, end),
                 });
             }
             TokenKind::Arrow => {
@@ -203,7 +203,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         expr: self._buckets.add(operand),
                         member,
                     },
-                    range: start..range.end,
+                    range: r(start, range.end),
                 });
             }
             TokenKind::Dot => {
@@ -216,7 +216,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         expr: self._buckets.add(operand),
                         member,
                     },
-                    range: start..range.end,
+                    range: r(start, range.end),
                 });
             }
             _ => return Ok(operand),
@@ -257,7 +257,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     expr_list.push(expr);
                     return Ok(Expr {
                         kind: ExprKind::List(self._buckets.add_array(expr_list)),
-                        range: start..end,
+                        range: r(start, end),
                     });
                 }
             }
@@ -327,7 +327,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 ASTType {
                     kind: ASTTypeKind::Struct { ident },
-                    range: start..range.end,
+                    range: r(start, range.end),
                 }
             }
             _ => self.parse_simple_type_prefix()?,
@@ -342,7 +342,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let (ident, range) = Error::expect_ident(&self.pop())?;
 
         return Ok(InnerStructDecl {
-            range: decl_type.range.start..range.end,
+            range: r(decl_type.range.start, range.end),
             pointer_count,
             decl_type,
             ident,
@@ -389,10 +389,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                         kind: GlobalStmtKind::StructDecl(StructDecl {
                             ident,
                             ident_range,
-                            range: start..end,
+                            range: r(start, end),
                             members: Some(self._buckets.add_array(decls)),
                         }),
-                        range: start..end,
+                        range: r(start, end),
                     });
                 }
 
@@ -400,10 +400,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.pop();
 
                     return Ok(GlobalStmt {
-                        range: start..ident_range.end,
+                        range: r(start, ident_range.end),
                         kind: GlobalStmtKind::StructDecl(StructDecl {
                             ident,
-                            range: start..ident_range.end,
+                            range: r(start, ident_range.end),
                             ident_range,
                             members: None,
                         }),
@@ -412,7 +412,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 ASTType {
                     kind: ASTTypeKind::Struct { ident },
-                    range: start..ident_range.end,
+                    range: r(start, ident_range.end),
                 }
             }
             _ => self.parse_simple_type_prefix()?,
@@ -427,7 +427,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let range_end = decl.range.end;
             decls.push(decl);
             return Ok(GlobalStmt {
-                range: header_start..range_end,
+                range: r(header_start, range_end),
                 kind: GlobalStmtKind::Decl {
                     decl_type,
                     decls: self._buckets.add_array(decls),
@@ -440,7 +440,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let range_end = decl.range.end;
             decls.push(decl);
             return Ok(GlobalStmt {
-                range: decl_type.range.start..range_end,
+                range: r(decl_type.range.start, range_end),
                 kind: GlobalStmtKind::Decl {
                     decl_type,
                     decls: self._buckets.add_array(decls),
@@ -452,7 +452,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let range_end = decl.range.end;
             decls.push(decl);
             return Ok(GlobalStmt {
-                range: decl_type.range.start..range_end,
+                range: r(decl_type.range.start, range_end),
                 kind: GlobalStmtKind::Decl {
                     decl_type,
                     decls: self._buckets.add_array(decls),
@@ -488,7 +488,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let end_decl_tok = self.pop();
         if end_decl_tok.kind == TokenKind::Semicolon {
             return Ok(GlobalStmt {
-                range: decl_type.range.start..end,
+                range: r(decl_type.range.start, end),
                 kind: GlobalStmtKind::FuncDecl {
                     pointer_count: decl.pointer_count,
                     return_type: decl_type,
@@ -503,7 +503,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 "unexpected token when parsing ending of function declaration",
                 vec![
                     (
-                        decl_type.range.start..end,
+                        r(decl_type.range.start, end),
                         "this was parsed as a function declaration".to_string(),
                     ),
                     (end_decl_tok.range, "expected a ';' or '{' here".to_string()),
@@ -519,7 +519,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let body = self._buckets.add_array(body);
         return Ok(GlobalStmt {
-            range: decl_type.range.start..end,
+            range: r(decl_type.range.start, end),
             kind: GlobalStmtKind::Func {
                 return_type: decl_type,
                 pointer_count: decl.pointer_count,
@@ -530,7 +530,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
     }
 
-    pub fn parse_block(&mut self) -> Result<(&'b [Stmt<'b>], Range<u32>), Error> {
+    pub fn parse_block(&mut self) -> Result<(&'b [Stmt<'b>], Range), Error> {
         let (stmts, range) = match self.peek().kind {
             TokenKind::LBrace => {
                 let start = self.pop().range.start;
@@ -543,17 +543,17 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 if stmts.len() == 1 {
                     if let StmtKind::Block(stmts) = stmts[0].kind {
-                        (stmts, start..end)
+                        (stmts, r(start, end))
                     } else {
-                        (&*self._buckets.add_array(stmts), start..end)
+                        (&*self._buckets.add_array(stmts), r(start, end))
                     }
                 } else {
-                    (&*self._buckets.add_array(stmts), start..end)
+                    (&*self._buckets.add_array(stmts), r(start, end))
                 }
             }
             _ => {
                 let stmt = self.parse_stmt()?;
-                let range = stmt.range.clone();
+                let range = stmt.range;
                 (slice::from_ref(self._buckets.add(stmt)), range)
             }
         };
@@ -605,7 +605,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                                 post_expr,
                                 body,
                             },
-                            range: start..body_range.end,
+                            range: r(start, body_range.end),
                         });
                     }
                     Err(at_start) => {
@@ -616,7 +616,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                                 post_expr,
                                 body,
                             },
-                            range: start..body_range.end,
+                            range: r(start, body_range.end),
                         })
                     }
                 }
@@ -644,7 +644,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                             if_body,
                             else_body: None,
                         },
-                        range: start..if_body_range.end,
+                        range: r(start, if_body_range.end),
                     });
                 }
 
@@ -657,7 +657,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         if_body,
                         else_body: Some(else_body),
                     },
-                    range: start..else_body_range.end,
+                    range: r(start, else_body_range.end),
                 });
             }
             TokenKind::LBrace => {
@@ -702,7 +702,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Error::expect_semicolon(&self.pop())?;
 
                 return Ok(Stmt {
-                    range: range_start..range_end,
+                    range: r(range_start, range_end),
                     kind: StmtKind::Decl {
                         decl_type,
                         decls: self._buckets.add_array(decls),

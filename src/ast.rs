@@ -1,4 +1,4 @@
-use core::ops::Range;
+use crate::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind<'a> {
@@ -31,7 +31,7 @@ pub enum ExprKind<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
-    pub range: Range<u32>,
+    pub range: Range,
 }
 
 #[derive(Debug)]
@@ -39,22 +39,22 @@ pub struct InnerStructDecl {
     pub decl_type: ASTType,
     pub pointer_count: u32,
     pub ident: u32,
-    pub range: Range<u32>,
+    pub range: Range,
 }
 
 #[derive(Debug)]
 pub struct StructDecl<'a> {
     pub ident: u32,
-    pub ident_range: Range<u32>,
+    pub ident_range: Range,
     pub members: Option<&'a [InnerStructDecl]>,
-    pub range: Range<u32>,
+    pub range: Range,
 }
 
 #[derive(Debug, Clone)]
 pub struct Decl<'a> {
     pub pointer_count: u32,
     pub ident: u32,
-    pub range: Range<u32>,
+    pub range: Range,
     pub expr: Expr<'a>,
 }
 
@@ -83,7 +83,7 @@ pub enum GlobalStmtKind<'a> {
 #[derive(Debug)]
 pub struct GlobalStmt<'a> {
     pub kind: GlobalStmtKind<'a>,
-    pub range: Range<u32>,
+    pub range: Range,
 }
 
 #[derive(Debug)]
@@ -97,7 +97,7 @@ pub enum ASTTypeKind {
 #[derive(Debug)]
 pub struct ASTType {
     pub kind: ASTTypeKind,
-    pub range: Range<u32>,
+    pub range: Range,
 }
 
 #[derive(Debug)]
@@ -138,5 +138,5 @@ pub enum StmtKind<'a> {
 #[derive(Debug)]
 pub struct Stmt<'a> {
     pub kind: StmtKind<'a>,
-    pub range: Range<u32>,
+    pub range: Range,
 }
