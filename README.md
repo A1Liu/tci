@@ -19,3 +19,5 @@ The goals of this compiler are:
 - Struct literals and array literals are allowed inside places where expressions
   are expected, and are type inferred.
 - No support for Goto
+- Typedefs must begin with an uppercase letter
+- Variables must begin with a lowercase letter
