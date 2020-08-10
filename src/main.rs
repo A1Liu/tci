@@ -26,7 +26,7 @@ pub use util::{r, r_from, Range};
 fn run_on_file<'a, 'b>(
     stdout: impl Write,
     stderr: impl Write,
-    buckets: &'a buckets::BucketList<'b>,
+    buckets: buckets::BucketListRef<'b>,
     files: &mut SimpleFiles<&'a str, &'b str>,
     filename: &'a str,
 ) -> Result<(), Diagnostic<usize>> {
@@ -130,7 +130,7 @@ fn main() {
         match run_on_file(
             std::io::stdout(),
             std::io::stderr(),
-            buckets,
+            buckets.clone(),
             &mut files,
             arg,
         ) {

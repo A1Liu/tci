@@ -1,5 +1,5 @@
 use crate::ast::{Expr, StructDecl};
-use crate::ast_typed::TCStruct;
+use crate::ast_typed::{TCStruct, TCType, TCTypeKind};
 use crate::lexer::{Token, TokenKind};
 use crate::*;
 
@@ -225,10 +225,18 @@ impl Error {
         );
     }
 
-    pub fn truth_value_of_struct(value: &Expr) -> Error {
-        return Error::new(
-            "tried to check truth value of struct",
-            vec![(value.range.clone(), "value is a struct type".to_string())],
-        );
+    pub fn truth_value_of_struct(value: &Expr, value_type: &TCType) -> Result<(), Error> {
+        if let TCType {
+            kind: TCTypeKind::Struct { .. },
+            ..
+        } = value_type
+        {
+            return Err(Error::new(
+                "tried to check truth value of struct",
+                vec![(value.range.clone(), "value is a struct type".to_string())],
+            ));
+        }
+
+        return Ok(());
     }
 }

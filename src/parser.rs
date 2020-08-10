@@ -1,17 +1,17 @@
 use crate::ast::*;
-use crate::buckets::BucketList;
+use crate::buckets::{BucketList, BucketListRef};
 use crate::errors::Error;
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::*;
 use core::slice;
 
-pub struct Parser<'a, 'b> {
-    pub _buckets: &'a mut BucketList<'b>,
+pub struct Parser<'b> {
+    pub _buckets: BucketListRef<'b>,
     pub lexer: Lexer<'b>,
     pub token_stack: Vec<Token>,
 }
 
-impl<'a, 'b> Parser<'a, 'b> {
+impl<'b> Parser<'b> {
     pub fn new(data: &'b str) -> Self {
         Self {
             _buckets: BucketList::new(),
@@ -144,7 +144,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     }
 
                     if comma_tok.kind != TokenKind::RParen {
-                        let range = comma_tok.range.clone();
                         return Err(Error::new(
                             "unexpected token when parsing end of function declaration",
                             vec![
@@ -152,7 +151,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                                     params.pop().unwrap().range,
                                     "interpreted as parameter declaration".to_string(),
                                 ),
-                                (range, format!("interpreted as {:?}", comma_tok)),
+                                (comma_tok.range, format!("interpreted as {:?}", comma_tok)),
                             ],
                         ));
                     }
@@ -307,7 +306,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         } else {
             expr = Expr {
                 kind: ExprKind::Uninit,
-                range: range.clone(),
+                range: range,
             };
         }
 
@@ -714,7 +713,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Error::expect_semicolon(&self.pop())?;
 
                 return Ok(Stmt {
-                    range: expr.range.clone(),
+                    range: expr.range,
                     kind: StmtKind::Expr(expr),
                 });
             }

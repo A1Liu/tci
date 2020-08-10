@@ -101,15 +101,3 @@ pub fn convert_type(type_node: &ASTType, pointer_count: u32) -> TCType {
         }
     }
 }
-
-pub enum TCExprKind<'a> {
-    ZeroPadToU16(&'a TCExpr<'a>),
-    ZeroPadToU32(&'a TCExpr<'a>),
-    ZerPadUTo64(&'a TCExpr<'a>),
-}
-
-pub struct TCExpr<'a> {
-    kind: TCExprKind<'a>,
-    _type: TCType,
-    range: Range,
-}

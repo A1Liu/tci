@@ -1,7 +1,8 @@
 use std::alloc::{alloc, dealloc, Layout};
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::{cmp, mem, ptr, slice, str};
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
@@ -16,6 +17,7 @@ pub fn grow_array(len: usize) -> usize {
 
 #[repr(C)]
 pub struct BucketListInner {
+    pub ref_count: AtomicUsize,
     pub next: AtomicPtr<BucketListInner>,
     pub bump: AtomicPtr<u8>,
     pub len: usize,
@@ -31,6 +33,10 @@ struct Bump {
 pub struct BucketList<'a> {
     unused: PhantomData<&'a u8>,
     pub data: BucketListInner,
+}
+
+pub struct BucketListRef<'a> {
+    buckets: NonNull<BucketList<'a>>,
 }
 
 impl BucketListInner {
@@ -105,21 +111,90 @@ impl BucketListInner {
     }
 }
 
+impl<'a> Deref for BucketListRef<'a> {
+    type Target = BucketList<'a>;
+    fn deref(&self) -> &Self::Target {
+        return unsafe { self.buckets.as_ref() };
+    }
+}
+
+impl<'a> Drop for BucketListRef<'a> {
+    fn drop(&mut self) {
+        let mut buckets = &unsafe { self.buckets.as_ref() }.data;
+        let mut ref_count = buckets.ref_count.fetch_sub(1, Ordering::SeqCst);
+        while ref_count == 1 {
+            unsafe {
+                let next_buckets = buckets.next.load(Ordering::SeqCst);
+
+                let bucket_size = buckets.len + mem::size_of::<BucketListInner>();
+                let bucket_align = mem::align_of::<BucketListInner>();
+                let layout = Layout::from_size_align_unchecked(bucket_size, bucket_align);
+                dealloc(
+                    buckets as *const BucketListInner as *mut BucketListInner as *mut u8,
+                    layout,
+                );
+
+                if next_buckets.is_null() {
+                    break;
+                }
+
+                buckets = &*next_buckets;
+                ref_count = buckets.ref_count.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+impl<'a> Clone for BucketListRef<'a> {
+    fn clone(&self) -> Self {
+        unsafe {
+            self.buckets
+                .as_ref()
+                .data
+                .ref_count
+                .fetch_add(1, Ordering::SeqCst);
+        }
+
+        Self {
+            buckets: self.buckets.clone(),
+        }
+    }
+}
+
+impl<'a> BucketListRef<'a> {
+    pub fn next(&self) -> Option<Self> {
+        let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
+        if let Some(next) = next {
+            unsafe {
+                next.as_ref().ref_count.fetch_add(1, Ordering::SeqCst);
+                return Some(Self {
+                    buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
+                });
+            }
+        }
+
+        return None;
+    }
+}
+
 impl<'a> BucketList<'a> {
-    pub fn new<'b>() -> &'b mut BucketList<'a> {
+    pub fn new() -> BucketListRef<'a> {
         return Self::with_capacity(INITIAL_BUCKET_SIZE);
     }
 
-    pub fn with_capacity<'b>(capacity: usize) -> &'b mut BucketList<'a> {
+    pub fn with_capacity(capacity: usize) -> BucketListRef<'a> {
         let bucket_align = mem::align_of::<BucketListInner>();
         let bucket_size = mem::size_of::<BucketListInner>() + capacity;
         unsafe {
-            let next_layout = Layout::from_size_align_unchecked(bucket_size, bucket_align);
-            let new = &mut *(alloc(next_layout) as *mut BucketList);
+            let layout = Layout::from_size_align_unchecked(bucket_size, bucket_align);
+            let new = &mut *(alloc(layout) as *mut Self);
+            new.data.ref_count = AtomicUsize::new(1);
             new.data.next = AtomicPtr::new(ptr::null_mut());
             new.data.bump = AtomicPtr::new(&mut new.data.array_begin as *mut () as *mut u8);
-            new.data.len = INITIAL_BUCKET_SIZE;
-            return new;
+            new.data.len = capacity;
+            return BucketListRef {
+                buckets: NonNull::new_unchecked(new as *mut Self),
+            };
         }
     }
 
@@ -166,55 +241,6 @@ impl<'a> BucketList<'a> {
         let values = values.as_bytes();
         return unsafe { str::from_utf8_unchecked_mut(self.add_slice(values)) };
     }
-
-    pub fn clear<'b>(buckets: &'a mut BucketList<'a>) -> &'b mut BucketList<'b> {
-        let mut bucket = &mut buckets.data as *mut BucketListInner;
-
-        while !bucket.is_null() {
-            let current = unsafe { &mut *bucket };
-            current.bump = AtomicPtr::new(&mut current.array_begin as *mut () as *mut u8);
-            bucket = current.next.load(Ordering::SeqCst);
-        }
-
-        return unsafe { mem::transmute(buckets) };
-    }
-
-    pub fn dealloc(buckets: &'a mut BucketList<'a>) {
-        let mut bucket = &mut buckets.data as *mut BucketListInner;
-
-        while !bucket.is_null() {
-            let current = unsafe { &mut *bucket };
-            let allocated_size = current.len + mem::size_of::<BucketListInner>();
-            let next_bucket = current.next.load(Ordering::SeqCst);
-            unsafe {
-                dealloc(
-                    bucket as *mut u8,
-                    Layout::from_size_align_unchecked(allocated_size, 1),
-                );
-            }
-            bucket = next_bucket;
-        }
-    }
-
-    pub fn coalesce<'b>(buckets: &'a mut BucketList<'a>) -> &'b mut BucketList<'b> {
-        let mut total_size: usize = 0;
-        let mut bucket = &mut buckets.data as *mut BucketListInner;
-
-        while !bucket.is_null() {
-            let current = unsafe { &mut *bucket };
-            let allocated_size = current.len + mem::size_of::<BucketListInner>();
-            total_size += allocated_size;
-            let next_bucket = current.next.load(Ordering::SeqCst);
-            unsafe {
-                dealloc(
-                    bucket as *mut u8,
-                    Layout::from_size_align_unchecked(allocated_size, 1),
-                );
-            }
-            bucket = next_bucket;
-        }
-        return BucketList::with_capacity(total_size);
-    }
 }
 
 #[test]
@@ -233,5 +259,5 @@ fn test_bucket_list() {
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
 
-    BucketList::clear(bucket_list);
+    println!("boring");
 }

@@ -1,13 +1,13 @@
 use crate::ast::*;
 use crate::ast_typed::*;
-use crate::buckets::BucketList;
+use crate::buckets::{BucketList, BucketListRef};
 use crate::errors::Error;
 use crate::lexer::Token;
 use crate::*;
 use std::collections::HashMap;
 
-pub struct TypeEnv<'a, 'b> {
-    pub _buckets: &'a mut BucketList<'b>,
+pub struct TypeEnv<'b> {
+    pub _buckets: BucketListRef<'b>,
     pub struct_types: HashMap<u32, TCStruct<'b>>,
     pub symbols: HashMap<u32, TCGlobalValue>,
     pub func_types: HashMap<u32, TCFunc<'b>>,
@@ -60,7 +60,7 @@ impl LocalTypeEnv {
     pub fn add_var(&mut self, decl_type: &ASTType, decl: &Decl) -> Result<(), Error> {
         let tc_value = TCValue {
             decl_type: convert_type(decl_type, decl.pointer_count),
-            range: decl.range.clone(),
+            range: decl.range,
         };
         if let Some(var_type) = self.symbols.insert(decl.ident, tc_value) {
             return Err(Error::variable_redefinition(&var_type.range, &decl.range));
@@ -70,13 +70,13 @@ impl LocalTypeEnv {
     }
 }
 
-pub struct TypeChecker<'a, 'b> {
-    pub env: TypeEnv<'a, 'b>,
+pub struct TypeChecker<'b> {
+    pub env: TypeEnv<'b>,
     pub functions: HashMap<u32, &'b [Token]>,
     pub values: HashMap<u32, &'b [Token]>,
 }
 
-impl<'a, 'b> TypeChecker<'a, 'b> {
+impl<'b> TypeChecker<'b> {
     pub fn new() -> Self {
         Self {
             env: TypeEnv {
@@ -107,8 +107,8 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
 
             let mut tc_struct = TCStruct {
                 decl_idx,
-                ident_range: decl_type.ident_range.clone(),
-                range: decl_type.range.clone(),
+                ident_range: decl_type.ident_range,
+                range: decl_type.range,
                 defn: None,
             };
 
@@ -130,14 +130,14 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
                         &member.range,
                     ));
                 } else {
-                    names.insert(member.ident, member.range.clone());
+                    names.insert(member.ident, member.range);
                 }
 
                 let member_type = convert_type(&member.decl_type, member.pointer_count);
                 typed_members.push(TCStructMember {
                     decl_type: member_type,
                     ident: member.ident,
-                    range: member.range.clone(),
+                    range: member.range,
                 });
             }
 
@@ -150,7 +150,7 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
             if let Some((defn_idx, members)) = type_defn.defn {
                 let filter_map_struct_idents = |member: &TCStructMember| {
                     if let TCTypeKind::Struct { ident } = member.decl_type.kind {
-                        Some((ident, member.range.clone(), member.decl_type.pointer_count))
+                        Some((ident, member.range, member.decl_type.pointer_count))
                     } else {
                         None
                     }
@@ -162,8 +162,8 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
                         return Err(Error::new(
                             "recursive struct",
                             vec![
-                                (type_defn.ident_range.clone(), "struct here".to_string()),
-                                (range.clone(), "recursive member here".to_string()),
+                                (type_defn.ident_range, "struct here".to_string()),
+                                (range, "recursive member here".to_string()),
                             ],
                         ));
                     }
@@ -184,18 +184,13 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
                 let decl_idx = decl_idx as u32;
                 let decl_type = convert_type(decl_type, decl.pointer_count);
                 if let TCTypeKind::Struct { ident } = decl_type.kind {
-                    self.check_struct_type(
-                        ident,
-                        decl_idx,
-                        decl_type.pointer_count,
-                        decl.range.clone(),
-                    )?;
+                    self.check_struct_type(ident, decl_idx, decl_type.pointer_count, decl.range)?;
                 }
 
                 let value_type = TCGlobalValue {
                     decl_type,
                     decl_idx,
-                    range: decl.range.clone(),
+                    range: decl.range,
                 };
 
                 if let Some(original_value_type) = self.env.symbols.insert(decl.ident, value_type) {
@@ -229,10 +224,10 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
             };
 
             let decl_idx = decl_idx as u32;
-            let type_range = return_type.range.clone();
+            let type_range = return_type.range;
             let return_type = convert_type(return_type, *pointer_count);
             if let TCTypeKind::Struct { ident } = return_type.kind {
-                self.check_struct_type(ident, decl_idx, *pointer_count, type_range.clone())?;
+                self.check_struct_type(ident, decl_idx, *pointer_count, type_range)?;
             }
 
             let mut names = HashMap::new();
@@ -296,7 +291,12 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
         return Ok(());
     }
 
-    pub fn check_stmts(&self, env: &mut LocalTypeEnv, stmts: &[Stmt]) -> Result<(), Error> {
+    pub fn check_stmts(
+        &self,
+        decl_idx: u32,
+        env: &mut LocalTypeEnv,
+        stmts: &[Stmt],
+    ) -> Result<(), Error> {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::ForDecl {
@@ -311,16 +311,13 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
                         local_env.add_var(at_start_decl_type, decl)?;
                     }
 
-                    if let TCType {
-                        kind: TCTypeKind::Struct { .. },
-                        ..
-                    } = self.check_expr(&local_env, condition)?
-                    {
-                        return Err(Error::truth_value_of_struct(condition));
-                    }
+                    Error::truth_value_of_struct(
+                        condition,
+                        &self.check_expr(&local_env, condition)?,
+                    )?;
 
                     self.check_expr(&local_env, post_expr)?;
-                    self.check_stmts(&mut local_env, body)?;
+                    self.check_stmts(decl_idx, &mut local_env, body)?;
                 }
                 StmtKind::For {
                     at_start,
@@ -330,38 +327,36 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
                 } => {
                     let mut local_env = env.child();
                     self.check_expr(&local_env, at_start)?;
+                    Error::truth_value_of_struct(
+                        condition,
+                        &self.check_expr(&local_env, condition)?,
+                    )?;
 
                     if let TCType {
                         kind: TCTypeKind::Struct { .. },
                         ..
                     } = self.check_expr(&local_env, condition)?
-                    {
-                        return Err(Error::truth_value_of_struct(condition));
-                    }
+                    {}
 
                     self.check_expr(&local_env, post_expr)?;
-                    self.check_stmts(&mut local_env, body)?;
+                    self.check_stmts(decl_idx, &mut local_env, body)?;
                 }
+
+                StmtKind::Ret => {}
 
                 StmtKind::Branch {
                     if_cond,
                     if_body,
                     else_body,
                 } => {
-                    if let TCType {
-                        kind: TCTypeKind::Struct { .. },
-                        ..
-                    } = self.check_expr(env, if_cond)?
-                    {
-                        return Err(Error::truth_value_of_struct(if_cond));
-                    }
+                    Error::truth_value_of_struct(if_cond, &self.check_expr(env, if_cond)?)?;
 
                     let mut local_env = env.child();
-                    self.check_stmts(&mut local_env, if_body)?;
+                    self.check_stmts(decl_idx, &mut local_env, if_body)?;
 
                     let mut local_env = env.child();
                     if let Some(else_body) = else_body {
-                        self.check_stmts(&mut local_env, else_body)?;
+                        self.check_stmts(decl_idx, &mut local_env, else_body)?;
                     }
                 }
 
@@ -370,13 +365,14 @@ impl<'a, 'b> TypeChecker<'a, 'b> {
                 }
                 StmtKind::Block(block) => {
                     let mut local_env = env.child();
-                    self.check_stmts(&mut local_env, block)?;
+                    self.check_stmts(decl_idx, &mut local_env, block)?;
                 }
                 StmtKind::Nop => {}
 
                 _ => panic!("unimplemented"),
             }
         }
+
         return Ok(());
     }
 
