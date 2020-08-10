@@ -16,14 +16,16 @@ pub struct TypeEnv<'b> {
 pub struct LocalTypeEnv {
     pub symbols: HashMap<u32, TCValue>,
     pub return_type: TCType,
+    pub return_type_range: Range,
     pub parent: *const LocalTypeEnv,
 }
 
 impl LocalTypeEnv {
-    pub fn new(return_type: TCType) -> Self {
+    pub fn new(return_type: TCType, return_type_range: Range) -> Self {
         Self {
             symbols: HashMap::new(),
             return_type,
+            return_type_range,
             parent: core::ptr::null(),
         }
     }
@@ -34,12 +36,14 @@ impl LocalTypeEnv {
             Self {
                 symbols: HashMap::new(),
                 return_type: self.return_type.clone(),
+                return_type_range: self.return_type_range,
                 parent: self.parent,
             }
         } else {
             Self {
                 symbols: HashMap::new(),
                 return_type: self.return_type.clone(),
+                return_type_range: self.return_type_range,
                 parent: self,
             }
         }
@@ -342,7 +346,22 @@ impl<'b> TypeChecker<'b> {
                     self.check_stmts(decl_idx, &mut local_env, body)?;
                 }
 
-                StmtKind::Ret => {}
+                StmtKind::Ret => {
+                    Error::return_type_convert(
+                        &env.return_type,
+                        env.return_type_range,
+                        None,
+                        stmt.range,
+                    )?;
+                }
+                StmtKind::RetVal(val) => {
+                    Error::return_type_convert(
+                        &env.return_type,
+                        env.return_type_range,
+                        Some(&self.check_expr(env, val)?),
+                        stmt.range,
+                    )?;
+                }
 
                 StmtKind::Branch {
                     if_cond,
