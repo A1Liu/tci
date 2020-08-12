@@ -1,7 +1,25 @@
 use crate::ast::{Expr, StructDecl};
 use crate::ast_typed::{TCStruct, TCType, TCTypeKind};
 use crate::lexer::{Token, TokenKind};
+use crate::util::CallFrame;
 use crate::*;
+
+#[derive(Debug)]
+pub struct IError {
+    pub short_name: String,
+    pub message: String,
+    pub stack_trace: Vec<CallFrame>,
+}
+
+impl IError {
+    pub fn new(short_name: &str, message: String) -> Self {
+        Self {
+            short_name: short_name.to_string(),
+            message,
+            stack_trace: Vec::new(),
+        }
+    }
+}
 
 pub struct Error {
     pub message: String,
