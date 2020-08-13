@@ -1,7 +1,8 @@
 use crate::ast::{Expr, StructDecl};
 use crate::ast_typed::{TCStruct, TCType, TCTypeKind};
 use crate::lexer::{Token, TokenKind};
-use crate::util::CallFrame;
+use crate::opcodes::*;
+use crate::util::{CallFrame, StringWriter};
 use crate::*;
 
 #[derive(Debug)]
@@ -18,6 +19,22 @@ impl IError {
             message,
             stack_trace: Vec::new(),
         }
+    }
+
+    pub fn render(&self, program: &Program) -> Result<String, std::io::Error> {
+        let mut out = StringWriter::new();
+        write!(out, "{}: {}\n", self.short_name, self.message)?;
+        for frame in self.stack_trace.iter() {
+            write!(
+                out,
+                "    {} in file {} at line {}\n",
+                program.functions[frame.name as usize],
+                program.files[frame.file as usize],
+                frame.line
+            )?;
+        }
+
+        return Ok(out.to_string());
     }
 }
 

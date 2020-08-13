@@ -30,7 +30,7 @@ pub struct VarPointer {
 
 impl fmt::Display for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        return write!(formatter, "0x{:x}{:x}", self.idx, self.offset);
+        return write!(formatter, "0x{:0>4x}{:0>4x}", self.idx, self.offset);
     }
 }
 
@@ -75,7 +75,7 @@ impl VarBuffer {
     }
 
     pub fn invalid_ptr(ptr: VarPointer) -> IError {
-        return error!("InvalidPointer", "the pointer 0x{} is invalid", ptr);
+        return error!("InvalidPointer", "the pointer {} is invalid", ptr);
     }
 
     pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
@@ -84,7 +84,7 @@ impl VarBuffer {
         end.offset = var.len;
         return error!(
             "InvalidPointer",
-            "the poitner {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
+            "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
         );
     }
 
@@ -155,7 +155,7 @@ impl VarBuffer {
         let idx = self.data.len() as u32;
         self.vars.push(Var { idx, len });
         self.data.resize((idx + len) as usize, 0);
-        let var_idx = self.vars.len() as u32 + 1;
+        let var_idx = self.vars.len() as u32;
         let var_range = idx as usize..((idx + len) as usize);
         return (var_idx, &mut self.data[var_range]);
     }
@@ -339,9 +339,9 @@ where
                 );
             }
 
-            write!(self.stdlog, "stack: {:?}\n", self.stack.data)
+            write!(self.stdlog, "stack: {:0>3?}\n", self.stack.data)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
-            write!(self.stdlog, "heap: {:?}\n\n", self.heap.data)
+            write!(self.stdlog, "heap:  {:0>3?}\n\n", self.heap.data)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             if pc < 0 {
@@ -380,10 +380,6 @@ where
 
             Opcode::StackAlloc(space) => {
                 self.stack.add_var(space);
-            }
-            Opcode::StackAllocPtr(space) => {
-                let (var, _) = self.stack.add_var(space);
-                self.stack.push(VarPointer::new_stack(var, 0));
             }
             Opcode::Alloc(space) => {
                 let (var, _) = self.heap.add_var(space);
@@ -558,6 +554,54 @@ fn test_simple_read_write() {
     let mut runtime = Runtime::new(&mut out, &mut logs);
     let result = runtime.run_program(program);
     print!("{}", logs.to_string());
-    result.expect("shouldn't fail");
+    match result {
+        Ok(()) => {}
+        Err(err) => {
+            println!("{}", err.render(&program).expect("why did this fail?"));
+            panic!();
+        }
+    }
     assert_eq!(out.to_string(), "hello, world!\n");
+}
+
+#[test]
+fn test_errors() {
+    let files = vec!["main.c"];
+    let strings = vec!["hello, world!\n"];
+    let functions = vec!["main", "helper"];
+    let ops = vec![
+        Opcode::Func(FuncDesc { file: 0, name: 0 }),
+        Opcode::StackAlloc(8),
+        Opcode::LoadStr(0),
+        Opcode::SetLocal64 { var: 0, offset: 0 },
+        Opcode::Call(6),
+        Opcode::Ret,
+        Opcode::Func(FuncDesc { file: 0, name: 1 }),
+        Opcode::GetLocal64 { var: -1, offset: 0 },
+        Opcode::MakeTempInt64(12),
+        Opcode::AddU64,
+        Opcode::Ecall(ECALL_PRINT_STR),
+        Opcode::Ret,
+    ];
+    let tags = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    let ops: Vec<TaggedOpcode> = ops
+        .iter()
+        .zip(tags)
+        .map(|(&op, line)| TaggedOpcode { op, line })
+        .collect();
+
+    let program = Program {
+        files: &files,
+        strings: &strings,
+        functions: &functions,
+        ops: &ops,
+    };
+
+    let mut out = StringWriter::new();
+    let mut logs = StringWriter::new();
+    let mut runtime = Runtime::new(&mut out, &mut logs);
+    match runtime.run_program(program) {
+        Ok(()) => panic!("{}", logs.to_string()),
+        Err(err) => println!("{}", err.render(&program).expect("why did this fail?")),
+    }
 }

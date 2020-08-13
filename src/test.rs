@@ -2,10 +2,9 @@ use crate::buckets::BucketList;
 use crate::run_on_file;
 use crate::util::{StringWriter, Void};
 use codespan_reporting::files::SimpleFiles;
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 
 fn test_file_should_succeed(filename: &str) {
-    let writer = StandardStream::stderr(ColorChoice::Always);
+    let mut writer = StringWriter::new();
     let config = codespan_reporting::term::Config::default();
 
     let buckets = BucketList::new();
@@ -14,8 +13,9 @@ fn test_file_should_succeed(filename: &str) {
 
     match run_on_file(&mut output, Void::new(), buckets, &mut files, filename) {
         Err(diagnostic) => {
-            codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
+            codespan_reporting::term::emit(&mut writer, &config, &files, &diagnostic)
                 .expect("why did this fail?");
+            println!("{}", writer.to_string());
             panic!();
         }
         _ => {}
@@ -26,7 +26,7 @@ fn test_file_should_succeed(filename: &str) {
 }
 
 fn test_file_should_fail(filename: &str) {
-    let writer = StandardStream::stdout(ColorChoice::Always);
+    let mut writer = StringWriter::new();
     let config = codespan_reporting::term::Config::default();
 
     let buckets = BucketList::new();
@@ -34,8 +34,9 @@ fn test_file_should_fail(filename: &str) {
 
     match run_on_file(Void::new(), Void::new(), buckets, &mut files, filename) {
         Err(diagnostic) => {
-            codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
+            codespan_reporting::term::emit(&mut writer, &config, &files, &diagnostic)
                 .expect("why did this fail?");
+            println!("{}", writer.to_string());
         }
         _ => panic!("should have failed"),
     }

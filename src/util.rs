@@ -1,5 +1,6 @@
+use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::fmt;
-use std::io::Write;
+use std::io;
 
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
 pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
@@ -86,28 +87,44 @@ impl StringWriter {
     }
 }
 
-impl Write for StringWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl io::Write for StringWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         for b in buf {
             self.buf.push(*b);
         }
         Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
-pub struct Void {}
+impl WriteColor for StringWriter {
+    fn supports_color(&self) -> bool {
+        false
+    }
 
-impl Void {
-    pub fn new() -> Self {
-        return Self {};
+    fn set_color(&mut self, color: &ColorSpec) -> io::Result<()> {
+        return Ok(());
+    }
+
+    fn reset(&mut self) -> io::Result<()> {
+        return Ok(());
     }
 }
 
-impl Write for Void {
+pub struct Void {
+    unused: (),
+}
+
+impl Void {
+    pub fn new() -> Self {
+        return Self { unused: () };
+    }
+}
+
+impl io::Write for Void {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         Ok(buf.len())
     }

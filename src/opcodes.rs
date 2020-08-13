@@ -13,10 +13,9 @@ pub const ECALL_PRINT_STR: u32 = 1;
 pub enum Opcode {
     Func(FuncDesc), // Function header used for callstack manipulation
 
-    StackAlloc(u32),    // Allocates space on the stack
-    StackAllocPtr(u32), // Allocates space on the stack, then pushes a pointer to that space onto the stack
+    StackAlloc(u32), // Allocates space on the stack
+    StackDealloc,    // Pops a variable off of the stack
     Alloc(u32), // Allocates space on the heap, then pushes a pointer to that space onto the stack
-    StackDealloc,
 
     MakeTempInt64(i64),
     MakeTempFloat64(f64),
