@@ -52,8 +52,8 @@ impl VarPointer {
         Self { idx, offset }
     }
 
-    pub fn var_idx(self) -> u32 {
-        self.idx & !(1u32 << 31)
+    pub fn var_idx(self) -> usize {
+        (self.idx & !(1u32 << 31)) as usize
     }
 
     pub fn is_stack(self) -> bool {
@@ -93,7 +93,7 @@ impl VarBuffer {
             return Err(Self::invalid_ptr(ptr));
         }
 
-        let var = match self.vars.get(ptr.var_idx() as usize - 1) {
+        let var = match self.vars.get(ptr.var_idx() - 1) {
             Some(x) => *x,
             None => return Err(Self::invalid_ptr(ptr)),
         };
@@ -111,7 +111,7 @@ impl VarBuffer {
             return Err(Self::invalid_ptr(ptr));
         }
 
-        let var = match self.vars.get(ptr.var_idx() as usize - 1) {
+        let var = match self.vars.get(ptr.var_idx() - 1) {
             Some(x) => *x,
             None => return Err(Self::invalid_ptr(ptr)),
         };
@@ -127,10 +127,10 @@ impl VarBuffer {
 
     pub fn get_full_var_range(&self, ptr: VarPointer) -> Result<&[u8], IError> {
         if ptr.var_idx() == 0 {
-            return err!("NullPointer", "a variable of offset 0 was used");
+            return Err(Self::invalid_ptr(ptr));
         }
 
-        let var = match self.vars.get(ptr.var_idx() as usize - 1) {
+        let var = match self.vars.get(ptr.var_idx() - 1) {
             Some(x) => *x,
             None => return Err(Self::invalid_ptr(ptr)),
         };
@@ -144,10 +144,6 @@ impl VarBuffer {
 
     pub fn get_var<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
         let len = mem::size_of::<T>();
-        if len > u32::MAX as usize {
-            panic!("struct too long");
-        }
-
         return Ok(unsafe { *(self.get_var_range(ptr, len as u32)?.as_ptr() as *const T) });
     }
 
@@ -155,39 +151,17 @@ impl VarBuffer {
         return (self.vars.len() + 1) as u32;
     }
 
-    pub fn add_var(&mut self, len: u32) -> u32 {
+    pub fn add_var(&mut self, len: u32) -> (u32, &mut [u8]) {
         let idx = self.data.len() as u32;
-        if len > u32::MAX {
-            panic!("struct too long");
-        }
-
-        let var = Var { idx, len };
+        self.vars.push(Var { idx, len });
         self.data.resize((idx + len) as usize, 0);
         let var_idx = self.vars.len() as u32 + 1;
-        self.vars.push(var);
-        return var_idx;
-    }
-
-    pub fn add_var_range(&mut self, len: u32) -> (u32, &mut [u8]) {
-        let idx = self.data.len() as u32;
-        if len > u32::MAX {
-            panic!("struct too long");
-        }
-
-        let var = Var { idx, len };
-        self.data.resize((idx + len) as usize, 0);
-        let var_idx = self.vars.len() as u32 + 1;
-        self.vars.push(var);
-        return (
-            var_idx,
-            &mut self.data[idx as usize..((idx + len) as usize)],
-        );
+        let var_range = idx as usize..((idx + len) as usize);
+        return (var_idx, &mut self.data[var_range]);
     }
 
     pub fn pop_var(&mut self) -> Result<Var, IError> {
-        let var = self.vars.pop();
-
-        if let Some(var) = var {
+        if let Some(var) = self.vars.pop() {
             self.data.resize(var.idx as usize, 0);
             return Ok(var);
         } else {
@@ -236,14 +210,8 @@ impl VarBuffer {
     }
 
     pub fn set<T: Copy>(&mut self, ptr: VarPointer, t: T) -> Result<(), IError> {
-        let len = mem::size_of::<T>();
-        if len > u32::MAX as usize {
-            panic!("struct too long");
-        }
-
-        let to_bytes = self.get_var_range_mut(ptr, len as u32)?;
+        let to_bytes = self.get_var_range_mut(ptr, mem::size_of::<T>() as u32)?;
         to_bytes.copy_from_slice(any_as_u8_slice(&t));
-
         return Ok(());
     }
 }
@@ -414,11 +382,11 @@ where
                 self.stack.add_var(space);
             }
             Opcode::StackAllocPtr(space) => {
-                let var = self.stack.add_var(space);
+                let (var, _) = self.stack.add_var(space);
                 self.stack.push(VarPointer::new_stack(var, 0));
             }
             Opcode::Alloc(space) => {
-                let var = self.heap.add_var(space);
+                let (var, _) = self.heap.add_var(space);
                 self.stack.push(VarPointer::new_heap(var, 0));
             }
             Opcode::StackDealloc => {
@@ -431,7 +399,7 @@ where
                 let str_value = program.strings[idx as usize].as_bytes();
                 let str_len = str_value.len() as u32;
 
-                let (idx, bytes) = self.heap.add_var_range(str_len + 1);
+                let (idx, bytes) = self.heap.add_var(str_len + 1);
                 let ptr = VarPointer::new_heap(idx, 0);
 
                 let last_idx = bytes.len() - 1;
