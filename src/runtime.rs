@@ -4,8 +4,6 @@ use crate::util::*;
 use core::{mem, str};
 use std::io::Write;
 
-pub const DEBUG: bool = true;
-
 macro_rules! error {
     ($arg1:tt,$($arg:tt)*) => {
         IError::new($arg1, format!($($arg)*))
@@ -179,40 +177,20 @@ impl VarBuffer {
         return Ok(&self.data[var.idx as usize..((var.idx + var.len) as usize)]);
     }
 
-    pub fn get_var<T: Copy + Default>(&self, ptr: VarPointer) -> Result<T, IError> {
+    pub fn get_var<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
         let len = mem::size_of::<T>();
         if len > u32::MAX as usize {
             panic!("struct too long");
         }
 
-        let from_bytes = self.get_var_range(ptr, len as u32)?;
-
-        let mut t = T::default();
-        let to_bytes = unsafe { any_as_u8_slice_mut(&mut t) };
-        to_bytes.copy_from_slice(from_bytes);
-        return Ok(t);
+        return Ok(unsafe { *(self.get_var_range(ptr, len as u32)?.as_ptr() as *const T) });
     }
 
     pub fn upper_bound(&self) -> u32 {
         return (self.vars.len() + 1) as u32;
     }
 
-    pub fn add_var<T: Copy + Default>(&mut self, t: T) -> u32 {
-        let idx = self.data.len() as u32;
-        let len = mem::size_of::<T>();
-        if len > u32::MAX as usize {
-            panic!("struct too long");
-        }
-
-        let len = len as u32;
-        let var = Var { idx, len };
-        self.data.extend_from_slice(any_as_u8_slice(&t));
-        let var_idx = self.vars.len() as u32 + 1;
-        self.vars.push(var);
-        return var_idx;
-    }
-
-    pub fn add_var_dyn(&mut self, len: u32) -> u32 {
+    pub fn add_var(&mut self, len: u32) -> u32 {
         let idx = self.data.len() as u32;
         if len > u32::MAX {
             panic!("struct too long");
@@ -225,7 +203,7 @@ impl VarBuffer {
         return var_idx;
     }
 
-    pub fn add_var_dyn_range(&mut self, len: u32) -> (u32, &mut [u8]) {
+    pub fn add_var_range(&mut self, len: u32) -> (u32, &mut [u8]) {
         let idx = self.data.len() as u32;
         if len > u32::MAX {
             panic!("struct too long");
@@ -290,8 +268,7 @@ impl VarBuffer {
 
         let upper = self.data.len();
         let lower = upper - 8;
-
-        to_bytes.copy_from_slice(&self.data[lower..upper]);
+        let out = unsafe { *(self.data[lower..upper].as_ptr() as *const T) };
         self.data.resize(lower, 0);
         return Ok(out);
     }
@@ -309,26 +286,30 @@ impl VarBuffer {
     }
 }
 
-pub struct Runtime<Out>
+pub struct Runtime<Out, Log>
 where
     Out: Write,
+    Log: Write,
 {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
     pub callstack: Vec<CallFrame>,
     pub stdout: Out,
+    pub stdlog: Log,
 }
 
-impl<Out> Runtime<Out>
+impl<Out, Log> Runtime<Out, Log>
 where
     Out: Write,
+    Log: Write,
 {
-    pub fn new(stdout: Out) -> Self {
+    pub fn new(stdout: Out, stdlog: Log) -> Self {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             callstack: Vec::new(),
             stdout,
+            stdlog,
         }
     }
 
@@ -387,6 +368,16 @@ where
         }
     }
 
+    pub fn pop_callstack(&mut self) -> Result<(), IError> {
+        if self.callstack.pop().is_none() {
+            return err!(
+                "CallstackEmpty",
+                "tried to pop callstack when callstack was empty"
+            );
+        }
+        return Ok(());
+    }
+
     pub fn run_func(&mut self, program: &Program, pcounter: usize) -> Result<(), IError> {
         let func_desc = match program.ops[pcounter].op {
             Opcode::Func(desc) => desc,
@@ -406,9 +397,8 @@ where
 
         loop {
             let op = program.ops[pc as usize];
-            if DEBUG {
-                println!("op: {:?}", op);
-            }
+            write!(self.stdlog, "op: {:?}\n", op)
+                .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             self.callstack.push(func_desc.into_callframe(op.line));
             pc = self.run_op(fp, pc, program, func_desc, op.op)?;
@@ -419,23 +409,28 @@ where
                 );
             }
 
-            if DEBUG {
-                println!("stack: {:?}", self.stack.data);
-                println!("heap: {:?}", self.heap.data);
-            }
+            write!(self.stdlog, "stack: {:?}\n", self.stack.data)
+                .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
+            write!(self.stdlog, "heap: {:?}\n\n", self.heap.data)
+                .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             if pc < 0 {
                 self.stack.shrink_vars_to(fp);
-                if self.callstack.len() > callstack_len {
-                    self.callstack.resize(
-                        callstack_len,
-                        CallFrame {
-                            file: 0,
-                            name: 0,
-                            line: 0,
-                        },
+                if self.callstack.len() < callstack_len {
+                    return err!(
+                        "InvalidCallstackState",
+                        "callstack shrunk over course of function call"
                     );
                 }
+
+                self.callstack.resize(
+                    callstack_len,
+                    CallFrame {
+                        file: 0,
+                        name: 0,
+                        line: 0,
+                    },
+                );
 
                 return Ok(());
             }
@@ -455,14 +450,14 @@ where
             Opcode::Func(_) => {}
 
             Opcode::StackAlloc(space) => {
-                self.stack.add_var_dyn(space);
+                self.stack.add_var(space);
             }
             Opcode::StackAllocPtr(space) => {
-                let var = self.stack.add_var_dyn(space);
+                let var = self.stack.add_var(space);
                 self.stack.push(VarPointer::new_stack(var, 0));
             }
             Opcode::Alloc(space) => {
-                let var = self.heap.add_var_dyn(space);
+                let var = self.heap.add_var(space);
                 self.stack.push(VarPointer::new_heap(var, 0));
             }
 
@@ -472,7 +467,7 @@ where
                 let str_value = program.strings[idx as usize].as_bytes();
                 let str_len = str_value.len() as u32;
 
-                let (idx, bytes) = self.heap.add_var_dyn_range(str_len + 1);
+                let (idx, bytes) = self.heap.add_var_range(str_len + 1);
                 let ptr = VarPointer::new_heap(idx, 0);
 
                 let last_idx = bytes.len() - 1;
@@ -550,14 +545,7 @@ where
             Opcode::Ret => return Ok(-1),
 
             Opcode::AddCallstackDesc(desc) => self.callstack.push(desc),
-            Opcode::RemoveCallstackDesc => {
-                if self.callstack.pop().is_none() {
-                    return err!(
-                        "CallstackEmpty",
-                        "tried to pop callstack when callstack was empty"
-                    );
-                }
-            }
+            Opcode::RemoveCallstackDesc => self.pop_callstack()?,
 
             Opcode::Call(func) => {
                 self.run_func(program, func as usize)?;
@@ -600,4 +588,44 @@ where
 
         return Ok(pc + 1);
     }
+}
+
+#[test]
+fn test_simple_read_write() {
+    let files = vec!["main.c"];
+    let strings = vec!["hello, world!\n"];
+    let functions = vec!["main", "helper"];
+    let ops = vec![
+        Opcode::Func(FuncDesc { file: 0, name: 0 }),
+        Opcode::StackAlloc(8),
+        Opcode::LoadStr(0),
+        Opcode::SetLocal64 { var: 0, offset: 0 },
+        Opcode::Call(6),
+        Opcode::Ret,
+        Opcode::Func(FuncDesc { file: 0, name: 1 }),
+        Opcode::GetLocal64 { var: -1, offset: 0 },
+        Opcode::Ecall(ECALL_PRINT_STR),
+        Opcode::Ret,
+    ];
+    let tags = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let ops: Vec<TaggedOpcode> = ops
+        .iter()
+        .zip(tags)
+        .map(|(&op, line)| TaggedOpcode { op, line })
+        .collect();
+
+    let program = Program {
+        files: &files,
+        strings: &strings,
+        functions: &functions,
+        ops: &ops,
+    };
+
+    let mut out = StringWriter::new();
+    let mut logs = StringWriter::new();
+    let mut runtime = Runtime::new(&mut out, &mut logs);
+    let result = runtime.run_program(program);
+    print!("{}", logs.to_string());
+    result.expect("shouldn't fail");
+    assert_eq!(out.to_string(), "hello, world!\n");
 }
