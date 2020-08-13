@@ -1,7 +1,7 @@
 use crate::errors::*;
 use crate::opcodes::*;
 use crate::util::*;
-use core::{mem, str};
+use core::{fmt, mem, str};
 use std::io::Write;
 
 macro_rules! error {
@@ -26,6 +26,12 @@ pub struct Var {
 pub struct VarPointer {
     idx: u32,
     offset: i32,
+}
+
+impl fmt::Display for VarPointer {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        return write!(formatter, "0x{:x}{:x}", self.idx, self.offset);
+    }
 }
 
 impl VarPointer {
@@ -68,6 +74,20 @@ impl VarBuffer {
         }
     }
 
+    pub fn invalid_ptr(ptr: VarPointer) -> IError {
+        return error!("InvalidPointer", "the pointer 0x{} is invalid", ptr);
+    }
+
+    pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
+        let (mut start, mut end) = (ptr, ptr);
+        start.offset = 0;
+        end.offset = var.len as i32;
+        return error!(
+            "InvalidPointer",
+            "the poitner {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
+        );
+    }
+
     pub fn get_var_range_mut(&mut self, ptr: VarPointer, len: u32) -> Result<&mut [u8], IError> {
         if ptr.var_idx() == 0 {
             return err!("NullPointer", "a variable of offset 0 was used");
@@ -75,24 +95,12 @@ impl VarBuffer {
 
         let var = match self.vars.get(ptr.var_idx() as usize - 1) {
             Some(x) => *x,
-            None => {
-                return err!(
-                    "IncorrectVarOffset",
-                    "a variable offset of {} is incorrect",
-                    ptr.idx
-                )
-            }
+            None => return Err(Self::invalid_ptr(ptr)),
         };
 
         let upper = ptr.offset + len as i32;
         if upper > var.len as i32 || ptr.offset < 0i32 {
-            return err!(
-                "OutOfValueBounds",
-                "tried to access bytes {}..{} in an object of length {}",
-                ptr.offset,
-                upper,
-                var.len
-            );
+            return Err(Self::invalid_offset(var, ptr));
         }
 
         let begin = var.idx + ptr.offset as u32;
@@ -106,24 +114,12 @@ impl VarBuffer {
 
         let var = match self.vars.get(ptr.var_idx() as usize - 1) {
             Some(x) => *x,
-            None => {
-                return err!(
-                    "IncorrectVarOffset",
-                    "a variable offset of {} is incorrect",
-                    ptr.idx
-                )
-            }
+            None => return Err(Self::invalid_ptr(ptr)),
         };
 
         let upper = ptr.offset + len as i32;
         if upper > var.len as i32 || ptr.offset < 0i32 {
-            return err!(
-                "OutOfValueBounds",
-                "tried to access bytes {}..{} in an object of length {}",
-                ptr.offset,
-                upper,
-                var.len
-            );
+            return Err(Self::invalid_offset(var, ptr));
         }
 
         let begin = (var.idx + ptr.offset as u32) as usize;
@@ -137,22 +133,11 @@ impl VarBuffer {
 
         let var = match self.vars.get(ptr.var_idx() as usize - 1) {
             Some(x) => *x,
-            None => {
-                return err!(
-                    "IncorrectVarOffset",
-                    "a variable offset of {} is incorrect",
-                    ptr.idx
-                )
-            }
+            None => return Err(Self::invalid_ptr(ptr)),
         };
 
         if ptr.offset > var.len as i32 || ptr.offset < 0i32 {
-            return err!(
-                "OutOfValueBounds",
-                "tried to access byte {} in an object of length {}",
-                ptr.offset,
-                var.len
-            );
+            return Err(Self::invalid_offset(var, ptr));
         }
 
         return Ok(&self.data[var.idx as usize..((var.idx + var.len) as usize)]);
@@ -379,7 +364,7 @@ where
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             self.callstack.push(func_desc.into_callframe(op.line));
-            pc = self.run_op(fp, pc, program, func_desc, op.op)?;
+            pc = self.run_op(fp, pc, program, op.op)?;
             if self.callstack.pop().is_none() {
                 return err!(
                     "CallstackEmpty",
@@ -421,7 +406,6 @@ where
         fp: u32,
         pc: i32,
         program: &Program,
-        func_desc: FuncDesc,
         opcode: Opcode,
     ) -> Result<i32, IError> {
         match opcode {
