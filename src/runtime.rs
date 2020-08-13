@@ -25,7 +25,7 @@ pub struct Var {
 #[derive(Debug, Clone, Copy)]
 pub struct VarPointer {
     idx: u32,
-    offset: i32,
+    offset: u32,
 }
 
 impl fmt::Display for VarPointer {
@@ -35,7 +35,7 @@ impl fmt::Display for VarPointer {
 }
 
 impl VarPointer {
-    pub fn new_stack(idx: u32, offset: i32) -> VarPointer {
+    pub fn new_stack(idx: u32, offset: u32) -> VarPointer {
         if idx & !(1u32 << 31) != idx {
             panic!("idx is too large");
         }
@@ -44,7 +44,7 @@ impl VarPointer {
         Self { idx, offset }
     }
 
-    pub fn new_heap(idx: u32, offset: i32) -> VarPointer {
+    pub fn new_heap(idx: u32, offset: u32) -> VarPointer {
         if idx & !(1u32 << 31) != idx {
             panic!("idx is too large");
         }
@@ -81,7 +81,7 @@ impl VarBuffer {
     pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
         let (mut start, mut end) = (ptr, ptr);
         start.offset = 0;
-        end.offset = var.len as i32;
+        end.offset = var.len;
         return error!(
             "InvalidPointer",
             "the poitner {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
@@ -90,7 +90,7 @@ impl VarBuffer {
 
     pub fn get_var_range_mut(&mut self, ptr: VarPointer, len: u32) -> Result<&mut [u8], IError> {
         if ptr.var_idx() == 0 {
-            return err!("NullPointer", "a variable of offset 0 was used");
+            return Err(Self::invalid_ptr(ptr));
         }
 
         let var = match self.vars.get(ptr.var_idx() as usize - 1) {
@@ -98,8 +98,7 @@ impl VarBuffer {
             None => return Err(Self::invalid_ptr(ptr)),
         };
 
-        let upper = ptr.offset + len as i32;
-        if upper > var.len as i32 || ptr.offset < 0i32 {
+        if ptr.offset + len > var.len {
             return Err(Self::invalid_offset(var, ptr));
         }
 
@@ -109,7 +108,7 @@ impl VarBuffer {
 
     pub fn get_var_range(&self, ptr: VarPointer, len: u32) -> Result<&[u8], IError> {
         if ptr.var_idx() == 0 {
-            return err!("NullPointer", "a variable of offset 0 was used");
+            return Err(Self::invalid_ptr(ptr));
         }
 
         let var = match self.vars.get(ptr.var_idx() as usize - 1) {
@@ -117,8 +116,8 @@ impl VarBuffer {
             None => return Err(Self::invalid_ptr(ptr)),
         };
 
-        let upper = ptr.offset + len as i32;
-        if upper > var.len as i32 || ptr.offset < 0i32 {
+        let upper = ptr.offset + len;
+        if upper > var.len {
             return Err(Self::invalid_offset(var, ptr));
         }
 
@@ -136,7 +135,7 @@ impl VarBuffer {
             None => return Err(Self::invalid_ptr(ptr)),
         };
 
-        if ptr.offset > var.len as i32 || ptr.offset < 0i32 {
+        if ptr.offset > var.len {
             return Err(Self::invalid_offset(var, ptr));
         }
 
@@ -447,23 +446,23 @@ where
             }
 
             Opcode::GetLocal64 { var, offset } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
+                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
                 self.stack.push(self.stack.get_var::<u64>(ptr)?);
             }
             Opcode::SetLocal64 { var, offset } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
+                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
                 let word: u64 = self.stack.pop()?;
                 self.stack.set(ptr, word)?;
             }
 
             Opcode::Get64 { offset } => {
                 let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
+                ptr.offset = ptr.offset.wrapping_add(offset as u32);
                 self.stack.push(self.get_var::<u64>(ptr)?);
             }
             Opcode::Set64 { offset } => {
                 let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
+                ptr.offset = ptr.offset.wrapping_add(offset as u32);
                 let word = self.stack.pop::<u64>()?;
                 self.set(ptr, word)?;
             }
