@@ -20,6 +20,16 @@ pub struct FuncDesc {
     pub name: u32,
 }
 
+impl FuncDesc {
+    pub fn into_callframe(self, line: u32) -> CallFrame {
+        CallFrame {
+            file: self.file,
+            name: self.name,
+            line,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
     pub file: u32,

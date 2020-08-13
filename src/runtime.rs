@@ -225,6 +225,22 @@ impl VarBuffer {
         return var_idx;
     }
 
+    pub fn add_var_dyn_range(&mut self, len: u32) -> (u32, &mut [u8]) {
+        let idx = self.data.len() as u32;
+        if len > u32::MAX {
+            panic!("struct too long");
+        }
+
+        let var = Var { idx, len };
+        self.data.resize((idx + len) as usize, 0);
+        let var_idx = self.vars.len() as u32 + 1;
+        self.vars.push(var);
+        return (
+            var_idx,
+            &mut self.data[idx as usize..((idx + len) as usize)],
+        );
+    }
+
     pub fn pop_var(&mut self) -> Option<Var> {
         let var = self.vars.pop();
 
@@ -372,7 +388,7 @@ where
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: usize) -> Result<(), IError> {
-        let func_desc = match program.ops[pcounter] {
+        let func_desc = match program.ops[pcounter].op {
             Opcode::Func(desc) => desc,
             op => {
                 return err!(
@@ -394,7 +410,14 @@ where
                 println!("op: {:?}", op);
             }
 
-            pc = self.run_op(fp, pc, program, func_desc, op)?;
+            self.callstack.push(func_desc.into_callframe(op.line));
+            pc = self.run_op(fp, pc, program, func_desc, op.op)?;
+            if self.callstack.pop().is_none() {
+                return err!(
+                    "CallstackEmpty",
+                    "tried to pop callstack when callstack was empty"
+                );
+            }
 
             if DEBUG {
                 println!("stack: {:?}", self.stack.data);
@@ -449,14 +472,12 @@ where
                 let str_value = program.strings[idx as usize].as_bytes();
                 let str_len = str_value.len() as u32;
 
-                let idx = self.heap.add_var_dyn(str_len + 1);
+                let (idx, bytes) = self.heap.add_var_dyn_range(str_len + 1);
                 let ptr = VarPointer::new_heap(idx, 0);
-                self.heap
-                    .get_var_range_mut(ptr, str_len)?
-                    .copy_from_slice(str_value);
 
-                let end_ptr = VarPointer::new_heap(idx, str_len as i32);
-                self.heap.get_var_range_mut(end_ptr, 1)?[0] = 0;
+                let last_idx = bytes.len() - 1;
+                bytes[0..last_idx].copy_from_slice(str_value);
+                bytes[last_idx] = 0;
 
                 self.stack.push(ptr);
             }
@@ -464,95 +485,26 @@ where
             Opcode::Pop64 => {
                 self.stack.pop::<u64>()?;
             }
-            Opcode::Pop32 => {
-                self.stack.pop::<u32>()?;
-            }
-            Opcode::Pop16 => {
-                self.stack.pop::<u16>()?;
-            }
-            Opcode::Pop8 => {
-                self.stack.pop::<u8>()?;
-            }
 
-            Opcode::GetLocal64 { var, offset, .. } => {
+            Opcode::GetLocal64 { var, offset } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
                 self.stack.push(self.stack.get_var::<u64>(ptr)?);
             }
-            Opcode::SetLocal64 { var, offset, .. } => {
+            Opcode::SetLocal64 { var, offset } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
                 let word: u64 = self.stack.pop()?;
                 self.stack.set(ptr, word)?;
             }
-            Opcode::GetLocal32 { var, offset, .. } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
-                self.stack.push(self.stack.get_var::<u32>(ptr)?);
-            }
-            Opcode::SetLocal32 { var, offset, .. } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
-                let word: u32 = self.stack.pop()?;
-                self.stack.set(ptr, word)?;
-            }
-            Opcode::GetLocal16 { var, offset, .. } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
-                self.stack.push(self.stack.get_var::<u16>(ptr)?);
-            }
-            Opcode::SetLocal16 { var, offset, .. } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
-                let word: u16 = self.stack.pop()?;
-                self.stack.set(ptr, word)?;
-            }
-            Opcode::GetLocal8 { var, offset, .. } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
-                self.stack.push(self.stack.get_var::<u8>(ptr)?);
-            }
-            Opcode::SetLocal8 { var, offset, .. } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset as i32);
-                let byte = self.stack.pop::<u8>()?;
-                self.stack.set(ptr, byte)?;
-            }
 
-            Opcode::Get64 { offset, .. } => {
+            Opcode::Get64 { offset } => {
                 let mut ptr: VarPointer = self.stack.pop()?;
                 ptr.offset += offset;
                 self.stack.push(self.get_var::<u64>(ptr)?);
             }
-            Opcode::Set64 { offset, .. } => {
+            Opcode::Set64 { offset } => {
                 let mut ptr: VarPointer = self.stack.pop()?;
                 ptr.offset += offset;
                 let word = self.stack.pop::<u64>()?;
-                self.set(ptr, word)?;
-            }
-            Opcode::Get32 { offset, .. } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
-                self.stack.push(self.get_var::<u32>(ptr)?);
-            }
-            Opcode::Set32 { offset, .. } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
-                let word = self.stack.pop::<u32>()?;
-                self.set(ptr, word)?;
-            }
-            Opcode::Get16 { offset, .. } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
-                self.stack.push(self.get_var::<u16>(ptr)?);
-            }
-            Opcode::Set16 { offset, .. } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
-                let word = self.stack.pop::<u16>()?;
-                self.set(ptr, word)?;
-            }
-            Opcode::Get8 { offset, .. } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
-                self.stack.push(self.get_var::<u8>(ptr)?);
-            }
-            Opcode::Set8 { offset, .. } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.offset += offset;
-                let word = self.stack.pop::<u8>()?;
                 self.set(ptr, word)?;
             }
 
@@ -594,42 +546,6 @@ where
                     return Ok(target as i32);
                 }
             }
-            Opcode::JumpIfZero32(target) => {
-                let value: u32 = self.stack.pop()?;
-                if value == 0 {
-                    return Ok(target as i32);
-                }
-            }
-            Opcode::JumpIfNotZero32(target) => {
-                let value: u32 = self.stack.pop()?;
-                if value != 0 {
-                    return Ok(target as i32);
-                }
-            }
-            Opcode::JumpIfZero16(target) => {
-                let value: u16 = self.stack.pop()?;
-                if value == 0 {
-                    return Ok(target as i32);
-                }
-            }
-            Opcode::JumpIfNotZero16(target) => {
-                let value: u16 = self.stack.pop()?;
-                if value != 0 {
-                    return Ok(target as i32);
-                }
-            }
-            Opcode::JumpIfZero8(target) => {
-                let value: u8 = self.stack.pop()?;
-                if value == 0 {
-                    return Ok(target as i32);
-                }
-            }
-            Opcode::JumpIfNotZero8(target) => {
-                let value: u8 = self.stack.pop()?;
-                if value != 0 {
-                    return Ok(target as i32);
-                }
-            }
 
             Opcode::Ret => return Ok(-1),
 
@@ -643,35 +559,16 @@ where
                 }
             }
 
-            Opcode::Call { func, line } => {
-                self.callstack.push(CallFrame {
-                    file: func_desc.file,
-                    name: func_desc.name,
-                    line,
-                });
-
+            Opcode::Call(func) => {
                 self.run_func(program, func as usize)?;
-
-                if self.callstack.pop().is_none() {
-                    return err!(
-                        "CallstackEmpty",
-                        "tried to pop callstack when callstack was empty"
-                    );
-                }
             }
 
-            Opcode::Ecall {
-                call: ECALL_PRINT_INT,
-                ..
-            } => {
+            Opcode::Ecall(ECALL_PRINT_INT) => {
                 let word: i64 = i64::from_be(self.stack.pop()?);
                 write!(self.stdout, "{}", word)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
-            Opcode::Ecall {
-                call: ECALL_PRINT_STR,
-                ..
-            } => {
+            Opcode::Ecall(ECALL_PRINT_STR) => {
                 let ptr: VarPointer = self.stack.pop()?;
                 let str_bytes = if ptr.is_stack() {
                     self.stack.get_full_var_range(ptr)?
@@ -696,38 +593,11 @@ where
                 write!(self.stdout, "{}", str_value)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
-            Opcode::Ecall { call, .. } => {
+            Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
             }
         }
 
         return Ok(pc + 1);
     }
-}
-
-#[test]
-fn simple_read_write() {
-    let files = map! {
-        "main.c".to_string() => map! {
-            "main".to_string() => vec![
-                PseudoOp::Call { file: "main.c".to_string(), func: "helper".to_string(), line: 1 },
-                PseudoOp::Ret,
-            ],
-            "helper".to_string() => vec![
-                PseudoOp::StackAlloc(8),
-                PseudoOp::LoadString("hello".to_string()),
-                PseudoOp::SetLocal64 { var: 0, offset: 0, line: 2 },
-                PseudoOp::GetLocal64 { var: 0, offset: 0, line: 3 },
-                PseudoOp::Ecall { call: ECALL_PRINT_STR, line: 4 },
-                PseudoOp::Ret,
-            ]
-        }
-    };
-
-    let program = Program::new(files);
-    let mut stdout = StringWriter::new();
-    let mut runtime = Runtime::new(&mut stdout);
-    runtime.run_program(program).expect("why did this fail?");
-
-    assert_eq!(stdout.to_string(), "hello");
 }
