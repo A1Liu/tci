@@ -16,6 +16,7 @@ pub enum Opcode {
     StackAlloc(u32),    // Allocates space on the stack
     StackAllocPtr(u32), // Allocates space on the stack, then pushes a pointer to that space onto the stack
     Alloc(u32), // Allocates space on the heap, then pushes a pointer to that space onto the stack
+    StackDealloc,
 
     MakeTempInt64(i64),
     MakeTempFloat64(f64),

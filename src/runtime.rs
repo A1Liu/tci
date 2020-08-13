@@ -16,19 +16,6 @@ macro_rules! err {
     };
 }
 
-#[cfg(test)]
-macro_rules! map(
-    { $($key:expr => $value:expr),* } => {
-        {
-            let mut m = ::std::collections::HashMap::new();
-            $(
-                m.insert($key, $value);
-            )*
-            m
-        }
-     };
-);
-
 #[derive(Debug, Clone, Copy)]
 pub struct Var {
     pub idx: u32,
@@ -39,12 +26,6 @@ pub struct Var {
 pub struct VarPointer {
     idx: u32,
     offset: i32,
-}
-
-impl Default for VarPointer {
-    fn default() -> Self {
-        VarPointer { idx: 0, offset: 0 }
-    }
 }
 
 impl VarPointer {
@@ -219,14 +200,14 @@ impl VarBuffer {
         );
     }
 
-    pub fn pop_var(&mut self) -> Option<Var> {
+    pub fn pop_var(&mut self) -> Result<Var, IError> {
         let var = self.vars.pop();
 
         if let Some(var) = var {
             self.data.resize(var.idx as usize, 0);
-            return Some(var);
+            return Ok(var);
         } else {
-            return None;
+            return err!("StackIsEmpty", "tried to pop from stack when it is empty");
         }
     }
 
@@ -248,13 +229,10 @@ impl VarBuffer {
         self.data.extend_from_slice(any_as_u8_slice(&value));
     }
 
-    pub fn pop<T: Default + Copy>(&mut self) -> Result<T, IError> {
+    pub fn pop<T: Copy>(&mut self) -> Result<T, IError> {
         if self.data.len() < 8 {
             return err!("StackIsEmpty", "tried to pop from stack when it is empty");
         }
-
-        let mut out = T::default();
-        let to_bytes = unsafe { any_as_u8_slice_mut(&mut out) };
 
         if let Some(var) = self.vars.last() {
             let upper = (var.idx + var.len) as usize;
@@ -459,6 +437,9 @@ where
             Opcode::Alloc(space) => {
                 let var = self.heap.add_var(space);
                 self.stack.push(VarPointer::new_heap(var, 0));
+            }
+            Opcode::StackDealloc => {
+                self.stack.pop_var()?;
             }
 
             Opcode::MakeTempInt64(value) => self.stack.push(value.to_be()),
