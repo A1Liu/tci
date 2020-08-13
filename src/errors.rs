@@ -27,9 +27,9 @@ impl IError {
         for frame in self.stack_trace.iter() {
             write!(
                 out,
-                "    {} in file {} at line {}\n",
-                program.functions[frame.name as usize],
+                "    file {} -> function {} -> line {}\n",
                 program.files[frame.file as usize],
+                program.functions[frame.name as usize],
                 frame.line
             )?;
         }
