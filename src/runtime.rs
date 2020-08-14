@@ -1,6 +1,6 @@
 use crate::util::*;
 use core::{fmt, mem, str};
-use std::io::Write;
+use std::io::{Stderr, Stdout, Write};
 
 #[derive(Debug)]
 pub struct IError {
@@ -29,7 +29,7 @@ macro_rules! err {
     };
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Var {
     pub idx: usize,
     pub len: u32, // len in bytes
@@ -50,7 +50,7 @@ impl Var {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct VarPointer {
     _idx: u32,
@@ -68,6 +68,16 @@ impl fmt::Display for VarPointer {
     }
 }
 
+impl fmt::Debug for VarPointer {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        return write!(
+            formatter,
+            "0x{:x}{:0>8x}",
+            u32::from_be(self._idx),
+            u32::from_be(self._offset)
+        );
+    }
+}
 impl VarPointer {
     pub fn new_stack(idx: u32, offset: u32) -> VarPointer {
         if idx & !(1u32 << 31) != idx {
@@ -127,7 +137,7 @@ pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
     );
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VarBuffer {
     pub data: Vec<u8>,  // Allocator for variables
     pub vars: Vec<Var>, // Tracker for variables
@@ -139,6 +149,10 @@ impl VarBuffer {
             data: Vec::new(),
             vars: Vec::new(),
         }
+    }
+
+    pub fn new_from(data: Vec<u8>, vars: Vec<Var>) -> Self {
+        Self { data, vars }
     }
 
     pub fn get_var_range(&mut self, ptr: VarPointer, len: u32) -> Result<(usize, usize), IError> {
@@ -662,7 +676,7 @@ impl Memory {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MemorySnapshot<'a> {
     pub stack_data: &'a [u8],
     pub stack_vars: &'a [Var],
@@ -671,12 +685,12 @@ pub struct MemorySnapshot<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct _Memory {
+struct MockMemory {
     stack: VarBuffer,
     heap: VarBuffer,
 }
 
-impl _Memory {
+impl MockMemory {
     pub fn new() -> Self {
         Self {
             stack: VarBuffer::new(),
@@ -684,10 +698,10 @@ impl _Memory {
         }
     }
 
-    pub fn new_from(stack: &VarBuffer, heap: &VarBuffer) -> Self {
+    pub fn new_from(stack: VarBuffer, heap: VarBuffer) -> Self {
         Self {
-            stack: stack.clone(),
-            heap: heap.clone(),
+            stack: stack,
+            heap: heap,
         }
     }
 
@@ -698,11 +712,20 @@ impl _Memory {
             &mut self.heap
         }
     }
+
+    pub fn snapshot(&self) -> MemorySnapshot {
+        MemorySnapshot {
+            stack_data: &self.stack.data,
+            stack_vars: &self.stack.vars,
+            heap_data: &self.heap.data,
+            heap_vars: &self.heap.vars,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct MemorySnapshotWalker<'a> {
-    memory: _Memory,
+    memory: MockMemory,
     historical_data: &'a [u8],
     history: &'a [MemoryAction],
     index: usize,
@@ -762,12 +785,7 @@ impl<'a> MemorySnapshotWalker<'a> {
         }
         self.index += 1;
 
-        Some(MemorySnapshot {
-            stack_data: &self.memory.stack.data,
-            stack_vars: &self.memory.stack.vars,
-            heap_data: &self.memory.heap.data,
-            heap_vars: &self.memory.heap.vars,
-        })
+        Some(self.memory.snapshot())
     }
 
     pub fn prev(&mut self) -> Option<MemorySnapshot> {
@@ -775,7 +793,9 @@ impl<'a> MemorySnapshotWalker<'a> {
             return None;
         }
 
-        if self.index <= self.historical_data.len() {
+        println!("{}", self.index);
+        if self.index <= self.history.len() {
+            println!("{:?}", self.history[self.index - 1]);
             match self.history[self.index - 1] {
                 MemoryAction::SetValue {
                     ptr,
@@ -831,19 +851,14 @@ impl<'a> MemorySnapshotWalker<'a> {
 
         self.index -= 1;
 
-        Some(MemorySnapshot {
-            stack_data: &self.memory.stack.data,
-            stack_vars: &self.memory.stack.vars,
-            heap_data: &self.memory.heap.data,
-            heap_vars: &self.memory.heap.vars,
-        })
+        Some(self.memory.snapshot())
     }
 }
 
 impl Memory {
     pub fn forwards_walker(&self) -> MemorySnapshotWalker {
         MemorySnapshotWalker {
-            memory: _Memory::new(),
+            memory: MockMemory::new(),
             historical_data: &self.historical_data,
             history: &self.history,
             index: 0,
@@ -852,12 +867,70 @@ impl Memory {
 
     pub fn backwards_walker(&self) -> MemorySnapshotWalker {
         MemorySnapshotWalker {
-            memory: _Memory::new_from(&self.stack, &self.heap),
+            memory: MockMemory::new_from(self.stack.clone(), self.heap.clone()),
             historical_data: &self.historical_data,
             history: &self.history,
             index: self.history.len() + 1,
         }
     }
+}
+
+#[test]
+fn test_walker() {
+    let mut memory = Memory::new();
+    memory.add_stack_var(12);
+    memory.push_stack(12u64.to_be());
+    memory.push_stack(4u32.to_be());
+    memory
+        .pop_stack_bytes_into(VarPointer::new_stack(1, 0), 12)
+        .expect("should not fail");
+
+    println!("history: {:?}", memory.history);
+
+    let mut walker = memory.backwards_walker();
+
+    let expected = MockMemory::new_from(
+        VarBuffer::new_from(
+            vec![0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 4],
+            vec![Var {
+                idx: 0,
+                len: 12,
+                meta: 0,
+            }],
+        ),
+        VarBuffer::new(),
+    );
+    assert_eq!(walker.prev().unwrap(), expected.snapshot());
+
+    let expected = MockMemory::new_from(
+        VarBuffer::new_from(
+            vec![
+                0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 4,
+            ],
+            vec![Var {
+                idx: 0,
+                len: 12,
+                meta: 0,
+            }],
+        ),
+        VarBuffer::new(),
+    );
+    assert_eq!(walker.prev().unwrap(), expected.snapshot());
+
+    let expected = MockMemory::new_from(
+        VarBuffer::new_from(
+            vec![
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 4,
+            ],
+            vec![Var {
+                idx: 0,
+                len: 12,
+                meta: 0,
+            }],
+        ),
+        VarBuffer::new(),
+    );
+    assert_eq!(walker.prev().unwrap(), expected.snapshot());
 }
 
 pub trait RuntimeIO {
@@ -899,5 +972,27 @@ impl RuntimeIO for InMemoryIO {
     }
     fn log(&mut self) -> &mut StringWriter {
         return &mut self.log;
+    }
+}
+
+pub struct DefaultIO {
+    pub out: Stdout,
+    pub log: StringWriter,
+    pub err: Stderr,
+}
+
+impl RuntimeIO for DefaultIO {
+    type Out = Stdout;
+    type Log = StringWriter;
+    type Err = Stderr;
+
+    fn out(&mut self) -> &mut Stdout {
+        return &mut self.out;
+    }
+    fn log(&mut self) -> &mut StringWriter {
+        return &mut self.log;
+    }
+    fn err(&mut self) -> &mut Stderr {
+        return &mut self.err;
     }
 }
