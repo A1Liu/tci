@@ -67,6 +67,8 @@ pub const ECALL_PRINT_STR: u32 = 1;
 ///   of the stack
 /// - Set and Get are equivalent of GetLocal and SetLocal, but the location they access is
 ///   determined by popping the top of the stack first
+/// - PopKeep pops keep-many bytes off the stack, then pops drop-many bytes off the stack and
+///   repushes the first set of popped bytes back onto  the stack
 #[derive(Debug, Clone, Copy)]
 pub enum Opcode {
     Func(FuncDesc), // Function header used for callstack manipulation
@@ -79,7 +81,8 @@ pub enum Opcode {
     MakeTempFloat64(f64),
     LoadStr(u32),
 
-    Pop64,
+    Pop { bytes: u32 },
+    PopKeep { keep: u32, drop: u32 },
 
     GetLocal { var: i32, offset: u32, bytes: u32 },
     SetLocal { var: i32, offset: u32, bytes: u32 },
@@ -266,9 +269,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.push_stack(ptr);
             }
 
-            Opcode::Pop64 => {
-                self.pop_stack::<u64>()?;
-            }
+            Opcode::Pop { bytes } => self.pop_bytes(bytes)?,
+            Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop)?,
 
             Opcode::GetLocal { var, offset, bytes } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);

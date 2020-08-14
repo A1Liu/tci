@@ -539,6 +539,90 @@ impl Memory {
         return Ok(());
     }
 
+    pub fn pop_bytes(&mut self, len: u32) -> Result<(), IError> {
+        if self.stack.data.len() < len as usize {
+            return err!(
+                "StackTooShort",
+                "tried to pop {} bytes from stack when stack is only {} bytes long",
+                len,
+                self.stack.data.len(),
+            );
+        }
+
+        if let Some(var) = self.stack.vars.last() {
+            if self.stack.data.len() - var.upper() < len as usize {
+                return err!(
+                    "StackPopInvalidatesVariable",
+                    "popping from the stack would invalidate a variable"
+                );
+            }
+        }
+
+        let upper = self.stack.data.len();
+        let lower = upper - len as usize;
+        let from_bytes = &self.stack.data[lower..upper];
+
+        let value_start = self.historical_data.len();
+        self.historical_data.extend_from_slice(from_bytes);
+        let value_end = self.historical_data.len();
+
+        self.stack.data.resize(lower, 0);
+        self.history.push(MemoryAction::PopStack {
+            value_start,
+            value_end,
+        });
+
+        return Ok(());
+    }
+
+    pub fn pop_keep_bytes(&mut self, keep: u32, pop: u32) -> Result<(), IError> {
+        let len = keep + pop;
+        if self.stack.data.len() < len as usize {
+            return err!(
+                "StackTooShort",
+                "tried to pop {} bytes from stack when stack is only {} bytes long",
+                len,
+                self.stack.data.len(),
+            );
+        }
+
+        if let Some(var) = self.stack.vars.last() {
+            if self.stack.data.len() - var.upper() < len as usize {
+                return err!(
+                    "StackPopInvalidatesVariable",
+                    "popping from the stack would invalidate a variable"
+                );
+            }
+        }
+
+        let keep_start = self.stack.data.len() - keep as usize;
+        let pop_start = keep_start - pop as usize;
+        let pop_value_start = self.historical_data.len();
+        self.historical_data
+            .extend_from_slice(&self.stack.data[pop_start..]);
+        let pop_value_end = self.historical_data.len();
+        self.historical_data
+            .extend_from_slice(&self.stack.data[keep_start..]);
+        let push_value_end = self.historical_data.len();
+
+        let mutate_slice = &mut self.stack.data[pop_start..];
+        for i in 0..mutate_slice.len() {
+            mutate_slice[i] = mutate_slice[i + pop as usize];
+        }
+        self.stack.data.resize(pop_start + keep as usize, 0);
+
+        self.history.push(MemoryAction::PopStack {
+            value_start: pop_value_start,
+            value_end: pop_value_end,
+        });
+        self.history.push(MemoryAction::PushStack {
+            value_start: pop_value_end,
+            value_end: push_value_end,
+        });
+
+        return Ok(());
+    }
+
     pub fn pop_stack<T: Copy>(&mut self) -> Result<T, IError> {
         let len = mem::size_of::<T>();
         if self.stack.data.len() < len {
