@@ -1,4 +1,5 @@
 use crate::util::*;
+use core::ops::{Deref, DerefMut};
 use core::{fmt, mem, str};
 use std::io::Write;
 
@@ -64,9 +65,6 @@ pub enum Opcode {
 
     Ret, // Returns to caller
 
-    AddCallstackDesc(CallFrame),
-    RemoveCallstackDesc,
-
     Call(u32),
     Ecall(u32),
 }
@@ -89,7 +87,6 @@ pub struct Program<'a> {
 pub struct IError {
     pub short_name: String,
     pub message: String,
-    pub stack_trace: Vec<CallFrame>,
 }
 
 impl IError {
@@ -97,14 +94,17 @@ impl IError {
         Self {
             short_name: short_name.to_string(),
             message,
-            stack_trace: Vec::new(),
         }
     }
 
-    pub fn render(&self, program: &Program) -> Result<String, std::io::Error> {
+    pub fn render(
+        &self,
+        stack_trace: &Vec<CallFrame>,
+        program: &Program,
+    ) -> Result<String, std::io::Error> {
         let mut out = StringWriter::new();
         write!(out, "{}: {}\n", self.short_name, self.message)?;
-        for frame in self.stack_trace.iter() {
+        for frame in stack_trace {
             write!(
                 out,
                 "    file {} -> function {} -> line {}\n",
@@ -132,8 +132,23 @@ macro_rules! err {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Var {
-    pub idx: u32,
+    pub idx: usize,
     pub len: u32, // len in bytes
+    pub meta: u32,
+}
+
+impl Var {
+    pub fn new() -> Self {
+        Self {
+            idx: 0,
+            len: 0,
+            meta: 0,
+        }
+    }
+
+    pub fn upper(self) -> usize {
+        self.idx + self.len as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -147,7 +162,7 @@ impl fmt::Display for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         return write!(
             formatter,
-            "0x{:0>8x}{:0>8x}",
+            "0x{:x}{:0>8x}",
             u32::from_be(self._idx),
             u32::from_be(self._offset)
         );
@@ -182,6 +197,12 @@ impl VarPointer {
         (u32::from_be(self._idx) & !(1u32 << 31)) as usize
     }
 
+    pub fn with_offset(self, offset: u32) -> Self {
+        let mut ptr = self;
+        ptr.set_offset(offset);
+        return ptr;
+    }
+
     pub fn offset(self) -> u32 {
         u32::from_be(self._offset)
     }
@@ -190,17 +211,24 @@ impl VarPointer {
         self._offset = offset.to_be();
     }
 
-    pub fn bytes(self) -> u64 {
-        let idx = (u32::from_be(self._idx) as u64) << 32;
-        let offset = u32::from_be(self._offset) as u64;
-        return (idx + offset).to_be();
-    }
-
     pub fn is_stack(self) -> bool {
-        self._idx & (1u32 << 31) != 0
+        u32::from_be(self._idx) & (1u32 << 31) != 0
     }
 }
 
+pub fn invalid_ptr(ptr: VarPointer) -> IError {
+    return error!("InvalidPointer", "the pointer {} is invalid", ptr);
+}
+
+pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
+    let (start, end) = (ptr.with_offset(0), ptr.with_offset(var.len));
+    return error!(
+        "InvalidPointer",
+        "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
+    );
+}
+
+#[derive(Debug, Clone)]
 pub struct VarBuffer {
     pub data: Vec<u8>,  // Allocator for variables
     pub vars: Vec<Var>, // Tracker for variables
@@ -214,126 +242,279 @@ impl VarBuffer {
         }
     }
 
-    pub fn invalid_ptr(ptr: VarPointer) -> IError {
-        return error!("InvalidPointer", "the pointer {} is invalid", ptr);
-    }
-
-    pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
-        let (mut start, mut end) = (ptr, ptr);
-        start._offset = 0;
-        end._offset = var.len;
-        return error!(
-            "InvalidPointer",
-            "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
-        );
-    }
-
-    pub fn get_var_range_mut(&mut self, ptr: VarPointer, len: u32) -> Result<&mut [u8], IError> {
+    pub fn get_var_range(&self, ptr: VarPointer) -> Result<&[u8], IError> {
         if ptr.var_idx() == 0 {
-            return Err(Self::invalid_ptr(ptr));
+            return Err(invalid_ptr(ptr));
         }
 
         let var = match self.vars.get(ptr.var_idx() - 1) {
             Some(x) => *x,
-            None => return Err(Self::invalid_ptr(ptr)),
-        };
-
-        if ptr.offset() + len > var.len {
-            return Err(Self::invalid_offset(var, ptr));
-        }
-
-        let begin = var.idx + ptr.offset();
-        return Ok(&mut self.data[begin as usize..((begin + len) as usize)]);
-    }
-
-    pub fn get_var_range(&self, ptr: VarPointer, len: u32) -> Result<&[u8], IError> {
-        if ptr.var_idx() == 0 {
-            return Err(Self::invalid_ptr(ptr));
-        }
-
-        let var = match self.vars.get(ptr.var_idx() - 1) {
-            Some(x) => *x,
-            None => return Err(Self::invalid_ptr(ptr)),
-        };
-
-        if ptr.offset() + len > var.len {
-            return Err(Self::invalid_offset(var, ptr));
-        }
-
-        let begin = var.idx + ptr.offset();
-        return Ok(&self.data[begin as usize..((begin + len) as usize)]);
-    }
-
-    pub fn get_full_var_range(&self, ptr: VarPointer) -> Result<&[u8], IError> {
-        if ptr.var_idx() == 0 {
-            return Err(Self::invalid_ptr(ptr));
-        }
-
-        let var = match self.vars.get(ptr.var_idx() - 1) {
-            Some(x) => *x,
-            None => return Err(Self::invalid_ptr(ptr)),
+            None => return Err(invalid_ptr(ptr)),
         };
 
         if ptr.offset() >= var.len {
-            return Err(Self::invalid_offset(var, ptr));
+            return Err(invalid_offset(var, ptr));
         }
 
-        return Ok(&self.data[(var.idx + ptr.offset()) as usize..((var.idx + var.len) as usize)]);
+        return Ok(&self.data[(var.idx + ptr.offset() as usize)..(var.idx + var.len as usize)]);
+    }
+
+    pub fn write_bytes(&mut self, ptr: VarPointer, bytes: &[u8]) -> Result<Vec<u8>, IError> {
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var = match self.vars.get(ptr.var_idx() - 1) {
+            Some(x) => *x,
+            None => return Err(invalid_ptr(ptr)),
+        };
+
+        if ptr.offset() >= var.len {
+            return Err(invalid_offset(var, ptr));
+        }
+
+        let len = bytes.len() as u32; // TODO check for overflow here
+        if ptr.offset() + len > var.len {
+            println!("hello from canada");
+            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len)));
+        }
+
+        let start = var.idx + ptr.offset() as usize;
+        let to_bytes = &mut self.data[start..(start + len as usize)];
+        let mut previous_value = Vec::new();
+        previous_value.extend_from_slice(to_bytes);
+        to_bytes.copy_from_slice(bytes);
+        return Ok(previous_value);
     }
 
     pub fn get_var<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
-        let len = mem::size_of::<T>();
-        return Ok(unsafe { *(self.get_var_range(ptr, len as u32)?.as_ptr() as *const T) });
+        let len = mem::size_of::<T>() as u32; // TODO check for overflow
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var = match self.vars.get(ptr.var_idx() - 1) {
+            Some(x) => *x,
+            None => return Err(invalid_ptr(ptr)),
+        };
+
+        if ptr.offset() + len > var.len {
+            return Err(invalid_offset(var, ptr));
+        }
+
+        let begin = var.idx + ptr.offset() as usize;
+        let var_range = &self.data[begin..(begin + len as usize)];
+        return Ok(unsafe { *(var_range.as_ptr() as *const T) });
     }
 
-    pub fn upper_bound(&self) -> u32 {
-        return (self.vars.len() + 1) as u32;
+    pub fn add_var(&mut self, len: u32) -> u32 {
+        let idx = self.data.len();
+        self.vars.push(Var { idx, len, meta: 0 });
+        self.data.resize(idx + len as usize, 0);
+        let var_idx = self.vars.len() as u32; // TODO Check for overflow
+        return var_idx;
     }
 
-    pub fn add_var(&mut self, len: u32) -> (u32, &mut [u8]) {
-        let idx = self.data.len() as u32;
-        self.vars.push(Var { idx, len });
-        self.data.resize((idx + len) as usize, 0);
-        let var_idx = self.vars.len() as u32;
-        let var_range = idx as usize..((idx + len) as usize);
-        return (var_idx, &mut self.data[var_range]);
+    pub fn set<T: Copy>(&mut self, ptr: VarPointer, t: T) -> Result<T, IError> {
+        let len = mem::size_of::<T>() as u32; // TODO check for overflow
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var = match self.vars.get(ptr.var_idx() - 1) {
+            Some(x) => *x,
+            None => return Err(invalid_ptr(ptr)),
+        };
+
+        if ptr.offset() + len > var.len {
+            return Err(invalid_offset(var, ptr));
+        }
+
+        let begin = var.idx + ptr.offset() as usize;
+        let to_bytes = &mut self.data[begin..(begin + len as usize)];
+        let previous_value = unsafe { *(to_bytes.as_ptr() as *const T) };
+        to_bytes.copy_from_slice(any_as_u8_slice(&t));
+        return Ok(previous_value);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MemoryAction {
+    SetValue {
+        ptr: VarPointer,
+        value_start: usize,
+        value_end_overwrite_start: usize,
+        overwrite_end: usize,
+    },
+    PopStack {
+        value_start: usize,
+        value_end: usize,
+    },
+    PushStack {
+        value_start: usize,
+        value_end: usize,
+    },
+    PopStackVar {
+        var_start: usize,
+        var_end_stack_start: usize,
+        stack_end: usize,
+    },
+    AllocStackVar {
+        len: u32,
+    },
+    AllocHeapVar {
+        len: u32,
+    },
+}
+
+pub struct Memory {
+    pub stack: VarBuffer,
+    pub heap: VarBuffer,
+    pub historical_data: Vec<u8>,
+    pub history: Vec<MemoryAction>,
+}
+
+impl Memory {
+    pub fn new() -> Self {
+        Self {
+            stack: VarBuffer::new(),
+            heap: VarBuffer::new(),
+            historical_data: Vec::new(),
+            history: Vec::new(),
+        }
     }
 
-    pub fn pop_var(&mut self) -> Result<Var, IError> {
-        if let Some(var) = self.vars.pop() {
-            self.data.resize(var.idx as usize, 0);
+    #[inline]
+    pub fn get_var_range(&self, ptr: VarPointer) -> Result<&[u8], IError> {
+        if ptr.is_stack() {
+            return self.stack.get_var_range(ptr);
+        } else {
+            return self.heap.get_var_range(ptr);
+        }
+    }
+
+    #[inline]
+    pub fn get_var<T: Default + Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
+        if ptr.is_stack() {
+            return self.stack.get_var(ptr);
+        } else {
+            return self.heap.get_var(ptr);
+        }
+    }
+
+    #[inline]
+    pub fn set<T: Copy>(&mut self, ptr: VarPointer, value: T) -> Result<(), IError> {
+        let value_start = self.historical_data.len();
+        self.historical_data
+            .extend_from_slice(any_as_u8_slice(&value));
+
+        let previous_value;
+        if ptr.is_stack() {
+            previous_value = self.stack.set(ptr, value)?;
+        } else {
+            previous_value = self.heap.set(ptr, value)?;
+        }
+
+        let value_end_overwrite_start = self.historical_data.len();
+        self.historical_data
+            .extend_from_slice(any_as_u8_slice(&previous_value));
+        let overwrite_end = self.historical_data.len();
+        self.history.push(MemoryAction::SetValue {
+            ptr,
+            value_start,
+            value_end_overwrite_start,
+            overwrite_end,
+        });
+
+        return Ok(());
+    }
+
+    #[inline]
+    pub fn add_stack_var(&mut self, len: u32) -> VarPointer {
+        let ptr = VarPointer::new_stack(self.stack.add_var(len), 0);
+        self.history.push(MemoryAction::AllocStackVar { len });
+        return ptr;
+    }
+
+    #[inline]
+    pub fn add_heap_var(&mut self, len: u32) -> VarPointer {
+        let ptr = VarPointer::new_heap(self.heap.add_var(len), 0);
+        self.history.push(MemoryAction::AllocHeapVar { len });
+        return ptr;
+    }
+
+    #[inline]
+    pub fn write_bytes(&mut self, ptr: VarPointer, bytes: &[u8]) -> Result<(), IError> {
+        let value_start = self.historical_data.len();
+        self.historical_data.extend_from_slice(bytes);
+
+        let previous_value;
+        if ptr.is_stack() {
+            previous_value = self.stack.write_bytes(ptr, bytes)?;
+        } else {
+            previous_value = self.heap.write_bytes(ptr, bytes)?;
+        }
+
+        let value_end_overwrite_start = self.historical_data.len();
+        self.historical_data.extend_from_slice(&previous_value);
+        let overwrite_end = self.historical_data.len();
+        self.history.push(MemoryAction::SetValue {
+            ptr,
+            value_start,
+            value_end_overwrite_start,
+            overwrite_end,
+        });
+
+        return Ok(());
+    }
+
+    #[inline]
+    pub fn stack_length(&self) -> u32 {
+        return (self.stack.vars.len() + 1) as u32; // TODO check for overflow
+    }
+
+    pub fn pop_stack_var(&mut self) -> Result<Var, IError> {
+        if let Some(var) = self.stack.vars.pop() {
+            let var_start = self.historical_data.len();
+            let var_end_stack_start = var_start + var.len as usize;
+            self.historical_data
+                .extend_from_slice(&self.stack.data[var.idx..]);
+            let stack_end = self.historical_data.len();
+
+            self.stack.data.resize(var.idx, 0);
+            self.history.push(MemoryAction::PopStackVar {
+                var_start,
+                var_end_stack_start,
+                stack_end,
+            });
+
             return Ok(var);
         } else {
             return err!("StackIsEmpty", "tried to pop from stack when it is empty");
         }
     }
 
-    pub fn shrink_vars_to(&mut self, len: u32) {
-        let len = (len - 1) as usize;
-        if len > self.vars.len() {
-            panic!("shrinking to a length larger than the vars array");
-        }
+    #[inline]
+    pub fn push_stack<T: Copy>(&mut self, value: T) {
+        let from_bytes = any_as_u8_slice(&value);
+        let value_start = self.historical_data.len();
+        self.historical_data.extend_from_slice(from_bytes);
+        let value_end = self.historical_data.len();
 
-        self.vars.resize(len, Var { idx: 0, len: 0 });
-        if let Some(var) = self.vars.last() {
-            self.data.resize((var.idx + var.len) as usize, 0);
-        } else {
-            self.data.resize(0, 0);
-        }
+        self.stack.data.extend_from_slice(from_bytes);
+        self.history.push(MemoryAction::PushStack {
+            value_start,
+            value_end,
+        });
     }
 
-    pub fn push<T: Copy>(&mut self, value: T) {
-        self.data.extend_from_slice(any_as_u8_slice(&value));
-    }
-
-    pub fn pop<T: Copy>(&mut self) -> Result<T, IError> {
-        if self.data.len() < 8 {
+    pub fn pop_stack<T: Copy>(&mut self) -> Result<T, IError> {
+        if self.stack.data.len() < 8 {
             return err!("StackIsEmpty", "tried to pop from stack when it is empty");
         }
 
-        if let Some(var) = self.vars.last() {
-            let upper = (var.idx + var.len) as usize;
-            if self.data.len() - upper < 8 {
+        if let Some(var) = self.stack.vars.last() {
+            if self.stack.data.len() - var.upper() < 8 {
                 return err!(
                     "StackPopInvalidatesVariable",
                     "popping from the stack would invalidate a variable"
@@ -341,17 +522,220 @@ impl VarBuffer {
             }
         }
 
-        let upper = self.data.len();
+        let upper = self.stack.data.len();
         let lower = upper - 8;
-        let out = unsafe { *(self.data[lower..upper].as_ptr() as *const T) };
-        self.data.resize(lower, 0);
+        let from_bytes = &self.stack.data[lower..upper];
+
+        let value_start = self.historical_data.len();
+        self.historical_data.extend_from_slice(from_bytes);
+        let value_end = self.historical_data.len();
+
+        let out = unsafe { *(from_bytes.as_ptr() as *const T) };
+        self.stack.data.resize(lower, 0);
+        self.history.push(MemoryAction::PopStack {
+            value_start,
+            value_end,
+        });
+
         return Ok(out);
     }
+}
 
-    pub fn set<T: Copy>(&mut self, ptr: VarPointer, t: T) -> Result<(), IError> {
-        let to_bytes = self.get_var_range_mut(ptr, mem::size_of::<T>() as u32)?;
-        to_bytes.copy_from_slice(any_as_u8_slice(&t));
-        return Ok(());
+#[derive(Debug, Clone, Copy)]
+pub struct MemorySnapshot<'a> {
+    pub stack_data: &'a [u8],
+    pub stack_vars: &'a [Var],
+    pub heap_data: &'a [u8],
+    pub heap_vars: &'a [Var],
+}
+
+#[derive(Debug, Clone)]
+struct _Memory {
+    stack: VarBuffer,
+    heap: VarBuffer,
+}
+
+impl _Memory {
+    pub fn new() -> Self {
+        Self {
+            stack: VarBuffer::new(),
+            heap: VarBuffer::new(),
+        }
+    }
+
+    pub fn new_from(stack: &VarBuffer, heap: &VarBuffer) -> Self {
+        Self {
+            stack: stack.clone(),
+            heap: heap.clone(),
+        }
+    }
+
+    pub fn var_buffer(&mut self, ptr: VarPointer) -> &mut VarBuffer {
+        if ptr.is_stack() {
+            &mut self.stack
+        } else {
+            &mut self.heap
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MemorySnapshotWalker<'a> {
+    memory: _Memory,
+    historical_data: &'a [u8],
+    history: &'a [MemoryAction],
+    index: usize,
+}
+
+impl<'a> MemorySnapshotWalker<'a> {
+    pub fn next(&mut self) -> Option<MemorySnapshot> {
+        if self.index > self.history.len() {
+            return None;
+        }
+
+        if self.index > 0 {
+            match self.history[self.index - 1] {
+                MemoryAction::SetValue {
+                    ptr,
+                    value_start,
+                    value_end_overwrite_start,
+                    overwrite_end,
+                } => {
+                    let value_bytes = &self.historical_data[value_start..value_end_overwrite_start];
+                    self.memory
+                        .var_buffer(ptr)
+                        .write_bytes(ptr, value_bytes)
+                        .expect("this should never error");
+                }
+                MemoryAction::PopStack {
+                    value_start,
+                    value_end,
+                } => {
+                    let popped_len = value_end - value_start;
+                    let data = &mut self.memory.stack.data;
+                    data.resize(data.len() - popped_len, 0);
+                }
+                MemoryAction::PushStack {
+                    value_start,
+                    value_end,
+                } => {
+                    let popped_len = value_end - value_start;
+                    let data = &mut self.memory.stack.data;
+                    data.extend_from_slice(&self.historical_data[value_start..value_end]);
+                }
+                MemoryAction::PopStackVar {
+                    var_start,
+                    var_end_stack_start,
+                    stack_end,
+                } => {
+                    let var = self.memory.stack.vars.pop().unwrap();
+                    self.memory.stack.data.resize(var.idx, 0);
+                }
+                MemoryAction::AllocHeapVar { len } => {
+                    self.memory.heap.add_var(len);
+                }
+                MemoryAction::AllocStackVar { len } => {
+                    self.memory.stack.add_var(len);
+                }
+            }
+        }
+        self.index += 1;
+
+        Some(MemorySnapshot {
+            stack_data: &self.memory.stack.data,
+            stack_vars: &self.memory.stack.vars,
+            heap_data: &self.memory.heap.data,
+            heap_vars: &self.memory.heap.vars,
+        })
+    }
+
+    pub fn prev(&mut self) -> Option<MemorySnapshot> {
+        if self.index == 0 {
+            return None;
+        }
+
+        if self.index <= self.historical_data.len() {
+            match self.history[self.index - 1] {
+                MemoryAction::SetValue {
+                    ptr,
+                    value_start,
+                    value_end_overwrite_start,
+                    overwrite_end,
+                } => {
+                    let value_bytes =
+                        &self.historical_data[value_end_overwrite_start..overwrite_end];
+                    self.memory
+                        .var_buffer(ptr)
+                        .write_bytes(ptr, value_bytes)
+                        .expect("this should never error");
+                }
+                MemoryAction::PopStack {
+                    value_start,
+                    value_end,
+                } => {
+                    let popped_len = value_end - value_start;
+                    let data = &mut self.memory.stack.data;
+                    data.extend_from_slice(&self.historical_data[value_start..value_end]);
+                }
+                MemoryAction::PushStack {
+                    value_start,
+                    value_end,
+                } => {
+                    let popped_len = value_end - value_start;
+                    let data = &mut self.memory.stack.data;
+                    data.resize(data.len() - popped_len, 0);
+                }
+                MemoryAction::PopStackVar {
+                    var_start,
+                    var_end_stack_start,
+                    stack_end,
+                } => {
+                    let data = &mut self.memory.stack.data;
+                    let idx = data.len(); // TODO check for overflow
+                    let len = (var_end_stack_start - var_start) as u32;
+                    data.extend_from_slice(&self.historical_data[var_start..stack_end]);
+                    let vars = &mut self.memory.stack.vars;
+                    vars.push(Var { idx, len, meta: 0 });
+                }
+                MemoryAction::AllocHeapVar { len } => {
+                    let var = self.memory.heap.vars.pop().unwrap();
+                    self.memory.heap.data.resize(var.idx, 0);
+                }
+                MemoryAction::AllocStackVar { len } => {
+                    let var = self.memory.stack.vars.pop().unwrap();
+                    self.memory.stack.data.resize(var.idx, 0);
+                }
+            }
+        }
+
+        self.index -= 1;
+
+        Some(MemorySnapshot {
+            stack_data: &self.memory.stack.data,
+            stack_vars: &self.memory.stack.vars,
+            heap_data: &self.memory.heap.data,
+            heap_vars: &self.memory.heap.vars,
+        })
+    }
+}
+
+impl Memory {
+    pub fn forwards_walker(&self) -> MemorySnapshotWalker {
+        MemorySnapshotWalker {
+            memory: _Memory::new(),
+            historical_data: &self.historical_data,
+            history: &self.history,
+            index: 0,
+        }
+    }
+
+    pub fn backwards_walker(&self) -> MemorySnapshotWalker {
+        MemorySnapshotWalker {
+            memory: _Memory::new_from(&self.stack, &self.heap),
+            historical_data: &self.historical_data,
+            history: &self.history,
+            index: self.history.len() + 1,
+        }
     }
 }
 
@@ -366,9 +750,9 @@ pub trait RuntimeIO {
 }
 
 pub struct InMemoryIO {
-    out: StringWriter,
-    log: StringWriter,
-    err: StringWriter,
+    pub out: StringWriter,
+    pub log: StringWriter,
+    pub err: StringWriter,
 }
 
 impl InMemoryIO {
@@ -398,17 +782,28 @@ impl RuntimeIO for InMemoryIO {
 }
 
 pub struct Runtime<IO: RuntimeIO> {
-    pub stack: VarBuffer,
-    pub heap: VarBuffer,
+    pub memory: Memory,
     pub callstack: Vec<CallFrame>,
     pub io: IO,
+}
+
+impl<IO: RuntimeIO> DerefMut for Runtime<IO> {
+    fn deref_mut(&mut self) -> &mut Memory {
+        return &mut self.memory;
+    }
+}
+
+impl<IO: RuntimeIO> Deref for Runtime<IO> {
+    type Target = Memory;
+    fn deref(&self) -> &Memory {
+        return &self.memory;
+    }
 }
 
 impl<IO: RuntimeIO> Runtime<IO> {
     pub fn new(io: IO) -> Self {
         Self {
-            stack: VarBuffer::new(),
-            heap: VarBuffer::new(),
+            memory: Memory::new(),
             callstack: Vec::new(),
             io,
         }
@@ -416,6 +811,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
     pub fn fp_offset(fp: u32, var: i32) -> u32 {
         if var < 0 {
+            // TODO make sure there's no overflow happening here
             let var = (var * -1) as u32;
             fp - var
         } else {
@@ -423,50 +819,9 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn get_var<T: Default + Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
-        if ptr.is_stack() {
-            return self.stack.get_var(ptr);
-        } else {
-            return self.heap.get_var(ptr);
-        }
-    }
-
-    pub fn get_var_range(&self, ptr: VarPointer, len: u32) -> Result<&[u8], IError> {
-        if ptr.is_stack() {
-            return self.stack.get_var_range(ptr, len);
-        } else {
-            return self.heap.get_var_range(ptr, len);
-        }
-    }
-
-    pub fn get_var_range_mut(&mut self, ptr: VarPointer, len: u32) -> Result<&mut [u8], IError> {
-        if ptr.is_stack() {
-            return self.stack.get_var_range_mut(ptr, len);
-        } else {
-            return self.heap.get_var_range_mut(ptr, len);
-        }
-    }
-
-    pub fn set<T: Copy>(&mut self, ptr: VarPointer, value: T) -> Result<(), IError> {
-        if ptr.is_stack() {
-            return self.stack.set(ptr, value);
-        } else {
-            return self.heap.set(ptr, value);
-        }
-    }
-
     pub fn run_program(&mut self, program: Program) -> Result<(), IError> {
-        match self.run_func(&program, 0) {
-            Ok(()) => Ok(()),
-            Err(mut err) => {
-                err.stack_trace.reserve(self.callstack.len());
-                for callframe in self.callstack.iter() {
-                    err.stack_trace.push(*callframe);
-                }
-
-                return Err(err);
-            }
-        }
+        self.memory = Memory::new();
+        return self.run_func(&program, 0);
     }
 
     pub fn pop_callstack(&mut self) -> Result<(), IError> {
@@ -493,8 +848,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         let callstack_len = self.callstack.len();
 
-        let fp = self.stack.upper_bound();
-        let mut pc: i32 = (pcounter + 1) as i32;
+        let fp = self.memory.stack_length();
+        let mut pc: i32 = pcounter as i32;
 
         loop {
             let op = program.ops[pc as usize];
@@ -510,13 +865,15 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 );
             }
 
-            write!(self.io.log(), "stack: {:0>3?}\n", self.stack.data)
-                .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
-            write!(self.io.log(), "heap:  {:0>3?}\n\n", self.heap.data)
-                .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
+            write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
+                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
+            write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
+                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
 
             if pc < 0 {
-                self.stack.shrink_vars_to(fp);
+                while self.memory.stack_length() > fp {
+                    self.memory.pop_stack_var()?;
+                }
                 if self.callstack.len() < callstack_len {
                     return err!(
                         "InvalidCallstackState",
@@ -550,92 +907,93 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Func(_) => {}
 
             Opcode::StackAlloc(space) => {
-                self.stack.add_var(space);
+                self.add_stack_var(space);
             }
             Opcode::Alloc(space) => {
-                let (var, _) = self.heap.add_var(space);
-                self.stack.push(VarPointer::new_heap(var, 0));
+                let ptr = self.add_heap_var(space);
+                self.push_stack(ptr);
             }
             Opcode::StackDealloc => {
-                self.stack.pop_var()?;
+                self.pop_stack_var()?;
             }
 
-            Opcode::MakeTempInt64(value) => self.stack.push(value.to_be()),
-            Opcode::MakeTempFloat64(value) => self.stack.push(value),
+            Opcode::MakeTempInt64(value) => self.push_stack(value.to_be()),
+            Opcode::MakeTempFloat64(value) => self.push_stack(value),
             Opcode::LoadStr(idx) => {
                 let str_value = program.strings[idx as usize].as_bytes();
-                let str_len = str_value.len() as u32;
+                let str_len = str_value.len() as u32; // TODO check for overflow
 
-                let (idx, bytes) = self.heap.add_var(str_len + 1);
-                let ptr = VarPointer::new_heap(idx, 0);
-
-                let last_idx = bytes.len() - 1;
-                bytes[0..last_idx].copy_from_slice(str_value);
-                bytes[last_idx] = 0;
-
-                self.stack.push(ptr.bytes());
+                let ptr = self.add_heap_var(str_len + 1);
+                self.write_bytes(ptr, str_value)?;
+                let mut end_ptr = ptr;
+                end_ptr.set_offset(str_len);
+                self.write_bytes(end_ptr, &vec![0])?;
+                self.push_stack(ptr);
             }
 
             Opcode::Pop64 => {
-                self.stack.pop::<u64>()?;
+                self.pop_stack::<u64>()?;
             }
 
             Opcode::GetLocal64 { var, offset } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
-                self.stack.push(self.stack.get_var::<u64>(ptr)?);
+                let var = self.get_var::<u64>(ptr)?;
+                self.push_stack(var);
             }
             Opcode::SetLocal64 { var, offset } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
-                let word: u64 = self.stack.pop()?;
-                self.stack.set(ptr, word)?;
+                let word: u64 = self.pop_stack()?;
+                println!("is_stack?: {}", ptr.is_stack());
+                self.set(ptr, word)?;
             }
 
             Opcode::Get64 { offset } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.set_offset(ptr.offset().wrapping_add(offset as u32));
-                self.stack.push(self.get_var::<u64>(ptr)?);
+                let mut ptr: VarPointer = self.pop_stack()?;
+                ptr.set_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
+                let var = self.get_var::<u64>(ptr)?;
+                self.push_stack(var);
             }
             Opcode::Set64 { offset } => {
-                let mut ptr: VarPointer = self.stack.pop()?;
-                ptr.set_offset(ptr.offset().wrapping_add(offset as u32));
-                let word = self.stack.pop::<u64>()?;
+                let mut ptr: VarPointer = self.pop_stack()?;
+                ptr.set_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
+                let word = self.pop_stack::<u64>()?;
                 self.set(ptr, word)?;
             }
 
             Opcode::AddU64 => {
-                let word1: u64 = u64::from_be(self.stack.pop()?);
-                let word2: u64 = u64::from_be(self.stack.pop()?);
-                self.stack.push(word1.wrapping_add(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack()?);
+                let word2: u64 = u64::from_be(self.pop_stack()?);
+                self.push_stack(word1.wrapping_add(word2).to_be());
             }
             Opcode::SubI64 => {
-                let word1: u64 = u64::from_be(self.stack.pop()?);
-                let word2: u64 = u64::from_be(self.stack.pop()?);
-                self.stack.push(word1.wrapping_sub(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack()?);
+                let word2: u64 = u64::from_be(self.pop_stack()?);
+                self.push_stack(word1.wrapping_sub(word2).to_be());
             }
             Opcode::MulI64 => {
-                let word1: u64 = u64::from_be(self.stack.pop()?);
-                let word2: u64 = u64::from_be(self.stack.pop()?);
-                self.stack.push(word1.wrapping_mul(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack()?);
+                let word2: u64 = u64::from_be(self.pop_stack()?);
+                self.push_stack(word1.wrapping_mul(word2).to_be());
             }
             Opcode::DivI64 => {
-                let word1: u64 = u64::from_be(self.stack.pop()?);
-                let word2: u64 = u64::from_be(self.stack.pop()?);
-                self.stack.push(word1.wrapping_div(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack()?);
+                let word2: u64 = u64::from_be(self.pop_stack()?);
+                self.push_stack(word1.wrapping_div(word2).to_be());
             }
             Opcode::ModI64 => {
-                let word1: u64 = u64::from_be(self.stack.pop()?);
-                let word2: u64 = u64::from_be(self.stack.pop()?);
-                self.stack.push((word1 % word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack()?);
+                let word2: u64 = u64::from_be(self.pop_stack()?);
+                self.push_stack((word1 % word2).to_be());
             }
 
             Opcode::JumpIfZero64(target) => {
-                let value: u64 = self.stack.pop()?;
+                let value: u64 = self.pop_stack()?;
                 if value == 0 {
                     return Ok(target as i32);
                 }
             }
             Opcode::JumpIfNotZero64(target) => {
-                let value: u64 = self.stack.pop()?;
+                let value: u64 = self.pop_stack()?;
                 if value != 0 {
                     return Ok(target as i32);
                 }
@@ -643,25 +1001,18 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::Ret => return Ok(-1),
 
-            Opcode::AddCallstackDesc(desc) => self.callstack.push(desc),
-            Opcode::RemoveCallstackDesc => self.pop_callstack()?,
-
             Opcode::Call(func) => {
                 self.run_func(program, func as usize)?;
             }
 
             Opcode::Ecall(ECALL_PRINT_INT) => {
-                let word: i64 = i64::from_be(self.stack.pop()?);
+                let word: i64 = i64::from_be(self.pop_stack()?);
                 write!(self.io.out(), "{}", word)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
             Opcode::Ecall(ECALL_PRINT_STR) => {
-                let ptr: VarPointer = self.stack.pop()?;
-                let str_bytes = if ptr.is_stack() {
-                    self.stack.get_full_var_range(ptr)?
-                } else {
-                    self.heap.get_full_var_range(ptr)?
-                };
+                let ptr: VarPointer = self.pop_stack()?;
+                let str_bytes = self.memory.get_var_range(ptr)?;
 
                 let mut idx = str_bytes.len();
                 for (idx_, byte) in str_bytes.iter().enumerate() {
@@ -726,7 +1077,11 @@ fn test_simple_read_write() {
     match result {
         Ok(()) => {}
         Err(err) => {
-            println!("{}", err.render(&program).expect("why did this fail?"));
+            println!(
+                "{}",
+                err.render(&runtime.callstack, &program)
+                    .expect("why did this fail?")
+            );
             panic!();
         }
     }
@@ -774,7 +1129,63 @@ fn test_errors() {
             panic!();
         }
         Err(err) => {
-            println!("{}", err.render(&program).expect("why did this fail?"));
+            println!(
+                "{}",
+                err.render(&runtime.callstack, &program)
+                    .expect("why did this fail?")
+            );
+            println!("{}", runtime.io.log().to_string());
+            assert_eq!(err.short_name, "InvalidPointer");
+        }
+    }
+}
+
+#[test]
+fn test_walker() {
+    let files = vec!["main.c"];
+    let strings = vec!["hello, world!\n"];
+    let functions = vec!["main", "helper"];
+    let ops = vec![
+        Opcode::Func(FuncDesc { file: 0, name: 0 }),
+        Opcode::StackAlloc(8),
+        Opcode::LoadStr(0),
+        Opcode::SetLocal64 { var: 0, offset: 0 },
+        Opcode::Call(6),
+        Opcode::Ret,
+        Opcode::Func(FuncDesc { file: 0, name: 1 }),
+        Opcode::GetLocal64 { var: -1, offset: 0 },
+        Opcode::MakeTempInt64(15),
+        Opcode::AddU64,
+        Opcode::Ecall(ECALL_PRINT_STR),
+        Opcode::Ret,
+    ];
+    let tags = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    let ops: Vec<TaggedOpcode> = ops
+        .iter()
+        .zip(tags)
+        .map(|(&op, line)| TaggedOpcode { op, line })
+        .collect();
+
+    let program = Program {
+        file_names: &files,
+        strings: &strings,
+        functions: &functions,
+        ops: &ops,
+    };
+
+    let mut runtime = Runtime::new(InMemoryIO::new());
+    match runtime.run_program(program) {
+        Ok(()) => {
+            println!("{}", runtime.io.log().to_string());
+            println!("{}", runtime.io.out().to_string());
+            panic!();
+        }
+        Err(err) => {
+            println!(
+                "{}",
+                err.render(&runtime.callstack, &program)
+                    .expect("why did this fail?")
+            );
             println!("{}", runtime.io.log().to_string());
             assert_eq!(err.short_name, "InvalidPointer");
         }
