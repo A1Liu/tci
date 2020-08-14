@@ -1,7 +1,7 @@
 use crate::runtime::*;
 use crate::util::*;
 use core::ops::{Deref, DerefMut};
-use core::str;
+use core::{mem, str};
 use std::io::Write;
 
 macro_rules! error {
@@ -120,20 +120,20 @@ pub struct Program<'a> {
 }
 
 pub struct Runtime<IO: RuntimeIO> {
-    pub memory: Memory,
+    pub memory: Memory<u32>,
     pub callstack: Vec<CallFrame>,
     pub io: IO,
 }
 
 impl<IO: RuntimeIO> DerefMut for Runtime<IO> {
-    fn deref_mut(&mut self) -> &mut Memory {
+    fn deref_mut(&mut self) -> &mut Memory<u32> {
         return &mut self.memory;
     }
 }
 
 impl<IO: RuntimeIO> Deref for Runtime<IO> {
-    type Target = Memory;
-    fn deref(&self) -> &Memory {
+    type Target = Memory<u32>;
+    fn deref(&self) -> &Memory<u32> {
         return &self.memory;
     }
 }
@@ -151,7 +151,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         if var < 0 {
             // TODO make sure there's no overflow happening here
             let var = (var * -1) as u32;
-            fp - var
+            fp - var - 1
         } else {
             fp + var as u32
         }
@@ -172,8 +172,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
         return Ok(());
     }
 
-    pub fn run_func(&mut self, program: &Program, pcounter: usize) -> Result<(), IError> {
-        let func_desc = match program.ops[pcounter].op {
+    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<(), IError> {
+        let func_desc = match program.ops[pcounter as usize].op {
             Opcode::Func(desc) => desc,
             op => {
                 return err!(
@@ -185,17 +185,20 @@ impl<IO: RuntimeIO> Runtime<IO> {
         };
 
         let callstack_len = self.callstack.len();
-
+        let ptr = self.add_stack_var(mem::size_of::<FuncDesc>() as u32, pcounter);
+        self.push_stack(func_desc, pcounter);
+        self.pop_stack_bytes_into(ptr, mem::size_of::<FuncDesc>() as u32, pcounter)
+            .expect("why did this fail?");
         let fp = self.memory.stack_length();
-        let mut pc: i32 = pcounter as i32;
+        let mut pc: u32 = pcounter + 1;
 
         loop {
             let op = program.ops[pc as usize];
-            write!(self.io.log(), "op: {:?}\n", op)
+            write!(self.io.log(), "op: {:?}\n", op.op)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             self.callstack.push(func_desc.into_callframe(op.line));
-            pc = self.run_op(fp, pc, program, op.op)?;
+            let new_pc = self.run_op(fp, pc, program, op.op)?;
             if self.callstack.pop().is_none() {
                 return err!(
                     "CallstackEmpty",
@@ -208,10 +211,11 @@ impl<IO: RuntimeIO> Runtime<IO> {
             write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
 
-            if pc < 0 {
+            if new_pc < 0 {
                 while self.memory.stack_length() > fp {
-                    self.memory.pop_stack_var()?;
+                    self.memory.pop_stack_var(pc)?;
                 }
+                self.memory.pop_stack_var(pc)?;
                 if self.callstack.len() < callstack_len {
                     return err!(
                         "InvalidCallstackState",
@@ -230,6 +234,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
                 return Ok(());
             }
+
+            pc = new_pc as u32;
         }
     }
 
@@ -237,7 +243,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     pub fn run_op(
         &mut self,
         fp: u32,
-        pc: i32,
+        pc: u32,
         program: &Program,
         opcode: Opcode,
     ) -> Result<i32, IError> {
@@ -245,87 +251,87 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Func(_) => {}
 
             Opcode::StackAlloc(space) => {
-                self.add_stack_var(space);
+                self.add_stack_var(space, pc);
             }
             Opcode::Alloc(space) => {
-                let ptr = self.add_heap_var(space);
-                self.push_stack(ptr);
+                let ptr = self.add_heap_var(space, pc);
+                self.push_stack(ptr, pc);
             }
             Opcode::StackDealloc => {
-                self.pop_stack_var()?;
+                self.pop_stack_var(pc)?;
             }
 
-            Opcode::MakeTempInt64(value) => self.push_stack(value.to_be()),
-            Opcode::MakeTempFloat64(value) => self.push_stack(value),
+            Opcode::MakeTempInt64(value) => self.push_stack(value.to_be(), pc),
+            Opcode::MakeTempFloat64(value) => self.push_stack(value, pc),
             Opcode::LoadStr(idx) => {
                 let str_value = program.strings[idx as usize].as_bytes();
                 let str_len = str_value.len() as u32; // TODO check for overflow
 
-                let ptr = self.add_heap_var(str_len + 1);
-                self.write_bytes(ptr, str_value)?;
+                let ptr = self.add_heap_var(str_len + 1, pc);
+                self.write_bytes(ptr, str_value, pc)?;
                 let mut end_ptr = ptr;
                 end_ptr.set_offset(str_len);
-                self.write_bytes(end_ptr, &vec![0])?;
-                self.push_stack(ptr);
+                self.write_bytes(end_ptr, &vec![0], pc)?;
+                self.push_stack(ptr, pc);
             }
 
-            Opcode::Pop { bytes } => self.pop_bytes(bytes)?,
-            Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop)?,
+            Opcode::Pop { bytes } => self.pop_bytes(bytes, pc)?,
+            Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop, pc)?,
 
             Opcode::GetLocal { var, offset, bytes } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
-                self.push_stack_bytes_from(ptr, bytes)?;
+                self.push_stack_bytes_from(ptr, bytes, pc)?;
             }
             Opcode::SetLocal { var, offset, bytes } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
-                self.pop_stack_bytes_into(ptr, bytes)?;
+                self.pop_stack_bytes_into(ptr, bytes, pc)?;
             }
 
             Opcode::Get { offset, bytes } => {
-                let ptr: VarPointer = self.pop_stack()?;
+                let ptr: VarPointer = self.pop_stack(pc)?;
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
-                self.push_stack_bytes_from(ptr, bytes)?;
+                self.push_stack_bytes_from(ptr, bytes, pc)?;
             }
             Opcode::Set { offset, bytes } => {
-                let ptr: VarPointer = self.pop_stack()?;
+                let ptr: VarPointer = self.pop_stack(pc)?;
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
-                self.pop_stack_bytes_into(ptr, bytes)?;
+                self.pop_stack_bytes_into(ptr, bytes, pc)?;
             }
 
             Opcode::AddU64 => {
-                let word1: u64 = u64::from_be(self.pop_stack()?);
-                let word2: u64 = u64::from_be(self.pop_stack()?);
-                self.push_stack(word1.wrapping_add(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                self.push_stack(word1.wrapping_add(word2).to_be(), pc);
             }
             Opcode::SubI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack()?);
-                let word2: u64 = u64::from_be(self.pop_stack()?);
-                self.push_stack(word1.wrapping_sub(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                self.push_stack(word1.wrapping_sub(word2).to_be(), pc);
             }
             Opcode::MulI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack()?);
-                let word2: u64 = u64::from_be(self.pop_stack()?);
-                self.push_stack(word1.wrapping_mul(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                self.push_stack(word1.wrapping_mul(word2).to_be(), pc);
             }
             Opcode::DivI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack()?);
-                let word2: u64 = u64::from_be(self.pop_stack()?);
-                self.push_stack(word1.wrapping_div(word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                self.push_stack(word1.wrapping_div(word2).to_be(), pc);
             }
             Opcode::ModI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack()?);
-                let word2: u64 = u64::from_be(self.pop_stack()?);
-                self.push_stack((word1 % word2).to_be());
+                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                self.push_stack((word1 % word2).to_be(), pc);
             }
 
             Opcode::JumpIfZero64(target) => {
-                let value: u64 = self.pop_stack()?;
+                let value: u64 = self.pop_stack(pc)?;
                 if value == 0 {
                     return Ok(target as i32);
                 }
             }
             Opcode::JumpIfNotZero64(target) => {
-                let value: u64 = self.pop_stack()?;
+                let value: u64 = self.pop_stack(pc)?;
                 if value != 0 {
                     return Ok(target as i32);
                 }
@@ -334,16 +340,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Ret => return Ok(-1),
 
             Opcode::Call(func) => {
-                self.run_func(program, func as usize)?;
+                self.run_func(program, func)?;
             }
 
             Opcode::Ecall(ECALL_PRINT_INT) => {
-                let word: i64 = i64::from_be(self.pop_stack()?);
+                let word: i64 = i64::from_be(self.pop_stack(pc)?);
                 write!(self.io.out(), "{}", word)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
             Opcode::Ecall(ECALL_PRINT_STR) => {
-                let ptr: VarPointer = self.pop_stack()?;
+                let ptr: VarPointer = self.pop_stack(pc)?;
                 let str_bytes = self.memory.get_var_slice(ptr)?;
 
                 let mut idx = str_bytes.len();
@@ -368,7 +374,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         }
 
-        return Ok(pc + 1);
+        return Ok(pc as i32 + 1);
     }
 }
 
