@@ -55,7 +55,7 @@ pub struct TaggedOpcode {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Program<'a> {
-    pub files: &'a [&'a str],
+    pub file_names: &'a [&'a str],
     pub strings: &'a [&'a str],
     pub functions: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],

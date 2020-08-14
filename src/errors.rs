@@ -28,7 +28,7 @@ impl IError {
             write!(
                 out,
                 "    file {} -> function {} -> line {}\n",
-                program.files[frame.file as usize],
+                program.file_names[frame.file as usize],
                 program.functions[frame.name as usize],
                 frame.line
             )?;

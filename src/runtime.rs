@@ -241,30 +241,62 @@ impl VarBuffer {
     }
 }
 
-pub struct Runtime<Out, Log>
-where
-    Out: Write,
-    Log: Write,
-{
+pub trait RuntimeIO {
+    type Out: Write;
+    type Log: Write;
+    type Err: Write;
+
+    fn out(&mut self) -> &mut Self::Out;
+    fn log(&mut self) -> &mut Self::Log;
+    fn err(&mut self) -> &mut Self::Err;
+}
+
+pub struct InMemoryIO {
+    out: StringWriter,
+    log: StringWriter,
+    err: StringWriter,
+}
+
+impl InMemoryIO {
+    pub fn new() -> Self {
+        Self {
+            out: StringWriter::new(),
+            log: StringWriter::new(),
+            err: StringWriter::new(),
+        }
+    }
+}
+
+impl RuntimeIO for InMemoryIO {
+    type Out = StringWriter;
+    type Log = StringWriter;
+    type Err = StringWriter;
+
+    fn out(&mut self) -> &mut StringWriter {
+        return &mut self.out;
+    }
+    fn err(&mut self) -> &mut StringWriter {
+        return &mut self.err;
+    }
+    fn log(&mut self) -> &mut StringWriter {
+        return &mut self.log;
+    }
+}
+
+pub struct Runtime<IO: RuntimeIO> {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
     pub callstack: Vec<CallFrame>,
-    pub stdout: Out,
-    pub stdlog: Log,
+    pub io: IO,
 }
 
-impl<Out, Log> Runtime<Out, Log>
-where
-    Out: Write,
-    Log: Write,
-{
-    pub fn new(stdout: Out, stdlog: Log) -> Self {
+impl<IO: RuntimeIO> Runtime<IO> {
+    pub fn new(io: IO) -> Self {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             callstack: Vec::new(),
-            stdout,
-            stdlog,
+            io,
         }
     }
 
@@ -352,7 +384,7 @@ where
 
         loop {
             let op = program.ops[pc as usize];
-            write!(self.stdlog, "op: {:?}\n", op)
+            write!(self.io.log(), "op: {:?}\n", op)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             self.callstack.push(func_desc.into_callframe(op.line));
@@ -364,9 +396,9 @@ where
                 );
             }
 
-            write!(self.stdlog, "stack: {:0>3?}\n", self.stack.data)
+            write!(self.io.log(), "stack: {:0>3?}\n", self.stack.data)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
-            write!(self.stdlog, "heap:  {:0>3?}\n\n", self.heap.data)
+            write!(self.io.log(), "heap:  {:0>3?}\n\n", self.heap.data)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
             if pc < 0 {
@@ -506,7 +538,7 @@ where
 
             Opcode::Ecall(ECALL_PRINT_INT) => {
                 let word: i64 = i64::from_be(self.stack.pop()?);
-                write!(self.stdout, "{}", word)
+                write!(self.io.out(), "{}", word)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
             Opcode::Ecall(ECALL_PRINT_STR) => {
@@ -531,7 +563,7 @@ where
 
                 let str_value = unsafe { str::from_utf8_unchecked(&str_bytes[0..idx]) };
 
-                write!(self.stdout, "{}", str_value)
+                write!(self.io.out(), "{}", str_value)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
             Opcode::Ecall(call) => {
@@ -568,17 +600,15 @@ fn test_simple_read_write() {
         .collect();
 
     let program = Program {
-        files: &files,
+        file_names: &files,
         strings: &strings,
         functions: &functions,
         ops: &ops,
     };
 
-    let mut out = StringWriter::new();
-    let mut logs = StringWriter::new();
-    let mut runtime = Runtime::new(&mut out, &mut logs);
+    let mut runtime = Runtime::new(InMemoryIO::new());
     let result = runtime.run_program(program);
-    print!("{}", logs.to_string());
+    print!("{}", runtime.io.log().to_string());
     match result {
         Ok(()) => {}
         Err(err) => {
@@ -586,7 +616,7 @@ fn test_simple_read_write() {
             panic!();
         }
     }
-    assert_eq!(out.to_string(), "hello, world!\n");
+    assert_eq!(runtime.io.out().to_string(), "hello, world!\n");
 }
 
 #[test]
@@ -616,24 +646,22 @@ fn test_errors() {
         .collect();
 
     let program = Program {
-        files: &files,
+        file_names: &files,
         strings: &strings,
         functions: &functions,
         ops: &ops,
     };
 
-    let mut out = StringWriter::new();
-    let mut logs = StringWriter::new();
-    let mut runtime = Runtime::new(&mut out, &mut logs);
+    let mut runtime = Runtime::new(InMemoryIO::new());
     match runtime.run_program(program) {
         Ok(()) => {
-            println!("{}", logs.to_string());
-            println!("{}", out.to_string());
+            println!("{}", runtime.io.log().to_string());
+            println!("{}", runtime.io.out().to_string());
             panic!();
         }
         Err(err) => {
             println!("{}", err.render(&program).expect("why did this fail?"));
-            println!("{}", logs.to_string());
+            println!("{}", runtime.io.log().to_string());
             assert_eq!(err.short_name, "InvalidPointer");
         }
     }

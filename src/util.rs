@@ -78,8 +78,8 @@ impl StringWriter {
         }
     }
 
-    pub fn to_string(self) -> String {
-        if let Ok(s) = String::from_utf8(self.buf) {
+    pub fn to_string(&self) -> String {
+        if let Ok(s) = String::from_utf8(self.buf.clone()) {
             s
         } else {
             String::new()
