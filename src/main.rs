@@ -8,6 +8,7 @@ use std::io::Write;
 mod ast;
 mod buckets;
 mod errors;
+mod interpreter;
 mod lexer;
 mod parser;
 mod runtime;
