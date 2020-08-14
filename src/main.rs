@@ -6,11 +6,9 @@ use std::fs::read_to_string;
 use std::io::Write;
 
 mod ast;
-mod ast_typed;
 mod buckets;
 mod errors;
 mod lexer;
-mod opcodes;
 mod parser;
 mod runtime;
 mod type_checker;

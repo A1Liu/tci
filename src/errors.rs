@@ -1,42 +1,6 @@
-use crate::ast::{Expr, StructDecl};
-use crate::ast_typed::{TCStruct, TCType, TCTypeKind};
+use crate::ast::*;
 use crate::lexer::{Token, TokenKind};
-use crate::opcodes::*;
-use crate::util::{CallFrame, StringWriter};
 use crate::*;
-
-#[derive(Debug)]
-pub struct IError {
-    pub short_name: String,
-    pub message: String,
-    pub stack_trace: Vec<CallFrame>,
-}
-
-impl IError {
-    pub fn new(short_name: &str, message: String) -> Self {
-        Self {
-            short_name: short_name.to_string(),
-            message,
-            stack_trace: Vec::new(),
-        }
-    }
-
-    pub fn render(&self, program: &Program) -> Result<String, std::io::Error> {
-        let mut out = StringWriter::new();
-        write!(out, "{}: {}\n", self.short_name, self.message)?;
-        for frame in self.stack_trace.iter() {
-            write!(
-                out,
-                "    file {} -> function {} -> line {}\n",
-                program.file_names[frame.file as usize],
-                program.functions[frame.name as usize],
-                frame.line
-            )?;
-        }
-
-        return Ok(out.to_string());
-    }
-}
 
 pub struct Error {
     pub message: String,

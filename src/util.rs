@@ -15,29 +15,6 @@ pub fn u32_to_u16_tup(value: u32) -> (u16, u16) {
     ((value >> 16) as u16, value as u16)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct FuncDesc {
-    pub file: u32,
-    pub name: u32,
-}
-
-impl FuncDesc {
-    pub fn into_callframe(self, line: u32) -> CallFrame {
-        CallFrame {
-            file: self.file,
-            name: self.name,
-            line,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct CallFrame {
-    pub file: u32,
-    pub name: u32,
-    pub line: u32,
-}
-
 #[derive(Clone, PartialEq, Copy)]
 pub struct Range {
     pub start: u32,

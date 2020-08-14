@@ -1,5 +1,4 @@
 use crate::ast::*;
-use crate::ast_typed::*;
 use crate::buckets::{BucketList, BucketListRef};
 use crate::errors::Error;
 use crate::lexer::Token;

@@ -1,8 +1,122 @@
-use crate::errors::*;
-use crate::opcodes::*;
 use crate::util::*;
 use core::{fmt, mem, str};
 use std::io::Write;
+
+#[derive(Debug, Clone, Copy)]
+pub struct FuncDesc {
+    pub file: u32,
+    pub name: u32,
+}
+
+impl FuncDesc {
+    pub fn into_callframe(self, line: u32) -> CallFrame {
+        CallFrame {
+            file: self.file,
+            name: self.name,
+            line,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CallFrame {
+    pub file: u32,
+    pub name: u32,
+    pub line: u32,
+}
+
+pub const ECALL_PRINT_INT: u32 = 0;
+pub const ECALL_PRINT_STR: u32 = 1;
+
+/// - GetLocal gets a value from the stack at a given stack and variable offset
+/// - SetLocal sets a value on the stack at a given stack and variable offset to the value at the top
+///   of the stack
+/// - Set and Get are equivalent of GetLocal and SetLocal, but the location they access is
+///   determined by popping the top of the stack first
+#[derive(Debug, Clone, Copy)]
+pub enum Opcode {
+    Func(FuncDesc), // Function header used for callstack manipulation
+
+    StackAlloc(u32), // Allocates space on the stack
+    StackDealloc,    // Pops a variable off of the stack
+    Alloc(u32), // Allocates space on the heap, then pushes a pointer to that space onto the stack
+
+    MakeTempInt64(i64),
+    MakeTempFloat64(f64),
+    LoadStr(u32),
+
+    Pop64,
+
+    GetLocal64 { var: i32, offset: u32 },
+    SetLocal64 { var: i32, offset: u32 },
+
+    Get64 { offset: i32 },
+    Set64 { offset: i32 },
+
+    AddU64,
+    SubI64,
+    MulI64,
+    DivI64,
+    ModI64,
+
+    JumpIfZero64(u32),
+    JumpIfNotZero64(u32),
+
+    Ret, // Returns to caller
+
+    AddCallstackDesc(CallFrame),
+    RemoveCallstackDesc,
+
+    Call(u32),
+    Ecall(u32),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TaggedOpcode {
+    pub op: Opcode,
+    pub line: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Program<'a> {
+    pub file_names: &'a [&'a str],
+    pub strings: &'a [&'a str],
+    pub functions: &'a [&'a str],
+    pub ops: &'a [TaggedOpcode],
+}
+
+#[derive(Debug)]
+pub struct IError {
+    pub short_name: String,
+    pub message: String,
+    pub stack_trace: Vec<CallFrame>,
+}
+
+impl IError {
+    pub fn new(short_name: &str, message: String) -> Self {
+        Self {
+            short_name: short_name.to_string(),
+            message,
+            stack_trace: Vec::new(),
+        }
+    }
+
+    pub fn render(&self, program: &Program) -> Result<String, std::io::Error> {
+        let mut out = StringWriter::new();
+        write!(out, "{}: {}\n", self.short_name, self.message)?;
+        for frame in self.stack_trace.iter() {
+            write!(
+                out,
+                "    file {} -> function {} -> line {}\n",
+                program.file_names[frame.file as usize],
+                program.functions[frame.name as usize],
+                frame.line
+            )?;
+        }
+
+        return Ok(out.to_string());
+    }
+}
 
 macro_rules! error {
     ($arg1:tt,$($arg:tt)*) => {
@@ -25,8 +139,8 @@ pub struct Var {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct VarPointer {
-    idx: u32,
-    offset: u32,
+    _idx: u32,
+    _offset: u32,
 }
 
 impl fmt::Display for VarPointer {
@@ -34,8 +148,8 @@ impl fmt::Display for VarPointer {
         return write!(
             formatter,
             "0x{:0>8x}{:0>8x}",
-            u32::from_be(self.idx),
-            u32::from_be(self.offset)
+            u32::from_be(self._idx),
+            u32::from_be(self._offset)
         );
     }
 }
@@ -48,8 +162,8 @@ impl VarPointer {
 
         let idx = idx | (1u32 << 31);
         Self {
-            idx: idx.to_be(),
-            offset: offset.to_be(),
+            _idx: idx.to_be(),
+            _offset: offset.to_be(),
         }
     }
 
@@ -59,31 +173,31 @@ impl VarPointer {
         }
 
         Self {
-            idx: idx.to_be(),
-            offset: offset.to_be(),
+            _idx: idx.to_be(),
+            _offset: offset.to_be(),
         }
     }
 
     pub fn var_idx(self) -> usize {
-        (u32::from_be(self.idx) & !(1u32 << 31)) as usize
+        (u32::from_be(self._idx) & !(1u32 << 31)) as usize
     }
 
     pub fn offset(self) -> u32 {
-        u32::from_be(self.offset)
+        u32::from_be(self._offset)
     }
 
     pub fn set_offset(&mut self, offset: u32) {
-        self.offset = offset.to_be();
+        self._offset = offset.to_be();
     }
 
     pub fn bytes(self) -> u64 {
-        let idx = (u32::from_be(self.idx) as u64) << 32;
-        let offset = u32::from_be(self.offset) as u64;
+        let idx = (u32::from_be(self._idx) as u64) << 32;
+        let offset = u32::from_be(self._offset) as u64;
         return (idx + offset).to_be();
     }
 
     pub fn is_stack(self) -> bool {
-        self.idx & (1u32 << 31) != 0
+        self._idx & (1u32 << 31) != 0
     }
 }
 
@@ -106,8 +220,8 @@ impl VarBuffer {
 
     pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
         let (mut start, mut end) = (ptr, ptr);
-        start.offset = 0;
-        end.offset = var.len;
+        start._offset = 0;
+        end._offset = var.len;
         return error!(
             "InvalidPointer",
             "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
