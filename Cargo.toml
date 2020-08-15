@@ -6,4 +6,4 @@ edition = "2018"
 
 
 [dependencies]
-codespan-reporting = "0.9.3"
+codespan-reporting = { path = "codespan-reporting" }

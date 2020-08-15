@@ -80,22 +80,17 @@ fn run_on_string<'b>(
             return Err(Diagnostic::error().with_message(e.message).with_labels(
                 e.sections
                     .into_iter()
-                    .map(|x| {
-                        let mut label =
-                            Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize));
-                        label.message = x.1.clone();
-                        label
-                    })
+                    .map(|(range, message)| Label::primary(file_id, range).with_message(message))
                     .collect(),
             ))
         }
     }
 
-    let (variables, functions, type_env) = (
-        type_checker.values,
-        type_checker.functions,
-        type_checker.env,
-    );
+    // let (variables, functions, type_env) = (
+    //     type_checker.values,
+    //     type_checker.functions,
+    //     type_checker.env,
+    // );
 
     // for (function, tokens) in functions {
     //     let mut parser = parser_2::Parser2::new(&type_env, tokens);

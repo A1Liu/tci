@@ -1,5 +1,5 @@
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
-use core::fmt;
+use core::{fmt, ops};
 use std::io;
 
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
@@ -41,6 +41,12 @@ pub fn r_from(range1: Range, range2: Range) -> Range {
     Range {
         start: range1.start,
         end: range2.start,
+    }
+}
+
+impl Into<ops::Range<usize>> for Range {
+    fn into(self) -> ops::Range<usize> {
+        (self.start as usize)..(self.end as usize)
     }
 }
 

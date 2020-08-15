@@ -21,3 +21,7 @@ The goals of this compiler are:
 - No support for Goto
 - Typedefs must begin with an uppercase letter
 - Variables must begin with a lowercase letter
+
+## Credit
+
+

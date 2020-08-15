@@ -1,5 +1,6 @@
 use crate::runtime::*;
 use crate::util::*;
+use codespan_reporting::files::*;
 use core::ops::{Deref, DerefMut};
 use core::{mem, str};
 use std::io::Write;
@@ -23,11 +24,11 @@ pub struct FuncDesc {
 }
 
 impl FuncDesc {
-    pub fn into_callframe(self, line: u32) -> CallFrame {
+    pub fn into_callframe(self, range: Range) -> CallFrame {
         CallFrame {
             file: self.file,
             name: self.name,
-            line,
+            range,
         }
     }
 }
@@ -36,7 +37,7 @@ impl FuncDesc {
 pub struct CallFrame {
     pub file: u32,
     pub name: u32,
-    pub line: u32,
+    pub range: Range,
 }
 
 pub fn render_err(
@@ -44,16 +45,25 @@ pub fn render_err(
     stack_trace: &Vec<CallFrame>,
     program: &Program,
 ) -> Result<String, std::io::Error> {
+    use codespan_reporting::diagnostic::*;
+    use codespan_reporting::term::*;
+
     let mut out = StringWriter::new();
+    let config = Config {
+        display_style: DisplayStyle::Rich,
+        tab_width: 4,
+        styles: Styles::default(),
+        chars: Chars::default(),
+        start_context_lines: 3,
+        end_context_lines: 1,
+    };
+
     write!(out, "{}: {}\n", error.short_name, error.message)?;
     for frame in stack_trace {
-        write!(
-            out,
-            "    file {} -> function {} -> line {}\n",
-            program.file_names[frame.file as usize],
-            program.functions[frame.name as usize],
-            frame.line
-        )?;
+        let diagnostic = Diagnostic::new(Severity::Void)
+            .with_labels(vec![Label::primary(frame.file as usize, frame.range)]);
+        codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic)
+            .expect("why did this fail?");
     }
 
     return Ok(out.to_string());
@@ -108,12 +118,12 @@ pub enum Opcode {
 #[derive(Debug, Clone, Copy)]
 pub struct TaggedOpcode {
     pub op: Opcode,
-    pub line: u32,
+    pub range: Range,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Program<'a> {
-    pub file_names: &'a [&'a str],
+    pub files: SimpleFiles<&'a str, &'a str>,
     pub strings: &'a [&'a str],
     pub functions: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
@@ -197,7 +207,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             write!(self.io.log(), "op: {:?}\n", op.op)
                 .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
 
-            self.callstack.push(func_desc.into_callframe(op.line));
+            self.callstack.push(func_desc.into_callframe(op.range));
             let new_pc = self.run_op(fp, pc, program, op.op)?;
             if self.callstack.pop().is_none() {
                 return err!(
@@ -228,7 +238,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     CallFrame {
                         file: 0,
                         name: 0,
-                        line: 0,
+                        range: r(0, 0),
                     },
                 );
 
@@ -378,6 +388,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 }
 
+/*
 #[test]
 fn test_simple_read_write() {
     let files = vec!["main.c"];
@@ -550,3 +561,4 @@ fn test_walker() {
         }
     }
 }
+*/
