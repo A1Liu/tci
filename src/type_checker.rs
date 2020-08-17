@@ -4,15 +4,32 @@ use crate::errors::Error;
 use crate::*;
 use std::collections::HashMap;
 
-macro_rules! err {
-    ($msg:expr) => {
-        Err(Error::new($msg, vec![]))
-    };
-
-    ($msg:expr, $range1:expr, $msg1:expr) => {
-        Err(Error::new($msg, vec![($range1, $msg1.to_string())]))
-    };
-}
+// macro_rules! err {
+//     ($msg:expr) => {
+//         Err(Error::new($msg, vec![]))
+//     };
+//
+//     ($msg:expr, $range1:expr, $msg1:expr) => {
+//         Err(Error::new($msg, vec![($range1, $msg1.to_string())]))
+//     };
+// }
+//
+// macro_rules! error {
+//     ($msg:expr) => {
+//         Error::new($msg, vec![])
+//     };
+//
+//     ($msg:expr, $range1:expr, $msg1:expr) => {
+//         Error::new($msg, vec![($range1, $msg1.to_string())])
+//     };
+//
+//     ($msg:expr, $range1:expr, $msg1:expr, $range2:expr, $msg2:expr) => {
+//         Error::new(
+//             $msg,
+//             vec![($range1, $msg1.to_string()), ($range2, $msg2.to_string())],
+//         )
+//     };
+// }
 
 pub struct LocalTypeEnv {
     pub symbols: HashMap<u32, TCVar>,
@@ -238,12 +255,26 @@ impl<'b> TypeChecker<'b> {
                     range: expr.range,
                 });
             }
-            // ExprKind::Add(l, r) => {
-            //     let l = self.check_expr(env, l)?;
-            //     let r = self.check_expr(env, r)?;
+            ExprKind::Add(l, r) => {
+                let l = self.check_expr(env, l)?;
+                let r = self.check_expr(env, r)?;
 
-            //     return Ok();
-            // }
+                if !self.type_is_numeric(&l.expr_type) || !self.type_is_numeric(&r.expr_type) {
+                    return Err(self.invalid_operands_bin_expr(&l, &r));
+                }
+
+                let l = self._buckets.add(l);
+                let r = self._buckets.add(r);
+
+                return Ok(TCExpr {
+                    kind: TCExprKind::AddI32(l, r),
+                    expr_type: TCType {
+                        kind: TCTypeKind::Int,
+                        pointer_count: 0,
+                    },
+                    range: expr.range,
+                });
+            }
             _ => panic!("unimplemented"),
         }
     }
@@ -253,6 +284,42 @@ impl<'b> TypeChecker<'b> {
     //         return Ok((l, r));
     //     }
     // }
+
+    pub fn invalid_operands_bin_expr(&self, l: &TCExpr, r: &TCExpr) -> Error {
+        return Error::new(
+            "invalid operands to binary expression",
+            vec![
+                (l.range, format!("this has type {:?}", l.expr_type)),
+                (r.range, format!("this has type {:?}", r.expr_type)),
+            ],
+        );
+    }
+
+    #[inline]
+    pub fn type_width(&self, tc_type: &TCType) -> u32 {
+        if tc_type.pointer_count > 0 {
+            return 8;
+        }
+
+        match tc_type.kind {
+            TCTypeKind::Int => 4,
+            TCTypeKind::Char => 1,
+            TCTypeKind::Void => 0,
+            TCTypeKind::Struct { ident } => panic!("unimplemented"),
+        }
+    }
+
+    #[inline]
+    pub fn type_is_numeric(&self, tc_type: &TCType) -> bool {
+        if tc_type.pointer_count > 0 {
+            return true;
+        }
+
+        match tc_type.kind {
+            TCTypeKind::Int | TCTypeKind::Char => true,
+            TCTypeKind::Void | TCTypeKind::Struct { .. } => false,
+        }
+    }
 
     pub fn check_type(
         &self,

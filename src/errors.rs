@@ -18,10 +18,7 @@ impl Error {
     pub fn unexpected_token(parsing_what: &str, tok: &Token) -> Error {
         return Error {
             message: "unexpected token while parsing ".to_string() + parsing_what,
-            sections: vec![(
-                tok.range.clone(),
-                format!("this was interpreted as {:?}", tok),
-            )],
+            sections: vec![(tok.range, format!("this was interpreted as {:?}", tok))],
         };
     }
 
@@ -263,12 +260,12 @@ impl Error {
         );
     }
 
-    pub fn expected_return_value(target_range: Range, value_range: Range) -> Error {
+    pub fn expected_return_value(target_range: Range, return_range: Range) -> Error {
         return Error::new(
             "expected value in return statement (return type is not void)",
             vec![
                 (target_range, "target type is here".to_string()),
-                (value_range, "value is here".to_string()),
+                (return_range, "return statement is here".to_string()),
             ],
         );
     }
