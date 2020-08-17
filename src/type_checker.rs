@@ -1,19 +1,21 @@
 use crate::ast::*;
 use crate::buckets::{BucketList, BucketListRef};
 use crate::errors::Error;
-use crate::lexer::Token;
 use crate::*;
 use std::collections::HashMap;
 
-pub struct TypeEnv<'b> {
-    pub _buckets: BucketListRef<'b>,
-    pub struct_types: HashMap<u32, TCStruct<'b>>,
-    pub symbols: HashMap<u32, TCGlobalValue>,
-    pub func_types: HashMap<u32, TCFunc<'b>>,
+macro_rules! err {
+    ($msg:expr) => {
+        Err(Error::new($msg, vec![]))
+    };
+
+    ($msg:expr, $range1:expr, $msg1:expr) => {
+        Err(Error::new($msg, vec![($range1, $msg1.to_string())]))
+    };
 }
 
 pub struct LocalTypeEnv {
-    pub symbols: HashMap<u32, TCValue>,
+    pub symbols: HashMap<u32, TCVar>,
     pub return_type: TCType,
     pub return_type_range: Range,
     pub parent: *const LocalTypeEnv,
@@ -48,7 +50,7 @@ impl LocalTypeEnv {
         }
     }
 
-    pub fn var(&self, id: u32) -> Option<&TCValue> {
+    pub fn var(&self, id: u32) -> Option<&TCVar> {
         if let Some(var_type) = self.symbols.get(&id) {
             return Some(var_type);
         }
@@ -61,7 +63,7 @@ impl LocalTypeEnv {
     }
 
     pub fn add_var(&mut self, decl_type: &ASTType, decl: &Decl) -> Result<(), Error> {
-        let tc_value = TCValue {
+        let tc_value = TCVar {
             decl_type: convert_type(decl_type, decl.pointer_count),
             range: decl.range,
         };
@@ -74,30 +76,233 @@ impl LocalTypeEnv {
 }
 
 pub struct TypeChecker<'b> {
-    pub env: TypeEnv<'b>,
-    pub functions: HashMap<u32, &'b [Token]>,
-    pub values: HashMap<u32, &'b [Token]>,
+    pub _buckets: BucketListRef<'b>,
+    pub func_types: HashMap<u32, TCFuncType<'b>>,
+    pub functions: HashMap<u32, TCFunc<'b>>,
 }
 
 impl<'b> TypeChecker<'b> {
     pub fn new() -> Self {
         Self {
-            env: TypeEnv {
-                _buckets: BucketList::new(),
-                struct_types: HashMap::new(),
-                symbols: HashMap::new(),
-                func_types: HashMap::new(),
-            },
+            _buckets: BucketList::new(),
+            func_types: HashMap::new(),
             functions: HashMap::new(),
-            values: HashMap::new(),
         }
     }
 
     pub fn check_global_stmts(&mut self, stmts: &[GlobalStmt]) -> Result<(), Error> {
+        struct UncheckedFunction<'a, 'b> {
+            defn_idx: u32,
+            ident: u32,
+            func_type: TCFuncType<'b>,
+            return_type_range: Range,
+            range: Range,
+            body: &'a [Stmt<'a>],
+        };
+
+        let mut functions: Vec<UncheckedFunction> = Vec::new();
+        for (decl_idx, stmt) in stmts.iter().enumerate() {
+            let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
+                GlobalStmtKind::FuncDecl {
+                    return_type,
+                    ident,
+                    pointer_count,
+                    params,
+                } => (return_type, pointer_count, ident, params, None),
+                GlobalStmtKind::Func {
+                    return_type,
+                    ident,
+                    pointer_count,
+                    params,
+                    body,
+                } => (return_type, pointer_count, ident, params, Some(body)),
+                _ => panic!("unimplemented"),
+            };
+
+            let decl_idx = decl_idx as u32;
+            let return_type_range = return_type.range;
+            let return_type = convert_type(return_type, *pointer_count);
+            if let TCTypeKind::Struct { ident } = return_type.kind {
+                self.check_struct_type(ident, decl_idx, *pointer_count, return_type_range)?;
+            }
+
+            let mut names = HashMap::new();
+            let mut typed_params = Vec::new();
+            for param in params.iter() {
+                if let Some(original) = names.insert(param.ident, param.range.clone()) {
+                    return Err(Error::parameter_redeclaration(&original, &param.range));
+                }
+
+                let param_type = self.check_type(decl_idx, &param.decl_type, *pointer_count)?;
+
+                typed_params.push(TCFuncParam {
+                    decl_type: param_type,
+                    ident: param.ident,
+                    range: param.range,
+                });
+            }
+
+            let typed_params = self._buckets.add_array(typed_params);
+            let tc_func_type = TCFuncType {
+                return_type,
+                range: stmt.range,
+                params: typed_params,
+                decl_idx,
+            };
+
+            if let Some(prev_tc_func_type) = self.func_types.get(ident) {
+                if prev_tc_func_type != &tc_func_type {
+                    return Err(Error::function_declaration_mismatch(
+                        &prev_tc_func_type.range,
+                        &tc_func_type.range,
+                    ));
+                }
+
+                if let Some(body) = self.functions.get(&ident) {
+                    if let Some(body) = func_body {
+                        return Err(Error::function_redefinition(
+                            &prev_tc_func_type.range,
+                            &tc_func_type.range,
+                        ));
+                    }
+                }
+            } else {
+                self.func_types.insert(*ident, tc_func_type);
+            }
+
+            if let Some(body) = func_body {
+                functions.push(UncheckedFunction {
+                    defn_idx: decl_idx,
+                    func_type: tc_func_type,
+                    ident: *ident,
+                    return_type_range,
+                    range: stmt.range,
+                    body,
+                });
+            }
+        }
+
+        for func in functions.into_iter() {
+            let ftype = func.func_type;
+            let mut env = LocalTypeEnv::new(ftype.return_type, func.return_type_range);
+            let gstmts = self.check_stmts(ftype.decl_idx, &mut env, func.body)?;
+            self.functions.insert(
+                func.ident,
+                TCFunc {
+                    func_type: ftype,
+                    defn_idx: func.defn_idx,
+                    range: func.range,
+                    stmts: gstmts,
+                },
+            );
+        }
+
+        return Ok(());
+    }
+
+    pub fn check_stmts(
+        &self,
+        decl_idx: u32,
+        env: &mut LocalTypeEnv,
+        stmts: &[Stmt],
+    ) -> Result<&'b [TCStmt<'b>], Error> {
+        let mut tstmts = Vec::new();
+        for stmt in stmts {
+            match &stmt.kind {
+                StmtKind::RetVal(expr) => {
+                    let expr = self.check_expr(&env, expr)?;
+                    tstmts.push(TCStmt {
+                        range: expr.range,
+                        kind: TCStmtKind::RetVal(expr),
+                    });
+                }
+
+                StmtKind::Nop => {}
+
+                _ => panic!("unimplemented"),
+            }
+        }
+
+        return Ok(self._buckets.add_array(tstmts));
+    }
+
+    pub fn check_expr(&self, env: &LocalTypeEnv, expr: &Expr) -> Result<TCExpr<'b>, Error> {
+        match expr.kind {
+            ExprKind::IntLiteral(val) => {
+                return Ok(TCExpr {
+                    kind: TCExprKind::IntLiteral(val),
+                    expr_type: TCType {
+                        kind: TCTypeKind::Int,
+                        pointer_count: 0,
+                    },
+                    range: expr.range,
+                });
+            }
+            // ExprKind::Add(l, r) => {
+            //     let l = self.check_expr(env, l)?;
+            //     let r = self.check_expr(env, r)?;
+
+            //     return Ok();
+            // }
+            _ => panic!("unimplemented"),
+        }
+    }
+
+    // pub fn binary_op(l: TCExpr<'b>, r: TCExpr<'b>) -> Result<(TCExpr<'b>, TCExpr<'b>), Error> {
+    //     if l.expr_type == r.expr_type {
+    //         return Ok((l, r));
+    //     }
+    // }
+
+    pub fn check_type(
+        &self,
+        decl_idx: u32,
+        ast_type: &ASTType,
+        pointer_count: u32,
+    ) -> Result<TCType, Error> {
+        let unchecked_type = convert_type(&ast_type, pointer_count);
+        if let TCTypeKind::Struct { ident } = unchecked_type.kind {
+            self.check_struct_type(ident, decl_idx, pointer_count, ast_type.range)?;
+        }
+
+        return Ok(unchecked_type);
+    }
+
+    pub fn check_struct_type(
+        &self,
+        struct_ident: u32,
+        decl_idx: u32,
+        pointer_count: u32,
+        range: Range,
+    ) -> Result<(), Error> {
+        // if let Some(struct_type) = self.struct_types.get(&struct_ident) {
+        //     if let Some((type_defn_idx, _)) = struct_type.defn {
+        //         if pointer_count == 0 && type_defn_idx > decl_idx {
+        //             return Err(Error::struct_misordered_type(struct_type, &range));
+        //         }
+        //     } else if pointer_count == 0 {
+        //         return Err(Error::struct_incomplete_type(struct_type, &range));
+        //     }
+        // } else {
+        //     return Err(Error::struct_doesnt_exist(&range));
+        // }
+
+        return Ok(());
+    }
+}
+
+/*
         // Add all types to the type table
         for (decl_idx, stmt) in stmts.iter().enumerate() {
             let decl_type = match &stmt.kind {
                 GlobalStmtKind::StructDecl(decl_type) => decl_type,
+                GlobalStmtKind::Decl { decl_type, decls } => {
+                    return err!(
+                        "global declarations not supported yet",
+                        r_from(decl_type.range, decls.last().unwrap().range),
+                        "declaration here"
+                    )
+                }
                 _ => continue,
             };
 
@@ -176,247 +381,5 @@ impl<'b> TypeChecker<'b> {
             }
         }
 
-        let mut values = HashMap::new();
-        for (decl_idx, stmt) in stmts.iter().enumerate() {
-            let (decl_type, decls) = match &stmt.kind {
-                GlobalStmtKind::Decl { decl_type, decls } => (decl_type, decls),
-                _ => continue,
-            };
 
-            for decl in decls.iter() {
-                let decl_idx = decl_idx as u32;
-                let decl_type = convert_type(decl_type, decl.pointer_count);
-                if let TCTypeKind::Struct { ident } = decl_type.kind {
-                    self.check_struct_type(ident, decl_idx, decl_type.pointer_count, decl.range)?;
-                }
-
-                let value_type = TCGlobalValue {
-                    decl_type,
-                    decl_idx,
-                    range: decl.range,
-                };
-
-                if let Some(original_value_type) = self.env.symbols.insert(decl.ident, value_type) {
-                    return Err(Error::variable_redefinition(
-                        &original_value_type.range,
-                        &decl.range,
-                    ));
-                }
-
-                values.insert(decl.ident, &decl.expr);
-            }
-        }
-
-        let mut functions = HashMap::new();
-        for (decl_idx, stmt) in stmts.iter().enumerate() {
-            let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
-                GlobalStmtKind::FuncDecl {
-                    return_type,
-                    ident,
-                    pointer_count,
-                    params,
-                } => (return_type, pointer_count, ident, params, None),
-                GlobalStmtKind::Func {
-                    return_type,
-                    ident,
-                    pointer_count,
-                    params,
-                    body,
-                } => (return_type, pointer_count, ident, params, Some(body)),
-                _ => continue,
-            };
-
-            let decl_idx = decl_idx as u32;
-            let type_range = return_type.range;
-            let return_type = convert_type(return_type, *pointer_count);
-            if let TCTypeKind::Struct { ident } = return_type.kind {
-                self.check_struct_type(ident, decl_idx, *pointer_count, type_range)?;
-            }
-
-            let mut names = HashMap::new();
-            let mut typed_params = Vec::new();
-            for param in params.iter() {
-                if let Some(original_range) = names.get(&param.ident) {
-                    return Err(Error::parameter_redeclaration(original_range, &param.range));
-                } else {
-                    names.insert(param.ident, param.range.clone());
-                }
-
-                let param_type = convert_type(&param.decl_type, *pointer_count);
-                if let TCTypeKind::Struct { ident } = return_type.kind {
-                    self.check_struct_type(
-                        ident,
-                        decl_idx,
-                        return_type.pointer_count,
-                        type_range.clone(),
-                    )?;
-                }
-
-                typed_params.push(TCFuncParam {
-                    decl_type: param_type,
-                    ident: param.ident,
-                    range: param.range.clone(),
-                });
-            }
-
-            let typed_params = self.env._buckets.add_array(typed_params);
-            let tc_func_type = TCFunc {
-                return_type,
-                range: stmt.range.clone(),
-                params: typed_params,
-                decl_idx,
-            };
-
-            if let Some(prev_tc_func_type) = self.env.func_types.get(&ident) {
-                if prev_tc_func_type != &tc_func_type {
-                    return Err(Error::function_declaration_mismatch(
-                        &prev_tc_func_type.range,
-                        &tc_func_type.range,
-                    ));
-                }
-
-                if let Some(body) = self.functions.get(&ident) {
-                    if let Some(body) = func_body {
-                        return Err(Error::function_redefinition(
-                            &prev_tc_func_type.range,
-                            &tc_func_type.range,
-                        ));
-                    }
-                }
-            }
-
-            self.env.func_types.insert(*ident, tc_func_type);
-            if let Some(body) = func_body {
-                functions.insert(*ident, body);
-            }
-        }
-
-        return Ok(());
-    }
-
-    pub fn check_stmts(
-        &self,
-        decl_idx: u32,
-        env: &mut LocalTypeEnv,
-        stmts: &[Stmt],
-    ) -> Result<(), Error> {
-        for stmt in stmts {
-            match &stmt.kind {
-                StmtKind::ForDecl {
-                    at_start_decl_type,
-                    at_start,
-                    condition,
-                    post_expr,
-                    body,
-                } => {
-                    let mut local_env = env.child();
-                    for decl in at_start.iter() {
-                        local_env.add_var(at_start_decl_type, decl)?;
-                    }
-
-                    Error::truth_value_of_struct(
-                        condition,
-                        &self.check_expr(&local_env, condition)?,
-                    )?;
-
-                    self.check_expr(&local_env, post_expr)?;
-                    self.check_stmts(decl_idx, &mut local_env, body)?;
-                }
-                StmtKind::For {
-                    at_start,
-                    condition,
-                    post_expr,
-                    body,
-                } => {
-                    let mut local_env = env.child();
-                    self.check_expr(&local_env, at_start)?;
-                    Error::truth_value_of_struct(
-                        condition,
-                        &self.check_expr(&local_env, condition)?,
-                    )?;
-
-                    if let TCType {
-                        kind: TCTypeKind::Struct { .. },
-                        ..
-                    } = self.check_expr(&local_env, condition)?
-                    {}
-
-                    self.check_expr(&local_env, post_expr)?;
-                    self.check_stmts(decl_idx, &mut local_env, body)?;
-                }
-
-                StmtKind::Ret => {
-                    Error::return_type_convert(
-                        &env.return_type,
-                        env.return_type_range,
-                        None,
-                        stmt.range,
-                    )?;
-                }
-                StmtKind::RetVal(val) => {
-                    Error::return_type_convert(
-                        &env.return_type,
-                        env.return_type_range,
-                        Some(&self.check_expr(env, val)?),
-                        stmt.range,
-                    )?;
-                }
-
-                StmtKind::Branch {
-                    if_cond,
-                    if_body,
-                    else_body,
-                } => {
-                    Error::truth_value_of_struct(if_cond, &self.check_expr(env, if_cond)?)?;
-
-                    let mut local_env = env.child();
-                    self.check_stmts(decl_idx, &mut local_env, if_body)?;
-
-                    let mut local_env = env.child();
-                    if let Some(else_body) = else_body {
-                        self.check_stmts(decl_idx, &mut local_env, else_body)?;
-                    }
-                }
-
-                StmtKind::Expr(expr) => {
-                    self.check_expr(&env, expr)?;
-                }
-                StmtKind::Block(block) => {
-                    let mut local_env = env.child();
-                    self.check_stmts(decl_idx, &mut local_env, block)?;
-                }
-                StmtKind::Nop => {}
-
-                _ => panic!("unimplemented"),
-            }
-        }
-
-        return Ok(());
-    }
-
-    pub fn check_expr(&self, env: &LocalTypeEnv, expr: &Expr) -> Result<TCType, Error> {
-        return Err(Error::new("", vec![]));
-    }
-
-    pub fn check_struct_type(
-        &self,
-        struct_ident: u32,
-        decl_idx: u32,
-        pointer_count: u32,
-        range: Range,
-    ) -> Result<(), Error> {
-        if let Some(struct_type) = self.env.struct_types.get(&struct_ident) {
-            if let Some((type_defn_idx, _)) = struct_type.defn {
-                if pointer_count == 0 && type_defn_idx > decl_idx {
-                    return Err(Error::struct_misordered_type(struct_type, &range));
-                }
-            } else if pointer_count == 0 {
-                return Err(Error::struct_incomplete_type(struct_type, &range));
-            }
-        } else {
-            return Err(Error::struct_doesnt_exist(&range));
-        }
-
-        return Ok(());
-    }
-}
+*/

@@ -1,5 +1,4 @@
 use crate::*;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind<'a> {
     IntLiteral(u32),
@@ -148,10 +147,16 @@ pub struct TCStructMember {
     pub range: Range,
 }
 
+#[derive(Debug, Clone)]
+pub struct TCStructDefn<'a> {
+    defn_idx: u32,
+    members: &'a [TCStructMember],
+}
+
 #[derive(Debug)]
 pub struct TCStruct<'a> {
     pub decl_idx: u32,
-    pub defn: Option<(u32, &'a [TCStructMember])>,
+    pub defn: Option<TCStructDefn<'a>>,
     pub ident_range: Range,
     pub range: Range,
 }
@@ -178,7 +183,7 @@ pub struct TCGlobalValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct TCValue {
+pub struct TCVar {
     pub decl_type: TCType,
     pub range: Range,
 }
@@ -190,18 +195,45 @@ pub struct TCFuncParam {
     pub range: Range,
 }
 
-#[derive(Debug, Clone)]
-pub struct TCFunc<'a> {
-    pub return_type: TCType,
-    pub params: &'a [TCFuncParam],
-    pub range: Range,
+#[derive(Debug, Clone, Copy)]
+pub struct TCFuncType<'a> {
     pub decl_idx: u32,
+    pub return_type: TCType,
+    pub range: Range,
+    pub params: &'a [TCFuncParam],
 }
 
-impl PartialEq for TCFuncParam {
-    fn eq(&self, other: &Self) -> bool {
-        return self.decl_type == other.decl_type;
-    }
+#[derive(Debug, Clone)]
+pub struct TCFunc<'a> {
+    pub func_type: TCFuncType<'a>,
+    pub defn_idx: u32,
+    pub range: Range,
+    pub stmts: &'a [TCStmt<'a>],
+}
+
+#[derive(Debug, Clone)]
+pub enum TCStmtKind<'a> {
+    RetVal(TCExpr<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub struct TCStmt<'a> {
+    pub kind: TCStmtKind<'a>,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone)]
+pub enum TCExprKind<'a> {
+    AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    WidenTo32(&'a TCExpr<'a>),
+    IntLiteral(u32),
+}
+
+#[derive(Debug, Clone)]
+pub struct TCExpr<'a> {
+    pub kind: TCExprKind<'a>,
+    pub expr_type: TCType,
+    pub range: Range,
 }
 
 impl PartialEq for TCType {
@@ -210,9 +242,23 @@ impl PartialEq for TCType {
     }
 }
 
-impl<'a> PartialEq for TCFunc<'a> {
+impl<'a> PartialEq for TCFuncType<'a> {
     fn eq(&self, other: &Self) -> bool {
-        return self.return_type == other.return_type && self.params == other.params;
+        if self.return_type != other.return_type {
+            return false;
+        }
+
+        if self.params.len() != other.params.len() {
+            return false;
+        }
+
+        for i in 0..self.params.len() {
+            if self.params[i].decl_type != other.params[i].decl_type {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 

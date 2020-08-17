@@ -43,16 +43,6 @@ fn test_file_should_fail(filename: &str) {
 }
 
 #[test]
-fn test_expr() {
+fn test_hello_world() {
     test_file_should_succeed("test/hello_world.c");
-}
-
-#[test]
-fn test_recursive_struct() {
-    test_file_should_fail("test/recursive_struct.c");
-}
-
-#[test]
-fn test_variable_redefinition() {
-    test_file_should_fail("test/var_redef.c");
 }

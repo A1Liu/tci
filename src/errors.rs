@@ -111,7 +111,7 @@ impl Error {
     }
 
     pub fn struct_redefinition(original: &TCStruct, new: &StructDecl) -> Result<(), Error> {
-        if let Some((defn_idx, members)) = original.defn {
+        if let Some(_) = original.defn {
             if let Some(new_members) = new.members {
                 return Err(Error::new(
                     "redefinition of struct",
