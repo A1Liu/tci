@@ -1,10 +1,16 @@
 use crate::*;
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub enum BinOp {
+    Add,
+    Sub,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind<'a> {
     IntLiteral(u32),
     Ident(u32),
-    Add(&'a Expr<'a>, &'a Expr<'a>),
-    Subtract(&'a Expr<'a>, &'a Expr<'a>),
+    BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
     Call {
         function: &'a Expr<'a>,
         params: &'a [Expr<'a>],
@@ -163,7 +169,8 @@ pub struct TCStruct<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TCTypeKind {
-    Int,
+    I32, // int
+    U64, // unsigned long
     Char,
     Void,
     Struct { ident: u32 },
@@ -173,6 +180,16 @@ pub enum TCTypeKind {
 pub struct TCType {
     pub kind: TCTypeKind,
     pub pointer_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub enum TCShallowType {
+    I32, // int
+    U64, // unsigned long
+    Char,
+    Void,
+    Struct { ident: u32 },
+    Pointer,
 }
 
 #[derive(Debug, Clone)]
@@ -224,8 +241,8 @@ pub struct TCStmt<'a> {
 
 #[derive(Debug, Clone)]
 pub enum TCExprKind<'a> {
-    AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    WidenTo32(&'a TCExpr<'a>),
+    Add(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    Into(&'a TCExpr<'a>),
     IntLiteral(u32),
 }
 
@@ -234,6 +251,22 @@ pub struct TCExpr<'a> {
     pub kind: TCExprKind<'a>,
     pub expr_type: TCType,
     pub range: Range,
+}
+
+impl TCType {
+    pub fn to_shallow(&self) -> TCShallowType {
+        if self.pointer_count > 0 {
+            return TCShallowType::Pointer;
+        }
+
+        match self.kind {
+            TCTypeKind::I32 => TCShallowType::I32,
+            TCTypeKind::U64 => TCShallowType::U64,
+            TCTypeKind::Char => TCShallowType::Char,
+            TCTypeKind::Void => TCShallowType::Void,
+            TCTypeKind::Struct { ident } => TCShallowType::Struct { ident },
+        }
+    }
 }
 
 impl PartialEq for TCType {
@@ -264,13 +297,13 @@ impl<'a> PartialEq for TCFuncType<'a> {
 
 pub fn convert_type(type_node: &ASTType, pointer_count: u32) -> TCType {
     let mut out = TCType {
-        kind: TCTypeKind::Int,
+        kind: TCTypeKind::I32,
         pointer_count: pointer_count,
     };
 
     match &type_node.kind {
         ASTTypeKind::Int => {
-            out.kind = TCTypeKind::Int;
+            out.kind = TCTypeKind::I32;
             return out;
         }
         ASTTypeKind::Char => {
@@ -281,8 +314,8 @@ pub fn convert_type(type_node: &ASTType, pointer_count: u32) -> TCType {
             out.kind = TCTypeKind::Void;
             return out;
         }
-        ASTTypeKind::Struct { ident } => {
-            out.kind = TCTypeKind::Struct { ident: *ident };
+        &ASTTypeKind::Struct { ident } => {
+            out.kind = TCTypeKind::Struct { ident };
             return out;
         }
     }

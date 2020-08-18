@@ -95,7 +95,7 @@ impl<'b> Parser<'b> {
                     let right = self._buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::Add(left, right),
+                        kind: ExprKind::BinOp(BinOp::Add, left, right),
                         range: r(start, end),
                     };
                 }
@@ -107,7 +107,7 @@ impl<'b> Parser<'b> {
                     let right = self._buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::Subtract(left, right),
+                        kind: ExprKind::BinOp(BinOp::Sub, left, right),
                         range: r(start, end),
                     };
                 }

@@ -319,7 +319,7 @@ impl Error {
                     value_range,
                 ));
             }
-            TCTypeKind::Int | TCTypeKind::Char => {
+            TCTypeKind::U64 | TCTypeKind::I32 | TCTypeKind::Char => {
                 if target_type.pointer_count != value_type.pointer_count {
                     return Err(Error::assignment_convert_incompatible(
                         target_range,
@@ -329,7 +329,7 @@ impl Error {
 
                 if target_type.pointer_count == 0 {
                     match value_type.kind {
-                        TCTypeKind::Int | TCTypeKind::Char => return Ok(()),
+                        TCTypeKind::I32 | TCTypeKind::Char => return Ok(()),
                         _ => {
                             return Err(Error::assignment_convert_incompatible(
                                 target_range,

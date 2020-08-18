@@ -7,3 +7,4 @@ edition = "2018"
 
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
+lazy_static = "1.4.0"

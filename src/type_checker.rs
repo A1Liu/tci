@@ -31,6 +31,50 @@ use std::collections::HashMap;
 //     };
 // }
 
+fn add_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
+        expr_type: TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        },
+    };
+}
+
+fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let r = TCExpr {
+        range: r.range,
+        kind: TCExprKind::Into(buckets.add(r)),
+        expr_type: TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        },
+    };
+
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
+        expr_type: TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        },
+    };
+}
+
+type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
+
+lazy_static! {
+    pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
+        use TCShallowType::*;
+
+        let mut m: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = HashMap::new();
+        m.insert((BinOp::Add, I32, I32), *&add_int);
+        m.insert((BinOp::Add, I32, Char), *&add_int_char);
+        m
+    };
+}
+
 pub struct LocalTypeEnv {
     pub symbols: HashMap<u32, TCVar>,
     pub return_type: TCType,
@@ -104,6 +148,15 @@ impl<'b> TypeChecker<'b> {
             _buckets: BucketList::new(),
             func_types: HashMap::new(),
             functions: HashMap::new(),
+        }
+    }
+
+    fn get_overload(&self, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
+        let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
+        println!("{:?}", key);
+        match BIN_OP_OVERLOADS.get(&key) {
+            Some(bin_op) => return Ok(*bin_op),
+            None => return Err(self.invalid_operands_bin_expr(l, r)),
         }
     }
 
@@ -249,41 +302,22 @@ impl<'b> TypeChecker<'b> {
                 return Ok(TCExpr {
                     kind: TCExprKind::IntLiteral(val),
                     expr_type: TCType {
-                        kind: TCTypeKind::Int,
+                        kind: TCTypeKind::I32,
                         pointer_count: 0,
                     },
                     range: expr.range,
                 });
             }
-            ExprKind::Add(l, r) => {
+            ExprKind::BinOp(BinOp::Add, l, r) => {
                 let l = self.check_expr(env, l)?;
                 let r = self.check_expr(env, r)?;
 
-                if !self.type_is_numeric(&l.expr_type) || !self.type_is_numeric(&r.expr_type) {
-                    return Err(self.invalid_operands_bin_expr(&l, &r));
-                }
-
-                let l = self._buckets.add(l);
-                let r = self._buckets.add(r);
-
-                return Ok(TCExpr {
-                    kind: TCExprKind::AddI32(l, r),
-                    expr_type: TCType {
-                        kind: TCTypeKind::Int,
-                        pointer_count: 0,
-                    },
-                    range: expr.range,
-                });
+                let bin_op = self.get_overload(BinOp::Add, &l, &r)?;
+                return Ok(bin_op(&self._buckets, l, r));
             }
             _ => panic!("unimplemented"),
         }
     }
-
-    // pub fn binary_op(l: TCExpr<'b>, r: TCExpr<'b>) -> Result<(TCExpr<'b>, TCExpr<'b>), Error> {
-    //     if l.expr_type == r.expr_type {
-    //         return Ok((l, r));
-    //     }
-    // }
 
     pub fn invalid_operands_bin_expr(&self, l: &TCExpr, r: &TCExpr) -> Error {
         return Error::new(
@@ -302,7 +336,8 @@ impl<'b> TypeChecker<'b> {
         }
 
         match tc_type.kind {
-            TCTypeKind::Int => 4,
+            TCTypeKind::I32 => 4,
+            TCTypeKind::U64 => 8,
             TCTypeKind::Char => 1,
             TCTypeKind::Void => 0,
             TCTypeKind::Struct { ident } => panic!("unimplemented"),
@@ -316,7 +351,7 @@ impl<'b> TypeChecker<'b> {
         }
 
         match tc_type.kind {
-            TCTypeKind::Int | TCTypeKind::Char => true,
+            TCTypeKind::I32 | TCTypeKind::U64 | TCTypeKind::Char => true,
             TCTypeKind::Void | TCTypeKind::Struct { .. } => false,
         }
     }
