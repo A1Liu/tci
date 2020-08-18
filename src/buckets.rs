@@ -2,7 +2,7 @@ use std::alloc::{alloc, dealloc, Layout};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::{cmp, mem, ptr, slice, str};
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
@@ -17,7 +17,6 @@ pub fn grow_array(len: usize) -> usize {
 
 #[repr(C)]
 pub struct BucketListInner {
-    pub ref_count: AtomicUsize,
     pub next: AtomicPtr<BucketListInner>,
     pub bump: AtomicPtr<u8>,
     pub len: usize,
@@ -35,27 +34,47 @@ pub struct BucketList<'a> {
     pub data: BucketListInner,
 }
 
+#[derive(Clone, Copy)]
 pub struct BucketListRef<'a> {
     buckets: NonNull<BucketList<'a>>,
 }
 
 impl BucketListInner {
-    unsafe fn bump_size_align(bump: *const u8, end: *const u8, layout: Layout) -> Result<Bump, ()> {
+    unsafe fn bump_size_align(bump: *const u8, end: *const u8, layout: Layout) -> Option<Bump> {
         let required_offset = bump.align_offset(layout.align());
         if required_offset == usize::MAX {
-            return Err(());
+            return None;
         }
 
         let bump = bump.add(required_offset);
         let end_alloc = bump.add(layout.size());
         if end_alloc as usize > end as usize {
-            return Err(());
+            return None;
         }
 
-        return Ok(Bump {
+        return Some(Bump {
             ptr: NonNull::new_unchecked(bump as *mut u8),
             next_bump: NonNull::new_unchecked(end_alloc as *mut u8),
         });
+    }
+
+    pub unsafe fn make_next(&self, min_layout: Layout) -> (*mut BucketListInner, Layout) {
+        let bucket_align = cmp::max(min_layout.align(), mem::align_of::<BucketListInner>());
+        let inner_size = cmp::max(bucket_align, mem::size_of::<BucketListInner>());
+        let new_len = cmp::max(grow_array(self.len), min_layout.size());
+        let bucket_size = inner_size + new_len;
+
+        let next_layout = match Layout::from_size_align(bucket_size, bucket_align) {
+            Ok(x) => x,
+            Err(_) => return (ptr::null_mut(), min_layout),
+        };
+
+        let new_buffer = &mut *(alloc(next_layout) as *mut BucketListInner);
+        let next_array_begin = &mut new_buffer.array_begin as *mut () as *mut u8;
+        new_buffer.next = AtomicPtr::new(ptr::null_mut());
+        new_buffer.bump = AtomicPtr::new(next_array_begin);
+        new_buffer.len = new_len;
+        return (new_buffer, next_layout);
     }
 
     pub unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -63,7 +82,7 @@ impl BucketListInner {
         let bucket_end = array_begin.add(self.len);
         let mut bump = self.bump.load(Ordering::SeqCst);
 
-        while let Ok(Bump { ptr, next_bump }) = Self::bump_size_align(bump, bucket_end, layout) {
+        while let Some(Bump { ptr, next_bump }) = Self::bump_size_align(bump, bucket_end, layout) {
             if let Err(ptr) = self.bump.compare_exchange_weak(
                 bump,
                 next_bump.as_ptr(),
@@ -76,38 +95,21 @@ impl BucketListInner {
             }
         }
 
-        let next = self.next.load(Ordering::SeqCst);
-        if !next.is_null() {
-            return (&*next).alloc(layout);
+        let mut next = self.next.load(Ordering::SeqCst);
+        if next.is_null() {
+            let (new_buffer, new_layout) = self.make_next(layout);
+            if let Err(ptr) = self.next.compare_exchange(
+                ptr::null_mut(),
+                new_buffer,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                dealloc(new_buffer as *mut u8, new_layout);
+                next = ptr;
+            }
         }
 
-        let bucket_align = cmp::max(layout.align(), mem::align_of::<BucketListInner>());
-        let inner_size = cmp::max(bucket_align, mem::size_of::<BucketListInner>());
-        let new_len = cmp::max(grow_array(self.len), layout.size());
-        let bucket_size = inner_size + new_len;
-
-        let next_layout = match Layout::from_size_align(bucket_size, bucket_align) {
-            Ok(x) => x,
-            Err(_) => return ptr::null_mut(),
-        };
-
-        let new_buffer = &mut *(alloc(next_layout) as *mut BucketListInner);
-        let next_array_begin = &mut new_buffer.array_begin as *mut () as *mut u8;
-        new_buffer.next = AtomicPtr::new(ptr::null_mut());
-        new_buffer.bump = AtomicPtr::new(next_array_begin.add(layout.size()));
-        new_buffer.len = new_len;
-
-        let mut target = &self.next;
-        while let Err(ptr) = target.compare_exchange_weak(
-            ptr::null_mut(),
-            new_buffer,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            target = &(&*ptr).next;
-        }
-
-        return next_array_begin;
+        return (&*next).alloc(layout);
     }
 }
 
@@ -118,55 +120,11 @@ impl<'a> Deref for BucketListRef<'a> {
     }
 }
 
-impl<'a> Drop for BucketListRef<'a> {
-    fn drop(&mut self) {
-        let mut buckets = &unsafe { self.buckets.as_ref() }.data;
-        let mut ref_count = buckets.ref_count.fetch_sub(1, Ordering::SeqCst);
-        while ref_count == 1 {
-            unsafe {
-                let next_buckets = buckets.next.load(Ordering::SeqCst);
-
-                let bucket_size = buckets.len + mem::size_of::<BucketListInner>();
-                let bucket_align = mem::align_of::<BucketListInner>();
-                let layout = Layout::from_size_align_unchecked(bucket_size, bucket_align);
-                dealloc(
-                    buckets as *const BucketListInner as *mut BucketListInner as *mut u8,
-                    layout,
-                );
-
-                if next_buckets.is_null() {
-                    break;
-                }
-
-                buckets = &*next_buckets;
-                ref_count = buckets.ref_count.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-    }
-}
-
-impl<'a> Clone for BucketListRef<'a> {
-    fn clone(&self) -> Self {
-        unsafe {
-            self.buckets
-                .as_ref()
-                .data
-                .ref_count
-                .fetch_add(1, Ordering::SeqCst);
-        }
-
-        Self {
-            buckets: self.buckets.clone(),
-        }
-    }
-}
-
 impl<'a> BucketListRef<'a> {
     pub fn next(&self) -> Option<Self> {
         let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
         if let Some(next) = next {
             unsafe {
-                next.as_ref().ref_count.fetch_add(1, Ordering::SeqCst);
                 return Some(Self {
                     buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
                 });
@@ -174,6 +132,31 @@ impl<'a> BucketListRef<'a> {
         }
 
         return None;
+    }
+
+    pub fn force_next(&self) -> Self {
+        let inner = &self.data;
+        let mut next = inner.next.load(Ordering::SeqCst);
+        unsafe {
+            if next.is_null() {
+                let (new_buffer, new_layout) = inner.make_next(Layout::new::<()>());
+                if let Err(ptr) = inner.next.compare_exchange(
+                    ptr::null_mut(),
+                    new_buffer,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    dealloc(new_buffer as *mut u8, new_layout);
+                    next = ptr;
+                } else {
+                    next = new_buffer;
+                }
+            }
+
+            return Self {
+                buckets: NonNull::new_unchecked(next as *mut BucketList),
+            };
+        }
     }
 }
 
@@ -188,7 +171,6 @@ impl<'a> BucketList<'a> {
         unsafe {
             let layout = Layout::from_size_align_unchecked(bucket_size, bucket_align);
             let new = &mut *(alloc(layout) as *mut Self);
-            new.data.ref_count = AtomicUsize::new(1);
             new.data.next = AtomicPtr::new(ptr::null_mut());
             new.data.bump = AtomicPtr::new(&mut new.data.array_begin as *mut () as *mut u8);
             new.data.len = capacity;
