@@ -42,6 +42,26 @@ fn add_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) ->
     };
 }
 
+fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let l = TCExpr {
+        range: r.range,
+        kind: TCExprKind::Into(buckets.add(l)),
+        expr_type: TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        },
+    };
+
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
+        expr_type: TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        },
+    };
+}
+
 fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let r = TCExpr {
         range: r.range,
