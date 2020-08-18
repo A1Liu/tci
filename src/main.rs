@@ -8,6 +8,7 @@ use std::env;
 use std::fs::read_to_string;
 use std::io::Write;
 
+mod assembler;
 mod ast;
 mod buckets;
 mod errors;

@@ -31,66 +31,74 @@ use std::collections::HashMap;
 //     };
 // }
 
+type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
+
 fn add_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    return TCExpr {
-        range: r_from(l.range, r.range),
-        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
-        expr_type: TCType {
-            kind: TCTypeKind::I32,
-            pointer_count: 0,
-        },
+    let result_type = TCType {
+        kind: TCTypeKind::I32,
+        pointer_count: 0,
     };
-}
 
-fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let l = TCExpr {
-        range: r.range,
+        range: l.range,
         kind: TCExprKind::Into(buckets.add(l)),
-        expr_type: TCType {
-            kind: TCTypeKind::I32,
-            pointer_count: 0,
-        },
+        expr_type: result_type,
     };
 
-    return TCExpr {
-        range: r_from(l.range, r.range),
-        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
-        expr_type: TCType {
-            kind: TCTypeKind::I32,
-            pointer_count: 0,
-        },
-    };
-}
-
-fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let r = TCExpr {
         range: r.range,
         kind: TCExprKind::Into(buckets.add(r)),
-        expr_type: TCType {
-            kind: TCTypeKind::I32,
-            pointer_count: 0,
-        },
+        expr_type: result_type,
     };
 
     return TCExpr {
         range: r_from(l.range, r.range),
         kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
-        expr_type: TCType {
-            kind: TCTypeKind::I32,
-            pointer_count: 0,
-        },
+        expr_type: result_type,
     };
 }
 
-type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
+fn add_ptr<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let pointer_type = l.expr_type;
+    let add_type = TCType {
+        kind: TCTypeKind::U64,
+        pointer_count: 0,
+    };
+
+    let l = TCExpr {
+        range: l.range,
+        kind: TCExprKind::Into(buckets.add(l)),
+        expr_type: add_type,
+    };
+
+    let r = TCExpr {
+        range: r.range,
+        kind: TCExprKind::Into(buckets.add(r)),
+        expr_type: add_type,
+    };
+
+    let result = TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
+        expr_type: add_type,
+    };
+
+    return TCExpr {
+        range: result.range,
+        kind: TCExprKind::Into(buckets.add(result)),
+        expr_type: pointer_type,
+    };
+}
 
 lazy_static! {
     pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
         use TCShallowType::*;
-
         let mut m: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = HashMap::new();
-        m.insert((BinOp::Add, I32, I32), *&add_int);
-        m.insert((BinOp::Add, I32, Char), *&add_int_char);
+        m.insert((BinOp::Add, I32, I32), add_int);
+        m.insert((BinOp::Add, I32, Char), add_int);
+        m.insert((BinOp::Add, Char, I32), add_int);
+        m.insert((BinOp::Add, Pointer, I32), add_ptr);
+        m.insert((BinOp::Add, I32, Pointer), add_ptr);
         m
     };
 }
