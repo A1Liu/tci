@@ -1,6 +1,5 @@
 use crate::ast::*;
 use crate::buckets::{BucketList, BucketListRef};
-use crate::errors::Error;
 use crate::*;
 use std::collections::HashMap;
 
@@ -76,6 +75,31 @@ lazy_static! {
     };
 }
 
+fn get_overload(
+    env: &StructEnv,
+    op: BinOp,
+    l: &TCExpr,
+    r: &TCExpr,
+) -> Result<BinOpTransform, Error> {
+    let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
+    match BIN_OP_OVERLOADS.get(&key) {
+        Some(bin_op) => return Ok(*bin_op),
+        None => return Err(invalid_operands_bin_expr(env, l, r)),
+    }
+}
+
+pub fn invalid_operands_bin_expr(env: &StructEnv, l: &TCExpr, r: &TCExpr) -> Error {
+    return error!(
+        "invalid operands to binary expression",
+        l.range,
+        env.file,
+        format!("this has type {:?}", l.expr_type),
+        r.range,
+        env.file,
+        format!("this has type {:?}", r.expr_type)
+    );
+}
+
 pub struct LocalTypeEnv {
     pub symbols: HashMap<u32, TCVar>,
     pub return_type: TCType,
@@ -124,238 +148,29 @@ impl LocalTypeEnv {
         return unsafe { &*self.parent }.var(id);
     }
 
-    pub fn add_var(&mut self, decl_type: &ASTType, decl: &Decl) -> Result<(), Error> {
-        let tc_value = TCVar {
-            decl_type: convert_type(decl_type, decl.pointer_count),
-            range: decl.range,
-        };
-        if let Some(var_type) = self.symbols.insert(decl.ident, tc_value) {
-            return Err(Error::variable_redefinition(&var_type.range, &decl.range));
-        }
+    // pub fn add_var(&mut self, decl_type: &ASTType, decl: &Decl) -> Result<(), Error> {
+    //     let tc_value = TCVar {
+    //         decl_type: convert_type(decl_type, decl.pointer_count),
+    //         range: decl.range,
+    //     };
+    //     if let Some(var_type) = self.symbols.insert(decl.ident, tc_value) {
+    //         return Err(error!(
+    //             "name redefined in struct",
+    //             &var_type.range,
+    //             self.file_id,
+    //             "first_definition here" & decl.range
+    //         ));
+    //     }
 
-        return Ok(());
-    }
+    //     return Ok(());
+    // }
 }
 
-pub struct TypeChecker<'b> {
-    pub buckets: BucketListRef<'b>,
-    pub func_types: HashMap<u32, TCFuncType<'b>>,
-    pub functions: HashMap<u32, TCFunc<'b>>,
+pub struct StructEnv {
+    file: u32,
 }
 
-impl<'b> TypeChecker<'b> {
-    pub fn new(buckets: BucketListRef<'b>) -> Self {
-        Self {
-            buckets,
-            func_types: HashMap::new(),
-            functions: HashMap::new(),
-        }
-    }
-
-    fn get_overload(&self, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
-        let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
-        match BIN_OP_OVERLOADS.get(&key) {
-            Some(bin_op) => return Ok(*bin_op),
-            None => return Err(self.invalid_operands_bin_expr(l, r)),
-        }
-    }
-
-    pub fn check_global_stmts(&mut self, stmts: &[GlobalStmt]) -> Result<(), Error> {
-        struct UncheckedFunction<'a, 'b> {
-            defn_idx: u32,
-            ident: u32,
-            func_type: TCFuncType<'b>,
-            return_type_range: Range,
-            range: Range,
-            body: &'a [Stmt<'a>],
-        };
-
-        let mut functions: Vec<UncheckedFunction> = Vec::new();
-        for (decl_idx, stmt) in stmts.iter().enumerate() {
-            let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
-                GlobalStmtKind::FuncDecl {
-                    return_type,
-                    ident,
-                    pointer_count,
-                    params,
-                } => (return_type, pointer_count, ident, params, None),
-                GlobalStmtKind::Func {
-                    return_type,
-                    ident,
-                    pointer_count,
-                    params,
-                    body,
-                } => (return_type, pointer_count, ident, params, Some(body)),
-                _ => panic!("unimplemented"),
-            };
-
-            let decl_idx = decl_idx as u32;
-            let return_type_range = return_type.range;
-            let return_type = convert_type(return_type, *pointer_count);
-            if let TCTypeKind::Struct { ident } = return_type.kind {
-                self.check_struct_type(ident, decl_idx, *pointer_count, return_type_range)?;
-            }
-
-            let mut names = HashMap::new();
-            let mut typed_params = Vec::new();
-            for param in params.iter() {
-                if let Some(original) = names.insert(param.ident, param.range.clone()) {
-                    return Err(Error::parameter_redeclaration(&original, &param.range));
-                }
-
-                let param_type = self.check_type(decl_idx, &param.decl_type, *pointer_count)?;
-
-                typed_params.push(TCFuncParam {
-                    decl_type: param_type,
-                    ident: param.ident,
-                    range: param.range,
-                });
-            }
-
-            let typed_params = self.buckets.add_array(typed_params);
-            let tc_func_type = TCFuncType {
-                return_type,
-                range: stmt.range,
-                params: typed_params,
-                decl_idx,
-            };
-
-            if let Some(prev_tc_func_type) = self.func_types.get(ident) {
-                if prev_tc_func_type != &tc_func_type {
-                    return Err(Error::function_declaration_mismatch(
-                        &prev_tc_func_type.range,
-                        &tc_func_type.range,
-                    ));
-                }
-
-                if let Some(body) = self.functions.get(&ident) {
-                    if let Some(body) = func_body {
-                        return Err(Error::function_redefinition(
-                            &prev_tc_func_type.range,
-                            &tc_func_type.range,
-                        ));
-                    }
-                }
-            } else {
-                self.func_types.insert(*ident, tc_func_type);
-            }
-
-            if let Some(body) = func_body {
-                functions.push(UncheckedFunction {
-                    defn_idx: decl_idx,
-                    func_type: tc_func_type,
-                    ident: *ident,
-                    return_type_range,
-                    range: stmt.range,
-                    body,
-                });
-            }
-        }
-
-        for func in functions.into_iter() {
-            let ftype = func.func_type;
-            let mut env = LocalTypeEnv::new(ftype.return_type, func.return_type_range);
-            let gstmts = self.check_stmts(ftype.decl_idx, &mut env, func.body)?;
-            self.functions.insert(
-                func.ident,
-                TCFunc {
-                    func_type: ftype,
-                    defn_idx: func.defn_idx,
-                    range: func.range,
-                    stmts: gstmts,
-                },
-            );
-        }
-
-        return Ok(());
-    }
-
-    pub fn check_stmts(
-        &self,
-        decl_idx: u32,
-        env: &mut LocalTypeEnv,
-        stmts: &[Stmt],
-    ) -> Result<&'b [TCStmt<'b>], Error> {
-        let mut tstmts = Vec::new();
-        for stmt in stmts {
-            match &stmt.kind {
-                StmtKind::RetVal(expr) => {
-                    let expr = self.check_expr(&env, expr)?;
-                    tstmts.push(TCStmt {
-                        range: expr.range,
-                        kind: TCStmtKind::RetVal(expr),
-                    });
-                }
-
-                StmtKind::Nop => {}
-
-                _ => panic!("unimplemented"),
-            }
-        }
-
-        return Ok(self.buckets.add_array(tstmts));
-    }
-
-    pub fn check_expr(&self, env: &LocalTypeEnv, expr: &Expr) -> Result<TCExpr<'b>, Error> {
-        match expr.kind {
-            ExprKind::IntLiteral(val) => {
-                return Ok(TCExpr {
-                    kind: TCExprKind::IntLiteral(val),
-                    expr_type: TCType {
-                        kind: TCTypeKind::I32,
-                        pointer_count: 0,
-                    },
-                    range: expr.range,
-                });
-            }
-            ExprKind::BinOp(BinOp::Add, l, r) => {
-                let l = self.check_expr(env, l)?;
-                let r = self.check_expr(env, r)?;
-
-                let bin_op = self.get_overload(BinOp::Add, &l, &r)?;
-                return Ok(bin_op(&self.buckets, l, r));
-            }
-            _ => panic!("unimplemented"),
-        }
-    }
-
-    pub fn invalid_operands_bin_expr(&self, l: &TCExpr, r: &TCExpr) -> Error {
-        return Error::new(
-            "invalid operands to binary expression",
-            vec![
-                (l.range, format!("this has type {:?}", l.expr_type)),
-                (r.range, format!("this has type {:?}", r.expr_type)),
-            ],
-        );
-    }
-
-    #[inline]
-    pub fn type_width(&self, tc_type: &TCType) -> u32 {
-        if tc_type.pointer_count > 0 {
-            return 8;
-        }
-
-        match tc_type.kind {
-            TCTypeKind::I32 => 4,
-            TCTypeKind::U64 => 8,
-            TCTypeKind::Char => 1,
-            TCTypeKind::Void => 0,
-            TCTypeKind::Struct { ident } => panic!("unimplemented"),
-        }
-    }
-
-    #[inline]
-    pub fn type_is_numeric(&self, tc_type: &TCType) -> bool {
-        if tc_type.pointer_count > 0 {
-            return true;
-        }
-
-        match tc_type.kind {
-            TCTypeKind::I32 | TCTypeKind::U64 | TCTypeKind::Char => true,
-            TCTypeKind::Void | TCTypeKind::Struct { .. } => false,
-        }
-    }
-
+impl StructEnv {
     pub fn check_type(
         &self,
         decl_idx: u32,
@@ -392,6 +207,243 @@ impl<'b> TypeChecker<'b> {
         return Ok(());
     }
 }
+
+pub struct TypedEnv<'a> {
+    pub structs: StructEnv,
+    pub func_types: HashMap<u32, TCFuncType<'a>>,
+    pub functions: HashMap<u32, TCFunc<'a>>,
+}
+
+pub fn check_types<'a>(
+    buckets: BucketListRef<'a>,
+    file: u32,
+    stmts: &[GlobalStmt],
+) -> Result<TypedEnv<'a>, Error> {
+    struct UncheckedFunction<'a, 'b> {
+        defn_idx: u32,
+        ident: u32,
+        func_type: TCFuncType<'b>,
+        return_type_range: Range,
+        range: Range,
+        body: &'a [Stmt<'a>],
+    }
+
+    let struct_env = StructEnv { file };
+
+    let mut env = TypedEnv {
+        structs: struct_env,
+        func_types: HashMap::new(),
+        functions: HashMap::new(),
+    };
+
+    let mut functions: Vec<UncheckedFunction> = Vec::new();
+    for (decl_idx, stmt) in stmts.iter().enumerate() {
+        let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
+            GlobalStmtKind::FuncDecl {
+                return_type,
+                ident,
+                pointer_count,
+                params,
+            } => (return_type, pointer_count, ident, params, None),
+            GlobalStmtKind::Func {
+                return_type,
+                ident,
+                pointer_count,
+                params,
+                body,
+            } => (return_type, pointer_count, ident, params, Some(body)),
+            _ => panic!("unimplemented"),
+        };
+
+        let decl_idx = decl_idx as u32;
+        let return_type_range = return_type.range;
+        let struct_env = &env.structs;
+        let return_type = struct_env.check_type(decl_idx, return_type, *pointer_count)?;
+
+        let mut names = HashMap::new();
+        let mut typed_params = Vec::new();
+        for param in params.iter() {
+            if let Some(original) = names.insert(param.ident, param.range.clone()) {
+                return Err(param_redeclaration(struct_env.file, original, param.range));
+            }
+
+            let param_type = struct_env.check_type(decl_idx, &param.decl_type, *pointer_count)?;
+
+            typed_params.push(TCFuncParam {
+                decl_type: param_type,
+                ident: param.ident,
+                range: param.range,
+            });
+        }
+
+        let typed_params = buckets.add_array(typed_params);
+        let tc_func_type = TCFuncType {
+            return_type,
+            loc: stmt.range.cloc(env.structs.file),
+            params: typed_params,
+            decl_idx,
+        };
+
+        if let Some(prev_tc_func_type) = env.func_types.get(ident) {
+            if prev_tc_func_type != &tc_func_type {
+                return Err(function_declaration_mismatch(
+                    prev_tc_func_type.loc,
+                    tc_func_type.loc,
+                ));
+            }
+
+            if let Some(body) = env.functions.get(&ident) {
+                if let Some(body) = func_body {
+                    return Err(function_redefinition(
+                        prev_tc_func_type.loc,
+                        tc_func_type.loc,
+                    ));
+                }
+            }
+        } else {
+            env.func_types.insert(*ident, tc_func_type);
+        }
+
+        if let Some(body) = func_body {
+            functions.push(UncheckedFunction {
+                defn_idx: decl_idx,
+                func_type: tc_func_type,
+                ident: *ident,
+                return_type_range,
+                range: stmt.range,
+                body,
+            });
+        }
+    }
+
+    for func in functions.into_iter() {
+        let ftype = func.func_type;
+        let mut local_env = LocalTypeEnv::new(ftype.return_type, func.return_type_range);
+        let gstmts = check_stmts(buckets, &mut env, &mut local_env, ftype.decl_idx, func.body)?;
+        env.functions.insert(
+            func.ident,
+            TCFunc {
+                func_type: ftype,
+                defn_idx: func.defn_idx,
+                loc: func.range.cloc(env.structs.file),
+                stmts: buckets.add_array(gstmts),
+            },
+        );
+    }
+
+    return Ok(env);
+}
+
+pub fn check_stmts<'a>(
+    buckets: BucketListRef<'a>,
+    env: &TypedEnv<'a>,
+    local_env: &mut LocalTypeEnv,
+    decl_idx: u32,
+    stmts: &[Stmt],
+) -> Result<Vec<TCStmt<'a>>, Error> {
+    let mut tstmts = Vec::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::RetVal(expr) => {
+                let expr = check_expr(buckets, &env, &local_env, expr)?;
+                tstmts.push(TCStmt {
+                    range: expr.range,
+                    kind: TCStmtKind::RetVal(expr),
+                });
+            }
+
+            StmtKind::Nop => {}
+
+            _ => panic!("unimplemented"),
+        }
+    }
+
+    return Ok(tstmts);
+}
+
+pub fn check_expr<'a>(
+    buckets: BucketListRef<'a>,
+    env: &TypedEnv<'a>,
+    local_env: &LocalTypeEnv,
+    expr: &Expr,
+) -> Result<TCExpr<'a>, Error> {
+    match expr.kind {
+        ExprKind::IntLiteral(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::IntLiteral(val),
+                expr_type: TCType {
+                    kind: TCTypeKind::I32,
+                    pointer_count: 0,
+                },
+                range: expr.range,
+            });
+        }
+        ExprKind::BinOp(BinOp::Add, l, r) => {
+            let l = check_expr(buckets, env, local_env, l)?;
+            let r = check_expr(buckets, env, local_env, r)?;
+
+            let bin_op = get_overload(&env.structs, BinOp::Add, &l, &r)?;
+            return Ok(bin_op(&buckets, l, r));
+        }
+        _ => panic!("unimplemented"),
+    }
+}
+
+pub fn param_redeclaration(file: u32, original_range: Range, range: Range) -> Error {
+    return error!(
+        "redeclaration of function parameter",
+        original_range, file, "original declaration here", range, file, "second declaration here"
+    );
+}
+
+pub fn function_declaration_mismatch(original: CodeLoc, new: CodeLoc) -> Error {
+    return error!(
+        "function declaration doesn't match previous declaration",
+        original, "original declaration here", new, "second declaration here"
+    );
+}
+
+pub fn function_redefinition(original: CodeLoc, redef: CodeLoc) -> Error {
+    return error!(
+        "redefinition of function",
+        original, "original definition here", redef, "second definition here"
+    );
+}
+
+// pub struct TypeChecker<'b> {
+//     pub buckets: BucketListRef<'b>,
+//     pub func_types: HashMap<u32, TCFuncType<'b>>,
+//     pub functions: HashMap<u32, TCFunc<'b>>,
+// }
+//
+// impl<'b> TypeChecker<'b> {
+//     #[inline]
+//     pub fn type_width(&self, tc_type: &TCType) -> u32 {
+//         if tc_type.pointer_count > 0 {
+//             return 8;
+//         }
+//
+//         match tc_type.kind {
+//             TCTypeKind::I32 => 4,
+//             TCTypeKind::U64 => 8,
+//             TCTypeKind::Char => 1,
+//             TCTypeKind::Void => 0,
+//             TCTypeKind::Struct { ident } => panic!("unimplemented"),
+//         }
+//     }
+//
+//     #[inline]
+//     pub fn type_is_numeric(&self, tc_type: &TCType) -> bool {
+//         if tc_type.pointer_count > 0 {
+//             return true;
+//         }
+//
+//         match tc_type.kind {
+//             TCTypeKind::I32 | TCTypeKind::U64 | TCTypeKind::Char => true,
+//             TCTypeKind::Void | TCTypeKind::Struct { .. } => false,
+//         }
+//     }
+// }
 
 /*
         // Add all types to the type table

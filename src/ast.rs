@@ -164,7 +164,7 @@ pub struct TCStruct<'a> {
     pub decl_idx: u32,
     pub defn: Option<TCStructDefn<'a>>,
     pub ident_range: Range,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -193,16 +193,9 @@ pub enum TCShallowType {
 }
 
 #[derive(Debug, Clone)]
-pub struct TCGlobalValue {
-    pub decl_type: TCType,
-    pub range: Range,
-    pub decl_idx: u32,
-}
-
-#[derive(Debug, Clone)]
 pub struct TCVar {
     pub decl_type: TCType,
-    pub range: Range,
+    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
 
 #[derive(Debug, Clone)]
@@ -216,7 +209,7 @@ pub struct TCFuncParam {
 pub struct TCFuncType<'a> {
     pub decl_idx: u32,
     pub return_type: TCType,
-    pub range: Range,
+    pub loc: CodeLoc,
     pub params: &'a [TCFuncParam],
 }
 
@@ -224,7 +217,7 @@ pub struct TCFuncType<'a> {
 pub struct TCFunc<'a> {
     pub func_type: TCFuncType<'a>,
     pub defn_idx: u32,
-    pub range: Range,
+    pub loc: CodeLoc,
     pub stmts: &'a [TCStmt<'a>],
 }
 

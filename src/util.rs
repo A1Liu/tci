@@ -11,10 +11,20 @@ macro_rules! error {
         Error::new(
             $msg,
             vec![util::ErrorSection {
-                location: CodeLocation {
+                location: CodeLoc {
                     range: $range1,
                     file: $file1,
                 },
+                message: $msg1.to_string(),
+            }],
+        )
+    };
+
+    ($msg:expr, $loc1:expr, $msg1:expr) => {
+        Error::new(
+            $msg,
+            vec![util::ErrorSection {
+                location: $loc1,
                 message: $msg1.to_string(),
             }],
         )
@@ -25,14 +35,14 @@ macro_rules! error {
             $msg,
             vec![
                 util::ErrorSection {
-                    location: CodeLocation {
+                    location: CodeLoc {
                         range: $range1,
                         file: $file1,
                     },
                     message: $msg1.to_string(),
                 },
                 util::ErrorSection {
-                    location: CodeLocation {
+                    location: CodeLoc {
                         range: $range2,
                         file: $file2,
                     },
@@ -41,10 +51,26 @@ macro_rules! error {
             ],
         )
     };
+
+    ($msg:expr, $loc1:expr, $msg1:expr, $loc2:expr, $msg2:expr) => {
+        Error::new(
+            $msg,
+            vec![
+                util::ErrorSection {
+                    location: $loc1,
+                    message: $msg1.to_string(),
+                },
+                util::ErrorSection {
+                    location: $loc1,
+                    message: $msg2.to_string(),
+                },
+            ],
+        )
+    };
 }
 
 pub struct ErrorSection {
-    pub location: CodeLocation,
+    pub location: CodeLoc,
     pub message: String,
 }
 
@@ -104,14 +130,20 @@ pub fn r_from(range1: Range, range2: Range) -> Range {
     }
 }
 
+impl Range {
+    pub fn cloc(self, file: u32) -> CodeLoc {
+        CodeLoc { range: self, file }
+    }
+}
+
 impl Into<ops::Range<usize>> for Range {
     fn into(self) -> ops::Range<usize> {
         (self.start as usize)..(self.end as usize)
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct CodeLocation {
+#[derive(Debug, Clone, Copy)]
+pub struct CodeLoc {
     pub range: Range,
     pub file: u32,
 }

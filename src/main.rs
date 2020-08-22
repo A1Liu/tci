@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-// #[macro_use]
-// extern crate lazy_static;
+#[macro_use]
+extern crate lazy_static;
 
 use std::env;
 use std::fs::read_to_string;
@@ -17,7 +17,7 @@ mod interpreter;
 mod lexer;
 mod parser;
 mod runtime;
-// mod type_checker;
+mod type_checker;
 
 #[cfg(test)]
 mod test;
@@ -27,7 +27,7 @@ use codespan_reporting::files::{Files, SimpleFiles};
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use runtime::{DefaultIO, RuntimeIO};
 
-pub use util::{fold_binary, r, r_from, CodeLocation, Error, Range};
+pub use util::{fold_binary, r, r_from, CodeLoc, Error, Range};
 
 pub struct Environment<'a> {
     pub buckets: buckets::BucketListRef<'a>,
@@ -53,6 +53,7 @@ fn run<'a>(env: &Environment<'a>, runtime_io: impl RuntimeIO) -> Result<(), Erro
     let iter = token_lists.into_iter().enumerate();
     let iter = iter.map(|(file, tokens)| {
         let ast = parser::parse_tokens(end, file as u32, &tokens)?;
+        let typed_ast = type_checker::check_types(end, file as u32, &ast)?;
         Ok(())
     });
 
