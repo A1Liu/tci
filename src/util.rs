@@ -50,6 +50,70 @@ impl Into<ops::Range<usize>> for Range {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct CodeLocation {
+    pub range: Range,
+    pub file: u32,
+}
+
+pub fn fold_binary<I, Iter: Iterator<Item = I>>(
+    mut iter: Iter,
+    mut reducer: impl FnMut(I, I) -> I,
+) -> Option<I> {
+    let first = iter.next()?;
+    let second = match iter.next() {
+        Some(s) => s,
+        None => return Some(first),
+    };
+
+    let mut source = Vec::new();
+    source.push(reducer(first, second));
+
+    loop {
+        let first = match iter.next() {
+            Some(f) => f,
+            None => break,
+        };
+
+        let val = match iter.next() {
+            Some(e) => reducer(first, e),
+            None => first,
+        };
+
+        source.push(val);
+    }
+
+    let mut target = Vec::new();
+    loop {
+        let mut iter = source.into_iter();
+
+        let first = iter.next().unwrap();
+        let second = match iter.next() {
+            Some(s) => s,
+            None => return Some(first),
+        };
+
+        target.push(reducer(first, second));
+
+        loop {
+            let first = match iter.next() {
+                Some(f) => f,
+                None => break,
+            };
+
+            let val = match iter.next() {
+                Some(e) => reducer(first, e),
+                None => first,
+            };
+
+            target.push(val);
+        }
+
+        source = target;
+        target = Vec::new();
+    }
+}
+
 pub struct StringWriter {
     buf: Vec<u8>,
 }

@@ -61,7 +61,7 @@ pub fn render_err(
     write!(out, "{}: {}\n", error.short_name, error.message)?;
     for frame in stack_trace {
         let diagnostic = Diagnostic::new(Severity::Void)
-            .with_labels(vec![Label::primary(frame.file as usize, frame.range)]);
+            .with_labels(vec![Label::primary(frame.file, frame.range)]);
         codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic)
             .expect("why did this fail?");
     }

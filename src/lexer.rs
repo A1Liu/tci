@@ -71,7 +71,7 @@ pub enum TokenKind {
     End,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token {
     pub kind: TokenKind,
     pub range: Range,
@@ -86,245 +86,249 @@ impl Token {
     }
 }
 
-pub struct Lexer<'a> {
-    pub data: &'a [u8],
-    pub current: usize,
-    pub symbols: Vec<&'a str>,
+pub struct Symbols<'a> {
+    pub names: Vec<&'a str>,
     pub translate: HashMap<&'a str, u32>,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(data: &'a str) -> Self {
+impl<'a> Symbols<'a> {
+    pub fn new() -> Self {
         Self {
-            data: data.as_bytes(),
-            current: 0,
-            symbols: Vec::new(),
+            names: Vec::new(),
             translate: HashMap::new(),
         }
     }
 
-    pub fn next(&mut self) -> Token {
-        while self.current < self.data.len()
-            && match self.data[self.current] {
-                b' ' | b'\t' | b'\n' => true,
-                _ => false,
+    pub fn translate_add(&mut self, word: &'a str) -> u32 {
+        if let Some(id) = self.translate.get(word) {
+            return *id;
+        } else {
+            let idx = self.names.len() as u32;
+            self.names.push(word);
+            self.translate.insert(word, idx);
+            return idx;
+        }
+    }
+}
+
+pub fn lex_file<'a>(symbols: &mut Symbols<'a>, data: &'a str) -> Vec<Token> {
+    let mut toks = Vec::new();
+    let bytes = data.as_bytes();
+    let mut current = 0;
+    let mut tok = lex_token(symbols, bytes, &mut current);
+    toks.push(tok);
+
+    while tok.kind != TokenKind::End {
+        tok = lex_token(symbols, bytes, &mut current);
+        toks.push(tok);
+    }
+
+    return toks;
+}
+
+pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut usize) -> Token {
+    while *current < data.len()
+        && match data[*current] {
+            b' ' | b'\t' | b'\n' => true,
+            _ => false,
+        }
+    {
+        *current += 1;
+    }
+
+    if *current == data.len() {
+        return Token::new(TokenKind::End, *current..*current);
+    }
+
+    let begin = *current;
+    *current += 1;
+
+    match data[begin] {
+        x if (x >= b'a' && x <= b'z') => {
+            let mut cur = data[*current];
+
+            while (cur >= b'a' && cur <= b'z')
+                || (cur >= b'A' && cur <= b'Z')
+                || cur == b'_'
+                || (cur >= b'0' && cur <= b'9')
+            {
+                *current += 1;
+                cur = data[*current];
             }
-        {
-            self.current += 1;
+
+            let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
+            match word {
+                "if" => return Token::new(TokenKind::If, begin..*current),
+                "else" => return Token::new(TokenKind::Else, begin..*current),
+                "do" => return Token::new(TokenKind::Do, begin..*current),
+                "while" => return Token::new(TokenKind::While, begin..*current),
+                "for" => return Token::new(TokenKind::For, begin..*current),
+                "break" => return Token::new(TokenKind::Break, begin..*current),
+                "continue" => return Token::new(TokenKind::Continue, begin..*current),
+                "return" => return Token::new(TokenKind::Return, begin..*current),
+                "struct" => return Token::new(TokenKind::Struct, begin..*current),
+                "typedef" => return Token::new(TokenKind::Typedef, begin..*current),
+                "void" => return Token::new(TokenKind::Void, begin..*current),
+                "int" => return Token::new(TokenKind::Int, begin..*current),
+                "char" => return Token::new(TokenKind::Char, begin..*current),
+                word => {
+                    let id = symbols.translate_add(word);
+                    return Token::new(TokenKind::Ident(id), begin..*current);
+                }
+            }
         }
 
-        if self.current == self.data.len() {
-            return Token::new(TokenKind::End, self.current..self.current);
+        x if (x >= b'A' && x <= b'Z') => {
+            let mut cur = data[*current];
+
+            while (cur >= b'a' && cur <= b'z')
+                || (cur >= b'A' && cur <= b'Z')
+                || cur == b'_'
+                || (cur >= b'0' && cur <= b'9')
+            {
+                *current += 1;
+                cur = data[*current];
+            }
+
+            let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
+            let id = symbols.translate_add(word);
+
+            return Token::new(TokenKind::TypeIdent(id), begin..*current);
         }
 
-        let begin = self.current;
-        self.current += 1;
-
-        match self.data[begin] {
-            x if (x >= b'a' && x <= b'z') => {
-                let mut cur = self.data[self.current];
-
-                while (cur >= b'a' && cur <= b'z')
-                    || (cur >= b'A' && cur <= b'Z')
-                    || cur == b'_'
-                    || (cur >= b'0' && cur <= b'9')
-                {
-                    self.current += 1;
-                    cur = self.data[self.current];
-                }
-
-                let word =
-                    unsafe { std::str::from_utf8_unchecked(&self.data[begin..self.current]) };
-                match word {
-                    "if" => return Token::new(TokenKind::If, begin..self.current),
-                    "else" => return Token::new(TokenKind::Else, begin..self.current),
-                    "do" => return Token::new(TokenKind::Do, begin..self.current),
-                    "while" => return Token::new(TokenKind::While, begin..self.current),
-                    "for" => return Token::new(TokenKind::For, begin..self.current),
-                    "break" => return Token::new(TokenKind::Break, begin..self.current),
-                    "continue" => return Token::new(TokenKind::Continue, begin..self.current),
-                    "return" => return Token::new(TokenKind::Return, begin..self.current),
-                    "struct" => return Token::new(TokenKind::Struct, begin..self.current),
-                    "typedef" => return Token::new(TokenKind::Typedef, begin..self.current),
-                    "void" => return Token::new(TokenKind::Void, begin..self.current),
-                    "int" => return Token::new(TokenKind::Int, begin..self.current),
-                    "char" => return Token::new(TokenKind::Char, begin..self.current),
-                    word => {
-                        let id = if let Some(id) = self.translate.get(word) {
-                            *id
-                        } else {
-                            let idx = self.symbols.len() as u32;
-                            self.symbols.push(word);
-                            self.translate.insert(word, idx);
-                            idx
-                        };
-
-                        return Token::new(TokenKind::Ident(id), begin..self.current);
-                    }
-                }
+        b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
+            let mut int_value: u32 = 0;
+            while data[*current] >= b'0' && data[*current] <= b'9' {
+                *current += 1;
+                int_value *= 10;
+                int_value += (data[*current] - b'0') as u32;
             }
-
-            x if (x >= b'A' && x <= b'Z') => {
-                let mut cur = self.data[self.current];
-
-                while (cur >= b'a' && cur <= b'z')
-                    || (cur >= b'A' && cur <= b'Z')
-                    || cur == b'_'
-                    || (cur >= b'0' && cur <= b'9')
-                {
-                    self.current += 1;
-                    cur = self.data[self.current];
-                }
-
-                let word =
-                    unsafe { std::str::from_utf8_unchecked(&self.data[begin..self.current]) };
-
-                let id = if let Some(id) = self.translate.get(word) {
-                    *id
-                } else {
-                    let idx = self.symbols.len() as u32;
-                    self.symbols.push(word);
-                    self.translate.insert(word, idx);
-                    idx
-                };
-
-                return Token::new(TokenKind::TypeIdent(id), begin..self.current);
-            }
-
-            b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
-                let mut int_value: u32 = 0;
-                while self.data[self.current] >= b'0' && self.data[self.current] <= b'9' {
-                    self.current += 1;
-                    int_value *= 10;
-                    int_value += (self.data[self.current] - b'0') as u32;
-                }
-                return Token::new(TokenKind::IntLiteral(int_value), begin..self.current);
-            }
-
-            b'{' => return Token::new(TokenKind::LBrace, begin..self.current),
-            b'}' => return Token::new(TokenKind::RBrace, begin..self.current),
-            b'(' => return Token::new(TokenKind::LParen, begin..self.current),
-            b')' => return Token::new(TokenKind::RParen, begin..self.current),
-            b'[' => return Token::new(TokenKind::LBracket, begin..self.current),
-            b']' => return Token::new(TokenKind::RBracket, begin..self.current),
-            b'~' => return Token::new(TokenKind::Tilde, begin..self.current),
-            b'.' => return Token::new(TokenKind::Dot, begin..self.current),
-            b';' => return Token::new(TokenKind::Semicolon, begin..self.current),
-            b',' => return Token::new(TokenKind::Comma, begin..self.current),
-
-            b'+' => {
-                if self.data[self.current] == b'+' {
-                    self.current += 1;
-                    return Token::new(TokenKind::PlusPlus, begin..self.current);
-                } else if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::PlusEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Plus, begin..self.current);
-                }
-            }
-            b'-' => {
-                if self.data[self.current] == b'-' {
-                    self.current += 1;
-                    return Token::new(TokenKind::DashDash, begin..self.current);
-                } else if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::DashEq, begin..self.current);
-                } else if self.data[self.current] == b'>' {
-                    self.current += 1;
-                    return Token::new(TokenKind::Arrow, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Dash, begin..self.current);
-                }
-            }
-            b'/' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::SlashEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Slash, begin..self.current);
-                }
-            }
-            b'*' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::StarEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Star, begin..self.current);
-                }
-            }
-            b'%' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::PercentEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Percent, begin..self.current);
-                }
-            }
-            b'>' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::Geq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Gt, begin..self.current);
-                }
-            }
-            b'<' => {
-                if self.data[self.current] == b'+' {
-                    self.current += 1;
-                    return Token::new(TokenKind::Leq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Gt, begin..self.current);
-                }
-            }
-            b'!' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::Neq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Not, begin..self.current);
-                }
-            }
-            b'=' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::EqEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Eq, begin..self.current);
-                }
-            }
-            b'|' => {
-                if self.data[self.current] == b'|' {
-                    self.current += 1;
-                    return Token::new(TokenKind::LineLine, begin..self.current);
-                } else if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::LineEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Line, begin..self.current);
-                }
-            }
-            b'&' => {
-                if self.data[self.current] == b'&' {
-                    self.current += 1;
-                    return Token::new(TokenKind::AmpAmp, begin..self.current);
-                } else if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::AmpEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Amp, begin..self.current);
-                }
-            }
-            b'^' => {
-                if self.data[self.current] == b'=' {
-                    self.current += 1;
-                    return Token::new(TokenKind::CaretEq, begin..self.current);
-                } else {
-                    return Token::new(TokenKind::Caret, begin..self.current);
-                }
-            }
-
-            _ => return Token::new(TokenKind::Invalid, begin..self.current),
+            return Token::new(TokenKind::IntLiteral(int_value), begin..*current);
         }
+
+        b'{' => return Token::new(TokenKind::LBrace, begin..*current),
+        b'}' => return Token::new(TokenKind::RBrace, begin..*current),
+        b'(' => return Token::new(TokenKind::LParen, begin..*current),
+        b')' => return Token::new(TokenKind::RParen, begin..*current),
+        b'[' => return Token::new(TokenKind::LBracket, begin..*current),
+        b']' => return Token::new(TokenKind::RBracket, begin..*current),
+        b'~' => return Token::new(TokenKind::Tilde, begin..*current),
+        b'.' => return Token::new(TokenKind::Dot, begin..*current),
+        b';' => return Token::new(TokenKind::Semicolon, begin..*current),
+        b',' => return Token::new(TokenKind::Comma, begin..*current),
+
+        b'+' => {
+            if data[*current] == b'+' {
+                *current += 1;
+                return Token::new(TokenKind::PlusPlus, begin..*current);
+            } else if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::PlusEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Plus, begin..*current);
+            }
+        }
+        b'-' => {
+            if data[*current] == b'-' {
+                *current += 1;
+                return Token::new(TokenKind::DashDash, begin..*current);
+            } else if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::DashEq, begin..*current);
+            } else if data[*current] == b'>' {
+                *current += 1;
+                return Token::new(TokenKind::Arrow, begin..*current);
+            } else {
+                return Token::new(TokenKind::Dash, begin..*current);
+            }
+        }
+        b'/' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::SlashEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Slash, begin..*current);
+            }
+        }
+        b'*' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::StarEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Star, begin..*current);
+            }
+        }
+        b'%' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::PercentEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Percent, begin..*current);
+            }
+        }
+        b'>' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::Geq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Gt, begin..*current);
+            }
+        }
+        b'<' => {
+            if data[*current] == b'+' {
+                *current += 1;
+                return Token::new(TokenKind::Leq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Gt, begin..*current);
+            }
+        }
+        b'!' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::Neq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Not, begin..*current);
+            }
+        }
+        b'=' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::EqEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Eq, begin..*current);
+            }
+        }
+        b'|' => {
+            if data[*current] == b'|' {
+                *current += 1;
+                return Token::new(TokenKind::LineLine, begin..*current);
+            } else if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::LineEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Line, begin..*current);
+            }
+        }
+        b'&' => {
+            if data[*current] == b'&' {
+                *current += 1;
+                return Token::new(TokenKind::AmpAmp, begin..*current);
+            } else if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::AmpEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Amp, begin..*current);
+            }
+        }
+        b'^' => {
+            if data[*current] == b'=' {
+                *current += 1;
+                return Token::new(TokenKind::CaretEq, begin..*current);
+            } else {
+                return Token::new(TokenKind::Caret, begin..*current);
+            }
+        }
+
+        _ => return Token::new(TokenKind::Invalid, begin..*current),
     }
 }

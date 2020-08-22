@@ -1,21 +1,17 @@
-use crate::buckets::BucketList;
 use crate::run_on_file;
+use crate::runtime::InMemoryIO;
 use crate::util::{StringWriter, Void};
-use codespan_reporting::files::SimpleFiles;
 
 fn test_file_should_succeed(filename: &str) {
-    let mut writer = StringWriter::new();
     let config = codespan_reporting::term::Config::default();
+    let mut writer = StringWriter::new();
+    let mut runtime = InMemoryIO::new();
 
-    let buckets = BucketList::new();
-    let mut files = SimpleFiles::new();
-    let mut output = StringWriter::new();
-
-    match run_on_file(&mut output, Void::new(), buckets, &mut files, filename) {
-        Err(diagnostic) => {
-            codespan_reporting::term::emit(&mut writer, &config, &files, &diagnostic)
-                .expect("why did this fail?");
+    match run_on_file(&mut runtime, filename, &mut writer) {
+        Err(_) => {
             println!("{}", writer.to_string());
+            println!("stdout:\n{}", runtime.out.to_string());
+            println!("stderr:\n{}", runtime.err.to_string());
             panic!();
         }
         _ => {}
@@ -27,18 +23,12 @@ fn test_file_should_succeed(filename: &str) {
 
 fn test_file_should_fail(filename: &str) {
     let mut writer = StringWriter::new();
-    let config = codespan_reporting::term::Config::default();
 
-    let buckets = BucketList::new();
-    let mut files = SimpleFiles::new();
-
-    match run_on_file(Void::new(), Void::new(), buckets, &mut files, filename) {
-        Err(diagnostic) => {
-            codespan_reporting::term::emit(&mut writer, &config, &files, &diagnostic)
-                .expect("why did this fail?");
-            println!("{}", writer.to_string());
+    match run_on_file(Void::new(), filename, &mut writer) {
+        Err(_) => println!("{}", writer.to_string()),
+        _ => {
+            panic!("should have failed");
         }
-        _ => panic!("should have failed"),
     }
 }
 

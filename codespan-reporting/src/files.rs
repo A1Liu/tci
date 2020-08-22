@@ -302,15 +302,20 @@ where
 
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again.
-    pub fn add(&mut self, name: Name, source: Source) -> usize {
-        let file_id = self.files.len();
+    pub fn add(&mut self, name: Name, source: Source) -> u32 {
+        let file_id = self.files.len() as u32;
         self.files.push(SimpleFile::new(name, source));
         file_id
     }
 
+    /// Iterate through the files contained in this instance
+    pub fn iter(&self) -> core::ops::Range<u32> {
+        return 0..(self.files.len() as u32);
+    }
+
     /// Get the file corresponding to the given id.
-    pub fn get(&self, file_id: usize) -> Option<&SimpleFile<Name, Source>> {
-        self.files.get(file_id)
+    pub fn get(&self, file_id: u32) -> Option<&SimpleFile<Name, Source>> {
+        self.files.get(file_id as usize)
     }
 }
 
@@ -319,24 +324,24 @@ where
     Name: 'a + std::fmt::Display + Clone,
     Source: 'a + AsRef<str>,
 {
-    type FileId = usize;
+    type FileId = u32;
     type Name = Name;
     type Source = &'a str;
 
-    fn name(&self, file_id: usize) -> Option<Name> {
-        Some(self.get(file_id)?.name().clone())
+    fn name(&self, file_id: u32) -> Option<Name> {
+        Some(self.files.get(file_id as usize)?.name().clone())
     }
 
-    fn source(&self, file_id: usize) -> Option<&str> {
-        Some(self.get(file_id)?.source().as_ref())
+    fn source(&self, file_id: u32) -> Option<&str> {
+        Some(self.files.get(file_id as usize)?.source().as_ref())
     }
 
-    fn line_index(&self, file_id: usize, byte_index: usize) -> Option<usize> {
-        self.get(file_id)?.line_index((), byte_index)
+    fn line_index(&self, file_id: u32, byte_index: usize) -> Option<usize> {
+        self.files.get(file_id as usize)?.line_index((), byte_index)
     }
 
-    fn line_range(&self, file_id: usize, line_index: usize) -> Option<Range<usize>> {
-        self.get(file_id)?.line_range((), line_index)
+    fn line_range(&self, file_id: u32, line_index: usize) -> Option<Range<usize>> {
+        self.files.get(file_id as usize)?.line_range((), line_index)
     }
 }
 

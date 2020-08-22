@@ -1,119 +1,98 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-#[macro_use]
-extern crate lazy_static;
+// #[macro_use]
+// extern crate lazy_static;
 
 use std::env;
 use std::fs::read_to_string;
-use std::io::Write;
+
+#[macro_use]
+mod errors;
 
 mod assembler;
 mod ast;
 mod buckets;
-mod errors;
 mod interpreter;
 mod lexer;
 mod parser;
 mod runtime;
-mod type_checker;
+// mod type_checker;
 mod util;
 
 #[cfg(test)]
 mod test;
 
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use codespan_reporting::files::SimpleFiles;
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use codespan_reporting::files::{Files, SimpleFiles};
+use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
+use runtime::{DefaultIO, RuntimeIO};
 
-pub use util::{r, r_from, Range};
+pub use errors::Error;
+pub use util::{fold_binary, r, r_from, CodeLocation, Range};
 
-fn run_on_file<'a, 'b>(
-    stdout: impl Write,
-    stderr: impl Write,
-    buckets: buckets::BucketListRef<'b>,
-    files: &mut SimpleFiles<&'a str, &'b str>,
-    filename: &'a str,
-) -> Result<(), Diagnostic<usize>> {
-    let input = buckets.add_str(&read_to_string(filename).unwrap());
-    let file_id = files.add(filename, input);
-
-    return run_on_string(stdout, stderr, file_id, input);
+pub struct Environment<'a> {
+    pub buckets: buckets::BucketListRef<'a>,
+    pub files: SimpleFiles<&'a str, &'a str>,
 }
 
-fn run_on_string<'b>(
-    _stdout: impl Write,
-    mut stderr: impl Write,
-    file_id: usize,
-    input: &str,
-) -> Result<(), Diagnostic<usize>> {
-    write!(stderr, "---\n{}\n---\n\n", input).expect("why did this fail?");
+fn run<'a>(env: &Environment<'a>, runtime_io: impl RuntimeIO) -> Result<(), Error> {
+    let mut symbols = lexer::Symbols::new();
+    let files = env.files.iter();
 
-    let mut parser = parser::Parser::new(input);
-    let mut type_checker = type_checker::TypeChecker::new();
-    let mut parse_result = Vec::new();
-    loop {
-        let decl = match parser.parse_global_decl() {
-            Ok(x) => x,
-            Err(e) => {
-                return Err(Diagnostic::error().with_message(e.message).with_labels(
-                    e.sections
-                        .iter()
-                        .map(|x| {
-                            Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
-                                .with_message(&x.1)
-                        })
-                        .collect(),
-                ))
-            }
-        };
-        parse_result.push(decl);
+    let token_lists: Vec<Vec<lexer::Token>> = files
+        .map(|file_id| lexer::lex_file(&mut symbols, env.files.source(file_id).unwrap()))
+        .collect();
 
-        if parser.peek().kind == lexer::TokenKind::End {
-            break;
-        }
+    let mut next = env.buckets.next();
+    let mut end = env.buckets;
+    while let Some(n) = next {
+        end = n;
+        next = n.next();
     }
+    end = end.force_next();
 
-    for stmt in parse_result.iter() {
-        write!(stderr, "{:?}\n", stmt).expect("why did this fail?");
+    let iter = token_lists.into_iter().enumerate();
+    let iter = iter.map(|(file, tokens)| {
+        let ast = parser::parse_tokens(end, file as u32, &tokens)?;
+        Ok(())
+    });
+
+    fold_binary(iter, |l, r| -> Result<(), Error> {
+        l?;
+        Ok(r?)
+    });
+
+    Ok(())
+}
+
+fn run_on_file(
+    runtime_io: impl RuntimeIO,
+    filename: &str,
+    writer: &mut impl WriteColor,
+) -> Result<(), Error> {
+    let mut env = Environment {
+        buckets: buckets::BucketList::new(),
+        files: SimpleFiles::new(),
+    };
+
+    let filename = env.buckets.add_str(filename);
+    let input = env.buckets.add_str(&read_to_string(&filename).unwrap());
+    let file_id = env.files.add(filename, input);
+
+    if let Err(err) = run(&env, runtime_io) {
+        let config = codespan_reporting::term::Config::default();
+        let diagnostic = Diagnostic::error().with_message(&err.message).with_labels(
+            err.sections
+                .iter()
+                .map(|x| Label::primary(x.location.file, x.location.range).with_message(&x.message))
+                .collect(),
+        );
+
+        codespan_reporting::term::emit(writer, &config, &env.files, &diagnostic)
+            .expect("why did this fail?");
+        return Err(err);
     }
-
-    match type_checker.check_global_stmts(&parse_result) {
-        Ok(()) => {}
-        Err(e) => {
-            return Err(Diagnostic::error().with_message(e.message).with_labels(
-                e.sections
-                    .into_iter()
-                    .map(|(range, message)| Label::primary(file_id, range).with_message(message))
-                    .collect(),
-            ))
-        }
-    }
-
-    // let (variables, functions, type_env) = (
-    //     type_checker.values,
-    //     type_checker.functions,
-    //     type_checker.env,
-    // );
-
-    // for (function, tokens) in functions {
-    //     let mut parser = parser_2::Parser2::new(&type_env, tokens);
-    //     while parser.peek().kind != lexer::TokenKind::End {
-    //         match parser.parse_stmt() {
-    //             Ok(x) => {}
-    //             Err(e) => {
-    //                 return Err(Diagnostic::error().with_message(e.message).with_labels(
-    //                     e.sections
-    //                         .iter()
-    //                         .map(|x| {
-    //                             Label::primary(file_id, (x.0.start as usize)..(x.0.end as usize))
-    //                         })
-    //                         .collect(),
-    //                 ))
-    //             }
-    //         }
-    //     }
-    // }
 
     return Ok(());
 }
@@ -121,24 +100,30 @@ fn run_on_string<'b>(
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let buckets = buckets::BucketList::new();
-    let writer = StandardStream::stderr(ColorChoice::Always);
-    let config = codespan_reporting::term::Config::default();
+    let mut env = Environment {
+        buckets: buckets::BucketList::new(),
+        files: SimpleFiles::new(),
+    };
 
-    for arg in args.iter().skip(1) {
-        let mut files = SimpleFiles::new();
-        match run_on_file(
-            std::io::stdout(),
-            std::io::stderr(),
-            buckets.clone(),
-            &mut files,
-            arg,
-        ) {
-            Err(diagnostic) => {
-                codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &diagnostic)
-                    .expect("why did this fail?")
-            }
-            _ => {}
-        }
+    let writer = StandardStream::stderr(ColorChoice::Always);
+    let runtime_io = DefaultIO::new();
+
+    for arg in args {
+        let filename = env.buckets.add_str(&arg);
+        let input = env.buckets.add_str(&read_to_string(&filename).unwrap());
+        env.files.add(filename, input);
+    }
+
+    if let Err(err) = run(&env, runtime_io) {
+        let config = codespan_reporting::term::Config::default();
+        let diagnostic = Diagnostic::error().with_message(&err.message).with_labels(
+            err.sections
+                .iter()
+                .map(|x| Label::primary(x.location.file, x.location.range).with_message(&x.message))
+                .collect(),
+        );
+
+        codespan_reporting::term::emit(&mut writer.lock(), &config, &env.files, &diagnostic)
+            .expect("why did this fail?");
     }
 }

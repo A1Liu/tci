@@ -4,33 +4,6 @@ use crate::errors::Error;
 use crate::*;
 use std::collections::HashMap;
 
-// macro_rules! err {
-//     ($msg:expr) => {
-//         Err(Error::new($msg, vec![]))
-//     };
-//
-//     ($msg:expr, $range1:expr, $msg1:expr) => {
-//         Err(Error::new($msg, vec![($range1, $msg1.to_string())]))
-//     };
-// }
-//
-// macro_rules! error {
-//     ($msg:expr) => {
-//         Error::new($msg, vec![])
-//     };
-//
-//     ($msg:expr, $range1:expr, $msg1:expr) => {
-//         Error::new($msg, vec![($range1, $msg1.to_string())])
-//     };
-//
-//     ($msg:expr, $range1:expr, $msg1:expr, $range2:expr, $msg2:expr) => {
-//         Error::new(
-//             $msg,
-//             vec![($range1, $msg1.to_string()), ($range2, $msg2.to_string())],
-//         )
-//     };
-// }
-
 type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
 
 fn add_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
@@ -165,15 +138,15 @@ impl LocalTypeEnv {
 }
 
 pub struct TypeChecker<'b> {
-    pub _buckets: BucketListRef<'b>,
+    pub buckets: BucketListRef<'b>,
     pub func_types: HashMap<u32, TCFuncType<'b>>,
     pub functions: HashMap<u32, TCFunc<'b>>,
 }
 
 impl<'b> TypeChecker<'b> {
-    pub fn new() -> Self {
+    pub fn new(buckets: BucketListRef<'b>) -> Self {
         Self {
-            _buckets: BucketList::new(),
+            buckets,
             func_types: HashMap::new(),
             functions: HashMap::new(),
         }
@@ -181,7 +154,6 @@ impl<'b> TypeChecker<'b> {
 
     fn get_overload(&self, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
         let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
-        println!("{:?}", key);
         match BIN_OP_OVERLOADS.get(&key) {
             Some(bin_op) => return Ok(*bin_op),
             None => return Err(self.invalid_operands_bin_expr(l, r)),
@@ -240,7 +212,7 @@ impl<'b> TypeChecker<'b> {
                 });
             }
 
-            let typed_params = self._buckets.add_array(typed_params);
+            let typed_params = self.buckets.add_array(typed_params);
             let tc_func_type = TCFuncType {
                 return_type,
                 range: stmt.range,
@@ -321,7 +293,7 @@ impl<'b> TypeChecker<'b> {
             }
         }
 
-        return Ok(self._buckets.add_array(tstmts));
+        return Ok(self.buckets.add_array(tstmts));
     }
 
     pub fn check_expr(&self, env: &LocalTypeEnv, expr: &Expr) -> Result<TCExpr<'b>, Error> {
@@ -341,7 +313,7 @@ impl<'b> TypeChecker<'b> {
                 let r = self.check_expr(env, r)?;
 
                 let bin_op = self.get_overload(BinOp::Add, &l, &r)?;
-                return Ok(bin_op(&self._buckets, l, r));
+                return Ok(bin_op(&self.buckets, l, r));
             }
             _ => panic!("unimplemented"),
         }
@@ -479,7 +451,7 @@ impl<'b> TypeChecker<'b> {
                 });
             }
 
-            tc_struct.defn = Some((defn_idx, self.env._buckets.add_array(typed_members)));
+            tc_struct.defn = Some((defn_idx, self.env.buckets.add_array(typed_members)));
             self.env.struct_types.insert(decl_type.ident, tc_struct);
         }
 

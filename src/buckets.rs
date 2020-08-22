@@ -39,6 +39,12 @@ pub struct BucketListRef<'a> {
     buckets: NonNull<BucketList<'a>>,
 }
 
+impl<'a> BucketListRef<'a> {
+    pub unsafe fn dealloc(self) {
+        todo!()
+    }
+}
+
 impl BucketListInner {
     unsafe fn bump_size_align(bump: *const u8, end: *const u8, layout: Layout) -> Option<Bump> {
         let required_offset = bump.align_offset(layout.align());

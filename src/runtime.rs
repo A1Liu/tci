@@ -1,6 +1,6 @@
 use crate::util::*;
 use core::{fmt, mem, str};
-use std::io::{Stderr, Stdout, Write};
+use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
 #[derive(Debug)]
 pub struct IError {
@@ -1012,6 +1012,22 @@ impl InMemoryIO {
     }
 }
 
+impl RuntimeIO for &mut InMemoryIO {
+    type Out = StringWriter;
+    type Log = StringWriter;
+    type Err = StringWriter;
+
+    fn out(&mut self) -> &mut StringWriter {
+        return &mut self.out;
+    }
+    fn err(&mut self) -> &mut StringWriter {
+        return &mut self.err;
+    }
+    fn log(&mut self) -> &mut StringWriter {
+        return &mut self.log;
+    }
+}
+
 impl RuntimeIO for InMemoryIO {
     type Out = StringWriter;
     type Log = StringWriter;
@@ -1034,6 +1050,16 @@ pub struct DefaultIO {
     pub err: Stderr,
 }
 
+impl DefaultIO {
+    pub fn new() -> Self {
+        Self {
+            out: stdout(),
+            log: StringWriter::new(),
+            err: stderr(),
+        }
+    }
+}
+
 impl RuntimeIO for DefaultIO {
     type Out = Stdout;
     type Log = StringWriter;
@@ -1047,5 +1073,21 @@ impl RuntimeIO for DefaultIO {
     }
     fn err(&mut self) -> &mut Stderr {
         return &mut self.err;
+    }
+}
+
+impl RuntimeIO for Void {
+    type Out = Void;
+    type Log = Void;
+    type Err = Void;
+
+    fn out(&mut self) -> &mut Void {
+        return self;
+    }
+    fn log(&mut self) -> &mut Void {
+        return self;
+    }
+    fn err(&mut self) -> &mut Void {
+        return self;
     }
 }
