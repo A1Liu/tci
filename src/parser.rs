@@ -1,6 +1,5 @@
 use crate::ast::*;
 use crate::buckets::BucketListRef;
-use crate::errors::Error;
 use crate::lexer::{Token, TokenKind};
 use crate::*;
 use core::slice;

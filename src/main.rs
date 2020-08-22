@@ -8,7 +8,7 @@ use std::env;
 use std::fs::read_to_string;
 
 #[macro_use]
-mod errors;
+mod util;
 
 mod assembler;
 mod ast;
@@ -18,7 +18,6 @@ mod lexer;
 mod parser;
 mod runtime;
 // mod type_checker;
-mod util;
 
 #[cfg(test)]
 mod test;
@@ -28,8 +27,7 @@ use codespan_reporting::files::{Files, SimpleFiles};
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use runtime::{DefaultIO, RuntimeIO};
 
-pub use errors::Error;
-pub use util::{fold_binary, r, r_from, CodeLocation, Range};
+pub use util::{fold_binary, r, r_from, CodeLocation, Error, Range};
 
 pub struct Environment<'a> {
     pub buckets: buckets::BucketListRef<'a>,

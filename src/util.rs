@@ -2,6 +2,66 @@ use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::{fmt, ops};
 use std::io;
 
+macro_rules! error {
+    ($arg1:expr) => {
+        Error::new($arg1, vec![])
+    };
+
+    ($msg:expr, $range1:expr, $file1:expr, $msg1:expr) => {
+        Error::new(
+            $msg,
+            vec![util::ErrorSection {
+                location: CodeLocation {
+                    range: $range1,
+                    file: $file1,
+                },
+                message: $msg1.to_string(),
+            }],
+        )
+    };
+
+    ($msg:expr, $range1:expr, $file1:expr, $msg1:expr, $range2:expr, $file2:expr, $msg2:expr) => {
+        Error::new(
+            $msg,
+            vec![
+                util::ErrorSection {
+                    location: CodeLocation {
+                        range: $range1,
+                        file: $file1,
+                    },
+                    message: $msg1.to_string(),
+                },
+                util::ErrorSection {
+                    location: CodeLocation {
+                        range: $range2,
+                        file: $file2,
+                    },
+                    message: $msg2.to_string(),
+                },
+            ],
+        )
+    };
+}
+
+pub struct ErrorSection {
+    pub location: CodeLocation,
+    pub message: String,
+}
+
+pub struct Error {
+    pub message: String,
+    pub sections: Vec<ErrorSection>,
+}
+
+impl Error {
+    pub fn new(message: &str, sections: Vec<ErrorSection>) -> Error {
+        Self {
+            message: message.to_string(),
+            sections,
+        }
+    }
+}
+
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
 pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
     std::slice::from_raw_parts_mut(p as *mut T as *mut u8, std::mem::size_of::<T>())
