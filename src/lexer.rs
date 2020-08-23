@@ -86,6 +86,9 @@ impl Token {
     }
 }
 
+pub const MAIN_SYMBOL: u32 = 0;
+pub const _MAIN_SYMBOL: u32 = 1;
+
 pub struct Symbols<'a> {
     pub names: Vec<&'a str>,
     pub translate: HashMap<&'a str, u32>,
@@ -93,10 +96,14 @@ pub struct Symbols<'a> {
 
 impl<'a> Symbols<'a> {
     pub fn new() -> Self {
-        Self {
+        let mut new_symbols = Self {
             names: Vec::new(),
             translate: HashMap::new(),
-        }
+        };
+
+        assert_eq!(MAIN_SYMBOL, new_symbols.translate_add("main"));
+        assert_eq!(_MAIN_SYMBOL, new_symbols.translate_add("_main"));
+        return new_symbols;
     }
 
     pub fn translate_add(&mut self, word: &'a str) -> u32 {

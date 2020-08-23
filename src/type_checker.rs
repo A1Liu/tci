@@ -366,18 +366,12 @@ pub fn check_types<'a>(
 
         if let Some(prev_tc_func_type) = env.func_types.get(ident) {
             if prev_tc_func_type != &tc_func_type {
-                return Err(function_declaration_mismatch(
-                    prev_tc_func_type.loc,
-                    tc_func_type.loc,
-                ));
+                return Err(func_decl_mismatch(prev_tc_func_type.loc, tc_func_type.loc));
             }
 
             if let Some(body) = unchecked_functions.get(ident) {
                 if let Some(body) = func_body {
-                    return Err(function_redefinition(
-                        prev_tc_func_type.loc,
-                        tc_func_type.loc,
-                    ));
+                    return Err(func_redef(prev_tc_func_type.loc, tc_func_type.loc));
                 }
             }
         } else {
@@ -493,14 +487,14 @@ pub fn param_redeclaration(file: u32, original_range: Range, range: Range) -> Er
     );
 }
 
-pub fn function_declaration_mismatch(original: CodeLoc, new: CodeLoc) -> Error {
+pub fn func_decl_mismatch(original: CodeLoc, new: CodeLoc) -> Error {
     return error!(
-        "function declaration doesn't match previous declaration",
+        "function declaration type doesn't match previous declaration",
         original, "original declaration here", new, "second declaration here"
     );
 }
 
-pub fn function_redefinition(original: CodeLoc, redef: CodeLoc) -> Error {
+pub fn func_redef(original: CodeLoc, redef: CodeLoc) -> Error {
     return error!(
         "redefinition of function",
         original, "original definition here", redef, "second definition here"

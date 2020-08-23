@@ -26,7 +26,6 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::{Files, SimpleFiles};
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use runtime::{DefaultIO, RuntimeIO};
-
 pub use util::{fold_binary, r, r_from, CodeLoc, Error, Range};
 
 pub struct Environment<'a> {
@@ -54,12 +53,14 @@ fn run<'a>(env: &Environment<'a>, runtime_io: impl RuntimeIO) -> Result<(), Erro
     let iter = iter.map(|(file, tokens)| {
         let ast = parser::parse_tokens(end, file as u32, &tokens)?;
         let typed_ast = type_checker::check_types(end, file as u32, &ast)?;
-        Ok(())
+        Ok(typed_ast)
     });
 
-    fold_binary(iter, |l, r| -> Result<(), Error> {
-        l?;
-        Ok(r?)
+    let mut assembler = assembler::Assembler::new();
+    let assember = iter.fold(Ok(()), |prev, tenv| -> Result<(), Error> {
+        prev?;
+        assembler.add_file(tenv?)?;
+        Ok(())
     });
 
     Ok(())
