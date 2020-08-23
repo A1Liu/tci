@@ -214,11 +214,16 @@ pub struct TCFuncType<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct TCFunc<'a> {
-    pub func_type: TCFuncType<'a>,
+pub struct TCFuncDefn<'a> {
     pub defn_idx: u32,
     pub loc: CodeLoc,
     pub stmts: &'a [TCStmt<'a>],
+}
+
+#[derive(Debug, Clone)]
+pub struct TCFunc<'a> {
+    pub func_type: TCFuncType<'a>,
+    pub defn: Option<TCFuncDefn<'a>>,
 }
 
 #[derive(Debug, Clone)]
@@ -234,8 +239,10 @@ pub struct TCStmt<'a> {
 
 #[derive(Debug, Clone)]
 pub enum TCExprKind<'a> {
-    Add(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    Into(&'a TCExpr<'a>),
+    AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    Conv8To32(&'a TCExpr<'a>),
+    Conv32To64(&'a TCExpr<'a>),
     IntLiteral(u32),
 }
 

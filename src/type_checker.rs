@@ -5,7 +5,39 @@ use std::collections::HashMap;
 
 type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
 
-fn add_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+fn add_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::I32,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
+fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::I32,
+        pointer_count: 0,
+    };
+
+    let r = TCExpr {
+        range: l.range,
+        kind: TCExprKind::Conv8To32(buckets.add(r)),
+        expr_type: result_type,
+    };
+
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
+fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::I32,
         pointer_count: 0,
@@ -13,52 +45,54 @@ fn add_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) ->
 
     let l = TCExpr {
         range: l.range,
-        kind: TCExprKind::Into(buckets.add(l)),
-        expr_type: result_type,
-    };
-
-    let r = TCExpr {
-        range: r.range,
-        kind: TCExprKind::Into(buckets.add(r)),
+        kind: TCExprKind::Conv8To32(buckets.add(l)),
         expr_type: result_type,
     };
 
     return TCExpr {
         range: r_from(l.range, r.range),
-        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
+        kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
         expr_type: result_type,
     };
 }
 
-fn add_ptr<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+fn add_int_ptr<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let pointer_type = l.expr_type;
     let add_type = TCType {
         kind: TCTypeKind::U64,
         pointer_count: 0,
     };
 
-    let l = TCExpr {
-        range: l.range,
-        kind: TCExprKind::Into(buckets.add(l)),
-        expr_type: add_type,
-    };
-
     let r = TCExpr {
         range: r.range,
-        kind: TCExprKind::Into(buckets.add(r)),
-        expr_type: add_type,
-    };
-
-    let result = TCExpr {
-        range: r_from(l.range, r.range),
-        kind: TCExprKind::Add(buckets.add(l), buckets.add(r)),
+        kind: TCExprKind::Conv32To64(buckets.add(r)),
         expr_type: add_type,
     };
 
     return TCExpr {
-        range: result.range,
-        kind: TCExprKind::Into(buckets.add(result)),
-        expr_type: pointer_type,
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::AddU64(buckets.add(l), buckets.add(r)),
+        expr_type: add_type,
+    };
+}
+
+fn add_ptr_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let pointer_type = l.expr_type;
+    let add_type = TCType {
+        kind: TCTypeKind::U64,
+        pointer_count: 0,
+    };
+
+    let r = TCExpr {
+        range: r.range,
+        kind: TCExprKind::Conv32To64(buckets.add(r)),
+        expr_type: add_type,
+    };
+
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::AddU64(buckets.add(l), buckets.add(r)),
+        expr_type: add_type,
     };
 }
 
@@ -66,11 +100,11 @@ lazy_static! {
     pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
         use TCShallowType::*;
         let mut m: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = HashMap::new();
-        m.insert((BinOp::Add, I32, I32), add_int);
-        m.insert((BinOp::Add, I32, Char), add_int);
-        m.insert((BinOp::Add, Char, I32), add_int);
-        m.insert((BinOp::Add, Pointer, I32), add_ptr);
-        m.insert((BinOp::Add, I32, Pointer), add_ptr);
+        m.insert((BinOp::Add, I32, I32), add_int_int);
+        m.insert((BinOp::Add, I32, Char), add_int_char);
+        m.insert((BinOp::Add, Char, I32), add_char_int);
+        m.insert((BinOp::Add, Pointer, I32), add_ptr_int);
+        m.insert((BinOp::Add, I32, Pointer), add_int_ptr);
         m
     };
 }
@@ -208,9 +242,22 @@ impl StructEnv {
     }
 }
 
-pub struct TypedEnv<'a> {
+// internal
+pub struct UncheckedFunction<'a> {
+    defn_idx: u32,
+    return_type_range: Range,
+    range: Range,
+    body: &'a [Stmt<'a>],
+}
+
+// internal
+pub struct TypeEnvInterim<'b> {
     pub structs: StructEnv,
-    pub func_types: HashMap<u32, TCFuncType<'a>>,
+    pub func_types: HashMap<u32, TCFuncType<'b>>,
+}
+
+pub struct TypeEnv<'a> {
+    pub structs: StructEnv,
     pub functions: HashMap<u32, TCFunc<'a>>,
 }
 
@@ -218,25 +265,15 @@ pub fn check_types<'a>(
     buckets: BucketListRef<'a>,
     file: u32,
     stmts: &[GlobalStmt],
-) -> Result<TypedEnv<'a>, Error> {
-    struct UncheckedFunction<'a, 'b> {
-        defn_idx: u32,
-        ident: u32,
-        func_type: TCFuncType<'b>,
-        return_type_range: Range,
-        range: Range,
-        body: &'a [Stmt<'a>],
-    }
-
+) -> Result<TypeEnv<'a>, Error> {
     let struct_env = StructEnv { file };
 
-    let mut env = TypedEnv {
+    let mut env = TypeEnvInterim {
         structs: struct_env,
         func_types: HashMap::new(),
-        functions: HashMap::new(),
     };
 
-    let mut functions: Vec<UncheckedFunction> = Vec::new();
+    let mut unchecked_functions = HashMap::new();
     for (decl_idx, stmt) in stmts.iter().enumerate() {
         let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
             GlobalStmtKind::FuncDecl {
@@ -292,7 +329,7 @@ pub fn check_types<'a>(
                 ));
             }
 
-            if let Some(body) = env.functions.get(&ident) {
+            if let Some(body) = unchecked_functions.get(ident) {
                 if let Some(body) = func_body {
                     return Err(function_redefinition(
                         prev_tc_func_type.loc,
@@ -305,42 +342,59 @@ pub fn check_types<'a>(
         }
 
         if let Some(body) = func_body {
-            functions.push(UncheckedFunction {
+            let unchecked_func = UncheckedFunction {
                 defn_idx: decl_idx,
-                func_type: tc_func_type,
-                ident: *ident,
                 return_type_range,
                 range: stmt.range,
                 body,
-            });
+            };
+            unchecked_functions.insert(*ident, (tc_func_type, Some(unchecked_func)));
+        } else {
+            unchecked_functions.insert(*ident, (tc_func_type, None));
         }
     }
 
-    for func in functions.into_iter() {
-        let ftype = func.func_type;
+    let mut functions = HashMap::new();
+    for (func_name, (ftype, func)) in unchecked_functions.into_iter() {
+        let mut tc_func = TCFunc {
+            func_type: ftype,
+            defn: None,
+        };
+
+        let func = match func {
+            Some(func) => func,
+            None => {
+                functions.insert(func_name, tc_func);
+                continue;
+            }
+        };
+
         let mut local_env = LocalTypeEnv::new(ftype.return_type, func.return_type_range);
         let gstmts = check_stmts(buckets, &mut env, &mut local_env, ftype.decl_idx, func.body)?;
-        env.functions.insert(
-            func.ident,
-            TCFunc {
-                func_type: ftype,
-                defn_idx: func.defn_idx,
-                loc: func.range.cloc(env.structs.file),
-                stmts: buckets.add_array(gstmts),
-            },
-        );
+
+        tc_func.defn = Some(TCFuncDefn {
+            defn_idx: func.defn_idx,
+            loc: func.range.cloc(env.structs.file),
+            stmts: buckets.add_array(gstmts),
+        });
+
+        functions.insert(func_name, tc_func);
     }
 
+    let env = TypeEnv {
+        structs: env.structs,
+        functions,
+    };
     return Ok(env);
 }
 
-pub fn check_stmts<'a>(
-    buckets: BucketListRef<'a>,
-    env: &TypedEnv<'a>,
+pub fn check_stmts<'b>(
+    buckets: BucketListRef<'b>,
+    env: &TypeEnvInterim<'b>,
     local_env: &mut LocalTypeEnv,
     decl_idx: u32,
     stmts: &[Stmt],
-) -> Result<Vec<TCStmt<'a>>, Error> {
+) -> Result<Vec<TCStmt<'b>>, Error> {
     let mut tstmts = Vec::new();
     for stmt in stmts {
         match &stmt.kind {
@@ -361,12 +415,12 @@ pub fn check_stmts<'a>(
     return Ok(tstmts);
 }
 
-pub fn check_expr<'a>(
-    buckets: BucketListRef<'a>,
-    env: &TypedEnv<'a>,
+pub fn check_expr<'b>(
+    buckets: BucketListRef<'b>,
+    env: &TypeEnvInterim<'b>,
     local_env: &LocalTypeEnv,
     expr: &Expr,
-) -> Result<TCExpr<'a>, Error> {
+) -> Result<TCExpr<'b>, Error> {
     match expr.kind {
         ExprKind::IntLiteral(val) => {
             return Ok(TCExpr {
