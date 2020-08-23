@@ -241,8 +241,9 @@ pub struct TCStmt<'a> {
 pub enum TCExprKind<'a> {
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    Conv8To32(&'a TCExpr<'a>),
-    Conv32To64(&'a TCExpr<'a>),
+    SConv8To32(&'a TCExpr<'a>),
+    ZConv8To32(&'a TCExpr<'a>),
+    ZConv32To64(&'a TCExpr<'a>),
     IntLiteral(u32),
 }
 

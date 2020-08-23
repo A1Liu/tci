@@ -26,7 +26,7 @@ fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
 
     let r = TCExpr {
         range: l.range,
-        kind: TCExprKind::Conv8To32(buckets.add(r)),
+        kind: TCExprKind::SConv8To32(buckets.add(r)),
         expr_type: result_type,
     };
 
@@ -45,7 +45,7 @@ fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
 
     let l = TCExpr {
         range: l.range,
-        kind: TCExprKind::Conv8To32(buckets.add(l)),
+        kind: TCExprKind::SConv8To32(buckets.add(l)),
         expr_type: result_type,
     };
 
@@ -65,7 +65,7 @@ fn add_int_ptr<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
 
     let r = TCExpr {
         range: r.range,
-        kind: TCExprKind::Conv32To64(buckets.add(r)),
+        kind: TCExprKind::ZConv32To64(buckets.add(r)),
         expr_type: add_type,
     };
 
@@ -85,7 +85,7 @@ fn add_ptr_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
 
     let r = TCExpr {
         range: r.range,
-        kind: TCExprKind::Conv32To64(buckets.add(r)),
+        kind: TCExprKind::ZConv32To64(buckets.add(r)),
         expr_type: add_type,
     };
 
