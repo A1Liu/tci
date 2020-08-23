@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::buckets::{BucketList, BucketListRef};
 use crate::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
 
@@ -107,6 +107,22 @@ lazy_static! {
         m.insert((BinOp::Add, I32, Pointer), add_int_ptr);
         m
     };
+    pub static ref BIN_LEFT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
+        use TCShallowType::*;
+        let mut m = HashSet::new();
+        m.insert((BinOp::Add, I32));
+        m.insert((BinOp::Add, Char));
+        m.insert((BinOp::Add, Pointer));
+        m
+    };
+    pub static ref BIN_RIGHT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
+        use TCShallowType::*;
+        let mut m = HashSet::new();
+        m.insert((BinOp::Add, I32));
+        m.insert((BinOp::Add, Char));
+        m.insert((BinOp::Add, Pointer));
+        m
+    };
 }
 
 fn get_overload(
@@ -118,11 +134,38 @@ fn get_overload(
     let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
     match BIN_OP_OVERLOADS.get(&key) {
         Some(bin_op) => return Ok(*bin_op),
-        None => return Err(invalid_operands_bin_expr(env, l, r)),
+        None => return Err(invalid_operands_bin_expr(env, op, l, r)),
     }
 }
 
-pub fn invalid_operands_bin_expr(env: &StructEnv, l: &TCExpr, r: &TCExpr) -> Error {
+pub fn invalid_operands_bin_expr(env: &StructEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Error {
+    let lkey = (op, l.expr_type.to_shallow());
+    let rkey = (op, r.expr_type.to_shallow());
+
+    if BIN_LEFT_OVERLOADS.get(&lkey).is_none() {
+        return error!(
+            "invalid operands to binary expression (left expression is not valid for this operand)",
+            l.range,
+            env.file,
+            format!("this has type {:?}", l.expr_type),
+            r.range,
+            env.file,
+            format!("this has type {:?}", r.expr_type)
+        );
+    }
+
+    if BIN_RIGHT_OVERLOADS.get(&rkey).is_none() {
+        return error!(
+            "invalid operands to binary expression (right expression is not valid for this operand)",
+            l.range,
+            env.file,
+            format!("this has type {:?}", l.expr_type),
+            r.range,
+            env.file,
+            format!("this has type {:?}", r.expr_type)
+        );
+    }
+
     return error!(
         "invalid operands to binary expression",
         l.range,
