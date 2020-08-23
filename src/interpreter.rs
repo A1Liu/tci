@@ -87,18 +87,23 @@ pub enum Opcode {
     StackDealloc,    // Pops a variable off of the stack
     Alloc(u32), // Allocates space on the heap, then pushes a pointer to that space onto the stack
 
+    MakeTempInt32(i32),
     MakeTempInt64(i64),
     MakeTempFloat64(f64),
     LoadStr(u32),
 
     Pop { bytes: u32 },
+    PushZero { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
+    Swap { top: u32, bottom: u32 },
 
     GetLocal { var: i32, offset: u32, bytes: u32 },
     SetLocal { var: i32, offset: u32, bytes: u32 },
 
     Get { offset: i32, bytes: u32 },
     Set { offset: i32, bytes: u32 },
+
+    AddU32,
 
     AddU64,
     SubI64,
@@ -382,6 +387,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
             }
+            _ => unimplemented!(),
         }
 
         return Ok(pc as i32 + 1);

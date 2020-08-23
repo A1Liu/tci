@@ -78,21 +78,60 @@ impl<'a> Assembler<'a> {
         }
 
         let func_header = self.opcodes.len() as u32;
+        let param_count = func_type.params.len() as u32;
 
         for stmt in defn.stmts {
-            let mut ops = self.translate_statement(stmt);
+            let mut ops = self.translate_statement(param_count, stmt);
             self.opcodes.append(&mut ops);
         }
 
         return Err(error!("unimplemented"));
     }
 
-    pub fn translate_statement(&self, stmt: &TCStmt) -> Vec<TaggedOpcode> {
+    pub fn translate_statement(&self, param_count: u32, stmt: &TCStmt) -> Vec<TaggedOpcode> {
         let ops = Vec::new();
 
-        // match &stmt.kind {
-        //     TCStmtKind::RetVal(val) => {}
-        // }
+        match &stmt.kind {
+            TCStmtKind::RetVal(val) => {}
+        }
+
+        return ops;
+    }
+
+    pub fn translate_expr(&self, expr: &TCExpr) -> Vec<TaggedOpcode> {
+        let mut ops = Vec::new();
+        let mut tagged = TaggedOpcode {
+            op: Opcode::StackDealloc,
+            range: expr.range,
+        };
+
+        match &expr.kind {
+            TCExprKind::IntLiteral(val) => {
+                tagged.op = Opcode::MakeTempInt32(*val);
+                ops.push(tagged);
+            }
+            TCExprKind::AddI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::AddU32;
+                ops.push(tagged);
+            }
+            TCExprKind::AddU64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::AddU64;
+                ops.push(tagged);
+            }
+            TCExprKind::SConv8To32(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::PushZero { bytes: 7 };
+                ops.push(tagged);
+                tagged.op = Opcode::Swap { top: 7, bottom: 1 };
+                ops.push(tagged);
+            }
+            TCExprKind::ZConv8To32(expr) => {}
+            TCExprKind::ZConv32To64(expr) => {}
+        }
 
         return ops;
     }
