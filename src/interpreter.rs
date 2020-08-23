@@ -476,7 +476,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 write!(self.io.out(), "{}", str_value)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
-            Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {}
+            Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {
+                let code: u8 = self.pop_stack(pc)?;
+                return Ok(Directive::Exit(code));
+            }
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
             }
