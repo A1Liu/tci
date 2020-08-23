@@ -280,6 +280,7 @@ impl<Tag: Copy> Memory<Tag> {
         }
     }
 
+    #[inline]
     pub fn push_history(&mut self, kind: MAKind, tag: Tag) {
         self.history.push(MemoryAction { kind, tag });
     }

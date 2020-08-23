@@ -26,6 +26,12 @@ impl<'a> Assembler<'a> {
             Opcode::StackAlloc(4), // int argc
             Opcode::StackAlloc(8), // int argv
             Opcode::Call(MAIN_SYMBOL),
+            Opcode::GetGlobal {
+                var: 0,
+                offset: 3,
+                bytes: 1,
+            },
+            Opcode::Ecall(ECALL_EXIT_WITH_CODE),
         ]
         .into_iter()
         .map(|op| TaggedOpcode { op, range: r(0, 0) })
@@ -110,6 +116,7 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::MakeTempInt32(*val);
                 ops.push(tagged);
             }
+
             TCExprKind::AddI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
@@ -122,15 +129,22 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::AddU64;
                 ops.push(tagged);
             }
+
             TCExprKind::SConv8To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::PushZero { bytes: 7 };
-                ops.push(tagged);
-                tagged.op = Opcode::Swap { top: 7, bottom: 1 };
+                tagged.op = Opcode::SExtend8To32;
                 ops.push(tagged);
             }
-            TCExprKind::ZConv8To32(expr) => {}
-            TCExprKind::ZConv32To64(expr) => {}
+            TCExprKind::ZConv8To32(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::ZExtend8To32;
+                ops.push(tagged);
+            }
+            TCExprKind::ZConv32To64(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::ZExtend32To64;
+                ops.push(tagged);
+            }
         }
 
         return ops;

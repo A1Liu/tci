@@ -71,6 +71,14 @@ pub fn render_err(
 
 pub const ECALL_PRINT_INT: u32 = 0;
 pub const ECALL_PRINT_STR: u32 = 1;
+pub const ECALL_EXIT: u32 = 2;
+pub const ECALL_EXIT_WITH_CODE: u32 = 3;
+
+pub enum Directive {
+    ChangePC(u32),
+    Return,
+    Exit(u8),
+}
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
 /// - SetLocal sets a value on the stack at a given stack and variable offset to the value at the top
@@ -93,9 +101,24 @@ pub enum Opcode {
     LoadStr(u32),
 
     Pop { bytes: u32 },
-    PushZero { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
-    Swap { top: u32, bottom: u32 },
+
+    SExtend8To16,
+    SExtend8To32,
+    SExtend8To64,
+    SExtend16To32,
+    SExtend16To64,
+    SExtend32To64,
+
+    ZExtend8To16,
+    ZExtend8To32,
+    ZExtend8To64,
+    ZExtend16To32,
+    ZExtend16To64,
+    ZExtend32To64,
+
+    GetGlobal { var: u32, offset: u32, bytes: u32 },
+    SetGlobal { var: u32, offset: u32, bytes: u32 },
 
     GetLocal { var: i32, offset: u32, bytes: u32 },
     SetLocal { var: i32, offset: u32, bytes: u32 },
@@ -172,22 +195,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run_program(&mut self, program: Program) -> Result<(), IError> {
+    pub fn run_program(&mut self, program: Program) -> Result<u8, IError> {
         self.memory = Memory::new();
-        return self.run_func(&program, 0);
+        return self.run_func(&program, 0).map(|ok| ok.unwrap_or(0));
     }
 
-    pub fn pop_callstack(&mut self) -> Result<(), IError> {
-        if self.callstack.pop().is_none() {
-            return err!(
-                "CallstackEmpty",
-                "tried to pop callstack when callstack was empty"
-            );
-        }
-        return Ok(());
-    }
-
-    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<(), IError> {
+    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<u8>, IError> {
         let func_desc = match program.ops[pcounter as usize].op {
             Opcode::Func(desc) => desc,
             op => {
@@ -209,48 +222,61 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         loop {
             let op = program.ops[pc as usize];
+
             write!(self.io.log(), "op: {:?}\n", op.op)
-                .map_err(|err| error!("LoggingFailed", "failed to log ({})", err))?;
-
+                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
             self.callstack.push(func_desc.into_callframe(op.range));
-            let new_pc = self.run_op(fp, pc, program, op.op)?;
-            if self.callstack.pop().is_none() {
-                return err!(
-                    "CallstackEmpty",
-                    "tried to pop callstack when callstack was empty"
-                );
-            }
-
+            let directive = self.run_op(fp, pc, program, op.op)?;
             write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
             write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
 
-            if new_pc < 0 {
-                while self.memory.stack_length() > fp {
-                    self.memory.pop_stack_var(pc)?;
+            match directive {
+                Directive::ChangePC(new_pc) => {
+                    if self.callstack.pop().is_none() {
+                        return err!(
+                            "CallstackEmpty",
+                            "tried to pop callstack when callstack was empty"
+                        );
+                    }
+
+                    pc = new_pc;
                 }
-                self.memory.pop_stack_var(pc)?;
-                if self.callstack.len() < callstack_len {
-                    return err!(
-                        "InvalidCallstackState",
-                        "callstack shrunk over course of function call"
+                Directive::Return => {
+                    if self.callstack.pop().is_none() {
+                        return err!(
+                            "CallstackEmpty",
+                            "tried to pop callstack when callstack was empty"
+                        );
+                    }
+
+                    while self.memory.stack_length() > fp {
+                        self.memory.pop_stack_var(pc)?;
+                    }
+                    self.memory.pop_stack_var(pc)?; // Pop function description
+                    if self.callstack.len() < callstack_len {
+                        return err!(
+                            "InvalidCallstackState",
+                            "callstack shrunk over course of function call"
+                        );
+                    }
+
+                    self.callstack.resize(
+                        callstack_len,
+                        CallFrame {
+                            file: 0,
+                            name: 0,
+                            range: r(0, 0),
+                        },
                     );
+
+                    return Ok(None);
                 }
-
-                self.callstack.resize(
-                    callstack_len,
-                    CallFrame {
-                        file: 0,
-                        name: 0,
-                        range: r(0, 0),
-                    },
-                );
-
-                return Ok(());
+                Directive::Exit(val) => {
+                    return Ok(Some(val));
+                }
             }
-
-            pc = new_pc as u32;
         }
     }
 
@@ -261,7 +287,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         pc: u32,
         program: &Program,
         opcode: Opcode,
-    ) -> Result<i32, IError> {
+    ) -> Result<Directive, IError> {
         match opcode {
             Opcode::Func(_) => {}
 
@@ -276,6 +302,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.pop_stack_var(pc)?;
             }
 
+            Opcode::MakeTempInt32(value) => self.push_stack(value.to_be(), pc),
             Opcode::MakeTempInt64(value) => self.push_stack(value.to_be(), pc),
             Opcode::MakeTempFloat64(value) => self.push_stack(value, pc),
             Opcode::LoadStr(idx) => {
@@ -292,6 +319,65 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::Pop { bytes } => self.pop_bytes(bytes, pc)?,
             Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop, pc)?,
+
+            Opcode::SExtend8To16 => {
+                let val = self.pop_stack::<i8>(pc)?;
+                self.push_stack(val as i16, pc);
+            }
+            Opcode::SExtend8To32 => {
+                let val = self.pop_stack::<i8>(pc)?;
+                self.push_stack(val as i32, pc);
+            }
+            Opcode::SExtend8To64 => {
+                let val = self.pop_stack::<i8>(pc)?;
+                self.push_stack(val as i64, pc);
+            }
+            Opcode::SExtend16To32 => {
+                let val = self.pop_stack::<i16>(pc)?;
+                self.push_stack(val as i32, pc);
+            }
+            Opcode::SExtend16To64 => {
+                let val = self.pop_stack::<i16>(pc)?;
+                self.push_stack(val as i64, pc);
+            }
+            Opcode::SExtend32To64 => {
+                let val = self.pop_stack::<i32>(pc)?;
+                self.push_stack(val as i64, pc);
+            }
+
+            Opcode::ZExtend8To16 => {
+                let val = self.pop_stack::<u8>(pc)?;
+                self.push_stack(val as u16, pc);
+            }
+            Opcode::ZExtend8To32 => {
+                let val = self.pop_stack::<u8>(pc)?;
+                self.push_stack(val as u32, pc);
+            }
+            Opcode::ZExtend8To64 => {
+                let val = self.pop_stack::<u8>(pc)?;
+                self.push_stack(val as u64, pc);
+            }
+            Opcode::ZExtend16To32 => {
+                let val = self.pop_stack::<u16>(pc)?;
+                self.push_stack(val as u32, pc);
+            }
+            Opcode::ZExtend16To64 => {
+                let val = self.pop_stack::<u16>(pc)?;
+                self.push_stack(val as u64, pc);
+            }
+            Opcode::ZExtend32To64 => {
+                let val = self.pop_stack::<u32>(pc)?;
+                self.push_stack(val as u64, pc);
+            }
+
+            Opcode::GetGlobal { var, offset, bytes } => {
+                let ptr = VarPointer::new_stack(var, offset);
+                self.push_stack_bytes_from(ptr, bytes, pc)?;
+            }
+            Opcode::SetGlobal { var, offset, bytes } => {
+                let ptr = VarPointer::new_stack(var, offset);
+                self.pop_stack_bytes_into(ptr, bytes, pc)?;
+            }
 
             Opcode::GetLocal { var, offset, bytes } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
@@ -311,6 +397,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let ptr: VarPointer = self.pop_stack(pc)?;
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
                 self.pop_stack_bytes_into(ptr, bytes, pc)?;
+            }
+
+            Opcode::AddU32 => {
+                let word1: u32 = u32::from_be(self.pop_stack(pc)?);
+                let word2: u32 = u32::from_be(self.pop_stack(pc)?);
+                self.push_stack(word1.wrapping_add(word2).to_be(), pc);
             }
 
             Opcode::AddU64 => {
@@ -342,17 +434,17 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::JumpIfZero64(target) => {
                 let value: u64 = self.pop_stack(pc)?;
                 if value == 0 {
-                    return Ok(target as i32);
+                    return Ok(Directive::ChangePC(target));
                 }
             }
             Opcode::JumpIfNotZero64(target) => {
                 let value: u64 = self.pop_stack(pc)?;
                 if value != 0 {
-                    return Ok(target as i32);
+                    return Ok(Directive::ChangePC(target));
                 }
             }
 
-            Opcode::Ret => return Ok(-1),
+            Opcode::Ret => return Ok(Directive::Return),
 
             Opcode::Call(func) => {
                 self.run_func(program, func)?;
@@ -384,187 +476,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 write!(self.io.out(), "{}", str_value)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
+            Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {}
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
             }
-            _ => unimplemented!(),
         }
 
-        return Ok(pc as i32 + 1);
+        return Ok(Directive::ChangePC(pc));
     }
 }
-
-/*
-#[test]
-fn test_simple_read_write() {
-    let files = vec!["main.c"];
-    let strings = vec!["hello, world!\n"];
-    let functions = vec!["main", "helper"];
-    let ops = vec![
-        Opcode::Func(FuncDesc { file: 0, name: 0 }),
-        Opcode::StackAlloc(8),
-        Opcode::LoadStr(0),
-        Opcode::SetLocal {
-            var: 0,
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::Call(6),
-        Opcode::Ret,
-        Opcode::Func(FuncDesc { file: 0, name: 1 }),
-        Opcode::GetLocal {
-            var: -1,
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::Ecall(ECALL_PRINT_STR),
-        Opcode::Ret,
-    ];
-    let tags = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    let ops: Vec<TaggedOpcode> = ops
-        .iter()
-        .zip(tags)
-        .map(|(&op, line)| TaggedOpcode { op, line })
-        .collect();
-
-    let program = Program {
-        file_names: &files,
-        strings: &strings,
-        functions: &functions,
-        ops: &ops,
-    };
-
-    let mut runtime = Runtime::new(InMemoryIO::new());
-    let result = runtime.run_program(program);
-    print!("{}", runtime.io.log().to_string());
-    match result {
-        Ok(()) => {}
-        Err(err) => {
-            println!(
-                "{}",
-                render_err(&err, &runtime.callstack, &program).expect("why did this fail?")
-            );
-            panic!();
-        }
-    }
-    assert_eq!(runtime.io.out().to_string(), "hello, world!\n");
-}
-
-#[test]
-fn test_errors() {
-    let files = vec!["main.c"];
-    let strings = vec!["hello, world!\n"];
-    let functions = vec!["main", "helper"];
-    let ops = vec![
-        Opcode::Func(FuncDesc { file: 0, name: 0 }),
-        Opcode::StackAlloc(8),
-        Opcode::LoadStr(0),
-        Opcode::SetLocal {
-            var: 0,
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::Call(6),
-        Opcode::Ret,
-        Opcode::Func(FuncDesc { file: 0, name: 1 }),
-        Opcode::GetLocal {
-            var: -1,
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::MakeTempInt64(15),
-        Opcode::AddU64,
-        Opcode::Ecall(ECALL_PRINT_STR),
-        Opcode::Ret,
-    ];
-    let tags = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    let ops: Vec<TaggedOpcode> = ops
-        .iter()
-        .zip(tags)
-        .map(|(&op, line)| TaggedOpcode { op, line })
-        .collect();
-
-    let program = Program {
-        file_names: &files,
-        strings: &strings,
-        functions: &functions,
-        ops: &ops,
-    };
-
-    let mut runtime = Runtime::new(InMemoryIO::new());
-    match runtime.run_program(program) {
-        Ok(()) => {
-            println!("{}", runtime.io.log().to_string());
-            println!("{}", runtime.io.out().to_string());
-            panic!();
-        }
-        Err(err) => {
-            println!(
-                "{}",
-                render_err(&err, &runtime.callstack, &program).expect("why did this fail?")
-            );
-            println!("{}", runtime.io.log().to_string());
-            assert_eq!(err.short_name, "InvalidPointer");
-        }
-    }
-}
-
-#[test]
-fn test_walker() {
-    let files = vec!["main.c"];
-    let strings = vec!["hello, world!\n"];
-    let functions = vec!["main", "helper"];
-    let ops = vec![
-        Opcode::Func(FuncDesc { file: 0, name: 0 }),
-        Opcode::StackAlloc(8),
-        Opcode::LoadStr(0),
-        Opcode::SetLocal {
-            var: 0,
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::Call(6),
-        Opcode::Ret,
-        Opcode::Func(FuncDesc { file: 0, name: 1 }),
-        Opcode::GetLocal {
-            var: -1,
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::MakeTempInt64(15),
-        Opcode::AddU64,
-        Opcode::Ecall(ECALL_PRINT_STR),
-        Opcode::Ret,
-    ];
-    let tags = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    let ops: Vec<TaggedOpcode> = ops
-        .iter()
-        .zip(tags)
-        .map(|(&op, line)| TaggedOpcode { op, line })
-        .collect();
-
-    let program = Program {
-        file_names: &files,
-        strings: &strings,
-        functions: &functions,
-        ops: &ops,
-    };
-
-    let mut runtime = Runtime::new(InMemoryIO::new());
-    match runtime.run_program(program) {
-        Ok(()) => {
-            println!("{}", runtime.io.log().to_string());
-            println!("{}", runtime.io.out().to_string());
-            panic!();
-        }
-        Err(err) => {
-            println!(
-                "{}",
-                render_err(&err, &runtime.callstack, &program).expect("why did this fail?")
-            );
-            println!("{}", runtime.io.log().to_string());
-            assert_eq!(err.short_name, "InvalidPointer");
-        }
-    }
-}
-*/
