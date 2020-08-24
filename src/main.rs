@@ -50,15 +50,14 @@ fn run<'a>(env: &Environment<'a>, runtime_io: impl RuntimeIO) -> Result<(), Erro
     end = end.force_next();
 
     let iter = token_lists.into_iter().enumerate();
-    let iter = iter.map(|(file, tokens)| {
+    let mut iter = iter.map(|(file, tokens)| {
         let ast = parser::parse_tokens(end, file as u32, &tokens)?;
         let typed_ast = type_checker::check_types(end, file as u32, &ast)?;
         Ok(typed_ast)
     });
 
     let mut assembler = assembler::Assembler::new();
-    let assember = iter.fold(Ok(()), |prev, tenv| -> Result<(), Error> {
-        prev?;
+    let assember = iter.try_fold((), |prev, tenv| -> Result<(), Error> {
         assembler.add_file(tenv?)?;
         Ok(())
     });

@@ -254,9 +254,20 @@ impl StructEnv {
         ast_type: &ASTType,
         pointer_count: u32,
     ) -> Result<TCType, Error> {
-        let unchecked_type = convert_type(&ast_type, pointer_count);
-        if let TCTypeKind::Struct { ident } = unchecked_type.kind {
-            self.check_struct_type(ident, decl_idx, pointer_count, ast_type.range)?;
+        let kind = match &ast_type.kind {
+            ASTTypeKind::Int => TCTypeKind::I32,
+            ASTTypeKind::Char => TCTypeKind::Char,
+            ASTTypeKind::Void => TCTypeKind::Void,
+            &ASTTypeKind::Struct { ident } => TCTypeKind::Struct { ident, size: 0 },
+        };
+
+        let mut unchecked_type = TCType {
+            kind,
+            pointer_count,
+        };
+
+        if let TCTypeKind::Struct { ident, size } = &mut unchecked_type.kind {
+            *size = self.check_struct_type(*ident, decl_idx, pointer_count, ast_type.range)?;
         }
 
         return Ok(unchecked_type);
@@ -268,7 +279,7 @@ impl StructEnv {
         decl_idx: u32,
         pointer_count: u32,
         range: Range,
-    ) -> Result<(), Error> {
+    ) -> Result<u32, Error> {
         // if let Some(struct_type) = self.struct_types.get(&struct_ident) {
         //     if let Some((type_defn_idx, _)) = struct_type.defn {
         //         if pointer_count == 0 && type_defn_idx > decl_idx {
@@ -281,7 +292,7 @@ impl StructEnv {
         //     return Err(Error::struct_doesnt_exist(&range));
         // }
 
-        return Ok(());
+        return Ok(0);
     }
 }
 

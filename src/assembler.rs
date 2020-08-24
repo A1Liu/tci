@@ -25,6 +25,12 @@ impl<'a> Assembler<'a> {
             Opcode::StackAlloc(4),
             Opcode::StackAlloc(4), // int argc
             Opcode::StackAlloc(8), // int argv
+            Opcode::MakeTempInt32(0),
+            Opcode::SetLocal {
+                var: 0,
+                offset: 0,
+                bytes: 4,
+            },
             Opcode::Call(MAIN_SYMBOL),
             Opcode::GetGlobal {
                 var: 0,
@@ -86,6 +92,14 @@ impl<'a> Assembler<'a> {
         let func_header = self.opcodes.len() as u32;
         let param_count = func_type.params.len() as u32;
 
+        self.opcodes.push(TaggedOpcode {
+            op: Opcode::Func(FuncDesc {
+                file: defn.loc.file,
+                name: ident,
+            }),
+            range: defn.loc.range,
+        });
+
         for stmt in defn.stmts {
             let mut ops = self.translate_statement(param_count, stmt);
             self.opcodes.append(&mut ops);
@@ -95,10 +109,22 @@ impl<'a> Assembler<'a> {
     }
 
     pub fn translate_statement(&self, param_count: u32, stmt: &TCStmt) -> Vec<TaggedOpcode> {
-        let ops = Vec::new();
+        let mut ops = Vec::new();
+        let mut tagged = TaggedOpcode {
+            op: Opcode::StackDealloc,
+            range: stmt.range,
+        };
 
         match &stmt.kind {
-            TCStmtKind::RetVal(val) => {}
+            TCStmtKind::RetVal(val) => {
+                let ret_idx = param_count as i32 * -1;
+                tagged.op = Opcode::SetLocal {
+                    var: ret_idx,
+                    offset: 0,
+                    bytes: val.expr_type.size(),
+                };
+                ops.push(tagged);
+            }
         }
 
         return ops;

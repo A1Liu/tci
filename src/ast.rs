@@ -173,7 +173,7 @@ pub enum TCTypeKind {
     U64, // unsigned long
     Char,
     Void,
-    Struct { ident: u32 },
+    Struct { ident: u32, size: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -188,7 +188,7 @@ pub enum TCShallowType {
     U64, // unsigned long
     Char,
     Void,
-    Struct { ident: u32 },
+    Struct,
     Pointer,
 }
 
@@ -265,7 +265,21 @@ impl TCType {
             TCTypeKind::U64 => TCShallowType::U64,
             TCTypeKind::Char => TCShallowType::Char,
             TCTypeKind::Void => TCShallowType::Void,
-            TCTypeKind::Struct { ident } => TCShallowType::Struct { ident },
+            TCTypeKind::Struct { ident, size } => TCShallowType::Struct,
+        }
+    }
+
+    pub fn size(&self) -> u32 {
+        if self.pointer_count > 0 {
+            return 8;
+        }
+
+        match self.kind {
+            TCTypeKind::U64 => 8,
+            TCTypeKind::I32 => 4,
+            TCTypeKind::Char => 1,
+            TCTypeKind::Void => 0,
+            TCTypeKind::Struct { ident, size } => size,
         }
     }
 }
@@ -293,31 +307,5 @@ impl<'a> PartialEq for TCFuncType<'a> {
         }
 
         return true;
-    }
-}
-
-pub fn convert_type(type_node: &ASTType, pointer_count: u32) -> TCType {
-    let mut out = TCType {
-        kind: TCTypeKind::I32,
-        pointer_count: pointer_count,
-    };
-
-    match &type_node.kind {
-        ASTTypeKind::Int => {
-            out.kind = TCTypeKind::I32;
-            return out;
-        }
-        ASTTypeKind::Char => {
-            out.kind = TCTypeKind::Char;
-            return out;
-        }
-        ASTTypeKind::Void => {
-            out.kind = TCTypeKind::Void;
-            return out;
-        }
-        &ASTTypeKind::Struct { ident } => {
-            out.kind = TCTypeKind::Struct { ident };
-            return out;
-        }
     }
 }
