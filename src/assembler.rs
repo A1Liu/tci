@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::buckets::*;
 use crate::interpreter::*;
 use crate::lexer::*;
 use crate::type_checker::*;
@@ -34,8 +35,8 @@ impl<'a> Assembler<'a> {
             Opcode::Call(MAIN_SYMBOL),
             Opcode::GetGlobal {
                 var: 0,
-                offset: 3,
-                bytes: 1,
+                offset: 0,
+                bytes: 4,
             },
             Opcode::Ecall(ECALL_EXIT_WITH_CODE),
         ]
@@ -72,7 +73,7 @@ impl<'a> Assembler<'a> {
             None => (func.func_type, None),
         };
 
-        let asm_func = ASMFunc {
+        let mut asm_func = ASMFunc {
             func_type,
             func_header: None,
         };
@@ -89,7 +90,7 @@ impl<'a> Assembler<'a> {
             return Err(func_redef(defn_loc, defn.loc));
         }
 
-        let func_header = self.opcodes.len() as u32;
+        asm_func.func_header = Some((self.opcodes.len() as u32, defn.loc));
         let param_count = func_type.params.len() as u32;
 
         self.opcodes.push(TaggedOpcode {
@@ -105,7 +106,8 @@ impl<'a> Assembler<'a> {
             self.opcodes.append(&mut ops);
         }
 
-        return Err(error!("unimplemented"));
+        self.functions.insert(ident, asm_func);
+        return Ok(());
     }
 
     pub fn translate_statement(&self, param_count: u32, stmt: &TCStmt) -> Vec<TaggedOpcode> {
@@ -176,7 +178,7 @@ impl<'a> Assembler<'a> {
         return ops;
     }
 
-    // pub fn assemble(self) -> Program {
-    //     todo!()
-    // }
+    pub fn assemble<'b>(self, buckets: BucketListRef<'b>) -> Program<'b> {
+        todo!()
+    }
 }

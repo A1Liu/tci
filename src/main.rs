@@ -13,6 +13,7 @@ mod util;
 mod assembler;
 mod ast;
 mod buckets;
+mod filedb;
 mod interpreter;
 mod lexer;
 mod parser;
@@ -22,18 +23,19 @@ mod type_checker;
 #[cfg(test)]
 mod test;
 
-use codespan_reporting::diagnostic::{Diagnostic, Label};
-use codespan_reporting::files::{Files, SimpleFiles};
+use crate::filedb::{FileDb, FileDbRef};
+use codespan_reporting::files::Files;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use runtime::{DefaultIO, RuntimeIO};
 pub use util::{fold_binary, r, r_from, CodeLoc, Error, Range};
 
+#[derive(Clone, Copy)]
 pub struct Environment<'a> {
     pub buckets: buckets::BucketListRef<'a>,
-    pub files: SimpleFiles<&'a str, &'a str>,
+    pub files: FileDbRef<'a>,
 }
 
-fn run<'a>(env: &Environment<'a>, runtime_io: impl RuntimeIO) -> Result<(), Error> {
+fn run<'a>(env: Environment<'a>, runtime_io: impl RuntimeIO) -> Result<u32, Error> {
     let mut symbols = lexer::Symbols::new();
     let files = env.files.iter();
 
@@ -57,72 +59,60 @@ fn run<'a>(env: &Environment<'a>, runtime_io: impl RuntimeIO) -> Result<(), Erro
     });
 
     let mut assembler = assembler::Assembler::new();
-    let assember = iter.try_fold((), |prev, tenv| -> Result<(), Error> {
+    iter.try_fold((), |prev, tenv| -> Result<(), Error> {
         assembler.add_file(tenv?)?;
         Ok(())
-    });
+    })?;
 
-    Ok(())
+    Ok(0)
 }
 
 fn run_on_file(
     runtime_io: impl RuntimeIO,
     filename: &str,
     writer: &mut impl WriteColor,
-) -> Result<(), Error> {
-    let mut env = Environment {
-        buckets: buckets::BucketList::new(),
-        files: SimpleFiles::new(),
-    };
+) -> Result<u32, Error> {
+    let buckets = buckets::BucketList::new();
+    let mut files = FileDb::new();
+    let input = buckets.add_str(&read_to_string(&filename).unwrap());
+    let file_id = files.add(buckets, filename, input);
+    let files = FileDbRef::new(buckets, &files);
 
-    let filename = env.buckets.add_str(filename);
-    let input = env.buckets.add_str(&read_to_string(&filename).unwrap());
-    let file_id = env.files.add(filename, input);
+    let env = Environment { buckets, files };
 
-    if let Err(err) = run(&env, runtime_io) {
-        let config = codespan_reporting::term::Config::default();
-        let diagnostic = Diagnostic::error().with_message(&err.message).with_labels(
-            err.sections
-                .iter()
-                .map(|x| Label::primary(x.location.file, x.location.range).with_message(&x.message))
-                .collect(),
-        );
-
-        codespan_reporting::term::emit(writer, &config, &env.files, &diagnostic)
-            .expect("why did this fail?");
-        return Err(err);
+    match run(env, runtime_io) {
+        Ok(x) => return Ok(x),
+        Err(err) => {
+            let config = codespan_reporting::term::Config::default();
+            codespan_reporting::term::emit(writer, &config, &env.files, &err.diagnostic())
+                .expect("why did this fail?");
+            return Err(err);
+        }
     }
-
-    return Ok(());
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let mut env = Environment {
-        buckets: buckets::BucketList::new(),
-        files: SimpleFiles::new(),
-    };
+    let buckets = buckets::BucketList::new();
+    let mut files = FileDb::new();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();
 
     for arg in args {
-        let filename = env.buckets.add_str(&arg);
-        let input = env.buckets.add_str(&read_to_string(&filename).unwrap());
-        env.files.add(filename, input);
+        let filename = buckets.add_str(&arg);
+        let input = buckets.add_str(&read_to_string(&filename).unwrap());
+        files.add(buckets, filename, input);
     }
 
-    if let Err(err) = run(&env, runtime_io) {
-        let config = codespan_reporting::term::Config::default();
-        let diagnostic = Diagnostic::error().with_message(&err.message).with_labels(
-            err.sections
-                .iter()
-                .map(|x| Label::primary(x.location.file, x.location.range).with_message(&x.message))
-                .collect(),
-        );
+    let files = FileDbRef::new(buckets, &files);
+    let env = Environment { buckets, files };
 
-        codespan_reporting::term::emit(&mut writer.lock(), &config, &env.files, &diagnostic)
+    if let Err(err) = run(env, runtime_io) {
+        let config = codespan_reporting::term::Config::default();
+
+        codespan_reporting::term::emit(&mut writer.lock(), &config, &env.files, &err.diagnostic())
             .expect("why did this fail?");
     }
 }

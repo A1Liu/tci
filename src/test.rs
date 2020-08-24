@@ -8,13 +8,19 @@ fn test_file_should_succeed(filename: &str) {
     let mut runtime = InMemoryIO::new();
 
     match run_on_file(&mut runtime, filename, &mut writer) {
-        Err(_) => {
+        Err(err) => {
             println!("{}", writer.to_string());
-            println!("stdout:\n{}", runtime.out.to_string());
-            println!("stderr:\n{}", runtime.err.to_string());
             panic!();
         }
-        _ => {}
+        Ok(code) => {
+            if code != 0 {
+                println!("return code: {}", code);
+                println!("logs:\n{}", runtime.log.to_string());
+                println!("stdout:\n{}", runtime.out.to_string());
+                println!("stderr:\n{}", runtime.err.to_string());
+                panic!();
+            }
+        }
     }
 
     // let filename = String::from(filename);

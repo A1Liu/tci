@@ -1,6 +1,6 @@
+use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
-use codespan_reporting::files::*;
 use core::ops::{Deref, DerefMut};
 use core::{mem, str};
 use std::io::Write;
@@ -77,7 +77,7 @@ pub const ECALL_EXIT_WITH_CODE: u32 = 3;
 pub enum Directive {
     ChangePC(u32),
     Return,
-    Exit(u8),
+    Exit(u32),
 }
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
@@ -151,7 +151,7 @@ pub struct TaggedOpcode {
 
 #[derive(Debug, Clone)]
 pub struct Program<'a> {
-    pub files: SimpleFiles<&'a str, &'a str>,
+    pub files: FileDbRef<'a>,
     pub strings: &'a [&'a str],
     pub functions: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
@@ -195,12 +195,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run_program(&mut self, program: Program) -> Result<u8, IError> {
+    pub fn run_program(&mut self, program: Program) -> Result<u32, IError> {
         self.memory = Memory::new();
         return self.run_func(&program, 0).map(|ok| ok.unwrap_or(0));
     }
 
-    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<u8>, IError> {
+    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<u32>, IError> {
         let func_desc = match program.ops[pcounter as usize].op {
             Opcode::Func(desc) => desc,
             op => {
@@ -477,7 +477,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
             Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {
-                let code: u8 = self.pop_stack(pc)?;
+                let code: u32 = self.pop_stack(pc)?;
                 return Ok(Directive::Exit(code));
             }
             Opcode::Ecall(call) => {

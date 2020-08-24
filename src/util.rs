@@ -1,3 +1,4 @@
+use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::{fmt, ops};
 use std::io;
@@ -79,12 +80,24 @@ pub struct Error {
     pub sections: Vec<ErrorSection>,
 }
 
+impl Into<Label<u32>> for &ErrorSection {
+    fn into(self) -> Label<u32> {
+        Label::primary(self.location.file, self.location.range).with_message(&self.message)
+    }
+}
+
 impl Error {
     pub fn new(message: &str, sections: Vec<ErrorSection>) -> Error {
         Self {
             message: message.to_string(),
             sections,
         }
+    }
+
+    pub fn diagnostic(&self) -> Diagnostic<u32> {
+        Diagnostic::error()
+            .with_message(&self.message)
+            .with_labels(self.sections.iter().map(|x| x.into()).collect())
     }
 }
 
