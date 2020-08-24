@@ -240,9 +240,13 @@ pub struct TCStmt<'a> {
 #[derive(Debug, Clone)]
 pub enum TCExprKind<'a> {
     IntLiteral(i32),
+
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
     SConv8To32(&'a TCExpr<'a>),
+    SConv32To64(&'a TCExpr<'a>),
+
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
 }

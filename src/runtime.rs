@@ -194,7 +194,9 @@ impl VarBuffer {
 
         let begin = var.idx + ptr.offset() as usize;
         let var_slice = &self.data[begin..(begin + len as usize)];
-        return Ok(unsafe { *(var_slice.as_ptr() as *const T) });
+        let mut value = unsafe { mem::MaybeUninit::uninit().assume_init() };
+        unsafe { any_as_u8_slice_mut(&mut value).copy_from_slice(var_slice) };
+        return Ok(value);
     }
 
     pub fn add_var(&mut self, len: u32) -> u32 {
@@ -222,7 +224,8 @@ impl VarBuffer {
 
         let begin = var.idx + ptr.offset() as usize;
         let to_bytes = &mut self.data[begin..(begin + len as usize)];
-        let previous_value = unsafe { *(to_bytes.as_ptr() as *const T) };
+        let mut previous_value = unsafe { mem::MaybeUninit::uninit().assume_init() };
+        unsafe { any_as_u8_slice_mut(&mut previous_value).copy_from_slice(to_bytes) };
         to_bytes.copy_from_slice(any_as_u8_slice(&t));
         return Ok(previous_value);
     }
@@ -428,27 +431,59 @@ impl<Tag: Copy> Memory<Tag> {
     }
 
     pub fn pop_stack_var(&mut self, tag: Tag) -> Result<Var, IError> {
-        if let Some(var) = self.stack.vars.pop() {
-            let var_start = self.historical_data.len();
-            let var_end_stack_start = var_start + var.len as usize;
-            self.historical_data
-                .extend_from_slice(&self.stack.data[var.idx..]);
-            let stack_end = self.historical_data.len();
+        let var = self.stack.vars.pop();
+        let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
+        let var = var.ok_or_else(map_err)?;
 
-            self.stack.data.resize(var.idx, 0);
-            self.push_history(
-                MAKind::PopStackVar {
-                    var_start,
-                    var_end_stack_start,
-                    stack_end,
-                },
-                tag,
-            );
+        let var_start = self.historical_data.len();
+        let var_end_stack_start = var_start + var.len as usize;
+        self.historical_data
+            .extend_from_slice(&self.stack.data[var.idx..]);
+        let stack_end = self.historical_data.len();
 
-            return Ok(var);
-        } else {
-            return err!("StackIsEmpty", "tried to pop from stack when it is empty");
-        }
+        self.stack.data.resize(var.idx, 0);
+        self.push_history(
+            MAKind::PopStackVar {
+                var_start,
+                var_end_stack_start,
+                stack_end,
+            },
+            tag,
+        );
+
+        return Ok(var);
+    }
+
+    pub fn pop_stack_var_onto_stack(&mut self, tag: Tag) -> Result<(), IError> {
+        let var = self.stack.vars.pop();
+        let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
+        let var = var.ok_or_else(map_err)?;
+
+        let var_start = self.historical_data.len();
+        let var_end_stack_start = var_start + var.len as usize;
+        self.historical_data
+            .extend_from_slice(&self.stack.data[var.idx..]);
+        let stack_end = self.historical_data.len();
+
+        self.stack.data.resize(var.idx + var.len as usize, 0);
+        self.push_history(
+            MAKind::PopStackVar {
+                var_start,
+                var_end_stack_start,
+                stack_end,
+            },
+            tag,
+        );
+
+        self.push_history(
+            MAKind::PushStack {
+                value_start: var_start,
+                value_end: var_end_stack_start,
+            },
+            tag,
+        );
+
+        return Ok(());
     }
 
     #[inline]
@@ -718,7 +753,8 @@ impl<Tag: Copy> Memory<Tag> {
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
-        let out = unsafe { *(from_bytes.as_ptr() as *const T) };
+        let mut out = unsafe { mem::MaybeUninit::uninit().assume_init() };
+        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
         self.stack.data.resize(lower, 0);
         self.push_history(
             MAKind::PopStack {

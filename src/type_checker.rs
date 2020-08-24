@@ -56,46 +56,6 @@ fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
     };
 }
 
-fn add_int_ptr<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let pointer_type = l.expr_type;
-    let add_type = TCType {
-        kind: TCTypeKind::U64,
-        pointer_count: 0,
-    };
-
-    let r = TCExpr {
-        range: r.range,
-        kind: TCExprKind::ZConv32To64(buckets.add(r)),
-        expr_type: add_type,
-    };
-
-    return TCExpr {
-        range: r_from(l.range, r.range),
-        kind: TCExprKind::AddU64(buckets.add(l), buckets.add(r)),
-        expr_type: add_type,
-    };
-}
-
-fn add_ptr_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let pointer_type = l.expr_type;
-    let add_type = TCType {
-        kind: TCTypeKind::U64,
-        pointer_count: 0,
-    };
-
-    let r = TCExpr {
-        range: r.range,
-        kind: TCExprKind::ZConv32To64(buckets.add(r)),
-        expr_type: add_type,
-    };
-
-    return TCExpr {
-        range: r_from(l.range, r.range),
-        kind: TCExprKind::AddU64(buckets.add(l), buckets.add(r)),
-        expr_type: add_type,
-    };
-}
-
 lazy_static! {
     pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
         use TCShallowType::*;
@@ -103,8 +63,6 @@ lazy_static! {
         m.insert((BinOp::Add, I32, I32), add_int_int);
         m.insert((BinOp::Add, I32, Char), add_int_char);
         m.insert((BinOp::Add, Char, I32), add_char_int);
-        m.insert((BinOp::Add, Pointer, I32), add_ptr_int);
-        m.insert((BinOp::Add, I32, Pointer), add_int_ptr);
         m
     };
     pub static ref BIN_LEFT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
@@ -112,7 +70,6 @@ lazy_static! {
         let mut m = HashSet::new();
         m.insert((BinOp::Add, I32));
         m.insert((BinOp::Add, Char));
-        m.insert((BinOp::Add, Pointer));
         m
     };
     pub static ref BIN_RIGHT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
@@ -120,7 +77,6 @@ lazy_static! {
         let mut m = HashSet::new();
         m.insert((BinOp::Add, I32));
         m.insert((BinOp::Add, Char));
-        m.insert((BinOp::Add, Pointer));
         m
     };
 }

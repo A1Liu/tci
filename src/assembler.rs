@@ -144,6 +144,12 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::SExtend8To32;
                 ops.push(tagged);
             }
+            TCExprKind::SConv32To64(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::SExtend32To64;
+                ops.push(tagged);
+            }
+
             TCExprKind::ZConv8To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::ZExtend8To32;
