@@ -146,20 +146,20 @@ pub struct Stmt<'a> {
     pub range: Range,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TCStructMember {
     pub decl_type: TCType,
     pub ident: u32,
     pub range: Range,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TCStructDefn<'a> {
     defn_idx: u32,
     members: &'a [TCStructMember],
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct TCStruct<'a> {
     pub decl_idx: u32,
     pub defn: Option<TCStructDefn<'a>>,

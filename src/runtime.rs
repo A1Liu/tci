@@ -1051,6 +1051,10 @@ pub struct DefaultIO {
     pub err: Stderr,
 }
 
+pub struct TestIO {
+    pub writer: RecordingWriter<Stderr>,
+}
+
 impl DefaultIO {
     pub fn new() -> Self {
         Self {
@@ -1074,6 +1078,62 @@ impl RuntimeIO for DefaultIO {
     }
     fn err(&mut self) -> &mut Stderr {
         return &mut self.err;
+    }
+}
+
+impl RuntimeIO for &mut DefaultIO {
+    type Out = Stdout;
+    type Log = StringWriter;
+    type Err = Stderr;
+
+    fn out(&mut self) -> &mut Stdout {
+        return &mut self.out;
+    }
+    fn log(&mut self) -> &mut StringWriter {
+        return &mut self.log;
+    }
+    fn err(&mut self) -> &mut Stderr {
+        return &mut self.err;
+    }
+}
+
+impl TestIO {
+    pub fn new() -> Self {
+        Self {
+            writer: RecordingWriter::new(stderr()),
+        }
+    }
+}
+
+impl RuntimeIO for &mut TestIO {
+    type Out = RecordingWriter<Stderr>;
+    type Log = RecordingWriter<Stderr>;
+    type Err = RecordingWriter<Stderr>;
+
+    fn out(&mut self) -> &mut Self::Out {
+        return &mut self.writer;
+    }
+    fn log(&mut self) -> &mut Self::Log {
+        return &mut self.writer;
+    }
+    fn err(&mut self) -> &mut Self::Err {
+        return &mut self.writer;
+    }
+}
+
+impl RuntimeIO for TestIO {
+    type Out = RecordingWriter<Stderr>;
+    type Log = RecordingWriter<Stderr>;
+    type Err = RecordingWriter<Stderr>;
+
+    fn out(&mut self) -> &mut Self::Out {
+        return &mut self.writer;
+    }
+    fn log(&mut self) -> &mut Self::Log {
+        return &mut self.writer;
+    }
+    fn err(&mut self) -> &mut Self::Err {
+        return &mut self.writer;
     }
 }
 

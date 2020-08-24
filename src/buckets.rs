@@ -45,7 +45,7 @@ pub struct BucketListRef<'a> {
 }
 
 impl<'a> BucketListRef<'a> {
-    pub unsafe fn dealloc(self) {
+    pub unsafe fn dealloc(self) -> Option<Self> {
         todo!()
     }
 }
@@ -117,6 +117,8 @@ impl BucketListInner {
             ) {
                 dealloc(new_buffer as *mut u8, new_layout);
                 next = ptr;
+            } else {
+                next = new_buffer;
             }
         }
 
@@ -257,6 +259,14 @@ impl<'a> Frame<'a> {
         self.bump += required_offset;
         let bump = self.bump;
         self.bump += layout.size();
+        if self.bump > self.data.len() {
+            panic!(
+                "allocated past end of frame: at byte {} of frame with size {}",
+                self.bump,
+                self.data.len()
+            );
+        }
+
         &mut self.data[bump] as *mut u8
     }
 

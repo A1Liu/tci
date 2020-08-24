@@ -1,23 +1,23 @@
 use crate::run_on_file;
-use crate::runtime::InMemoryIO;
 use crate::util::{StringWriter, Void};
 
 fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
-    let mut runtime = InMemoryIO::new();
+    // let mut io = crate::runtime::TestIO::new();
+    let mut io = crate::runtime::InMemoryIO::new();
 
-    match run_on_file(&mut runtime, filename, &mut writer) {
+    match run_on_file(&mut io, filename, &mut writer) {
         Err(err) => {
             println!("{}", writer.to_string());
             panic!();
         }
         Ok(code) => {
+            println!("return code: {}", code);
             if code != 0 {
-                println!("return code: {}", code);
-                println!("logs:\n{}", runtime.log.to_string());
-                println!("stdout:\n{}", runtime.out.to_string());
-                println!("stderr:\n{}", runtime.err.to_string());
+                println!("logs:\n{}", io.log.to_string());
+                println!("stdout:\n{}", io.out.to_string());
+                println!("stderr:\n{}", io.err.to_string());
                 panic!();
             }
         }

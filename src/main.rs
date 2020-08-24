@@ -4,9 +4,6 @@
 #[macro_use]
 extern crate lazy_static;
 
-use std::env;
-use std::fs::read_to_string;
-
 #[macro_use]
 mod util;
 
@@ -26,7 +23,10 @@ mod test;
 use crate::filedb::{FileDb, FileDbRef};
 use codespan_reporting::files::Files;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
+use core::mem;
 use runtime::{DefaultIO, RuntimeIO};
+use std::env;
+use std::fs::read_to_string;
 pub use util::{fold_binary, r, r_from, CodeLoc, Error, Range};
 
 #[derive(Clone, Copy)]
@@ -64,7 +64,12 @@ fn run<'a>(env: Environment<'a>, runtime_io: impl RuntimeIO) -> Result<u32, Erro
         Ok(())
     })?;
 
-    Ok(0)
+    let program = assembler.assemble(&env, &symbols)?;
+    mem::drop(env);
+    mem::drop(symbols);
+
+    let mut runtime = interpreter::Runtime::new(runtime_io);
+    Ok(runtime.run_program(program))
 }
 
 fn run_on_file(
@@ -74,8 +79,8 @@ fn run_on_file(
 ) -> Result<u32, Error> {
     let buckets = buckets::BucketList::new();
     let mut files = FileDb::new();
-    let input = buckets.add_str(&read_to_string(&filename).unwrap());
-    let file_id = files.add(buckets, filename, input);
+    let input = read_to_string(&filename).unwrap();
+    let file_id = files.add(buckets, filename, &input);
     let files = FileDbRef::new(buckets, &files);
 
     let env = Environment { buckets, files };

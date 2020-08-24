@@ -40,11 +40,7 @@ pub struct CallFrame {
     pub range: Range,
 }
 
-pub fn render_err(
-    error: &IError,
-    stack_trace: &Vec<CallFrame>,
-    program: &Program,
-) -> Result<String, std::io::Error> {
+pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Program) -> String {
     use codespan_reporting::diagnostic::*;
     use codespan_reporting::term::*;
 
@@ -58,7 +54,7 @@ pub fn render_err(
         end_context_lines: 1,
     };
 
-    write!(out, "{}: {}\n", error.short_name, error.message)?;
+    write!(out, "{}: {}\n", error.short_name, error.message).expect("cannot fail");
     for frame in stack_trace {
         let diagnostic = Diagnostic::new(Severity::Void)
             .with_labels(vec![Label::primary(frame.file, frame.range)]);
@@ -66,7 +62,7 @@ pub fn render_err(
             .expect("why did this fail?");
     }
 
-    return Ok(out.to_string());
+    return out.to_string();
 }
 
 pub const ECALL_PRINT_INT: u32 = 0;
@@ -149,11 +145,11 @@ pub struct TaggedOpcode {
     pub range: Range,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Program<'a> {
     pub files: FileDbRef<'a>,
     pub strings: &'a [&'a str],
-    pub functions: &'a [&'a str],
+    pub symbols: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
 }
 
@@ -195,9 +191,33 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run_program(&mut self, program: Program) -> Result<u32, IError> {
+    pub fn run_program(&mut self, program: Program) -> u32 {
         self.memory = Memory::new();
-        return self.run_func(&program, 0).map(|ok| ok.unwrap_or(0));
+        let ret_addr = self.add_stack_var(4, 0);
+        self.set(ret_addr, 0u32, 0)
+            .expect("failed to write to return address location of main");
+
+        let _argc = self.add_stack_var(4, 0);
+        let _argv = self.add_stack_var(8, 0);
+
+        // TODO populate argc and argv
+
+        self.set(ret_addr, 0u32, 0)
+            .expect("failed to write to return address location of main");
+        self.set(ret_addr, 0u32, 0)
+            .expect("failed to write to return address location of main");
+
+        let result = match self.run_func(&program, 0) {
+            Ok(res) => res,
+            Err(err) => {
+                let err_str = render_err(&err, &self.callstack, &program);
+                write!(self.io.err(), "{}", err_str).expect("why did this fail?");
+
+                return 1;
+            }
+        };
+
+        return result.unwrap_or(self.get_var(ret_addr).unwrap());
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<u32>, IError> {
@@ -212,7 +232,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         };
 
-        let callstack_len = self.callstack.len();
         let ptr = self.add_stack_var(mem::size_of::<FuncDesc>() as u32, pcounter);
         self.push_stack(func_desc, pcounter);
         self.pop_stack_bytes_into(ptr, mem::size_of::<FuncDesc>() as u32, pcounter)
@@ -255,21 +274,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                         self.memory.pop_stack_var(pc)?;
                     }
                     self.memory.pop_stack_var(pc)?; // Pop function description
-                    if self.callstack.len() < callstack_len {
-                        return err!(
-                            "InvalidCallstackState",
-                            "callstack shrunk over course of function call"
-                        );
-                    }
-
-                    self.callstack.resize(
-                        callstack_len,
-                        CallFrame {
-                            file: 0,
-                            name: 0,
-                            range: r(0, 0),
-                        },
-                    );
 
                     return Ok(None);
                 }
@@ -447,7 +451,9 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Ret => return Ok(Directive::Return),
 
             Opcode::Call(func) => {
-                self.run_func(program, func)?;
+                if let Some(exit_code) = self.run_func(program, func)? {
+                    return Ok(Directive::Exit(exit_code));
+                }
             }
 
             Opcode::Ecall(ECALL_PRINT_INT) => {
@@ -485,6 +491,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         }
 
-        return Ok(Directive::ChangePC(pc));
+        return Ok(Directive::ChangePC(pc + 1));
     }
 }

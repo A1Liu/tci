@@ -1,5 +1,5 @@
 [package]
-name = "tcc"
+name = "tci"
 version = "0.1.0"
 authors = ["Albert Liu <albertymliu@gmail.com>"]
 edition = "2018"

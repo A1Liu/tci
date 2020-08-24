@@ -1,51 +1,56 @@
 use crate::buckets::*;
+use crate::util::*;
 use codespan_reporting::files::{line_starts, Files};
 use core::mem;
 
 #[derive(Debug, Clone)]
 pub struct File<'a> {
     /// The name of the file.
-    pub name: &'a str,
+    pub _name: &'a str,
     /// The source code of the file.
-    pub source: &'a str,
+    pub _source: &'a str,
     /// The starting byte indices in the source code.
-    pub line_starts: &'a [usize],
+    pub _line_starts: &'a [usize],
 }
 
 impl<'a> File<'a> {
     /// Create a new source file.
     pub fn new(buckets: BucketListRef<'a>, name: &str, source: &str) -> Self {
         Self {
-            name: buckets.add_str(name),
-            line_starts: buckets.add_array(line_starts(source.as_ref()).collect()),
-            source: buckets.add_str(source),
+            _line_starts: buckets.add_array(line_starts(source).collect()),
+            _name: buckets.add_str(name),
+            _source: buckets.add_str(source),
         }
     }
 
-    pub fn new_frame(frame: &mut Frame<'a>, name: &str, source: &str) -> Self {
+    pub fn new_from_frame(frame: &mut Frame<'a>, name: &str, source: &str) -> Self {
         Self {
-            name: frame.add_str(name),
-            line_starts: frame.add_array(line_starts(source.as_ref()).collect()),
-            source: frame.add_str(source),
+            _line_starts: frame.add_array(line_starts(source).collect()),
+            _name: frame.add_str(name),
+            _source: frame.add_str(source),
         }
+    }
+
+    pub fn size(&self) -> usize {
+        self._name.len() + self._source.len() + self._line_starts.len() * 8
     }
 
     /// Return the name of the file.
     pub fn name(&self) -> &'a str {
-        self.name
+        self._name
     }
 
     /// Return the source of the file.
     pub fn source(&self) -> &'a str {
-        self.source
+        self._source
     }
 
     fn line_start(&self, line_index: usize) -> Option<usize> {
         use std::cmp::Ordering;
 
-        match line_index.cmp(&self.line_starts.len()) {
-            Ordering::Less => self.line_starts.get(line_index).cloned(),
-            Ordering::Equal => Some(self.source.len()),
+        match line_index.cmp(&self._line_starts.len()) {
+            Ordering::Less => self._line_starts.get(line_index).cloned(),
+            Ordering::Equal => Some(self._source.len()),
             Ordering::Greater => None,
         }
     }
@@ -57,15 +62,15 @@ impl<'a> Files<'a> for File<'a> {
     type Source = &'a str;
 
     fn name(&self, (): ()) -> Option<&'a str> {
-        Some(self.name)
+        Some(self._name)
     }
 
     fn source(&self, (): ()) -> Option<&'a str> {
-        Some(self.source)
+        Some(self._source)
     }
 
     fn line_index(&self, (): (), byte_index: usize) -> Option<usize> {
-        match self.line_starts.binary_search(&byte_index) {
+        match self._line_starts.binary_search(&byte_index) {
             Ok(line) => Some(line),
             Err(next_line) => Some(next_line - 1),
         }
@@ -98,8 +103,10 @@ impl<'a> FileDb<'a> {
     /// refer to it again.
     pub fn add(&mut self, buckets: BucketListRef<'a>, name: &str, source: &str) -> u32 {
         let file_id = self.files.len() as u32;
-        self.size += name.len() + source.len() + mem::size_of::<File>();
-        self.files.push(File::new(buckets, name, source));
+        let file = File::new(buckets, name, source);
+        let size = file.size() + mem::size_of::<File>();
+        self.size += align_usize(size, mem::align_of::<File>());
+        self.files.push(file);
         file_id
     }
 
@@ -138,33 +145,37 @@ impl<'a> Files<'a> for FileDb<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FileDbRef<'a> {
+    pub size: usize,
     pub files: &'a [File<'a>],
 }
 
 impl<'a> FileDbRef<'a> {
     /// Create a new files database.
     pub fn new<'b>(buckets: BucketListRef<'a>, files: &FileDb<'b>) -> Self {
+        let size = files.size;
         let files = files.files.iter();
-        let files = files.map(|file| File::new(buckets, file.name, file.source));
+        let files = files.map(|file| File::new(buckets, file._name, file._source));
         let files = buckets.add_array(files.collect());
-        Self { files }
+        Self { size, files }
     }
 
     /// Create a new files database.
-    pub fn new_frame<'b>(frame: &mut Frame<'a>, files: &FileDb<'b>) -> Self {
+    pub fn new_from_frame<'b>(frame: &mut Frame<'a>, files: &FileDb<'b>) -> Self {
+        let size = files.size;
         let files = files.files.iter();
-        let files = files.map(|file| File::new_frame(frame, file.name, file.source));
+        let files = files.map(|file| File::new_from_frame(frame, file._name, file._source));
         let files = files.collect();
         let files = frame.add_array(files);
-        Self { files }
+        Self { size, files }
     }
 
-    pub fn clone_frame<'b>(frame: &mut Frame<'b>, files: Self) -> FileDbRef<'b> {
-        let files = files.files.iter();
-        let files = files.map(|file| File::new_frame(frame, file.name, file.source));
+    pub fn clone_into_frame<'b>(&self, frame: &mut Frame<'b>) -> FileDbRef<'b> {
+        let size = self.size;
+        let files = self.files.iter();
+        let files = files.map(|file| File::new_from_frame(frame, file._name, file._source));
         let files = files.collect();
         let files = frame.add_array(files);
-        FileDbRef { files }
+        FileDbRef { size, files }
     }
 
     /// Iterate through the files contained in this instance

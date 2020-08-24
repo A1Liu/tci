@@ -101,19 +101,6 @@ impl Error {
     }
 }
 
-// https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
-pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
-    std::slice::from_raw_parts_mut(p as *mut T as *mut u8, std::mem::size_of::<T>())
-}
-
-pub fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(p as *const T as *const u8, std::mem::size_of::<T>()) }
-}
-
-pub fn u32_to_u16_tup(value: u32) -> (u16, u16) {
-    ((value >> 16) as u16, value as u16)
-}
-
 #[derive(Clone, PartialEq, Copy)]
 pub struct Range {
     pub start: u32,
@@ -155,10 +142,39 @@ impl Into<ops::Range<usize>> for Range {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CodeLoc {
     pub range: Range,
     pub file: u32,
+}
+
+pub fn align_usize(size: usize, align: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+
+    ((size - 1) / align * align) + align
+}
+
+pub fn align_u32(size: u32, align: u32) -> u32 {
+    if size == 0 {
+        return 0;
+    }
+
+    ((size - 1) / align * align) + align
+}
+
+// https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
+pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
+    std::slice::from_raw_parts_mut(p as *mut T as *mut u8, std::mem::size_of::<T>())
+}
+
+pub fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(p as *const T as *const u8, std::mem::size_of::<T>()) }
+}
+
+pub fn u32_to_u16_tup(value: u32) -> (u16, u16) {
+    ((value >> 16) as u16, value as u16)
 }
 
 pub fn fold_binary<I, Iter: Iterator<Item = I>>(
@@ -253,6 +269,57 @@ impl io::Write for StringWriter {
 }
 
 impl WriteColor for StringWriter {
+    fn supports_color(&self) -> bool {
+        false
+    }
+
+    fn set_color(&mut self, color: &ColorSpec) -> io::Result<()> {
+        return Ok(());
+    }
+
+    fn reset(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+}
+
+pub struct RecordingWriter<W>
+where
+    W: io::Write,
+{
+    pub string: StringWriter,
+    pub writer: W,
+}
+
+impl<W> RecordingWriter<W>
+where
+    W: io::Write,
+{
+    pub fn new(writer: W) -> Self {
+        Self {
+            string: StringWriter::new(),
+            writer,
+        }
+    }
+}
+
+impl<W> io::Write for RecordingWriter<W>
+where
+    W: io::Write,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.string.write(buf).expect("should not fail");
+        self.writer.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+impl<W> WriteColor for RecordingWriter<W>
+where
+    W: WriteColor,
+{
     fn supports_color(&self) -> bool {
         false
     }

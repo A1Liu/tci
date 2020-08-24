@@ -4,11 +4,14 @@ use crate::interpreter::*;
 use crate::lexer::*;
 use crate::type_checker::*;
 use crate::util::*;
+use crate::*;
+use core::alloc;
+use core::mem::{align_of, size_of};
 use std::collections::HashMap;
 
 pub struct ASMFunc<'a> {
     pub func_type: TCFuncType<'a>,
-    pub func_header: Option<(u32, CodeLoc)>, // points into opcodes buffer
+    pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
 pub struct Assembler<'a> {
@@ -18,34 +21,8 @@ pub struct Assembler<'a> {
 
 impl<'a> Assembler<'a> {
     pub fn new() -> Self {
-        let opcodes = vec![
-            Opcode::Func(FuncDesc {
-                file: 0,
-                name: _MAIN_SYMBOL,
-            }),
-            Opcode::StackAlloc(4),
-            Opcode::StackAlloc(4), // int argc
-            Opcode::StackAlloc(8), // int argv
-            Opcode::MakeTempInt32(0),
-            Opcode::SetLocal {
-                var: 0,
-                offset: 0,
-                bytes: 4,
-            },
-            Opcode::Call(MAIN_SYMBOL),
-            Opcode::GetGlobal {
-                var: 0,
-                offset: 0,
-                bytes: 4,
-            },
-            Opcode::Ecall(ECALL_EXIT_WITH_CODE),
-        ]
-        .into_iter()
-        .map(|op| TaggedOpcode { op, range: r(0, 0) })
-        .collect();
-
         Self {
-            opcodes,
+            opcodes: Vec::new(),
             functions: HashMap::new(),
         }
     }
@@ -119,12 +96,16 @@ impl<'a> Assembler<'a> {
 
         match &stmt.kind {
             TCStmtKind::RetVal(val) => {
+                ops.append(&mut self.translate_expr(val));
+
                 let ret_idx = param_count as i32 * -1;
                 tagged.op = Opcode::SetLocal {
                     var: ret_idx,
                     offset: 0,
                     bytes: val.expr_type.size(),
                 };
+                ops.push(tagged);
+                tagged.op = Opcode::Ret;
                 ops.push(tagged);
             }
         }
@@ -178,7 +159,63 @@ impl<'a> Assembler<'a> {
         return ops;
     }
 
-    pub fn assemble<'b>(self, buckets: BucketListRef<'b>) -> Program<'b> {
-        todo!()
+    pub fn assemble<'b>(
+        mut self,
+        env: &Environment,
+        symbols: &Symbols,
+    ) -> Result<Program<'b>, Error> {
+        let mut current_func = FuncDesc { file: !0, name: !0 };
+        for op in self.opcodes.iter_mut() {
+            match &mut op.op {
+                Opcode::Func(func_desc) => {
+                    current_func = *func_desc;
+                }
+                Opcode::Call(addr) => {
+                    let function = self.functions.get(addr).unwrap();
+                    if let Some(func_header) = function.func_header {
+                        let (fptr, loc) = func_header;
+                        *addr = fptr;
+                    } else {
+                        let func_loc = function.func_type.loc;
+                        return Err(error!(
+                            "couldn't find definition for function",
+                            op.range,
+                            current_func.file,
+                            "called here",
+                            func_loc.range,
+                            func_loc.file,
+                            "declared here"
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let file_size = env.files.size;
+        let symbols_size = align_usize(symbols.names.iter().map(|i| i.len()).sum(), 8)
+            + align_usize(symbols.names.len() * 16, align_of::<TaggedOpcode>());
+        let opcode_size = size_of::<TaggedOpcode>();
+        let opcodes_size = align_usize(self.opcodes.len() * opcode_size, align_of::<Program>());
+
+        let total_size = file_size + symbols_size + opcodes_size;
+        let buckets = BucketList::with_capacity(0);
+        let layout = alloc::Layout::from_size_align(total_size, 1).expect("why did this fail?");
+        let mut frame = buckets.alloc_frame(layout);
+
+        let files = env.files.clone_into_frame(&mut frame);
+        let strings: &[&str] = frame.add_array(Vec::new()); // TODO
+        let symbols = symbols.names.iter().map(|i| &*frame.add_str(*i)).collect();
+        let symbols: &[&str] = frame.add_array(symbols);
+        let ops = frame.add_array(self.opcodes);
+
+        let program = Program {
+            files,
+            strings,
+            symbols,
+            ops,
+        };
+
+        return Ok(program);
     }
 }

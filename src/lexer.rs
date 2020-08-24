@@ -90,8 +90,8 @@ pub const MAIN_SYMBOL: u32 = 0;
 pub const _MAIN_SYMBOL: u32 = 1;
 
 pub struct Symbols<'a> {
-    pub names: Vec<&'a str>,
     pub translate: HashMap<&'a str, u32>,
+    pub names: Vec<&'a str>,
 }
 
 impl<'a> Symbols<'a> {
