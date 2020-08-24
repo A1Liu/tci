@@ -202,11 +202,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         // TODO populate argc and argv
 
-        self.set(ret_addr, 0u32, 0)
-            .expect("failed to write to return address location of main");
-        self.set(ret_addr, 0u32, 0)
-            .expect("failed to write to return address location of main");
-
         let result = match self.run_func(&program, 0) {
             Ok(res) => res,
             Err(err) => {
@@ -217,7 +212,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         };
 
-        return result.unwrap_or(self.get_var(ret_addr).unwrap());
+        return result.unwrap_or(u32::from_be(self.get_var(ret_addr).unwrap()));
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<u32>, IError> {

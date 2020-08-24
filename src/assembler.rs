@@ -98,7 +98,7 @@ impl<'a> Assembler<'a> {
             TCStmtKind::RetVal(val) => {
                 ops.append(&mut self.translate_expr(val));
 
-                let ret_idx = param_count as i32 * -1;
+                let ret_idx = param_count as i32 * -1 - 1;
                 tagged.op = Opcode::SetLocal {
                     var: ret_idx,
                     offset: 0,
