@@ -1,11 +1,17 @@
+use crate::buckets::*;
 use crate::*;
 use std::collections::HashMap;
 
+pub const CLOSING_CHAR: u8 = !0;
+pub const INVALID_CHAR: u8 = (!0) - 1;
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum TokenKind {
+pub enum TokenKind<'a> {
     Ident(u32),
     TypeIdent(u32),
     IntLiteral(i32),
+    StringLiteral(&'a str),
+    CharLiteral(u8),
 
     Void,
     Char,
@@ -72,17 +78,24 @@ pub enum TokenKind {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Token {
-    pub kind: TokenKind,
+pub struct Token<'a> {
+    pub kind: TokenKind<'a>,
     pub range: Range,
 }
 
-impl Token {
-    pub fn new(kind: TokenKind, range: core::ops::Range<usize>) -> Self {
+impl<'a> Token<'a> {
+    pub fn new(kind: TokenKind<'a>, range: core::ops::Range<usize>) -> Self {
         Self {
             kind,
             range: r(range.start as u32, range.end as u32),
         }
+    }
+
+    pub fn newr<E>(kind: TokenKind<'a>, range: core::ops::Range<usize>) -> Result<Self, E> {
+        Ok(Self {
+            kind,
+            range: r(range.start as u32, range.end as u32),
+        })
     }
 }
 
@@ -118,22 +131,43 @@ impl<'a> Symbols<'a> {
     }
 }
 
-pub fn lex_file<'a>(symbols: &mut Symbols<'a>, data: &'a str) -> Vec<Token> {
+pub fn expect(data: &[u8], current: &mut usize) -> Result<u8, Error> {
+    if *current == data.len() {
+        return Err(error!("unexpected end of file"));
+    }
+
+    let cur = *current;
+    *current += 1;
+    return Ok(data[cur]);
+}
+
+pub fn lex_file<'a, 'b>(
+    buckets: BucketListRef<'b>,
+    symbols: &mut Symbols<'a>,
+    file: u32,
+    data: &'a str,
+) -> Result<Vec<Token<'b>>, Error> {
     let mut toks = Vec::new();
     let bytes = data.as_bytes();
     let mut current = 0;
-    let mut tok = lex_token(symbols, bytes, &mut current);
+    let mut tok = lex_token(buckets, symbols, file, bytes, &mut current)?;
     toks.push(tok);
 
     while tok.kind != TokenKind::End {
-        tok = lex_token(symbols, bytes, &mut current);
+        tok = lex_token(buckets, symbols, file, bytes, &mut current)?;
         toks.push(tok);
     }
 
-    return toks;
+    return Ok(toks);
 }
 
-pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut usize) -> Token {
+pub fn lex_token<'a, 'b>(
+    buckets: BucketListRef<'b>,
+    symbols: &mut Symbols<'a>,
+    file: u32,
+    data: &'a [u8],
+    current: &mut usize,
+) -> Result<Token<'b>, Error> {
     while *current < data.len()
         && match data[*current] {
             b' ' | b'\t' | b'\n' => true,
@@ -144,7 +178,7 @@ pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut us
     }
 
     if *current == data.len() {
-        return Token::new(TokenKind::End, *current..*current);
+        return Token::newr(TokenKind::End, *current..*current);
     }
 
     let begin = *current;
@@ -165,22 +199,22 @@ pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut us
 
             let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
             match word {
-                "if" => return Token::new(TokenKind::If, begin..*current),
-                "else" => return Token::new(TokenKind::Else, begin..*current),
-                "do" => return Token::new(TokenKind::Do, begin..*current),
-                "while" => return Token::new(TokenKind::While, begin..*current),
-                "for" => return Token::new(TokenKind::For, begin..*current),
-                "break" => return Token::new(TokenKind::Break, begin..*current),
-                "continue" => return Token::new(TokenKind::Continue, begin..*current),
-                "return" => return Token::new(TokenKind::Return, begin..*current),
-                "struct" => return Token::new(TokenKind::Struct, begin..*current),
-                "typedef" => return Token::new(TokenKind::Typedef, begin..*current),
-                "void" => return Token::new(TokenKind::Void, begin..*current),
-                "int" => return Token::new(TokenKind::Int, begin..*current),
-                "char" => return Token::new(TokenKind::Char, begin..*current),
+                "if" => return Token::newr(TokenKind::If, begin..*current),
+                "else" => return Token::newr(TokenKind::Else, begin..*current),
+                "do" => return Token::newr(TokenKind::Do, begin..*current),
+                "while" => return Token::newr(TokenKind::While, begin..*current),
+                "for" => return Token::newr(TokenKind::For, begin..*current),
+                "break" => return Token::newr(TokenKind::Break, begin..*current),
+                "continue" => return Token::newr(TokenKind::Continue, begin..*current),
+                "return" => return Token::newr(TokenKind::Return, begin..*current),
+                "struct" => return Token::newr(TokenKind::Struct, begin..*current),
+                "typedef" => return Token::newr(TokenKind::Typedef, begin..*current),
+                "void" => return Token::newr(TokenKind::Void, begin..*current),
+                "int" => return Token::newr(TokenKind::Int, begin..*current),
+                "char" => return Token::newr(TokenKind::Char, begin..*current),
                 word => {
                     let id = symbols.translate_add(word);
-                    return Token::new(TokenKind::Ident(id), begin..*current);
+                    return Token::newr(TokenKind::Ident(id), begin..*current);
                 }
             }
         }
@@ -200,7 +234,7 @@ pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut us
             let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
             let id = symbols.translate_add(word);
 
-            return Token::new(TokenKind::TypeIdent(id), begin..*current);
+            return Token::newr(TokenKind::TypeIdent(id), begin..*current);
         }
 
         b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
@@ -210,132 +244,230 @@ pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut us
                 int_value += (data[*current] - b'0') as i32;
                 *current += 1;
             }
-            return Token::new(TokenKind::IntLiteral(int_value), begin..*current);
+            return Token::newr(TokenKind::IntLiteral(int_value), begin..*current);
         }
 
-        b'{' => return Token::new(TokenKind::LBrace, begin..*current),
-        b'}' => return Token::new(TokenKind::RBrace, begin..*current),
-        b'(' => return Token::new(TokenKind::LParen, begin..*current),
-        b')' => return Token::new(TokenKind::RParen, begin..*current),
-        b'[' => return Token::new(TokenKind::LBracket, begin..*current),
-        b']' => return Token::new(TokenKind::RBracket, begin..*current),
-        b'~' => return Token::new(TokenKind::Tilde, begin..*current),
-        b'.' => return Token::new(TokenKind::Dot, begin..*current),
-        b';' => return Token::new(TokenKind::Semicolon, begin..*current),
-        b',' => return Token::new(TokenKind::Comma, begin..*current),
+        b'\"' => {
+            let mut cur = lex_character(b'\"', file, data, current)?;
+            let mut chars = Vec::new();
+            while cur != CLOSING_CHAR {
+                chars.push(cur);
+                cur = lex_character(b'\"', file, data, current)?;
+            }
+
+            let string = unsafe { std::str::from_utf8_unchecked(&chars) };
+            let string = buckets.add_str(string);
+            return Token::newr(TokenKind::StringLiteral(string), begin..*current);
+        }
+
+        b'\'' => {
+            let byte = lex_character(b'\'', file, data, current)?;
+            if byte == CLOSING_CHAR {
+                return Err(error!(
+                    "empty character literal",
+                    r(begin as u32, *current as u32),
+                    file,
+                    "found here"
+                ));
+            }
+
+            let closing = expect(data, current)?;
+            if closing != b'\'' {
+                return Err(error!(
+                    "expected closing single quote",
+                    r(begin as u32, *current as u32),
+                    file,
+                    "this should be a closing single quote"
+                ));
+            }
+
+            return Token::newr(TokenKind::CharLiteral(byte), begin..*current);
+        }
+
+        b'{' => return Token::newr(TokenKind::LBrace, begin..*current),
+        b'}' => return Token::newr(TokenKind::RBrace, begin..*current),
+        b'(' => return Token::newr(TokenKind::LParen, begin..*current),
+        b')' => return Token::newr(TokenKind::RParen, begin..*current),
+        b'[' => return Token::newr(TokenKind::LBracket, begin..*current),
+        b']' => return Token::newr(TokenKind::RBracket, begin..*current),
+        b'~' => return Token::newr(TokenKind::Tilde, begin..*current),
+        b'.' => return Token::newr(TokenKind::Dot, begin..*current),
+        b';' => return Token::newr(TokenKind::Semicolon, begin..*current),
+        b',' => return Token::newr(TokenKind::Comma, begin..*current),
 
         b'+' => {
             if data[*current] == b'+' {
                 *current += 1;
-                return Token::new(TokenKind::PlusPlus, begin..*current);
+                return Token::newr(TokenKind::PlusPlus, begin..*current);
             } else if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::PlusEq, begin..*current);
+                return Token::newr(TokenKind::PlusEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Plus, begin..*current);
+                return Token::newr(TokenKind::Plus, begin..*current);
             }
         }
         b'-' => {
             if data[*current] == b'-' {
                 *current += 1;
-                return Token::new(TokenKind::DashDash, begin..*current);
+                return Token::newr(TokenKind::DashDash, begin..*current);
             } else if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::DashEq, begin..*current);
+                return Token::newr(TokenKind::DashEq, begin..*current);
             } else if data[*current] == b'>' {
                 *current += 1;
-                return Token::new(TokenKind::Arrow, begin..*current);
+                return Token::newr(TokenKind::Arrow, begin..*current);
             } else {
-                return Token::new(TokenKind::Dash, begin..*current);
+                return Token::newr(TokenKind::Dash, begin..*current);
             }
         }
         b'/' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::SlashEq, begin..*current);
+                return Token::newr(TokenKind::SlashEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Slash, begin..*current);
+                return Token::newr(TokenKind::Slash, begin..*current);
             }
         }
         b'*' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::StarEq, begin..*current);
+                return Token::newr(TokenKind::StarEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Star, begin..*current);
+                return Token::newr(TokenKind::Star, begin..*current);
             }
         }
         b'%' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::PercentEq, begin..*current);
+                return Token::newr(TokenKind::PercentEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Percent, begin..*current);
+                return Token::newr(TokenKind::Percent, begin..*current);
             }
         }
         b'>' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::Geq, begin..*current);
+                return Token::newr(TokenKind::Geq, begin..*current);
             } else {
-                return Token::new(TokenKind::Gt, begin..*current);
+                return Token::newr(TokenKind::Gt, begin..*current);
             }
         }
         b'<' => {
             if data[*current] == b'+' {
                 *current += 1;
-                return Token::new(TokenKind::Leq, begin..*current);
+                return Token::newr(TokenKind::Leq, begin..*current);
             } else {
-                return Token::new(TokenKind::Gt, begin..*current);
+                return Token::newr(TokenKind::Gt, begin..*current);
             }
         }
         b'!' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::Neq, begin..*current);
+                return Token::newr(TokenKind::Neq, begin..*current);
             } else {
-                return Token::new(TokenKind::Not, begin..*current);
+                return Token::newr(TokenKind::Not, begin..*current);
             }
         }
         b'=' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::EqEq, begin..*current);
+                return Token::newr(TokenKind::EqEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Eq, begin..*current);
+                return Token::newr(TokenKind::Eq, begin..*current);
             }
         }
         b'|' => {
             if data[*current] == b'|' {
                 *current += 1;
-                return Token::new(TokenKind::LineLine, begin..*current);
+                return Token::newr(TokenKind::LineLine, begin..*current);
             } else if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::LineEq, begin..*current);
+                return Token::newr(TokenKind::LineEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Line, begin..*current);
+                return Token::newr(TokenKind::Line, begin..*current);
             }
         }
         b'&' => {
             if data[*current] == b'&' {
                 *current += 1;
-                return Token::new(TokenKind::AmpAmp, begin..*current);
+                return Token::newr(TokenKind::AmpAmp, begin..*current);
             } else if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::AmpEq, begin..*current);
+                return Token::newr(TokenKind::AmpEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Amp, begin..*current);
+                return Token::newr(TokenKind::Amp, begin..*current);
             }
         }
         b'^' => {
             if data[*current] == b'=' {
                 *current += 1;
-                return Token::new(TokenKind::CaretEq, begin..*current);
+                return Token::newr(TokenKind::CaretEq, begin..*current);
             } else {
-                return Token::new(TokenKind::Caret, begin..*current);
+                return Token::newr(TokenKind::Caret, begin..*current);
             }
         }
 
-        _ => return Token::new(TokenKind::Invalid, begin..*current),
+        _ => return Token::newr(TokenKind::Invalid, begin..*current),
+    }
+}
+
+pub fn lex_character(
+    surround: u8,
+    file: u32,
+    data: &[u8],
+    current: &mut usize,
+) -> Result<u8, Error> {
+    loop {
+        let cur_b = expect(data, current)?;
+        let cur: char = cur_b.into();
+
+        if !cur.is_ascii() {
+            return Err(error!(
+                "character is not valid ascii",
+                r(*current as u32 - 1, *current as u32),
+                file,
+                "invalid character literal here"
+            ));
+        }
+
+        if cur_b == surround {
+            return Ok(CLOSING_CHAR);
+        }
+
+        if cur_b == b'\n' || cur_b == b'\r' {
+            if surround == b'\"' {
+                return Err(error!(
+                    "invalid character found when parsing string literal",
+                    r(*current as u32 - 1, *current as u32),
+                    file,
+                    "invalid character here"
+                ));
+            } else {
+                return Err(error!(
+                    "invalid character found when parsing character literal",
+                    r(*current as u32 - 1, *current as u32),
+                    file,
+                    "invalid character here"
+                ));
+            }
+        }
+
+        if cur_b != b'\\' {
+            return Ok(cur_b);
+        }
+
+        match expect(data, current)? {
+            b'n' => return Ok(b'\n'),
+            b'\n' => continue,
+            b'\'' => return Ok(b'\''),
+            _ => {
+                return Err(error!(
+                    "invalid escape sequence",
+                    r(*current as u32 - 2, *current as u32),
+                    file,
+                    "invalid escape sequence here"
+                ))
+            }
+        }
     }
 }

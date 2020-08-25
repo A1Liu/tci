@@ -523,6 +523,16 @@ pub fn check_expr<'b>(
                 range: expr.range,
             });
         }
+        ExprKind::StringLiteral(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::StringLiteral(buckets.add_str(val)),
+                expr_type: TCType {
+                    kind: TCTypeKind::Char,
+                    pointer_count: 1,
+                },
+                range: expr.range,
+            });
+        }
 
         ExprKind::BinOp(op, l, r) => {
             let l = check_expr(buckets, env, local_env, decl_idx, l)?;

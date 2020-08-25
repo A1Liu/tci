@@ -98,7 +98,7 @@ impl<'a> Assembler<'a> {
     }
 
     pub fn translate_statement(
-        &self,
+        &mut self,
         func_type: &TCFuncType,
         param_count: u32,
         stmt: &TCStmt,
@@ -140,7 +140,7 @@ impl<'a> Assembler<'a> {
         return ops;
     }
 
-    pub fn translate_expr(&self, expr: &TCExpr) -> Vec<TaggedOpcode> {
+    pub fn translate_expr(&mut self, expr: &TCExpr) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
@@ -150,6 +150,12 @@ impl<'a> Assembler<'a> {
         match &expr.kind {
             TCExprKind::IntLiteral(val) => {
                 tagged.op = Opcode::MakeTempInt32(*val);
+                ops.push(tagged);
+            }
+            TCExprKind::StringLiteral(val) => {
+                let var = self.data.add_var(val.len() as u32); // TODO overflow here
+                self.data.data[self.data.vars[var as usize].idx..].copy_from_slice(val.as_bytes());
+                tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
                 ops.push(tagged);
             }
 

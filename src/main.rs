@@ -38,16 +38,16 @@ pub struct Environment<'a> {
 fn run<'a>(env: Environment<'a>, runtime_io: impl RuntimeIO) -> Result<u32, Error> {
     let mut symbols = lexer::Symbols::new();
     let files = env.files.iter();
+    let files = files.map(|id| (id, env.files.source(id).unwrap()));
 
-    let token_lists: Vec<Vec<lexer::Token>> = files
-        .map(|file_id| lexer::lex_file(&mut symbols, env.files.source(file_id).unwrap()))
-        .collect();
+    let mut token_lists = Vec::new();
+    files
+        .map(|(id, source)| lexer::lex_file(env.buckets, &mut symbols, id, source))
+        .try_fold((), |_, t| -> Result<(), Error> { Ok(token_lists.push(t?)) })?;
 
-    let mut next = env.buckets.next();
     let mut end = env.buckets;
-    while let Some(n) = next {
+    while let Some(n) = end.next() {
         end = n;
-        next = n.next();
     }
     end = end.force_next();
 

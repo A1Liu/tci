@@ -95,6 +95,7 @@ pub enum Opcode {
     MakeTempInt32(i32),
     MakeTempInt64(i64),
     MakeTempFloat64(f64),
+    MakeTempBinaryPtr { var: u32, offset: u32 },
     LoadStr(u32),
 
     Pop { bytes: u32 },
@@ -311,6 +312,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::MakeTempInt32(value) => self.push_stack(value.to_be(), pc),
             Opcode::MakeTempInt64(value) => self.push_stack(value.to_be(), pc),
             Opcode::MakeTempFloat64(value) => self.push_stack(value, pc),
+            Opcode::MakeTempBinaryPtr { var, offset } => {
+                let ptr = VarPointer::new_binary(var, offset);
+                self.push_stack(ptr, pc);
+            }
             Opcode::LoadStr(idx) => {
                 let str_value = program.strings[idx as usize].as_bytes();
                 let str_len = str_value.len() as u32; // TODO check for overflow

@@ -7,14 +7,14 @@ use core::slice;
 pub struct Parser<'a, 'b> {
     pub buckets: BucketListRef<'b>,
     pub file_id: u32,
-    pub tokens: &'a [Token],
+    pub tokens: &'a [Token<'a>],
     pub current: usize,
 }
 
 pub fn parse_tokens<'a, 'b>(
     buckets: BucketListRef<'b>,
     file_id: u32,
-    tokens: &'a [Token],
+    tokens: &'a [Token<'a>],
 ) -> Result<Vec<GlobalStmt<'b>>, Error> {
     let mut parser = Parser::new(buckets, file_id, tokens);
     let mut parse_result = Vec::new();
@@ -25,13 +25,17 @@ pub fn parse_tokens<'a, 'b>(
         if parser.peek().kind == lexer::TokenKind::End {
             break;
         }
+
+        while let Some(next) = parser.buckets.next() {
+            parser.buckets = next;
+        }
     }
 
     return Ok(parse_result);
 }
 
 impl<'a, 'b> Parser<'a, 'b> {
-    pub fn new(buckets: BucketListRef<'b>, file_id: u32, tokens: &'a [Token]) -> Self {
+    pub fn new(buckets: BucketListRef<'b>, file_id: u32, tokens: &'a [Token<'a>]) -> Self {
         Self {
             buckets,
             tokens,
@@ -40,14 +44,14 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    pub fn peek(&self) -> Token {
+    pub fn peek(&self) -> Token<'a> {
         return *self.tokens.get(self.current).unwrap_or(&Token {
             kind: TokenKind::End,
             range: r(0, 0),
         });
     }
 
-    pub fn pop(&mut self) -> Token {
+    pub fn pop(&mut self) -> Token<'a> {
         let current = self.current;
         self.current += 1;
         return *self.tokens.get(current).unwrap_or(&Token {
@@ -282,6 +286,19 @@ impl<'a, 'b> Parser<'a, 'b> {
                         range: r(start, end_range.end),
                     });
                 }
+            }
+            TokenKind::StringLiteral(string) => {
+                let mut string = string.to_string();
+                let mut range = tok.range;
+                while let TokenKind::StringLiteral(tstr) = self.peek().kind {
+                    string.push_str(tstr);
+                    range = r_from(range, self.pop().range);
+                }
+
+                return Ok(Expr {
+                    kind: ExprKind::StringLiteral(self.buckets.add_str(&string)),
+                    range,
+                });
             }
             _ => return Err(self.unexpected_token("expression", &tok)),
         }
@@ -805,7 +822,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         return Ok(tok.range);
     }
 
-    pub fn expect_lparen(&mut self) -> Result<Token, Error> {
+    pub fn expect_lparen(&mut self) -> Result<Token<'a>, Error> {
         let tok = self.pop();
         if tok.kind != TokenKind::LParen {
             return Err(error!(

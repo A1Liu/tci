@@ -9,6 +9,8 @@ pub enum BinOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind<'a> {
     IntLiteral(i32),
+    CharLiteral(u8),
+    StringLiteral(&'a str),
     Ident(u32),
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
     Call {
@@ -242,6 +244,7 @@ pub struct TCStmt<'a> {
 #[derive(Debug, Clone)]
 pub enum TCExprKind<'a> {
     IntLiteral(i32),
+    StringLiteral(&'a str),
 
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
