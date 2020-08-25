@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::buckets::*;
 use crate::interpreter::*;
 use crate::lexer::*;
+use crate::runtime::*;
 use crate::type_checker::*;
 use crate::util::*;
 use crate::*;
@@ -17,6 +18,7 @@ pub struct ASMFunc<'a> {
 pub struct Assembler<'a> {
     pub opcodes: Vec<TaggedOpcode>,
     pub func_types: HashMap<u32, u32>,
+    pub data: VarBuffer,
     pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
 }
 
@@ -24,6 +26,7 @@ impl<'a> Assembler<'a> {
     pub fn new() -> Self {
         Self {
             opcodes: Vec::new(),
+            data: VarBuffer::new(),
             functions: HashMap::new(),
             func_types: HashMap::new(),
         }
@@ -110,7 +113,7 @@ impl<'a> Assembler<'a> {
             TCStmtKind::RetVal(expr) => {
                 ops.append(&mut self.translate_expr(expr));
 
-                let ret_idx = param_count as i32 * -1 - 1;
+                let ret_idx = param_count as i16 * -1 - 1;
                 tagged.op = Opcode::SetLocal {
                     var: ret_idx,
                     offset: 0,
@@ -262,9 +265,11 @@ impl<'a> Assembler<'a> {
         let symbols_size = align_usize(symbols.names.iter().map(|i| i.len()).sum(), 8)
             + align_usize(symbols.names.len() * 16, align_of::<TaggedOpcode>());
         let opcode_size = size_of::<TaggedOpcode>();
-        let opcodes_size = align_usize(self.opcodes.len() * opcode_size, align_of::<Program>());
+        let opcodes_size = self.opcodes.len() * opcode_size;
+        let data_size = align_usize(self.data.data.len(), align_of::<Var>());
+        let vars_size = self.data.vars.len() * size_of::<Var>();
 
-        let total_size = file_size + symbols_size + opcodes_size;
+        let total_size = file_size + symbols_size + opcodes_size + data_size + vars_size + 8;
         let buckets = BucketList::with_capacity(0);
         let layout = alloc::Layout::from_size_align(total_size, 1).expect("why did this fail?");
         let mut frame = buckets.alloc_frame(layout);
@@ -274,11 +279,13 @@ impl<'a> Assembler<'a> {
         let symbols = symbols.names.iter().map(|i| &*frame.add_str(*i)).collect();
         let symbols: &[&str] = frame.add_array(symbols);
         let ops = frame.add_array(self.opcodes);
+        let data = self.data.write_to_ref(frame);
 
         let program = Program {
             files,
             strings,
             symbols,
+            data,
             ops,
             main_idx,
         };

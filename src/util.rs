@@ -120,13 +120,17 @@ impl fmt::Display for Range {
 }
 
 pub fn r(start: u32, end: u32) -> Range {
+    assert!(start <= end);
+
     Range { start, end }
 }
 
 pub fn r_from(range1: Range, range2: Range) -> Range {
+    assert!(range1.start <= range2.end);
+
     Range {
         start: range1.start,
-        end: range2.start,
+        end: range2.end,
     }
 }
 

@@ -249,7 +249,7 @@ impl<'a> Frame<'a> {
     // This could use &self if the bump were atomic
     pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
         // todo do alignment stuff here
-        let bump_ptr = &mut self.data[self.bump] as *mut u8;
+        let bump_ptr = unsafe { self.data.as_ptr().add(self.bump) };
 
         let required_offset = bump_ptr.align_offset(layout.align());
         if required_offset == usize::MAX {
@@ -330,6 +330,4 @@ fn test_bucket_list() {
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
     bucket_list.add_array(vec![12, 12, 31, 4123, 123, 5, 14, 5, 134, 5]);
-
-    println!("boring");
 }

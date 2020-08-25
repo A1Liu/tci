@@ -1,3 +1,4 @@
+use crate::buckets::*;
 use crate::util::*;
 use core::{fmt, mem, str};
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
@@ -53,7 +54,8 @@ impl Var {
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct VarPointer {
-    _idx: u32,
+    _tid: u16,
+    _idx: u16,
     _offset: u32,
 }
 
@@ -61,8 +63,9 @@ impl fmt::Display for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         return write!(
             formatter,
-            "0x{:x}{:0>8x}",
-            u32::from_be(self._idx),
+            "0x{:x}{:0>4x}{:0>8x}",
+            u16::from_be(self._tid),
+            u16::from_be(self._idx),
             u32::from_be(self._offset)
         );
     }
@@ -72,43 +75,88 @@ impl fmt::Debug for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         return write!(
             formatter,
-            "0x{:x}{:0>8x}",
-            u32::from_be(self._idx),
+            "0x{:x}{:0>4x}{:0>8x}",
+            u16::from_be(self._tid),
+            u16::from_be(self._idx),
             u32::from_be(self._offset)
         );
     }
 }
 impl VarPointer {
-    pub fn new_stack(idx: u32, offset: u32) -> VarPointer {
-        if idx & !(1u32 << 31) != idx {
-            panic!("idx is too large");
-        }
+    pub const HEAP_BIT: u16 = 1u16 << 15;
+    pub const STACK_BIT: u16 = 1u16 << 14;
+    pub const RESERVED_BITS: u16 = Self::HEAP_BIT | Self::STACK_BIT;
 
-        let idx = idx | (1u32 << 31);
+    pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
         Self {
+            _tid: Self::STACK_BIT.to_be(),
             _idx: idx.to_be(),
             _offset: offset.to_be(),
         }
     }
 
     pub fn new_heap(idx: u32, offset: u32) -> VarPointer {
-        if idx & !(1u32 << 31) != idx {
+        let tid = (idx >> 16) as u16;
+        if tid & Self::RESERVED_BITS != 0 {
             panic!("idx is too large");
         }
 
+        let tid = Self::HEAP_BIT | tid;
+        let idx = idx as u16;
+
         Self {
+            _tid: tid.to_be(),
             _idx: idx.to_be(),
             _offset: offset.to_be(),
         }
     }
 
+    pub fn new_binary(idx: u32, offset: u32) -> VarPointer {
+        let tid = (idx >> 16) as u16;
+        if tid & Self::RESERVED_BITS != 0 {
+            panic!("idx is too large");
+        }
+
+        Self {
+            _tid: tid.to_be(),
+            _idx: (idx as u16).to_be(),
+            _offset: offset.to_be(),
+        }
+    }
+
+    pub fn is_stack(&self) -> bool {
+        return (u16::from_be(self._tid) & Self::STACK_BIT) != 0;
+    }
+
+    pub fn is_heap(&self) -> bool {
+        return (u16::from_be(self._tid) & Self::HEAP_BIT) != 0;
+    }
+
+    pub fn is_binary(&self) -> bool {
+        return (u16::from_be(self._tid) & Self::RESERVED_BITS) == 0;
+    }
+
+    // returns u16::MAX if not attached to a thread
+    pub fn tid(&self) -> u16 {
+        if self.is_stack() {
+            return u16::from_be(self._tid) & !Self::RESERVED_BITS;
+        }
+
+        return u16::MAX;
+    }
+
     pub fn var_idx(self) -> usize {
-        (u32::from_be(self._idx) & !(1u32 << 31)) as usize
+        if self.is_stack() {
+            return u16::from_be(self._idx) as usize;
+        }
+
+        let top = ((u16::from_be(self._tid) & !Self::RESERVED_BITS) as u32) << 16;
+        return (top | u16::from_be(self._idx) as u32) as usize;
     }
 
     pub fn with_offset(self, offset: u32) -> Self {
         let mut ptr = self;
-        ptr.set_offset(offset);
+        ptr._offset = offset.to_be();
         return ptr;
     }
 
@@ -118,10 +166,6 @@ impl VarPointer {
 
     pub fn set_offset(&mut self, offset: u32) {
         self._offset = offset.to_be();
-    }
-
-    pub fn is_stack(self) -> bool {
-        u32::from_be(self._idx) & (1u32 << 31) != 0
     }
 }
 
@@ -143,12 +187,31 @@ pub struct VarBuffer {
     pub vars: Vec<Var>, // Tracker for variables
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VarBufferRef<'a> {
+    pub data: &'a [u8],
+    pub vars: &'a [Var],
+}
+
 impl VarBuffer {
     pub fn new() -> Self {
         Self {
             data: Vec::new(),
             vars: Vec::new(),
         }
+    }
+
+    pub fn load_from_ref<'a>(buffer_ref: VarBufferRef<'a>) -> Self {
+        let mut buffer = Self::new();
+        buffer.data.extend_from_slice(buffer_ref.data);
+        buffer.vars.extend_from_slice(buffer_ref.vars);
+        return buffer;
+    }
+
+    pub fn write_to_ref<'a>(&self, mut frame: Frame<'a>) -> VarBufferRef<'a> {
+        let data = frame.add_slice(&self.data);
+        let vars = frame.add_slice(&self.vars);
+        return VarBufferRef { data, vars };
     }
 
     pub fn new_from(data: Vec<u8>, vars: Vec<Var>) -> Self {
@@ -265,8 +328,10 @@ pub struct MemoryAction<Tag: Copy> {
 pub struct Memory<Tag: Copy> {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
+    pub binary: VarBuffer,
     pub historical_data: Vec<u8>,
     pub history: Vec<MemoryAction<Tag>>,
+    pub history_binary_end: usize,
 }
 
 impl<Tag: Copy> Memory<Tag> {
@@ -274,8 +339,25 @@ impl<Tag: Copy> Memory<Tag> {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
+            binary: VarBuffer::new(),
             historical_data: Vec::new(),
             history: Vec::new(),
+            history_binary_end: 0,
+        }
+    }
+
+    pub fn new_with_binary(binary: VarBufferRef) -> Self {
+        let mut historical_data = Vec::new();
+        historical_data.extend_from_slice(binary.data);
+        let history_binary_end = historical_data.len();
+
+        Self {
+            stack: VarBuffer::new(),
+            heap: VarBuffer::new(),
+            binary: VarBuffer::load_from_ref(binary),
+            historical_data,
+            history: Vec::new(),
+            history_binary_end,
         }
     }
 
@@ -289,8 +371,10 @@ impl<Tag: Copy> Memory<Tag> {
         let buffer;
         if ptr.is_stack() {
             buffer = &self.stack;
-        } else {
+        } else if ptr.is_heap() {
             buffer = &self.heap;
+        } else {
+            buffer = &self.binary;
         }
 
         if ptr.var_idx() == 0 {
@@ -314,8 +398,10 @@ impl<Tag: Copy> Memory<Tag> {
         let buffer;
         if ptr.is_stack() {
             buffer = &self.stack;
-        } else {
+        } else if ptr.is_heap() {
             buffer = &self.heap;
+        } else {
+            buffer = &self.binary;
         }
 
         if ptr.var_idx() == 0 {
@@ -342,8 +428,10 @@ impl<Tag: Copy> Memory<Tag> {
     pub fn get_var<T: Default + Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
         if ptr.is_stack() {
             return self.stack.get_var(ptr);
-        } else {
+        } else if ptr.is_heap() {
             return self.heap.get_var(ptr);
+        } else {
+            return self.binary.get_var(ptr);
         }
     }
 
@@ -356,8 +444,10 @@ impl<Tag: Copy> Memory<Tag> {
         let previous_value;
         if ptr.is_stack() {
             previous_value = self.stack.set(ptr, value)?;
-        } else {
+        } else if ptr.is_heap() {
             previous_value = self.heap.set(ptr, value)?;
+        } else {
+            previous_value = self.binary.set(ptr, value)?;
         }
 
         let value_end_overwrite_start = self.historical_data.len();
@@ -379,7 +469,7 @@ impl<Tag: Copy> Memory<Tag> {
 
     #[inline]
     pub fn add_stack_var(&mut self, len: u32, tag: Tag) -> VarPointer {
-        let ptr = VarPointer::new_stack(self.stack.add_var(len), 0);
+        let ptr = VarPointer::new_stack(self.stack.add_var(len) as u16, 0); // TODO check for overflow
         self.push_history(MAKind::AllocStackVar { len }, tag);
         return ptr;
     }
@@ -399,9 +489,12 @@ impl<Tag: Copy> Memory<Tag> {
         let to_bytes = if ptr.is_stack() {
             let (start, end) = self.stack.get_var_range(ptr, bytes.len() as u32)?;
             &mut self.stack.data[start..end]
-        } else {
+        } else if ptr.is_heap() {
             let (start, end) = self.heap.get_var_range(ptr, bytes.len() as u32)?;
             &mut self.heap.data[start..end]
+        } else {
+            let (start, end) = self.binary.get_var_range(ptr, bytes.len() as u32)?;
+            &mut self.binary.data[start..end]
         };
 
         let value_end_overwrite_start = self.historical_data.len();
@@ -422,8 +515,8 @@ impl<Tag: Copy> Memory<Tag> {
     }
 
     #[inline]
-    pub fn stack_length(&self) -> u32 {
-        return (self.stack.vars.len() + 1) as u32; // TODO check for overflow
+    pub fn stack_length(&self) -> u16 {
+        return (self.stack.vars.len() + 1) as u16; // TODO check for overflow
     }
 
     pub fn pop_stack_var(&mut self, tag: Tag) -> Result<Var, IError> {
@@ -547,12 +640,18 @@ impl<Tag: Copy> Memory<Tag> {
             let pop_lower = stack.len() - len as usize;
 
             (&mut stack_vars[start..end], &stack[pop_lower..])
-        } else {
+        } else if ptr.is_heap() {
             let (start, end) = self.heap.get_var_range(ptr, len)?;
             let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
             let pop_lower = stack.len() - len as usize;
 
             (&mut self.heap.data[start..end], &stack[pop_lower..])
+        } else {
+            let (start, end) = self.binary.get_var_range(ptr, len)?;
+            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
+            let pop_lower = stack.len() - len as usize;
+
+            (&mut self.binary.data[start..end], &stack[pop_lower..])
         };
 
         let value_start = self.historical_data.len();
@@ -604,10 +703,14 @@ impl<Tag: Copy> Memory<Tag> {
             let (start, end) = self.stack.get_var_range(ptr, len)?;
             let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
             (&stack_vars[start..end], stack)
-        } else {
+        } else if ptr.is_heap() {
             let (start, end) = self.heap.get_var_range(ptr, len)?;
             let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
             (&self.heap.data[start..end], stack)
+        } else {
+            let (start, end) = self.binary.get_var_range(ptr, len)?;
+            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
+            (&self.binary.data[start..end], stack)
         };
 
         let pop_lower = stack.len() - len as usize;
@@ -770,12 +873,15 @@ pub struct MemorySnapshot<'a> {
     pub stack_vars: &'a [Var],
     pub heap_data: &'a [u8],
     pub heap_vars: &'a [Var],
+    pub binary_data: &'a [u8],
+    pub binary_vars: &'a [Var],
 }
 
 #[derive(Debug, Clone)]
 struct MockMemory {
     stack: VarBuffer,
     heap: VarBuffer,
+    binary: VarBuffer,
 }
 
 impl MockMemory {
@@ -783,21 +889,25 @@ impl MockMemory {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
+            binary: VarBuffer::new(),
         }
     }
 
-    pub fn new_from(stack: VarBuffer, heap: VarBuffer) -> Self {
+    pub fn new_from(stack: VarBuffer, heap: VarBuffer, binary: VarBuffer) -> Self {
         Self {
-            stack: stack,
-            heap: heap,
+            stack,
+            heap,
+            binary,
         }
     }
 
     pub fn var_buffer(&mut self, ptr: VarPointer) -> &mut VarBuffer {
         if ptr.is_stack() {
             &mut self.stack
-        } else {
+        } else if ptr.is_heap() {
             &mut self.heap
+        } else {
+            &mut self.binary
         }
     }
 
@@ -807,6 +917,8 @@ impl MockMemory {
             stack_vars: &self.stack.vars,
             heap_data: &self.heap.data,
             heap_vars: &self.heap.vars,
+            binary_data: &self.binary.data,
+            binary_vars: &self.binary.vars,
         }
     }
 }
@@ -918,7 +1030,7 @@ impl<'a, Tag: Copy> MemorySnapshotWalker<'a, Tag> {
                     stack_end,
                 } => {
                     let data = &mut self.memory.stack.data;
-                    let idx = data.len(); // TODO check for overflow
+                    let idx = data.len();
                     let len = (var_end_stack_start - var_start) as u32;
                     data.extend_from_slice(&self.historical_data[var_start..stack_end]);
                     let vars = &mut self.memory.stack.vars;
@@ -943,8 +1055,20 @@ impl<'a, Tag: Copy> MemorySnapshotWalker<'a, Tag> {
 
 impl<Tag: Copy> Memory<Tag> {
     pub fn forwards_walker(&self) -> MemorySnapshotWalker<Tag> {
+        let memory = MockMemory::new_from(
+            VarBuffer::new(),
+            VarBuffer::new(),
+            VarBuffer::new_from(
+                self.historical_data[..self.history_binary_end]
+                    .iter()
+                    .map(|u| *u)
+                    .collect(),
+                self.binary.vars.clone(),
+            ),
+        );
+
         MemorySnapshotWalker {
-            memory: MockMemory::new(),
+            memory,
             historical_data: &self.historical_data,
             history: &self.history,
             index: 0,
@@ -953,7 +1077,11 @@ impl<Tag: Copy> Memory<Tag> {
 
     pub fn backwards_walker(&self) -> MemorySnapshotWalker<Tag> {
         MemorySnapshotWalker {
-            memory: MockMemory::new_from(self.stack.clone(), self.heap.clone()),
+            memory: MockMemory::new_from(
+                self.stack.clone(),
+                self.heap.clone(),
+                self.binary.clone(),
+            ),
             historical_data: &self.historical_data,
             history: &self.history,
             index: self.history.len() + 1,
@@ -985,6 +1113,7 @@ fn test_walker() {
             }],
         ),
         VarBuffer::new(),
+        VarBuffer::new(),
     );
     assert_eq!(walker.prev().unwrap(), expected.snapshot());
 
@@ -1000,6 +1129,7 @@ fn test_walker() {
             }],
         ),
         VarBuffer::new(),
+        VarBuffer::new(),
     );
     assert_eq!(walker.prev().unwrap(), expected.snapshot());
 
@@ -1014,6 +1144,7 @@ fn test_walker() {
                 meta: 0,
             }],
         ),
+        VarBuffer::new(),
         VarBuffer::new(),
     );
     assert_eq!(walker.prev().unwrap(), expected.snapshot());

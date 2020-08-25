@@ -206,9 +206,9 @@ pub fn lex_token<'a>(symbols: &mut Symbols<'a>, data: &'a [u8], current: &mut us
         b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
             let mut int_value: i32 = 0;
             while data[*current] >= b'0' && data[*current] <= b'9' {
-                *current += 1;
                 int_value *= 10;
                 int_value += (data[*current] - b'0') as i32;
+                *current += 1;
             }
             return Token::new(TokenKind::IntLiteral(int_value), begin..*current);
         }

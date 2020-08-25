@@ -114,11 +114,11 @@ pub enum Opcode {
     ZExtend16To64,
     ZExtend32To64,
 
-    GetGlobal { var: u32, offset: u32, bytes: u32 },
-    SetGlobal { var: u32, offset: u32, bytes: u32 },
+    GetGlobal { var: u16, offset: u32, bytes: u32 },
+    SetGlobal { var: u16, offset: u32, bytes: u32 },
 
-    GetLocal { var: i32, offset: u32, bytes: u32 },
-    SetLocal { var: i32, offset: u32, bytes: u32 },
+    GetLocal { var: i16, offset: u32, bytes: u32 },
+    SetLocal { var: i16, offset: u32, bytes: u32 },
 
     Get { offset: i32, bytes: u32 },
     Set { offset: i32, bytes: u32 },
@@ -150,6 +150,7 @@ pub struct TaggedOpcode {
 #[derive(Debug, Clone, Copy)]
 pub struct Program<'a> {
     pub files: FileDbRef<'a>,
+    pub data: VarBufferRef<'a>,
     pub strings: &'a [&'a str],
     pub symbols: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
@@ -184,18 +185,18 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn fp_offset(fp: u32, var: i32) -> u32 {
+    pub fn fp_offset(fp: u16, var: i16) -> u16 {
         if var < 0 {
             // TODO make sure there's no overflow happening here
-            let var = (var * -1) as u32;
+            let var = (var * -1) as u16;
             fp - var - 1
         } else {
-            fp + var as u32
+            fp + var as u16
         }
     }
 
     pub fn run_program(&mut self, program: Program) -> u32 {
-        self.memory = Memory::new();
+        self.memory = Memory::new_with_binary(program.data);
         let ret_addr = self.add_stack_var(4, 0);
         self.set(ret_addr, 0u32, 0)
             .expect("failed to write to return address location of main");
@@ -285,7 +286,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     #[inline]
     pub fn run_op(
         &mut self,
-        fp: u32,
+        fp: u16,
         pc: u32,
         program: &Program,
         opcode: Opcode,

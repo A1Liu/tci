@@ -112,6 +112,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let end = right.range.end;
                     let left = self.buckets.add(expr);
                     let right = self.buckets.add(right);
+                    let range = r(start, end);
 
                     expr = Expr {
                         kind: ExprKind::BinOp(BinOp::Add, left, right),
