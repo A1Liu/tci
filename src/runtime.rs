@@ -165,10 +165,6 @@ impl VarBuffer {
             None => return Err(invalid_ptr(ptr)),
         };
 
-        if ptr.offset() >= var.len {
-            return Err(invalid_offset(var, ptr));
-        }
-
         if ptr.offset() + len > var.len {
             return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len)));
         }

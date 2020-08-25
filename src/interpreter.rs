@@ -153,6 +153,7 @@ pub struct Program<'a> {
     pub strings: &'a [&'a str],
     pub symbols: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
+    pub main_idx: u32,
 }
 
 pub struct Runtime<IO: RuntimeIO> {
@@ -204,7 +205,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         // TODO populate argc and argv
 
-        let result = match self.run_func(&program, 0) {
+        let result = match self.run_func(&program, program.main_idx) {
             Ok(res) => res,
             Err(err) => {
                 let err_str = render_err(&err, &self.callstack, &program);

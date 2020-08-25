@@ -192,7 +192,8 @@ impl<'a> Assembler<'a> {
             }
 
             TCExprKind::Call { func, params } => {
-                tagged.op = Opcode::StackAlloc(*self.func_types.get(&func).unwrap());
+                let rtype_size = *self.func_types.get(&func).unwrap();
+                tagged.op = Opcode::StackAlloc(rtype_size);
                 ops.push(tagged);
 
                 for param in *params {
@@ -207,8 +208,13 @@ impl<'a> Assembler<'a> {
                     ops.push(tagged);
                 }
 
-                tagged.op = Opcode::StackAddToTemp;
-                ops.push(tagged);
+                if rtype_size == 0 {
+                    tagged.op = Opcode::StackDealloc;
+                    ops.push(tagged);
+                } else {
+                    tagged.op = Opcode::StackAddToTemp;
+                    ops.push(tagged);
+                }
             }
         }
 
@@ -220,6 +226,10 @@ impl<'a> Assembler<'a> {
         env: &Environment,
         symbols: &Symbols,
     ) -> Result<Program<'b>, Error> {
+        let no_main = || error!("missing definition main function");
+        let main_func = self.functions.get(&MAIN_SYMBOL).ok_or_else(no_main)?;
+        let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
+
         let mut current_func = FuncDesc { file: !0, name: !0 };
         for op in self.opcodes.iter_mut() {
             match &mut op.op {
@@ -270,6 +280,7 @@ impl<'a> Assembler<'a> {
             strings,
             symbols,
             ops,
+            main_idx,
         };
 
         return Ok(program);
