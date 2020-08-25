@@ -105,7 +105,7 @@ fn main() {
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();
 
-    for arg in args {
+    for arg in args.iter().skip(1) {
         let filename = buckets.add_str(&arg);
         let input = buckets.add_str(&read_to_string(&filename).unwrap());
         files.add(buckets, filename, input);
