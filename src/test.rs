@@ -1,5 +1,6 @@
 use crate::run_on_file;
 use crate::util::{StringWriter, Void};
+use std::fs::read_to_string;
 
 fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();
@@ -7,7 +8,7 @@ fn test_file_should_succeed(filename: &str) {
     // let mut io = crate::runtime::TestIO::new();
     let mut io = crate::runtime::InMemoryIO::new();
 
-    match run_on_file(&mut io, filename, &mut writer) {
+    let output = match run_on_file(&mut io, filename, &mut writer) {
         Err(err) => {
             println!("{}", writer.to_string());
             panic!();
@@ -20,11 +21,15 @@ fn test_file_should_succeed(filename: &str) {
                 println!("stderr:\n{}", io.err.to_string());
                 panic!();
             }
-        }
-    }
 
-    // let filename = String::from(filename);
-    // assert!(output.to_string() == read_to_string(filename + ".out").expect("why did this fail?"));
+            io.out.to_string()
+        }
+    };
+
+    match read_to_string(String::from(filename) + ".out") {
+        Ok(expected) => assert_eq!(output, expected),
+        Err(_) => {}
+    }
 }
 
 fn test_file_should_fail(filename: &str) {

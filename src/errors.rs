@@ -1,3 +1,6 @@
+// THIS FILE ISN'T USED IN THE CODEBASE RIGHT NOW; IT'S PURELY FOR REFERENCE WHEN
+// IMPLEMENTING FUTURE STUFF
+
 pub fn struct_redefinition(original: &TCStruct, new: &StructDecl) -> Result<(), Error> {
     if let Some(_) = original.defn {
         if let Some(new_members) = new.members {

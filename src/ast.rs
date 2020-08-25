@@ -229,6 +229,8 @@ pub struct TCFunc<'a> {
 #[derive(Debug, Clone)]
 pub enum TCStmtKind<'a> {
     RetVal(TCExpr<'a>),
+    Ret,
+    Expr(TCExpr<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -244,11 +246,15 @@ pub enum TCExprKind<'a> {
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
+    SubI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),
 
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
+
+    Call { func: u32, params: &'a [TCExpr<'a>] },
 }
 
 #[derive(Debug, Clone)]

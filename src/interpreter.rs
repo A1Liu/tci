@@ -89,6 +89,7 @@ pub enum Opcode {
 
     StackAlloc(u32), // Allocates space on the stack
     StackDealloc,    // Pops a variable off of the stack
+    StackAddToTemp,  // Pops a variable off the stack, adding it to the temporary storage below
     Alloc(u32), // Allocates space on the heap, then pushes a pointer to that space onto the stack
 
     MakeTempInt32(i32),
@@ -123,6 +124,7 @@ pub enum Opcode {
     Set { offset: i32, bytes: u32 },
 
     AddU32,
+    SubI32,
 
     AddU64,
     SubI64,
@@ -300,6 +302,9 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::StackDealloc => {
                 self.pop_stack_var(pc)?;
             }
+            Opcode::StackAddToTemp => {
+                self.pop_stack_var_onto_stack(pc)?;
+            }
 
             Opcode::MakeTempInt32(value) => self.push_stack(value.to_be(), pc),
             Opcode::MakeTempInt64(value) => self.push_stack(value.to_be(), pc),
@@ -399,34 +404,40 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::AddU32 => {
-                let word1: u32 = u32::from_be(self.pop_stack(pc)?);
-                let word2: u32 = u32::from_be(self.pop_stack(pc)?);
+                let word2 = u32::from_be(self.pop_stack(pc)?);
+                let word1 = u32::from_be(self.pop_stack(pc)?);
                 self.push_stack(word1.wrapping_add(word2).to_be(), pc);
             }
 
+            Opcode::SubI32 => {
+                let word2 = i32::from_be(self.pop_stack(pc)?);
+                let word1 = i32::from_be(self.pop_stack(pc)?);
+                self.push_stack(word1.wrapping_sub(word2).to_be(), pc);
+            }
+
             Opcode::AddU64 => {
-                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
-                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2 = u64::from_be(self.pop_stack(pc)?);
+                let word1 = u64::from_be(self.pop_stack(pc)?);
                 self.push_stack(word1.wrapping_add(word2).to_be(), pc);
             }
             Opcode::SubI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
-                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2 = u64::from_be(self.pop_stack(pc)?);
+                let word1 = u64::from_be(self.pop_stack(pc)?);
                 self.push_stack(word1.wrapping_sub(word2).to_be(), pc);
             }
             Opcode::MulI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
-                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2 = u64::from_be(self.pop_stack(pc)?);
+                let word1 = u64::from_be(self.pop_stack(pc)?);
                 self.push_stack(word1.wrapping_mul(word2).to_be(), pc);
             }
             Opcode::DivI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
-                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2 = u64::from_be(self.pop_stack(pc)?);
+                let word1 = u64::from_be(self.pop_stack(pc)?);
                 self.push_stack(word1.wrapping_div(word2).to_be(), pc);
             }
             Opcode::ModI64 => {
-                let word1: u64 = u64::from_be(self.pop_stack(pc)?);
-                let word2: u64 = u64::from_be(self.pop_stack(pc)?);
+                let word2 = u64::from_be(self.pop_stack(pc)?);
+                let word1 = u64::from_be(self.pop_stack(pc)?);
                 self.push_stack((word1 % word2).to_be(), pc);
             }
 

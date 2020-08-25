@@ -16,6 +16,7 @@ pub struct ASMFunc<'a> {
 
 pub struct Assembler<'a> {
     pub opcodes: Vec<TaggedOpcode>,
+    pub func_types: HashMap<u32, u32>,
     pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
 }
 
@@ -24,11 +25,17 @@ impl<'a> Assembler<'a> {
         Self {
             opcodes: Vec::new(),
             functions: HashMap::new(),
+            func_types: HashMap::new(),
         }
     }
 
     pub fn add_file(&mut self, types: TypeEnv<'a>) -> Result<(), Error> {
         // TODO Add types here
+
+        // Add function return sizes
+        for (ident, TCFunc { func_type, .. }) in types.functions.iter() {
+            self.func_types.insert(*ident, func_type.return_type.size());
+        }
 
         // Add functions
         for (ident, func) in types.functions.into_iter() {
@@ -79,7 +86,7 @@ impl<'a> Assembler<'a> {
         });
 
         for stmt in defn.stmts {
-            let mut ops = self.translate_statement(param_count, stmt);
+            let mut ops = self.translate_statement(&func_type, param_count, stmt);
             self.opcodes.append(&mut ops);
         }
 
@@ -87,7 +94,12 @@ impl<'a> Assembler<'a> {
         return Ok(());
     }
 
-    pub fn translate_statement(&self, param_count: u32, stmt: &TCStmt) -> Vec<TaggedOpcode> {
+    pub fn translate_statement(
+        &self,
+        func_type: &TCFuncType,
+        param_count: u32,
+        stmt: &TCStmt,
+    ) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
@@ -95,17 +107,29 @@ impl<'a> Assembler<'a> {
         };
 
         match &stmt.kind {
-            TCStmtKind::RetVal(val) => {
-                ops.append(&mut self.translate_expr(val));
+            TCStmtKind::RetVal(expr) => {
+                ops.append(&mut self.translate_expr(expr));
 
                 let ret_idx = param_count as i32 * -1 - 1;
                 tagged.op = Opcode::SetLocal {
                     var: ret_idx,
                     offset: 0,
-                    bytes: val.expr_type.size(),
+                    bytes: expr.expr_type.size(),
                 };
                 ops.push(tagged);
                 tagged.op = Opcode::Ret;
+                ops.push(tagged);
+            }
+            TCStmtKind::Ret => {
+                tagged.op = Opcode::Ret;
+                ops.push(tagged);
+            }
+
+            TCStmtKind::Expr(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::Pop {
+                    bytes: expr.expr_type.size(),
+                };
                 ops.push(tagged);
             }
         }
@@ -138,6 +162,12 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::AddU64;
                 ops.push(tagged);
             }
+            TCExprKind::SubI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::SubI32;
+                ops.push(tagged);
+            }
 
             TCExprKind::SConv8To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
@@ -158,6 +188,26 @@ impl<'a> Assembler<'a> {
             TCExprKind::ZConv32To64(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::ZExtend32To64;
+                ops.push(tagged);
+            }
+
+            TCExprKind::Call { func, params } => {
+                tagged.op = Opcode::StackAlloc(*self.func_types.get(&func).unwrap());
+                ops.push(tagged);
+
+                for param in *params {
+                    ops.append(&mut self.translate_expr(param));
+                }
+
+                tagged.op = Opcode::Call(*func);
+                ops.push(tagged);
+
+                tagged.op = Opcode::StackDealloc;
+                for param in *params {
+                    ops.push(tagged);
+                }
+
+                tagged.op = Opcode::StackAddToTemp;
                 ops.push(tagged);
             }
         }

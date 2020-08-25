@@ -56,6 +56,19 @@ fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
     };
 }
 
+fn sub_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::I32,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        range: r_from(l.range, r.range),
+        kind: TCExprKind::SubI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
 lazy_static! {
     pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
         use TCShallowType::*;
@@ -63,6 +76,7 @@ lazy_static! {
         m.insert((BinOp::Add, I32, I32), add_int_int);
         m.insert((BinOp::Add, I32, Char), add_int_char);
         m.insert((BinOp::Add, Char, I32), add_char_int);
+        m.insert((BinOp::Sub, I32, I32), sub_int_int);
         m
     };
     pub static ref BIN_LEFT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
@@ -70,6 +84,7 @@ lazy_static! {
         let mut m = HashSet::new();
         m.insert((BinOp::Add, I32));
         m.insert((BinOp::Add, Char));
+        m.insert((BinOp::Sub, I32));
         m
     };
     pub static ref BIN_RIGHT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
@@ -77,6 +92,7 @@ lazy_static! {
         let mut m = HashSet::new();
         m.insert((BinOp::Add, I32));
         m.insert((BinOp::Add, Char));
+        m.insert((BinOp::Sub, I32));
         m
     };
 }
@@ -229,6 +245,30 @@ impl StructEnv {
         return Ok(unchecked_type);
     }
 
+    // TODO make this work with implicit type conversions
+    pub fn assign_convert<'a>(
+        &self,
+        buckets: BucketListRef<'a>,
+        assign_to: &TCType,
+        assign_range: Range,
+        assign_file: u32,
+        expr: TCExpr<'a>,
+    ) -> Result<TCExpr<'a>, Error> {
+        if assign_to == &expr.expr_type {
+            return Ok(expr);
+        } else {
+            return Err(error!(
+                "value has invalid type",
+                expr.range,
+                self.file,
+                "value found here",
+                assign_range,
+                assign_file,
+                "expected type defined here"
+            ));
+        }
+    }
+
     pub fn check_struct_type(
         &self,
         struct_ident: u32,
@@ -311,7 +351,7 @@ pub fn check_types<'a>(
         let mut typed_params = Vec::new();
         for param in params.iter() {
             if let Some(original) = names.insert(param.ident, param.range.clone()) {
-                return Err(param_redeclaration(struct_env.file, original, param.range));
+                return Err(param_redeclaration(file, original, param.range));
             }
 
             let param_type = struct_env.check_type(decl_idx, &param.decl_type, *pointer_count)?;
@@ -326,7 +366,7 @@ pub fn check_types<'a>(
         let typed_params = buckets.add_array(typed_params);
         let tc_func_type = TCFuncType {
             return_type,
-            loc: stmt.range.cloc(env.structs.file),
+            loc: stmt.range.cloc(file),
             params: typed_params,
             decl_idx,
         };
@@ -378,7 +418,7 @@ pub fn check_types<'a>(
 
         tc_func.defn = Some(TCFuncDefn {
             defn_idx: func.defn_idx,
-            loc: func.range.cloc(env.structs.file),
+            loc: func.range.cloc(file),
             stmts: buckets.add_array(gstmts),
         });
 
@@ -403,10 +443,56 @@ pub fn check_stmts<'b>(
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::RetVal(expr) => {
-                let expr = check_expr(buckets, &env, &local_env, expr)?;
+                let expr = check_expr(buckets, &env, &local_env, decl_idx, expr)?;
+                let rtype = local_env.return_type;
+                if rtype.pointer_count == 0
+                    && rtype.kind == TCTypeKind::Void
+                    && rtype != expr.expr_type
+                {
+                    return Err(error!(
+                        "void function should not return a value",
+                        expr.range, env.structs.file, "value is here"
+                    ));
+                }
+
+                let expr = env.structs.assign_convert(
+                    buckets,
+                    &local_env.return_type,
+                    local_env.return_type_range,
+                    env.structs.file,
+                    expr,
+                )?;
+
+                tstmts.push(TCStmt {
+                    range: stmt.range,
+                    kind: TCStmtKind::RetVal(expr),
+                });
+            }
+            StmtKind::Ret => {
+                let rtype = local_env.return_type;
+                if rtype.pointer_count != 0 || rtype.kind != TCTypeKind::Void {
+                    return Err(error!(
+                        "expected value in return statement (return type is not void)",
+                        local_env.return_type_range,
+                        env.structs.file,
+                        "target type is here".to_string(),
+                        stmt.range,
+                        env.structs.file,
+                        "return statement is here".to_string()
+                    ));
+                }
+
+                tstmts.push(TCStmt {
+                    range: stmt.range,
+                    kind: TCStmtKind::Ret,
+                });
+            }
+
+            StmtKind::Expr(expr) => {
+                let expr = check_expr(buckets, env, local_env, decl_idx, expr)?;
                 tstmts.push(TCStmt {
                     range: expr.range,
-                    kind: TCStmtKind::RetVal(expr),
+                    kind: TCStmtKind::Expr(expr),
                 });
             }
 
@@ -423,6 +509,7 @@ pub fn check_expr<'b>(
     buckets: BucketListRef<'b>,
     env: &TypeEnvInterim<'b>,
     local_env: &LocalTypeEnv,
+    decl_idx: u32,
     expr: &Expr,
 ) -> Result<TCExpr<'b>, Error> {
     match expr.kind {
@@ -436,12 +523,67 @@ pub fn check_expr<'b>(
                 range: expr.range,
             });
         }
-        ExprKind::BinOp(BinOp::Add, l, r) => {
-            let l = check_expr(buckets, env, local_env, l)?;
-            let r = check_expr(buckets, env, local_env, r)?;
 
-            let bin_op = get_overload(&env.structs, BinOp::Add, &l, &r)?;
+        ExprKind::BinOp(op, l, r) => {
+            let l = check_expr(buckets, env, local_env, decl_idx, l)?;
+            let r = check_expr(buckets, env, local_env, decl_idx, r)?;
+
+            let bin_op = get_overload(&env.structs, op, &l, &r)?;
             return Ok(bin_op(&buckets, l, r));
+        }
+
+        ExprKind::Call { function, params } => {
+            let func_id = if let ExprKind::Ident(id) = function.kind {
+                id
+            } else {
+                return Err(error!(
+                    "calling an expression that isn't a function",
+                    function.range, env.structs.file, "called here"
+                ));
+            };
+
+            let func_type = if let Some(func_type) = env.func_types.get(&func_id) {
+                func_type
+            } else {
+                return Err(error!(
+                    "function doesn't exist",
+                    expr.range, env.structs.file, "called here"
+                ));
+            };
+
+            if func_type.decl_idx > decl_idx {
+                return Err(error!(
+                    "function hasn't been declared yet (declaration order matters in C)",
+                    expr.range,
+                    env.structs.file,
+                    "function called here",
+                    func_type.loc.range,
+                    func_type.loc.file,
+                    "function declared here"
+                ));
+            }
+
+            let mut tparams = Vec::new();
+            for param in params {
+                let expr = check_expr(buckets, &env, &local_env, decl_idx, expr)?;
+                let expr = env.structs.assign_convert(
+                    buckets,
+                    &func_type.return_type,
+                    func_type.loc.range,
+                    func_type.loc.file,
+                    expr,
+                )?;
+                tparams.push(expr);
+            }
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Call {
+                    func: func_id,
+                    params: buckets.add_array(tparams),
+                },
+                expr_type: func_type.return_type,
+                range: expr.range,
+            });
         }
         _ => panic!("unimplemented"),
     }
