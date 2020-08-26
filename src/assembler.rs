@@ -8,11 +8,20 @@ use crate::util::*;
 use crate::*;
 use core::alloc;
 use core::mem::{align_of, size_of};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct ASMFunc<'a> {
     pub func_type: TCFuncType<'a>,
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
+}
+
+lazy_static! {
+    pub static ref LIB_FUNCS: HashSet<u32> = {
+        let mut m = HashSet::new();
+        m.insert(PRINTF_SYMBOL);
+        m.insert(EXIT_SYMBOL);
+        m
+    };
 }
 
 pub struct Assembler<'a> {
@@ -81,10 +90,7 @@ impl<'a> Assembler<'a> {
         let param_count = func_type.params.len() as u32;
 
         self.opcodes.push(TaggedOpcode {
-            op: Opcode::Func(FuncDesc {
-                file: defn.loc.file,
-                name: ident,
-            }),
+            op: Opcode::Func(FuncDesc::new(defn.loc.file, ident)),
             range: defn.loc.range,
         });
 
@@ -153,8 +159,11 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
             TCExprKind::StringLiteral(val) => {
-                let var = self.data.add_var(val.len() as u32); // TODO overflow here
-                self.data.data[self.data.vars[var as usize].idx..].copy_from_slice(val.as_bytes());
+                let var = self.data.add_var(val.len() as u32 + 1); // TODO overflow here
+                let idx = self.data.vars[var as usize].idx;
+                let end = val.len() + idx;
+                self.data.data[idx..end].copy_from_slice(val.as_bytes());
+                self.data.data[end] = 0;
                 tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
                 ops.push(tagged);
             }
@@ -206,7 +215,12 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
 
                 for param in *params {
+                    let bytes = param.expr_type.size();
+                    tagged.op = Opcode::StackAlloc(bytes);
+                    ops.push(tagged);
                     ops.append(&mut self.translate_expr(param));
+                    tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
+                    ops.push(tagged);
                 }
 
                 tagged.op = Opcode::Call(*func);
@@ -239,7 +253,7 @@ impl<'a> Assembler<'a> {
         let main_func = self.functions.get(&MAIN_SYMBOL).ok_or_else(no_main)?;
         let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
-        let mut current_func = FuncDesc { file: !0, name: !0 };
+        let mut current_func = FuncDesc::new(!0, !0);
         for op in self.opcodes.iter_mut() {
             match &mut op.op {
                 Opcode::Func(func_desc) => {
@@ -250,6 +264,8 @@ impl<'a> Assembler<'a> {
                     if let Some(func_header) = function.func_header {
                         let (fptr, loc) = func_header;
                         *addr = fptr;
+                    } else if LIB_FUNCS.contains(addr) {
+                        op.op = Opcode::LibCall(*addr);
                     } else {
                         let func_loc = function.func_type.loc;
                         return Err(error!(

@@ -19,8 +19,8 @@ The goals of this compiler are:
 - Struct literals and array literals are allowed inside places where expressions
   are expected, and are type inferred.
 - No support for Goto
-- Typedefs must begin with an uppercase letter
-- Variables must begin with a lowercase letter
+- Typedefs must begin with an uppercase letter, or end with `_t`, with the exception of `va_list`
+- Variables must begin with a lowercase letter, and cannot end with `_t`
 
 ## Credit
 

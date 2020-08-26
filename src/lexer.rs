@@ -100,7 +100,8 @@ impl<'a> Token<'a> {
 }
 
 pub const MAIN_SYMBOL: u32 = 0;
-pub const _MAIN_SYMBOL: u32 = 1;
+pub const PRINTF_SYMBOL: u32 = 1;
+pub const EXIT_SYMBOL: u32 = 2;
 
 pub struct Symbols<'a> {
     pub translate: HashMap<&'a str, u32>,
@@ -115,7 +116,8 @@ impl<'a> Symbols<'a> {
         };
 
         assert_eq!(MAIN_SYMBOL, new_symbols.translate_add("main"));
-        assert_eq!(_MAIN_SYMBOL, new_symbols.translate_add("_main"));
+        assert_eq!(PRINTF_SYMBOL, new_symbols.translate_add("printf"));
+        assert_eq!(EXIT_SYMBOL, new_symbols.translate_add("exit"));
         return new_symbols;
     }
 
@@ -214,7 +216,11 @@ pub fn lex_token<'a, 'b>(
                 "char" => return Token::newr(TokenKind::Char, begin..*current),
                 word => {
                     let id = symbols.translate_add(word);
-                    return Token::newr(TokenKind::Ident(id), begin..*current);
+                    if word.ends_with("_t") || word == "va_list" {
+                        return Token::newr(TokenKind::TypeIdent(id), begin..*current);
+                    } else {
+                        return Token::newr(TokenKind::Ident(id), begin..*current);
+                    }
                 }
             }
         }

@@ -1,8 +1,8 @@
 use crate::filedb::*;
+use crate::lexer::*;
 use crate::runtime::*;
 use crate::util::*;
 use core::ops::{Deref, DerefMut};
-use core::{mem, str};
 use std::io::Write;
 
 macro_rules! error {
@@ -24,6 +24,10 @@ pub struct FuncDesc {
 }
 
 impl FuncDesc {
+    pub fn new(file: u32, name: u32) -> Self {
+        Self { file, name }
+    }
+
     pub fn into_callframe(self, range: Range) -> CallFrame {
         CallFrame {
             file: self.file,
@@ -65,10 +69,9 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
     return out.to_string();
 }
 
-pub const ECALL_PRINT_INT: u32 = 0;
-pub const ECALL_PRINT_STR: u32 = 1;
-pub const ECALL_EXIT: u32 = 2;
-pub const ECALL_EXIT_WITH_CODE: u32 = 3;
+pub const ECALL_PRINT_STR: u32 = 0;
+pub const ECALL_EXIT: u32 = 1;
+pub const ECALL_EXIT_WITH_CODE: u32 = 2;
 
 pub enum Directive {
     ChangePC(u32),
@@ -100,6 +103,7 @@ pub enum Opcode {
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
+    PopIntoTopVar { offset: u32, bytes: u32 },
 
     SExtend8To16,
     SExtend8To32,
@@ -139,6 +143,7 @@ pub enum Opcode {
     Ret, // Returns to caller
 
     Call(u32),
+    LibCall(u32),
     Ecall(u32),
 }
 
@@ -190,7 +195,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         if var < 0 {
             // TODO make sure there's no overflow happening here
             let var = (var * -1) as u16;
-            fp - var - 1
+            fp - var
         } else {
             fp + var as u16
         }
@@ -232,10 +237,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         };
 
-        let ptr = self.add_stack_var(mem::size_of::<FuncDesc>() as u32, pcounter);
-        self.push_stack(func_desc, pcounter);
-        self.pop_stack_bytes_into(ptr, mem::size_of::<FuncDesc>() as u32, pcounter)
-            .expect("why did this fail?");
         let fp = self.memory.stack_length();
         let mut pc: u32 = pcounter + 1;
 
@@ -273,7 +274,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     while self.memory.stack_length() > fp {
                         self.memory.pop_stack_var(pc)?;
                     }
-                    self.memory.pop_stack_var(pc)?; // Pop function description
 
                     return Ok(None);
                 }
@@ -330,6 +330,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::Pop { bytes } => self.pop_bytes(bytes, pc)?,
             Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop, pc)?,
+            Opcode::PopIntoTopVar { offset, bytes } => {
+                let ptr = VarPointer::new_stack(self.stack_length() - 1, offset);
+                self.pop_stack_bytes_into(ptr, bytes, pc)?;
+            }
 
             Opcode::SExtend8To16 => {
                 let val = self.pop_stack::<i8>(pc)?;
@@ -468,12 +472,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     return Ok(Directive::Exit(exit_code));
                 }
             }
-
-            Opcode::Ecall(ECALL_PRINT_INT) => {
-                let word: i64 = i64::from_be(self.pop_stack(pc)?);
-                write!(self.io.out(), "{}", word)
-                    .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
+            Opcode::LibCall(func_name) => {
+                if let Some(exit_code) = self.dispatch_lib_func(func_name, pc)? {
+                    return Ok(Directive::Exit(exit_code));
+                }
             }
+
             Opcode::Ecall(ECALL_PRINT_STR) => {
                 let ptr: VarPointer = self.pop_stack(pc)?;
                 let str_bytes = self.memory.get_var_slice(ptr)?;
@@ -490,7 +494,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     return err!("MissingNullTerminator", "string missing null terminator");
                 }
 
-                let str_value = unsafe { str::from_utf8_unchecked(&str_bytes[0..idx]) };
+                let str_value = unsafe { core::str::from_utf8_unchecked(&str_bytes[0..idx]) };
 
                 write!(self.io.out(), "{}", str_value)
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
@@ -505,5 +509,21 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
 
         return Ok(Directive::ChangePC(pc + 1));
+    }
+
+    pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<u32>, IError> {
+        match func_name {
+            PRINTF_SYMBOL => return self.printf(),
+            n => {
+                return Err(error!(
+                    "InvalidLibraryFunction",
+                    "library function symbol {} is invalid (this is a problem with tci)", n
+                ))
+            }
+        }
+    }
+
+    pub fn printf(&mut self) -> Result<Option<u32>, IError> {
+        return Err(error!("IDK", "idk man"));
     }
 }
