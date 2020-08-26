@@ -35,7 +35,7 @@ pub struct Environment<'a> {
     pub files: FileDbRef<'a>,
 }
 
-fn run<'a>(env: Environment<'a>, runtime_io: impl RuntimeIO) -> Result<u32, Error> {
+fn run<'a>(env: Environment<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Error> {
     let mut symbols = lexer::Symbols::new();
     let files = env.files.iter();
     let files = files.map(|id| (id, env.files.source(id).unwrap()));
@@ -76,7 +76,7 @@ fn run_on_file(
     runtime_io: impl RuntimeIO,
     filename: &str,
     writer: &mut impl WriteColor,
-) -> Result<u32, Error> {
+) -> Result<i32, Error> {
     let buckets = buckets::BucketList::new();
     let mut files = FileDb::new();
     let input = read_to_string(&filename).unwrap();
@@ -114,10 +114,21 @@ fn main() {
     let files = FileDbRef::new(buckets, &files);
     let env = Environment { buckets, files };
 
-    if let Err(err) = run(env, runtime_io) {
-        let config = codespan_reporting::term::Config::default();
+    match run(env, runtime_io) {
+        Err(err) => {
+            let config = codespan_reporting::term::Config::default();
 
-        codespan_reporting::term::emit(&mut writer.lock(), &config, &env.files, &err.diagnostic())
+            codespan_reporting::term::emit(
+                &mut writer.lock(),
+                &config,
+                &env.files,
+                &err.diagnostic(),
+            )
             .expect("why did this fail?");
+        }
+        Ok(ret_code) => {
+            println!("TCI: return code was {}", ret_code);
+            std::process::exit(ret_code as i32);
+        }
     }
 }

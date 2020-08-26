@@ -41,7 +41,7 @@ impl<'a> Assembler<'a> {
         }
     }
 
-    pub fn add_file(&mut self, types: TypeEnv<'a>) -> Result<(), Error> {
+    pub fn add_file(&mut self, types: TypedFuncs<'a>) -> Result<(), Error> {
         // TODO Add types here
 
         // Add function return sizes
@@ -167,6 +167,14 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
                 ops.push(tagged);
             }
+            TCExprKind::LocalIdent { var_offset } => {
+                tagged.op = Opcode::GetLocal {
+                    var: *var_offset,
+                    offset: 0,
+                    bytes: expr.expr_type.size(),
+                };
+                ops.push(tagged);
+            }
 
             TCExprKind::AddI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
@@ -209,7 +217,11 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
 
-            TCExprKind::Call { func, params } => {
+            TCExprKind::Call {
+                func,
+                params,
+                varargs,
+            } => {
                 let rtype_size = *self.func_types.get(&func).unwrap();
                 tagged.op = Opcode::StackAlloc(rtype_size);
                 ops.push(tagged);
@@ -223,11 +235,27 @@ impl<'a> Assembler<'a> {
                     ops.push(tagged);
                 }
 
+                if *varargs {
+                    tagged.op = Opcode::StackAlloc(4);
+                    ops.push(tagged);
+                    tagged.op = Opcode::MakeTempInt32(params.len() as i32); // check overflow here
+                    ops.push(tagged);
+                    tagged.op = Opcode::PopIntoTopVar {
+                        offset: 0,
+                        bytes: 4,
+                    };
+                    ops.push(tagged);
+                }
+
                 tagged.op = Opcode::Call(*func);
                 ops.push(tagged);
 
                 tagged.op = Opcode::StackDealloc;
                 for param in *params {
+                    ops.push(tagged);
+                }
+
+                if *varargs {
                     ops.push(tagged);
                 }
 
@@ -249,7 +277,7 @@ impl<'a> Assembler<'a> {
         env: &Environment,
         symbols: &Symbols,
     ) -> Result<Program<'b>, Error> {
-        let no_main = || error!("missing definition main function");
+        let no_main = || error!("missing main function definition");
         let main_func = self.functions.get(&MAIN_SYMBOL).ok_or_else(no_main)?;
         let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
@@ -297,7 +325,6 @@ impl<'a> Assembler<'a> {
         let mut frame = buckets.alloc_frame(layout);
 
         let files = env.files.clone_into_frame(&mut frame);
-        let strings: &[&str] = frame.add_array(Vec::new()); // TODO
         let symbols = symbols.names.iter().map(|i| &*frame.add_str(*i)).collect();
         let symbols: &[&str] = frame.add_array(symbols);
         let ops = frame.add_array(self.opcodes);
@@ -305,7 +332,6 @@ impl<'a> Assembler<'a> {
 
         let program = Program {
             files,
-            strings,
             symbols,
             data,
             ops,

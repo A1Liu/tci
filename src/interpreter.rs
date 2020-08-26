@@ -76,7 +76,7 @@ pub const ECALL_EXIT_WITH_CODE: u32 = 2;
 pub enum Directive {
     ChangePC(u32),
     Return,
-    Exit(u32),
+    Exit(i32),
 }
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
@@ -99,7 +99,6 @@ pub enum Opcode {
     MakeTempInt64(i64),
     MakeTempFloat64(f64),
     MakeTempBinaryPtr { var: u32, offset: u32 },
-    LoadStr(u32),
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
@@ -157,7 +156,6 @@ pub struct TaggedOpcode {
 pub struct Program<'a> {
     pub files: FileDbRef<'a>,
     pub data: VarBufferRef<'a>,
-    pub strings: &'a [&'a str],
     pub symbols: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
     pub main_idx: u32,
@@ -201,7 +199,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run_program(&mut self, program: Program) -> u32 {
+    pub fn run_program(&mut self, program: Program) -> i32 {
         self.memory = Memory::new_with_binary(program.data);
         let ret_addr = self.add_stack_var(4, 0);
         self.set(ret_addr, 0u32, 0)
@@ -222,10 +220,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         };
 
-        return result.unwrap_or(u32::from_be(self.get_var(ret_addr).unwrap()));
+        return result.unwrap_or(i32::from_be(self.get_var(ret_addr).unwrap()));
     }
 
-    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<u32>, IError> {
+    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<i32>, IError> {
         let func_desc = match program.ops[pcounter as usize].op {
             Opcode::Func(desc) => desc,
             op => {
@@ -314,17 +312,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::MakeTempFloat64(value) => self.push_stack(value, pc),
             Opcode::MakeTempBinaryPtr { var, offset } => {
                 let ptr = VarPointer::new_binary(var, offset);
-                self.push_stack(ptr, pc);
-            }
-            Opcode::LoadStr(idx) => {
-                let str_value = program.strings[idx as usize].as_bytes();
-                let str_len = str_value.len() as u32; // TODO check for overflow
-
-                let ptr = self.add_heap_var(str_len + 1, pc);
-                self.write_bytes(ptr, str_value, pc)?;
-                let mut end_ptr = ptr;
-                end_ptr.set_offset(str_len);
-                self.write_bytes(end_ptr, &vec![0], pc)?;
                 self.push_stack(ptr, pc);
             }
 
@@ -500,7 +487,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
             }
             Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {
-                let code: u32 = self.pop_stack(pc)?;
+                let code = i32::from_be(self.pop_stack(pc)?);
                 return Ok(Directive::Exit(code));
             }
             Opcode::Ecall(call) => {
@@ -511,7 +498,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         return Ok(Directive::ChangePC(pc + 1));
     }
 
-    pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<u32>, IError> {
+    pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<i32>, IError> {
         match func_name {
             PRINTF_SYMBOL => return self.printf(),
             n => {
@@ -523,7 +510,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn printf(&mut self) -> Result<Option<u32>, IError> {
+    pub fn printf(&mut self) -> Result<Option<i32>, IError> {
         return Err(error!("IDK", "idk man"));
     }
 }

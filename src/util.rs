@@ -70,11 +70,13 @@ macro_rules! error {
     };
 }
 
+#[derive(Debug)]
 pub struct ErrorSection {
     pub location: CodeLoc,
     pub message: String,
 }
 
+#[derive(Debug)]
 pub struct Error {
     pub message: String,
     pub sections: Vec<ErrorSection>,

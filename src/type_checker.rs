@@ -152,16 +152,16 @@ pub fn invalid_operands_bin_expr(env: &StructEnv, op: BinOp, l: &TCExpr, r: &TCE
 pub struct LocalTypeEnv {
     pub symbols: HashMap<u32, TCVar>,
     pub return_type: TCType,
-    pub return_type_range: Range,
+    pub rtype_range: Range,
     pub parent: *const LocalTypeEnv,
 }
 
 impl LocalTypeEnv {
-    pub fn new(return_type: TCType, return_type_range: Range) -> Self {
+    pub fn new(return_type: TCType, rtype_range: Range) -> Self {
         Self {
             symbols: HashMap::new(),
             return_type,
-            return_type_range,
+            rtype_range,
             parent: core::ptr::null(),
         }
     }
@@ -172,14 +172,14 @@ impl LocalTypeEnv {
             Self {
                 symbols: HashMap::new(),
                 return_type: self.return_type.clone(),
-                return_type_range: self.return_type_range,
+                rtype_range: self.rtype_range,
                 parent: self.parent,
             }
         } else {
             Self {
                 symbols: HashMap::new(),
                 return_type: self.return_type.clone(),
-                return_type_range: self.return_type_range,
+                rtype_range: self.rtype_range,
                 parent: self,
             }
         }
@@ -197,22 +197,22 @@ impl LocalTypeEnv {
         return unsafe { &*self.parent }.var(id);
     }
 
-    // pub fn add_var(&mut self, decl_type: &ASTType, decl: &Decl) -> Result<(), Error> {
-    //     let tc_value = TCVar {
-    //         decl_type: convert_type(decl_type, decl.pointer_count),
-    //         range: decl.range,
-    //     };
-    //     if let Some(var_type) = self.symbols.insert(decl.ident, tc_value) {
-    //         return Err(error!(
-    //             "name redefined in struct",
-    //             &var_type.range,
-    //             self.file_id,
-    //             "first_definition here" & decl.range
-    //         ));
-    //     }
+    pub fn add_var(&mut self, ident: u32, tc_value: TCVar) -> Result<(), Error> {
+        let tc_loc = tc_value.loc;
+        if let Some(var_type) = self.symbols.insert(ident, tc_value) {
+            return Err(error!(
+                "name redefined in scope",
+                var_type.loc.range,
+                var_type.loc.file,
+                "first declaration defined here",
+                tc_loc.range,
+                tc_loc.file,
+                "redecaration defined here"
+            ));
+        }
 
-    //     return Ok(());
-    // }
+        return Ok(());
+    }
 }
 
 pub struct StructEnv {
@@ -295,7 +295,7 @@ impl StructEnv {
 // internal
 pub struct UncheckedFunction<'a> {
     defn_idx: u32,
-    return_type_range: Range,
+    rtype_range: Range,
     range: Range,
     body: &'a [Stmt<'a>],
 }
@@ -306,7 +306,7 @@ pub struct TypeEnvInterim<'b> {
     pub func_types: HashMap<u32, TCFuncType<'b>>,
 }
 
-pub struct TypeEnv<'a> {
+pub struct TypedFuncs<'a> {
     pub structs: StructEnv,
     pub functions: HashMap<u32, TCFunc<'a>>,
 }
@@ -315,7 +315,7 @@ pub fn check_types<'a>(
     buckets: BucketListRef<'a>,
     file: u32,
     stmts: &[GlobalStmt],
-) -> Result<TypeEnv<'a>, Error> {
+) -> Result<TypedFuncs<'a>, Error> {
     let struct_env = StructEnv { file };
 
     let mut env = TypeEnvInterim {
@@ -325,7 +325,7 @@ pub fn check_types<'a>(
 
     let mut unchecked_functions = HashMap::new();
     for (decl_idx, stmt) in stmts.iter().enumerate() {
-        let (return_type, pointer_count, ident, params, func_body) = match &stmt.kind {
+        let (rtype, rpointer_count, ident, params, func_body) = match &stmt.kind {
             GlobalStmtKind::FuncDecl {
                 return_type,
                 ident,
@@ -343,22 +343,50 @@ pub fn check_types<'a>(
         };
 
         let decl_idx = decl_idx as u32;
-        let return_type_range = return_type.range;
+        let rtype_range = rtype.range;
         let struct_env = &env.structs;
-        let return_type = struct_env.check_type(decl_idx, return_type, *pointer_count)?;
+        let return_type = struct_env.check_type(decl_idx, rtype, *rpointer_count)?;
 
         let mut names = HashMap::new();
         let mut typed_params = Vec::new();
+        let mut varargs = None;
         for param in params.iter() {
-            if let Some(original) = names.insert(param.ident, param.range.clone()) {
-                return Err(param_redeclaration(file, original, param.range));
+            if let Some(range) = varargs {
+                return Err(error!(
+                    "function parameter after vararg",
+                    range, file, "vararg indicator here", param.range, file, "parameter here"
+                ));
             }
 
-            let param_type = struct_env.check_type(decl_idx, &param.decl_type, *pointer_count)?;
+            let (decl_type, ppointer_count, ident) = match &param.kind {
+                ParamKind::Vararg => {
+                    varargs = Some(param.range);
+                    continue;
+                }
+                ParamKind::StructLike {
+                    decl_type,
+                    pointer_count,
+                    ident,
+                } => (decl_type, *pointer_count, *ident),
+            };
+
+            if let Some(original) = names.insert(ident, param.range) {
+                return Err(error!(
+                    "redeclaration of function parameter",
+                    original,
+                    file,
+                    "original declaration here",
+                    param.range,
+                    file,
+                    "second declaration here"
+                ));
+            }
+
+            let param_type = struct_env.check_type(decl_idx, decl_type, ppointer_count)?;
 
             typed_params.push(TCFuncParam {
                 decl_type: param_type,
-                ident: param.ident,
+                ident: ident,
                 range: param.range,
             });
         }
@@ -369,6 +397,7 @@ pub fn check_types<'a>(
             loc: stmt.range.cloc(file),
             params: typed_params,
             decl_idx,
+            varargs: varargs.is_some(),
         };
 
         if let Some(prev_tc_func_type) = env.func_types.get(ident) {
@@ -388,7 +417,7 @@ pub fn check_types<'a>(
         if let Some(body) = func_body {
             let unchecked_func = UncheckedFunction {
                 defn_idx: decl_idx,
-                return_type_range,
+                rtype_range,
                 range: stmt.range,
                 body,
             };
@@ -413,7 +442,24 @@ pub fn check_types<'a>(
             }
         };
 
-        let mut local_env = LocalTypeEnv::new(ftype.return_type, func.return_type_range);
+        let mut local_env = LocalTypeEnv::new(ftype.return_type, func.rtype_range);
+        let param_count = if ftype.varargs {
+            ftype.params.len() + 1
+        } else {
+            ftype.params.len()
+        };
+
+        for (idx, param) in ftype.params.iter().enumerate() {
+            let var_offset = idx as i16 - param_count as i16;
+            let tc_value = TCVar {
+                decl_type: param.decl_type,
+                var_offset,
+                loc: param.range.cloc(file),
+            };
+
+            local_env.add_var(param.ident, tc_value).unwrap();
+        }
+
         let gstmts = check_stmts(buckets, &mut env, &mut local_env, ftype.decl_idx, func.body)?;
 
         tc_func.defn = Some(TCFuncDefn {
@@ -425,7 +471,7 @@ pub fn check_types<'a>(
         functions.insert(func_name, tc_func);
     }
 
-    let env = TypeEnv {
+    let env = TypedFuncs {
         structs: env.structs,
         functions,
     };
@@ -458,7 +504,7 @@ pub fn check_stmts<'b>(
                 let expr = env.structs.assign_convert(
                     buckets,
                     &local_env.return_type,
-                    local_env.return_type_range,
+                    local_env.rtype_range,
                     env.structs.file,
                     expr,
                 )?;
@@ -473,7 +519,7 @@ pub fn check_stmts<'b>(
                 if rtype.pointer_count != 0 || rtype.kind != TCTypeKind::Void {
                     return Err(error!(
                         "expected value in return statement (return type is not void)",
-                        local_env.return_type_range,
+                        local_env.rtype_range,
                         env.structs.file,
                         "target type is here".to_string(),
                         stmt.range,
@@ -533,6 +579,25 @@ pub fn check_expr<'b>(
                 range: expr.range,
             });
         }
+        ExprKind::Ident(id) => {
+            let tc_var = match local_env.var(id) {
+                Some(tc_var) => tc_var,
+                None => {
+                    return Err(error!(
+                        "couldn't find name",
+                        expr.range, env.structs.file, "identifier here"
+                    ));
+                }
+            };
+
+            return Ok(TCExpr {
+                kind: TCExprKind::LocalIdent {
+                    var_offset: tc_var.var_offset,
+                },
+                expr_type: tc_var.decl_type,
+                range: expr.range,
+            });
+        }
 
         ExprKind::BinOp(op, l, r) => {
             let l = check_expr(buckets, env, local_env, decl_idx, l)?;
@@ -573,12 +638,26 @@ pub fn check_expr<'b>(
                 ));
             }
 
+            if params.len() < func_type.params.len()
+                || (params.len() > func_type.params.len() && !func_type.varargs)
+            {
+                return Err(error!(
+                    "function call has wrong number of parameters",
+                    expr.range,
+                    env.structs.file,
+                    "function called here",
+                    func_type.loc.range,
+                    func_type.loc.file,
+                    "function declared here"
+                ));
+            }
+
             let mut tparams = Vec::new();
-            for param in params {
-                let expr = check_expr(buckets, &env, &local_env, decl_idx, expr)?;
+            for (param, param_type) in params.iter().zip(func_type.params) {
+                let expr = check_expr(buckets, &env, &local_env, decl_idx, param)?;
                 let expr = env.structs.assign_convert(
                     buckets,
-                    &func_type.return_type,
+                    &param_type.decl_type,
                     func_type.loc.range,
                     func_type.loc.file,
                     expr,
@@ -590,6 +669,7 @@ pub fn check_expr<'b>(
                 kind: TCExprKind::Call {
                     func: func_id,
                     params: buckets.add_array(tparams),
+                    varargs: func_type.varargs,
                 },
                 expr_type: func_type.return_type,
                 range: expr.range,
@@ -597,13 +677,6 @@ pub fn check_expr<'b>(
         }
         _ => panic!("unimplemented"),
     }
-}
-
-pub fn param_redeclaration(file: u32, original_range: Range, range: Range) -> Error {
-    return error!(
-        "redeclaration of function parameter",
-        original_range, file, "original declaration here", range, file, "second declaration here"
-    );
 }
 
 pub fn func_decl_mismatch(original: CodeLoc, new: CodeLoc) -> Error {

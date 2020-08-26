@@ -388,6 +388,27 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
     }
 
+    fn parse_param_decl(&mut self) -> Result<ParamDecl, Error> {
+        let vararg_tok = self.peek();
+        if vararg_tok.kind == TokenKind::DotDotDot {
+            self.pop();
+            return Ok(ParamDecl {
+                kind: ParamKind::Vararg,
+                range: vararg_tok.range,
+            });
+        }
+
+        let struct_decl = self.parse_inner_struct_decl()?;
+        return Ok(ParamDecl {
+            kind: ParamKind::StructLike {
+                decl_type: struct_decl.decl_type,
+                pointer_count: struct_decl.pointer_count,
+                ident: struct_decl.ident,
+            },
+            range: struct_decl.range,
+        });
+    }
+
     fn parse_multi_decl(&mut self) -> Result<(Vec<Decl<'b>>, Decl<'b>), Error> {
         let mut decl = self.parse_simple_decl()?;
         let mut tok = self.peek();
@@ -506,11 +527,11 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut params = Vec::new();
         let rparen_tok = self.peek();
         if rparen_tok.kind != TokenKind::RParen {
-            params.push(self.parse_inner_struct_decl()?);
+            params.push(self.parse_param_decl()?);
             let mut comma_tok = self.peek();
             while comma_tok.kind == TokenKind::Comma {
                 self.pop();
-                params.push(self.parse_inner_struct_decl()?);
+                params.push(self.parse_param_decl()?);
                 comma_tok = self.peek();
             }
 

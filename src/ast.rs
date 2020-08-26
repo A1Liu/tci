@@ -50,6 +50,22 @@ pub struct InnerStructDecl {
 }
 
 #[derive(Debug)]
+pub enum ParamKind {
+    StructLike {
+        decl_type: ASTType,
+        pointer_count: u32,
+        ident: u32,
+    },
+    Vararg,
+}
+
+#[derive(Debug)]
+pub struct ParamDecl {
+    pub kind: ParamKind,
+    pub range: Range,
+}
+
+#[derive(Debug)]
 pub struct StructDecl<'a> {
     pub ident: u32,
     pub ident_range: Range,
@@ -71,14 +87,14 @@ pub enum GlobalStmtKind<'a> {
         return_type: ASTType,
         pointer_count: u32,
         ident: u32,
-        params: &'a [InnerStructDecl],
+        params: &'a [ParamDecl],
         body: &'a [Stmt<'a>],
     },
     FuncDecl {
         return_type: ASTType,
         pointer_count: u32,
         ident: u32,
-        params: &'a [InnerStructDecl],
+        params: &'a [ParamDecl],
     },
     StructDecl(StructDecl<'a>),
     Decl {
@@ -197,7 +213,8 @@ pub enum TCShallowType {
 #[derive(Debug, Clone)]
 pub struct TCVar {
     pub decl_type: TCType,
-    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
+    pub var_offset: i16, // TODO TCVarKind with global and local
+    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +230,7 @@ pub struct TCFuncType<'a> {
     pub return_type: TCType,
     pub loc: CodeLoc,
     pub params: &'a [TCFuncParam],
+    pub varargs: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +263,9 @@ pub struct TCStmt<'a> {
 pub enum TCExprKind<'a> {
     IntLiteral(i32),
     StringLiteral(&'a str),
+    LocalIdent {
+        var_offset: i16,
+    },
 
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
@@ -257,7 +278,11 @@ pub enum TCExprKind<'a> {
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
 
-    Call { func: u32, params: &'a [TCExpr<'a>] },
+    Call {
+        func: u32,
+        params: &'a [TCExpr<'a>],
+        varargs: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

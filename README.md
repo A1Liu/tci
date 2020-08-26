@@ -21,7 +21,9 @@ The goals of this compiler are:
 - No support for Goto
 - Typedefs must begin with an uppercase letter, or end with `_t`, with the exception of `va_list`
 - Variables must begin with a lowercase letter, and cannot end with `_t`
+- This interpreter is always big endian
 
-## Credit
-
+# Credit
+- TCI uses [`codespan-reporting`](https://github.com/brendanzab/codespan) to make
+  nice error messages.
 
