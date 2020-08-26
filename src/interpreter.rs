@@ -532,7 +532,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
 
         let str_value = unsafe { core::str::from_utf8_unchecked(&str_bytes[0..idx]) };
-        println!("{}", str_value);
 
         write!(self.io.out(), "{}", str_value)
             .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;

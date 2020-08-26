@@ -127,7 +127,7 @@ fn main() {
             .expect("why did this fail?");
         }
         Ok(ret_code) => {
-            println!("TCI: return code was {}", ret_code);
+            eprintln!("TCI: return code was {}", ret_code);
             std::process::exit(ret_code as i32);
         }
     }
