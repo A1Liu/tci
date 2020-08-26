@@ -160,9 +160,9 @@ impl<'a> Assembler<'a> {
             }
             TCExprKind::StringLiteral(val) => {
                 let var = self.data.add_var(val.len() as u32 + 1); // TODO overflow here
-                let idx = self.data.vars[var as usize].idx;
-                let end = val.len() + idx;
-                self.data.data[idx..end].copy_from_slice(val.as_bytes());
+                let slice = self.data.get_full_var_range_mut(var);
+                let end = slice.len() - 1;
+                self.data.data[..end].copy_from_slice(val.as_bytes());
                 self.data.data[end] = 0;
                 tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
                 ops.push(tagged);

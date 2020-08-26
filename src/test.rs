@@ -1,4 +1,5 @@
 use crate::run_on_file;
+use crate::runtime::InMemoryIO;
 use crate::util::{StringWriter, Void};
 use std::fs::read_to_string;
 
@@ -6,7 +7,7 @@ fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
     // let mut io = crate::runtime::TestIO::new();
-    let mut io = crate::runtime::InMemoryIO::new();
+    let mut io = InMemoryIO::new();
 
     let output = match run_on_file(&mut io, filename, &mut writer) {
         Err(err) => {

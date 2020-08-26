@@ -511,6 +511,31 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn printf(&mut self) -> Result<Option<i32>, IError> {
-        return Err(error!("IDK", "idk man"));
+        let top_ptr_offset = self.stack_length() - 1;
+        let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
+        let param_len = u32::from_be(self.get_var(top_ptr)?);
+
+        let format_ptr = VarPointer::new_stack(top_ptr_offset - param_len as u16, 0); // TODO overflow
+        let format_str: VarPointer = self.get_var(format_ptr)?;
+        let str_bytes = self.memory.get_var_slice(format_str)?;
+
+        let mut idx = str_bytes.len();
+        for (idx_, byte) in str_bytes.iter().enumerate() {
+            if *byte == 0 {
+                idx = idx_;
+                break;
+            }
+        }
+
+        if idx == str_bytes.len() {
+            return err!("MissingNullTerminator", "string missing null terminator");
+        }
+
+        let str_value = unsafe { core::str::from_utf8_unchecked(&str_bytes[0..idx]) };
+        println!("{}", str_value);
+
+        write!(self.io.out(), "{}", str_value)
+            .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
+        return Ok(None);
     }
 }

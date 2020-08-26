@@ -218,7 +218,7 @@ impl VarBuffer {
         Self { data, vars }
     }
 
-    pub fn get_var_range(&mut self, ptr: VarPointer, len: u32) -> Result<(usize, usize), IError> {
+    pub fn get_var_range(&self, ptr: VarPointer, len: u32) -> Result<(usize, usize), IError> {
         if ptr.var_idx() == 0 {
             return Err(invalid_ptr(ptr));
         }
@@ -234,6 +234,15 @@ impl VarBuffer {
 
         let start = var.idx + ptr.offset() as usize;
         return Ok((start, start + len as usize));
+    }
+
+    pub fn get_full_var_range_mut(&mut self, var: u32) -> &mut [u8] {
+        if var == 0 {
+            panic!("var was null");
+        }
+
+        let var = self.vars[var as usize - 1];
+        return &mut self.data[var.idx..(var.idx + var.len as usize)];
     }
 
     pub fn get_var<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
@@ -425,7 +434,7 @@ impl<Tag: Copy> Memory<Tag> {
     }
 
     #[inline]
-    pub fn get_var<T: Default + Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
+    pub fn get_var<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
         if ptr.is_stack() {
             return self.stack.get_var(ptr);
         } else if ptr.is_heap() {
