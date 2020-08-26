@@ -358,3 +358,174 @@ impl io::Write for Void {
         Ok(())
     }
 }
+
+// https://tools.ietf.org/html/rfc3629
+static UTF8_CHAR_WIDTH: [u8; 256] = [
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, // 0x1F
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, // 0x3F
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, // 0x5F
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, // 0x7F
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, // 0x9F
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, // 0xBF
+    0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, // 0xDF
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, // 0xEF
+    4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0xFF
+];
+
+pub struct Utf8Lossy {
+    bytes: [u8],
+}
+
+impl Utf8Lossy {
+    pub fn from_str(s: &str) -> &Utf8Lossy {
+        Utf8Lossy::from_bytes(s.as_bytes())
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> &Utf8Lossy {
+        // SAFETY: Both use the same memory layout, and UTF-8 correctness isn't required.
+        unsafe { core::mem::transmute(bytes) }
+    }
+
+    pub fn chunks(&self) -> Utf8LossyChunksIter<'_> {
+        Utf8LossyChunksIter {
+            source: &self.bytes,
+        }
+    }
+}
+
+pub struct Utf8LossyChunksIter<'a> {
+    source: &'a [u8],
+}
+
+pub struct Utf8LossyChunk<'a> {
+    /// Sequence of valid chars.
+    /// Can be empty between broken UTF-8 chars.
+    pub valid: &'a str,
+    /// Single broken char, empty if none.
+    /// Empty iff iterator item is last.
+    pub broken: &'a [u8],
+}
+
+impl<'a> Utf8LossyChunksIter<'a> {
+    fn next(&mut self) -> Utf8LossyChunk<'a> {
+        if self.source.is_empty() {
+            return Utf8LossyChunk {
+                valid: "",
+                broken: self.source,
+            };
+        }
+
+        const TAG_CONT_U8: u8 = 128;
+        fn safe_get(xs: &[u8], i: usize) -> u8 {
+            *xs.get(i).unwrap_or(&0)
+        }
+
+        let mut i = 0;
+        while i < self.source.len() {
+            let i_ = i;
+
+            // SAFETY: `i` starts at `0`, is less than `self.source.len()`, and
+            // only increases, so `0 <= i < self.source.len()`.
+            let byte = unsafe { *self.source.get_unchecked(i) };
+            i += 1;
+
+            if byte < 128 {
+            } else {
+                let w = UTF8_CHAR_WIDTH[byte as usize];
+
+                macro_rules! error {
+                    () => {{
+                        // SAFETY: We have checked up to `i` that source is valid UTF-8.
+                        unsafe {
+                            let r = Utf8LossyChunk {
+                                valid: core::str::from_utf8_unchecked(&self.source[0..i_]),
+                                broken: &self.source[i_..i],
+                            };
+                            self.source = &self.source[i..];
+                            return r;
+                        }
+                    }};
+                }
+
+                match w {
+                    2 => {
+                        if safe_get(self.source, i) & 192 != TAG_CONT_U8 {
+                            error!();
+                        }
+                        i += 1;
+                    }
+                    3 => {
+                        match (byte, safe_get(self.source, i)) {
+                            (0xE0, 0xA0..=0xBF) => (),
+                            (0xE1..=0xEC, 0x80..=0xBF) => (),
+                            (0xED, 0x80..=0x9F) => (),
+                            (0xEE..=0xEF, 0x80..=0xBF) => (),
+                            _ => {
+                                error!();
+                            }
+                        }
+                        i += 1;
+                        if safe_get(self.source, i) & 192 != TAG_CONT_U8 {
+                            error!();
+                        }
+                        i += 1;
+                    }
+                    4 => {
+                        match (byte, safe_get(self.source, i)) {
+                            (0xF0, 0x90..=0xBF) => (),
+                            (0xF1..=0xF3, 0x80..=0xBF) => (),
+                            (0xF4, 0x80..=0x8F) => (),
+                            _ => {
+                                error!();
+                            }
+                        }
+                        i += 1;
+                        if safe_get(self.source, i) & 192 != TAG_CONT_U8 {
+                            error!();
+                        }
+                        i += 1;
+                        if safe_get(self.source, i) & 192 != TAG_CONT_U8 {
+                            error!();
+                        }
+                        i += 1;
+                    }
+                    _ => {
+                        error!();
+                    }
+                }
+            }
+        }
+
+        let r = Utf8LossyChunk {
+            // SAFETY: We have checked that the entire source is valid UTF-8.
+            valid: unsafe { core::str::from_utf8_unchecked(self.source) },
+            broken: &[],
+        };
+        self.source = &[];
+        r
+    }
+}
+
+pub fn string_append_utf8_lossy(string: &mut String, bytes: &[u8]) {
+    string.reserve(bytes.len());
+    let mut iter = Utf8Lossy::from_bytes(bytes).chunks();
+
+    const REPLACEMENT: &str = "\u{FFFD}";
+
+    loop {
+        let Utf8LossyChunk { valid, broken } = iter.next();
+        string.push_str(valid);
+        if !broken.is_empty() {
+            string.push_str(REPLACEMENT);
+        } else {
+            return;
+        }
+    }
+}

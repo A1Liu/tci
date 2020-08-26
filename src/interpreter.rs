@@ -235,7 +235,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         };
 
-        let fp = self.memory.stack_length();
+        let fp = self.memory.stack_length() + 1;
         let mut pc: u32 = pcounter + 1;
 
         loop {
@@ -269,7 +269,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                         );
                     }
 
-                    while self.memory.stack_length() > fp {
+                    while self.memory.stack_length() >= fp {
                         self.memory.pop_stack_var(pc)?;
                     }
 
@@ -318,7 +318,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Pop { bytes } => self.pop_bytes(bytes, pc)?,
             Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop, pc)?,
             Opcode::PopIntoTopVar { offset, bytes } => {
-                let ptr = VarPointer::new_stack(self.stack_length() - 1, offset);
+                let ptr = VarPointer::new_stack(self.stack_length(), offset);
                 self.pop_stack_bytes_into(ptr, bytes, pc)?;
             }
 
@@ -511,13 +511,75 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn printf(&mut self) -> Result<Option<i32>, IError> {
-        let top_ptr_offset = self.stack_length() - 1;
+        let top_ptr_offset = self.stack_length();
         let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
-        let param_len = u32::from_be(self.get_var(top_ptr)?);
+        let param_len = i32::from_be(self.get_var(top_ptr)?);
 
-        let format_ptr = VarPointer::new_stack(top_ptr_offset - param_len as u16, 0); // TODO overflow
-        let format_str: VarPointer = self.get_var(format_ptr)?;
-        let str_bytes = self.memory.get_var_slice(format_str)?;
+        println!("{}", top_ptr_offset);
+        println!("{}", param_len);
+        println!("{:?}", self.stack);
+        println!("{:?}", self.binary);
+
+        let mut current_offset = top_ptr_offset - (param_len as u16);
+        println!("{}", current_offset);
+        let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
+        current_offset += 1;
+
+        // OPTIMIZE This does an unnecessary linear scan
+        let format_str = self.cstring_bytes(self.get_var(format_ptr)?)?;
+
+        let mut out = String::new();
+        let mut idx = 0;
+        while idx < format_str.len() {
+            let mut idx2 = idx;
+            while idx2 < format_str.len() && format_str[idx2] != b'%' {
+                idx2 += 1;
+            }
+
+            string_append_utf8_lossy(&mut out, &format_str[idx..idx2]);
+
+            if idx2 == format_str.len() {
+                break;
+            }
+
+            // format_str[idx2] == b'%'
+
+            idx2 += 1;
+            if idx2 == format_str.len() {
+                return Err(error!(
+                    "InvalidFormatString",
+                    "format string ends with a single '%'; to print out a '%' use '%%'"
+                ));
+            }
+
+            match format_str[idx2] {
+                b'%' => string_append_utf8_lossy(&mut out, &[b'%']),
+                b's' => {
+                    let var_ptr = VarPointer::new_stack(current_offset, 0);
+                    let char_ptr = self.get_var(var_ptr)?;
+                    current_offset += 1;
+
+                    string_append_utf8_lossy(&mut out, self.cstring_bytes(char_ptr)?);
+                }
+                byte => {
+                    return Err(error!(
+                        "InvalidFormatString",
+                        "got byte '{}' after '%'",
+                        char::from(byte)
+                    ));
+                }
+            }
+
+            idx = idx2 + 1;
+        }
+
+        let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
+        write!(self.io.out(), "{}", &out).map_err(map_err)?;
+        return Ok(None);
+    }
+
+    pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {
+        let str_bytes = self.memory.get_var_slice(ptr)?;
 
         let mut idx = str_bytes.len();
         for (idx_, byte) in str_bytes.iter().enumerate() {
@@ -531,10 +593,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             return err!("MissingNullTerminator", "string missing null terminator");
         }
 
-        let str_value = unsafe { core::str::from_utf8_unchecked(&str_bytes[0..idx]) };
-
-        write!(self.io.out(), "{}", str_value)
-            .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
-        return Ok(None);
+        return Ok(&str_bytes[0..idx]);
     }
 }

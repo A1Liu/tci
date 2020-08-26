@@ -170,15 +170,42 @@ impl VarPointer {
 }
 
 pub fn invalid_ptr(ptr: VarPointer) -> IError {
-    return error!("InvalidPointer", "the pointer {} is invalid", ptr);
+    if ptr.is_stack() {
+        return error!("InvalidPointer", "the stack pointer {} is invalid", ptr);
+    } else if ptr.is_heap() {
+        return error!("InvalidPointer", "the heap pointer {} is invalid", ptr);
+    } else {
+        return error!("InvalidPointer", "the binary pointer {} is invalid", ptr);
+    }
 }
 
 pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
     let (start, end) = (ptr.with_offset(0), ptr.with_offset(var.len));
-    return error!(
-        "InvalidPointer",
-        "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
-    );
+    if ptr.is_stack() {
+        return error!(
+            "InvalidPointer",
+            "the stack pointer {} is invalid; the nearest object is in the range {}..{}",
+            ptr,
+            start,
+            end
+        );
+    } else if ptr.is_heap() {
+        return error!(
+            "InvalidPointer",
+            "the heap pointer {} is invalid; the nearest object is in the range {}..{}",
+            ptr,
+            start,
+            end
+        );
+    } else {
+        return error!(
+            "InvalidPointer",
+            "the binary pointer {} is invalid; the nearest object is in the range {}..{}",
+            ptr,
+            start,
+            end
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -257,7 +284,7 @@ impl VarBuffer {
         };
 
         if ptr.offset() + len > var.len {
-            return Err(invalid_offset(var, ptr));
+            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len)));
         }
 
         let begin = var.idx + ptr.offset() as usize;
@@ -377,14 +404,13 @@ impl<Tag: Copy> Memory<Tag> {
 
     #[inline]
     pub fn get_var_slice(&self, ptr: VarPointer) -> Result<&[u8], IError> {
-        let buffer;
-        if ptr.is_stack() {
-            buffer = &self.stack;
+        let buffer = if ptr.is_stack() {
+            &self.stack
         } else if ptr.is_heap() {
-            buffer = &self.heap;
+            &self.heap
         } else {
-            buffer = &self.binary;
-        }
+            &self.binary
+        };
 
         if ptr.var_idx() == 0 {
             return Err(invalid_ptr(ptr));
@@ -525,7 +551,7 @@ impl<Tag: Copy> Memory<Tag> {
 
     #[inline]
     pub fn stack_length(&self) -> u16 {
-        return (self.stack.vars.len() + 1) as u16; // TODO check for overflow
+        return self.stack.vars.len() as u16; // TODO check for overflow
     }
 
     pub fn pop_stack_var(&mut self, tag: Tag) -> Result<Var, IError> {

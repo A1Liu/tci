@@ -653,15 +653,19 @@ pub fn check_expr<'b>(
             }
 
             let mut tparams = Vec::new();
-            for (param, param_type) in params.iter().zip(func_type.params) {
-                let expr = check_expr(buckets, &env, &local_env, decl_idx, param)?;
-                let expr = env.structs.assign_convert(
-                    buckets,
-                    &param_type.decl_type,
-                    func_type.loc.range,
-                    func_type.loc.file,
-                    expr,
-                )?;
+            for (idx, param) in params.iter().enumerate() {
+                let mut expr = check_expr(buckets, &env, &local_env, decl_idx, param)?;
+                if idx < func_type.params.len() {
+                    let param_type = &func_type.params[idx];
+                    expr = env.structs.assign_convert(
+                        buckets,
+                        &param_type.decl_type,
+                        func_type.loc.range,
+                        func_type.loc.file,
+                        expr,
+                    )?;
+                }
+
                 tparams.push(expr);
             }
 

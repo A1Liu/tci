@@ -119,7 +119,7 @@ impl<'a> Assembler<'a> {
             TCStmtKind::RetVal(expr) => {
                 ops.append(&mut self.translate_expr(expr));
 
-                let ret_idx = param_count as i16 * -1 - 1;
+                let ret_idx = (param_count as i16 * -1) - 1;
                 tagged.op = Opcode::SetLocal {
                     var: ret_idx,
                     offset: 0,
@@ -162,8 +162,8 @@ impl<'a> Assembler<'a> {
                 let var = self.data.add_var(val.len() as u32 + 1); // TODO overflow here
                 let slice = self.data.get_full_var_range_mut(var);
                 let end = slice.len() - 1;
-                self.data.data[..end].copy_from_slice(val.as_bytes());
-                self.data.data[end] = 0;
+                slice[..end].copy_from_slice(val.as_bytes());
+                slice[end] = 0;
                 tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
                 ops.push(tagged);
             }
@@ -321,7 +321,7 @@ impl<'a> Assembler<'a> {
 
         let total_size = file_size + symbols_size + opcodes_size + data_size + vars_size + 8;
         let buckets = BucketList::with_capacity(0);
-        let layout = alloc::Layout::from_size_align(total_size, 1).expect("why did this fail?");
+        let layout = alloc::Layout::from_size_align(total_size, 8).expect("why did this fail?");
         let mut frame = buckets.alloc_frame(layout);
 
         let files = env.files.clone_into_frame(&mut frame);
