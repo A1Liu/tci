@@ -522,7 +522,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         // OPTIMIZE This does an unnecessary linear scan
         let format_str = self.cstring_bytes(self.get_var(format_ptr)?)?;
 
-        let mut out = String::new();
+        let mut out = StringWriter::new();
         let mut idx = 0;
         while idx < format_str.len() {
             let mut idx2 = idx;
@@ -530,7 +530,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 idx2 += 1;
             }
 
-            string_append_utf8_lossy(&mut out, &format_str[idx..idx2]);
+            write_utf8_lossy(&mut out, &format_str[idx..idx2]).expect("this shouldn't fail");
 
             if idx2 == format_str.len() {
                 break;
@@ -547,20 +547,30 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             match format_str[idx2] {
-                b'%' => string_append_utf8_lossy(&mut out, &[b'%']),
+                b'%' => {
+                    write_utf8_lossy(&mut out, &[b'%']).expect("this shouldn't fail");
+                }
                 b's' => {
                     let var_ptr = VarPointer::new_stack(current_offset, 0);
                     let char_ptr = self.get_var(var_ptr)?;
                     current_offset += 1;
 
-                    string_append_utf8_lossy(&mut out, self.cstring_bytes(char_ptr)?);
+                    write_utf8_lossy(&mut out, self.cstring_bytes(char_ptr)?)
+                        .expect("this shouldn't fail");
+                }
+                b'd' => {
+                    let var_ptr = VarPointer::new_stack(current_offset, 0);
+                    let value: i32 = self.get_var(var_ptr)?;
+                    current_offset += 1;
+
+                    write!(&mut out, "{}", value).expect("this shouldn't fail");
                 }
                 byte => {
                     return Err(error!(
                         "InvalidFormatString",
                         "got byte '{}' after '%'",
                         char::from(byte)
-                    ));
+                    ))
                 }
             }
 
@@ -568,7 +578,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
 
         let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
-        write!(self.io.out(), "{}", &out).map_err(map_err)?;
+        write!(self.io.out(), "{}", &out.into_string()).map_err(map_err)?;
         return Ok(None);
     }
 

@@ -252,20 +252,20 @@ impl StringWriter {
         }
     }
 
+    pub fn into_string(self) -> String {
+        return unsafe { String::from_utf8_unchecked(self.buf) };
+    }
+
     pub fn to_string(&self) -> String {
-        if let Ok(s) = String::from_utf8(self.buf.clone()) {
-            s
-        } else {
-            String::new()
-        }
+        return unsafe { String::from_utf8_unchecked(self.buf.clone()) };
     }
 }
 
 impl io::Write for StringWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        for b in buf {
-            self.buf.push(*b);
-        }
+        let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
+        core::str::from_utf8(buf).map_err(map_err)?;
+        self.buf.extend_from_slice(buf);
         Ok(buf.len())
     }
 
@@ -526,6 +526,25 @@ pub fn string_append_utf8_lossy(string: &mut String, bytes: &[u8]) {
             string.push_str(REPLACEMENT);
         } else {
             return;
+        }
+    }
+}
+
+pub fn write_utf8_lossy(mut write: impl io::Write, bytes: &[u8]) -> io::Result<usize> {
+    let mut iter = Utf8Lossy::from_bytes(bytes).chunks();
+
+    const REPLACEMENT: &str = "\u{FFFD}";
+
+    let mut total = 0;
+    loop {
+        let Utf8LossyChunk { valid, broken } = iter.next();
+        write.write(valid.as_bytes())?;
+        total += valid.len();
+        if !broken.is_empty() {
+            write.write(REPLACEMENT.as_bytes())?;
+            total += REPLACEMENT.len();
+        } else {
+            return Ok(total);
         }
     }
 }

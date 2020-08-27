@@ -1,6 +1,7 @@
 use crate::buckets::*;
 use crate::util::*;
 use core::{fmt, mem, str};
+use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
 #[derive(Debug)]
@@ -28,6 +29,12 @@ macro_rules! err {
     ($arg1:tt,$($arg:tt)*) => {
         Err(IError::new($arg1, format!($($arg)*)))
     };
+}
+
+impl From<io::Error> for IError {
+    fn from(err: io::Error) -> Self {
+        error!("WriteFailed", "failed to write to output ({})", err)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
