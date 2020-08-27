@@ -224,6 +224,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<i32>, IError> {
+        println!("{:?}", program);
         let func_desc = match program.ops[pcounter as usize].op {
             Opcode::Func(desc) => desc,
             op => {
@@ -560,7 +561,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 }
                 b'd' => {
                     let var_ptr = VarPointer::new_stack(current_offset, 0);
-                    let value: i32 = self.get_var(var_ptr)?;
+                    let value = i32::from_be(self.get_var(var_ptr)?);
                     current_offset += 1;
 
                     write!(&mut out, "{}", value).expect("this shouldn't fail");

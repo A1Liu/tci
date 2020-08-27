@@ -146,8 +146,17 @@ pub fn expect(data: &[u8], current: &mut usize) -> Result<u8, Error> {
 }
 
 #[inline]
-pub fn peek_check(data: &[u8], current: &mut usize, byte: u8) -> bool {
-    if *current == data.len() {
+pub fn peek_check(data: &[u8], current: &mut usize, checker: impl Fn(u8) -> bool) -> bool {
+    if *current >= data.len() {
+        return false;
+    }
+
+    return checker(data[*current]);
+}
+
+#[inline]
+pub fn peek_eq(data: &[u8], current: &mut usize, byte: u8) -> bool {
+    if *current >= data.len() {
         return false;
     }
 
@@ -155,8 +164,8 @@ pub fn peek_check(data: &[u8], current: &mut usize, byte: u8) -> bool {
 }
 
 #[inline]
-pub fn peek_checks(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
-    if *current == data.len() {
+pub fn peek_eqs(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
+    if *current >= data.len() {
         return false;
     }
 
@@ -207,7 +216,7 @@ pub fn lex_token<'a, 'b>(
     current: &mut usize,
 ) -> Result<Token<'b>, Error> {
     let whitespace = [b' ', b'\t', b'\n', b'\r'];
-    while peek_checks(data, current, &whitespace) {
+    while peek_eqs(data, current, &whitespace) {
         *current += 1;
     }
 
@@ -275,13 +284,15 @@ pub fn lex_token<'a, 'b>(
             return Token::newr(TokenKind::TypeIdent(id), begin..*current);
         }
 
-        b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' => {
-            let mut int_value: i32 = 0;
-            while data[*current] >= b'0' && data[*current] <= b'9' {
+        x if (x >= b'0' && x <= b'9') => {
+            let mut int_value: i32 = (x - b'0') as i32;
+            while peek_check(data, current, |b| b >= b'0' && b <= b'9') {
                 int_value *= 10;
                 int_value += (data[*current] - b'0') as i32;
                 *current += 1;
             }
+
+            println!("{}", int_value);
             return Token::newr(TokenKind::IntLiteral(int_value), begin..*current);
         }
 
@@ -333,9 +344,9 @@ pub fn lex_token<'a, 'b>(
         b',' => return Token::newr(TokenKind::Comma, begin..*current),
 
         b'.' => {
-            if peek_check(data, current, b'.') {
+            if peek_eq(data, current, b'.') {
                 *current += 1;
-                if peek_check(data, current, b'.') {
+                if peek_eq(data, current, b'.') {
                     *current += 1;
                     return Token::newr(TokenKind::DotDotDot, begin..*current);
                 }
@@ -346,10 +357,10 @@ pub fn lex_token<'a, 'b>(
             return Token::newr(TokenKind::Dot, begin..*current);
         }
         b'+' => {
-            if peek_check(data, current, b'+') {
+            if peek_eq(data, current, b'+') {
                 *current += 1;
                 return Token::newr(TokenKind::PlusPlus, begin..*current);
-            } else if peek_check(data, current, b'=') {
+            } else if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::PlusEq, begin..*current);
             } else {
@@ -357,13 +368,13 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'-' => {
-            if peek_check(data, current, b'-') {
+            if peek_eq(data, current, b'-') {
                 *current += 1;
                 return Token::newr(TokenKind::DashDash, begin..*current);
-            } else if peek_check(data, current, b'=') {
+            } else if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::DashEq, begin..*current);
-            } else if peek_check(data, current, b'>') {
+            } else if peek_eq(data, current, b'>') {
                 *current += 1;
                 return Token::newr(TokenKind::Arrow, begin..*current);
             } else {
@@ -371,7 +382,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'/' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::SlashEq, begin..*current);
             } else {
@@ -379,7 +390,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'*' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::StarEq, begin..*current);
             } else {
@@ -387,7 +398,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'%' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::PercentEq, begin..*current);
             } else {
@@ -395,7 +406,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'>' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::Geq, begin..*current);
             } else {
@@ -403,7 +414,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'<' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::Leq, begin..*current);
             } else {
@@ -411,7 +422,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'!' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::Neq, begin..*current);
             } else {
@@ -419,7 +430,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'=' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::EqEq, begin..*current);
             } else {
@@ -427,10 +438,10 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'|' => {
-            if peek_check(data, current, b'|') {
+            if peek_eq(data, current, b'|') {
                 *current += 1;
                 return Token::newr(TokenKind::LineLine, begin..*current);
-            } else if peek_check(data, current, b'=') {
+            } else if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::LineEq, begin..*current);
             } else {
@@ -438,10 +449,10 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'&' => {
-            if peek_check(data, current, b'&') {
+            if peek_eq(data, current, b'&') {
                 *current += 1;
                 return Token::newr(TokenKind::AmpAmp, begin..*current);
-            } else if peek_check(data, current, b'=') {
+            } else if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::AmpEq, begin..*current);
             } else {
@@ -449,7 +460,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
         b'^' => {
-            if peek_check(data, current, b'=') {
+            if peek_eq(data, current, b'=') {
                 *current += 1;
                 return Token::newr(TokenKind::CaretEq, begin..*current);
             } else {

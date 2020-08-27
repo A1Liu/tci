@@ -721,12 +721,13 @@ pub fn check_assign_target<'b>(
             };
 
             let kind = TCAssignKind::LocalIdent {
-                offset: tc_var.var_offset,
+                var_offset: tc_var.var_offset,
             };
 
             return Ok(TCAssignTarget {
                 kind,
                 defn_loc: tc_var.loc,
+                target_range: expr.range,
                 target_type: tc_var.decl_type,
             });
         }

@@ -249,13 +249,14 @@ pub struct TCFunc<'a> {
 
 #[derive(Debug, Clone)]
 pub enum TCAssignKind {
-    LocalIdent { offset: i16 },
+    LocalIdent { var_offset: i16 },
 }
 
 #[derive(Debug, Clone)]
 pub struct TCAssignTarget {
     pub kind: TCAssignKind,
     pub defn_loc: CodeLoc,
+    pub target_range: Range,
     pub target_type: TCType,
 }
 
