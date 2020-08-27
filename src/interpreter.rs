@@ -515,13 +515,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
         let param_len = i32::from_be(self.get_var(top_ptr)?);
 
-        println!("{}", top_ptr_offset);
-        println!("{}", param_len);
-        println!("{:?}", self.stack);
-        println!("{:?}", self.binary);
-
         let mut current_offset = top_ptr_offset - (param_len as u16);
-        println!("{}", current_offset);
         let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
         current_offset += 1;
 
