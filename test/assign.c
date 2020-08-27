@@ -1,9 +1,11 @@
-void printf(char *format, ...);
+
+int printf(char *format, ...);
 
 int main(int argc, char **argv) {
-  printf("%d\n", argc);
-  argc = 12;
-  printf("%d\n", argc);
-  argc = 13;
-  printf("%d\n", argc);
+  int hello, goodbye = 0;
+  printf("%d\n", goodbye);
+  goodbye = 12;
+  printf("%d\n", goodbye);
+  hello = 13;
+  printf("%d\n", hello);
 }

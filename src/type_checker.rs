@@ -97,12 +97,7 @@ lazy_static! {
     };
 }
 
-fn get_overload(
-    env: &StructEnv,
-    op: BinOp,
-    l: &TCExpr,
-    r: &TCExpr,
-) -> Result<BinOpTransform, Error> {
+fn get_overload(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
     let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
     match BIN_OP_OVERLOADS.get(&key) {
         Some(bin_op) => return Ok(*bin_op),
@@ -110,7 +105,7 @@ fn get_overload(
     }
 }
 
-pub fn invalid_operands_bin_expr(env: &StructEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Error {
+pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Error {
     let lkey = (op, l.expr_type.to_shallow());
     let rkey = (op, r.expr_type.to_shallow());
 
@@ -154,6 +149,7 @@ pub struct LocalTypeEnv {
     pub return_type: TCType,
     pub rtype_range: Range,
     pub parent: *const LocalTypeEnv,
+    pub decl_idx: i16,
 }
 
 impl LocalTypeEnv {
@@ -163,6 +159,7 @@ impl LocalTypeEnv {
             return_type,
             rtype_range,
             parent: core::ptr::null(),
+            decl_idx: 0,
         }
     }
 
@@ -171,15 +168,17 @@ impl LocalTypeEnv {
             // for the case of chained if-else
             Self {
                 symbols: HashMap::new(),
-                return_type: self.return_type.clone(),
+                return_type: self.return_type,
                 rtype_range: self.rtype_range,
                 parent: self.parent,
+                decl_idx: self.decl_idx,
             }
         } else {
             Self {
                 symbols: HashMap::new(),
-                return_type: self.return_type.clone(),
+                return_type: self.return_type,
                 rtype_range: self.rtype_range,
+                decl_idx: self.decl_idx,
                 parent: self,
             }
         }
@@ -213,13 +212,25 @@ impl LocalTypeEnv {
 
         return Ok(());
     }
+
+    pub fn add_local(&mut self, ident: u32, decl_type: TCType, loc: CodeLoc) -> Result<(), Error> {
+        let tc_var = TCVar {
+            decl_type,
+            var_offset: self.decl_idx,
+            loc,
+        };
+
+        self.decl_idx += 1;
+
+        return self.add_var(ident, tc_var);
+    }
 }
 
-pub struct StructEnv {
+pub struct TypeEnv {
     file: u32,
 }
 
-impl StructEnv {
+impl TypeEnv {
     pub fn check_type(
         &self,
         decl_idx: u32,
@@ -254,6 +265,14 @@ impl StructEnv {
         assign_file: u32,
         expr: TCExpr<'a>,
     ) -> Result<TCExpr<'a>, Error> {
+        if let TCTypeKind::Uninit { .. } = expr.expr_type.kind {
+            return Ok(TCExpr {
+                kind: TCExprKind::Uninit,
+                expr_type: *assign_to,
+                range: expr.range,
+            });
+        }
+
         if assign_to == &expr.expr_type {
             return Ok(expr);
         } else {
@@ -302,12 +321,38 @@ pub struct UncheckedFunction<'a> {
 
 // internal
 pub struct TypeEnvInterim<'b> {
-    pub structs: StructEnv,
+    pub types: TypeEnv,
     pub func_types: HashMap<u32, TCFuncType<'b>>,
 }
 
+impl<'b> TypeEnvInterim<'b> {
+    #[inline]
+    pub fn check_type(
+        &self,
+        decl_idx: u32,
+        ast_type: &ASTType,
+        pointer_count: u32,
+    ) -> Result<TCType, Error> {
+        return self.types.check_type(decl_idx, ast_type, pointer_count);
+    }
+
+    #[inline]
+    pub fn assign_convert<'a>(
+        &self,
+        buckets: BucketListRef<'a>,
+        assign_to: &TCType,
+        assign_range: Range,
+        assign_file: u32,
+        expr: TCExpr<'a>,
+    ) -> Result<TCExpr<'a>, Error> {
+        return self
+            .types
+            .assign_convert(buckets, assign_to, assign_range, assign_file, expr);
+    }
+}
+
 pub struct TypedFuncs<'a> {
-    pub structs: StructEnv,
+    pub structs: TypeEnv,
     pub functions: HashMap<u32, TCFunc<'a>>,
 }
 
@@ -316,10 +361,10 @@ pub fn check_types<'a>(
     file: u32,
     stmts: &[GlobalStmt],
 ) -> Result<TypedFuncs<'a>, Error> {
-    let struct_env = StructEnv { file };
+    let struct_env = TypeEnv { file };
 
     let mut env = TypeEnvInterim {
-        structs: struct_env,
+        types: struct_env,
         func_types: HashMap::new(),
     };
 
@@ -344,7 +389,7 @@ pub fn check_types<'a>(
 
         let decl_idx = decl_idx as u32;
         let rtype_range = rtype.range;
-        let struct_env = &env.structs;
+        let struct_env = &env.types;
         let return_type = struct_env.check_type(decl_idx, rtype, *rpointer_count)?;
 
         let mut names = HashMap::new();
@@ -472,7 +517,7 @@ pub fn check_types<'a>(
     }
 
     let env = TypedFuncs {
-        structs: env.structs,
+        structs: env.types,
         functions,
     };
     return Ok(env);
@@ -497,15 +542,15 @@ pub fn check_stmts<'b>(
                 {
                     return Err(error!(
                         "void function should not return a value",
-                        expr.range, env.structs.file, "value is here"
+                        expr.range, env.types.file, "value is here"
                     ));
                 }
 
-                let expr = env.structs.assign_convert(
+                let expr = env.assign_convert(
                     buckets,
                     &local_env.return_type,
                     local_env.rtype_range,
-                    env.structs.file,
+                    env.types.file,
                     expr,
                 )?;
 
@@ -520,10 +565,10 @@ pub fn check_stmts<'b>(
                     return Err(error!(
                         "expected value in return statement (return type is not void)",
                         local_env.rtype_range,
-                        env.structs.file,
+                        env.types.file,
                         "target type is here".to_string(),
                         stmt.range,
-                        env.structs.file,
+                        env.types.file,
                         "return statement is here".to_string()
                     ));
                 }
@@ -540,6 +585,26 @@ pub fn check_stmts<'b>(
                     range: expr.range,
                     kind: TCStmtKind::Expr(expr),
                 });
+            }
+
+            StmtKind::Decl { decl_type, decls } => {
+                for Decl {
+                    pointer_count,
+                    ident,
+                    range,
+                    expr,
+                } in *decls
+                {
+                    let decl_type = env.check_type(decl_idx, decl_type, *pointer_count)?;
+                    let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
+                    local_env.add_local(*ident, decl_type, range.cloc(env.types.file))?;
+                    let expr =
+                        env.assign_convert(buckets, &decl_type, *range, env.types.file, expr)?;
+                    tstmts.push(TCStmt {
+                        range: *range,
+                        kind: TCStmtKind::Decl { init: expr },
+                    });
+                }
             }
 
             StmtKind::Nop => {}
@@ -559,6 +624,16 @@ pub fn check_expr<'b>(
     expr: &Expr,
 ) -> Result<TCExpr<'b>, Error> {
     match expr.kind {
+        ExprKind::Uninit => {
+            return Ok(TCExpr {
+                kind: TCExprKind::Uninit,
+                expr_type: TCType {
+                    kind: TCTypeKind::Uninit { size: 0 },
+                    pointer_count: 0,
+                },
+                range: expr.range,
+            });
+        }
         ExprKind::IntLiteral(val) => {
             return Ok(TCExpr {
                 kind: TCExprKind::IntLiteral(val),
@@ -585,7 +660,7 @@ pub fn check_expr<'b>(
                 None => {
                     return Err(error!(
                         "couldn't find name",
-                        expr.range, env.structs.file, "identifier here"
+                        expr.range, env.types.file, "identifier here"
                     ));
                 }
             };
@@ -603,7 +678,7 @@ pub fn check_expr<'b>(
             let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
             let value = check_expr(buckets, env, local_env, decl_idx, value)?;
 
-            let value = env.structs.assign_convert(
+            let value = env.types.assign_convert(
                 buckets,
                 &target.target_type,
                 target.defn_loc.range,
@@ -624,7 +699,7 @@ pub fn check_expr<'b>(
             let l = check_expr(buckets, env, local_env, decl_idx, l)?;
             let r = check_expr(buckets, env, local_env, decl_idx, r)?;
 
-            let bin_op = get_overload(&env.structs, op, &l, &r)?;
+            let bin_op = get_overload(&env.types, op, &l, &r)?;
             return Ok(bin_op(&buckets, l, r));
         }
 
@@ -634,7 +709,7 @@ pub fn check_expr<'b>(
             } else {
                 return Err(error!(
                     "calling an expression that isn't a function",
-                    function.range, env.structs.file, "called here"
+                    function.range, env.types.file, "called here"
                 ));
             };
 
@@ -643,7 +718,7 @@ pub fn check_expr<'b>(
             } else {
                 return Err(error!(
                     "function doesn't exist",
-                    expr.range, env.structs.file, "called here"
+                    expr.range, env.types.file, "called here"
                 ));
             };
 
@@ -651,7 +726,7 @@ pub fn check_expr<'b>(
                 return Err(error!(
                     "function hasn't been declared yet (declaration order matters in C)",
                     expr.range,
-                    env.structs.file,
+                    env.types.file,
                     "function called here",
                     func_type.loc.range,
                     func_type.loc.file,
@@ -665,7 +740,7 @@ pub fn check_expr<'b>(
                 return Err(error!(
                     "function call has wrong number of parameters",
                     expr.range,
-                    env.structs.file,
+                    env.types.file,
                     "function called here",
                     func_type.loc.range,
                     func_type.loc.file,
@@ -678,7 +753,7 @@ pub fn check_expr<'b>(
                 let mut expr = check_expr(buckets, &env, &local_env, decl_idx, param)?;
                 if idx < func_type.params.len() {
                     let param_type = &func_type.params[idx];
-                    expr = env.structs.assign_convert(
+                    expr = env.types.assign_convert(
                         buckets,
                         &param_type.decl_type,
                         func_type.loc.range,
@@ -716,7 +791,7 @@ pub fn check_assign_target<'b>(
             let tc_var = match local_env.var(*id) {
                 Some(tc_var) => tc_var,
                 None => {
-                    return Err(ident_not_found(&env.structs, expr.range));
+                    return Err(ident_not_found(&env.types, expr.range));
                 }
             };
 
@@ -734,13 +809,13 @@ pub fn check_assign_target<'b>(
         _ => {
             return Err(error!(
                 "expression is not assignable",
-                expr.range, env.structs.file, "expression found here"
+                expr.range, env.types.file, "expression found here"
             ))
         }
     }
 }
 
-pub fn ident_not_found(env: &StructEnv, range: Range) -> Error {
+pub fn ident_not_found(env: &TypeEnv, range: Range) -> Error {
     return error!("couldn't find name", range, env.file, "identifier here");
 }
 

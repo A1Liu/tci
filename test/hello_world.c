@@ -1,5 +1,5 @@
 
-void printf(char *str, ...);
+int printf(char *str, ...);
 
 void goodbye() { return; }
 

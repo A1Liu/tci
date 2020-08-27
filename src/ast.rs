@@ -193,6 +193,7 @@ pub enum TCTypeKind {
     Char,
     Void,
     Struct { ident: u32, size: u32 },
+    Uninit { size: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -265,6 +266,7 @@ pub enum TCStmtKind<'a> {
     RetVal(TCExpr<'a>),
     Ret,
     Expr(TCExpr<'a>),
+    Decl { init: TCExpr<'a> },
 }
 
 #[derive(Debug, Clone)]
@@ -275,6 +277,7 @@ pub struct TCStmt<'a> {
 
 #[derive(Debug, Clone)]
 pub enum TCExprKind<'a> {
+    Uninit,
     IntLiteral(i32),
     StringLiteral(&'a str),
     LocalIdent {
@@ -323,6 +326,7 @@ impl TCType {
             TCTypeKind::Char => TCShallowType::Char,
             TCTypeKind::Void => TCShallowType::Void,
             TCTypeKind::Struct { ident, size } => TCShallowType::Struct,
+            TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
         }
     }
 
@@ -337,6 +341,7 @@ impl TCType {
             TCTypeKind::Char => 1,
             TCTypeKind::Void => 0,
             TCTypeKind::Struct { ident, size } => size,
+            TCTypeKind::Uninit { size } => size,
         }
     }
 }

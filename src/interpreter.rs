@@ -102,6 +102,7 @@ pub enum Opcode {
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
+    PushUndef { bytes: u32 },
     PopIntoTopVar { offset: u32, bytes: u32 },
 
     SExtend8To16,
@@ -224,7 +225,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<i32>, IError> {
-        println!("{:?}", program);
         let func_desc = match program.ops[pcounter as usize].op {
             Opcode::Func(desc) => desc,
             op => {
@@ -318,6 +318,11 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::Pop { bytes } => self.pop_bytes(bytes, pc)?,
             Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop, pc)?,
+            Opcode::PushUndef { bytes } => {
+                self.add_stack_var(bytes, pc);
+                self.pop_stack_var_onto_stack(pc)
+                    .expect("should never fail");
+            }
             Opcode::PopIntoTopVar { offset, bytes } => {
                 let ptr = VarPointer::new_stack(self.stack_length(), offset);
                 self.pop_stack_bytes_into(ptr, bytes, pc)?;
@@ -501,7 +506,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
     pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<i32>, IError> {
         match func_name {
-            PRINTF_SYMBOL => return self.printf(),
+            PRINTF_SYMBOL => return self.printf(pc),
             n => {
                 return Err(error!(
                     "InvalidLibraryFunction",
@@ -511,12 +516,13 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn printf(&mut self) -> Result<Option<i32>, IError> {
+    pub fn printf(&mut self, pc: u32) -> Result<Option<i32>, IError> {
         let top_ptr_offset = self.stack_length();
         let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
         let param_len = i32::from_be(self.get_var(top_ptr)?);
 
         let mut current_offset = top_ptr_offset - (param_len as u16);
+        let return_offset = current_offset - 1;
         let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
         current_offset += 1;
 
@@ -578,8 +584,15 @@ impl<IO: RuntimeIO> Runtime<IO> {
             idx = idx2 + 1;
         }
 
+        let out = out.into_string();
+        let len = out.len() as i32;
         let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
-        write!(self.io.out(), "{}", &out.into_string()).map_err(map_err)?;
+        write!(self.io.out(), "{}", &out).map_err(map_err)?;
+
+        // Return value for function
+        let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
+        self.set(return_ptr, len.to_be(), pc)?;
+
         return Ok(None);
     }
 

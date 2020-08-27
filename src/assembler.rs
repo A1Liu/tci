@@ -159,6 +159,15 @@ impl<'a> Assembler<'a> {
                 };
                 ops.push(tagged);
             }
+
+            TCStmtKind::Decl { init } => {
+                let bytes = init.expr_type.size();
+                tagged.op = Opcode::StackAlloc(bytes);
+                ops.push(tagged);
+                ops.append(&mut self.translate_expr(init));
+                tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
+                ops.push(tagged);
+            }
         }
 
         return ops;
@@ -172,6 +181,12 @@ impl<'a> Assembler<'a> {
         };
 
         match &expr.kind {
+            TCExprKind::Uninit => {
+                tagged.op = Opcode::PushUndef {
+                    bytes: expr.expr_type.size(),
+                };
+                ops.push(tagged);
+            }
             TCExprKind::IntLiteral(val) => {
                 tagged.op = Opcode::MakeTempInt32(*val);
                 ops.push(tagged);

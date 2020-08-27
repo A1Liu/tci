@@ -6,3 +6,5 @@ Then the caller pushes the parameters in order onto the stack, as stack vars. Th
 after the callee returns, the caller pops the stack vars off the stack, and pops
 the return value stack var onto its local stack.
 
+On variable argument functions, the caller also pushes an integer value onto the stack
+as the last parameter, with a count of how many parameters there are.

@@ -263,7 +263,7 @@ impl VarBuffer {
         };
 
         if ptr.offset() + len > var.len {
-            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len)));
+            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len - 1)));
         }
 
         let start = var.idx + ptr.offset() as usize;
@@ -291,7 +291,7 @@ impl VarBuffer {
         };
 
         if ptr.offset() + len > var.len {
-            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len)));
+            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len - 1)));
         }
 
         let begin = var.idx + ptr.offset() as usize;
@@ -321,7 +321,7 @@ impl VarBuffer {
         };
 
         if ptr.offset() + len > var.len {
-            return Err(invalid_offset(var, ptr));
+            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len - 1)));
         }
 
         let begin = var.idx + ptr.offset() as usize;
@@ -460,7 +460,7 @@ impl<Tag: Copy> Memory<Tag> {
         }
 
         if ptr.offset() + len > var.len {
-            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len)));
+            return Err(invalid_offset(var, ptr.with_offset(ptr.offset() + len - 1)));
         }
 
         return Ok(&buffer.data[(var.idx + ptr.offset() as usize)..((ptr.offset() + len) as usize)]);
