@@ -261,8 +261,7 @@ impl TypeEnv {
         &self,
         buckets: BucketListRef<'a>,
         assign_to: &TCType,
-        assign_range: Range,
-        assign_file: u32,
+        assign_to_loc: Option<CodeLoc>,
         expr: TCExpr<'a>,
     ) -> Result<TCExpr<'a>, Error> {
         if let TCTypeKind::Uninit { .. } = expr.expr_type.kind {
@@ -275,15 +274,20 @@ impl TypeEnv {
 
         if assign_to == &expr.expr_type {
             return Ok(expr);
-        } else {
+        } else if let Some(assign_loc) = assign_to_loc {
             return Err(error!(
-                "value has invalid type",
+                "value cannot be converted to target type",
                 expr.range,
                 self.file,
                 "value found here",
-                assign_range,
-                assign_file,
+                assign_loc.range,
+                assign_loc.file,
                 "expected type defined here"
+            ));
+        } else {
+            return Err(error!(
+                "value cannot be converted to target type",
+                expr.range, self.file, "value found here"
             ));
         }
     }
@@ -341,13 +345,12 @@ impl<'b> TypeEnvInterim<'b> {
         &self,
         buckets: BucketListRef<'a>,
         assign_to: &TCType,
-        assign_range: Range,
-        assign_file: u32,
+        assign_to_loc: Option<CodeLoc>,
         expr: TCExpr<'a>,
     ) -> Result<TCExpr<'a>, Error> {
         return self
             .types
-            .assign_convert(buckets, assign_to, assign_range, assign_file, expr);
+            .assign_convert(buckets, assign_to, assign_to_loc, expr);
     }
 }
 
@@ -549,8 +552,7 @@ pub fn check_stmts<'b>(
                 let expr = env.assign_convert(
                     buckets,
                     &local_env.return_type,
-                    local_env.rtype_range,
-                    env.types.file,
+                    Some(local_env.rtype_range.cloc(env.types.file)),
                     expr,
                 )?;
 
@@ -598,8 +600,12 @@ pub fn check_stmts<'b>(
                     let decl_type = env.check_type(decl_idx, decl_type, *pointer_count)?;
                     let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
                     local_env.add_local(*ident, decl_type, range.cloc(env.types.file))?;
-                    let expr =
-                        env.assign_convert(buckets, &decl_type, *range, env.types.file, expr)?;
+                    let expr = env.assign_convert(
+                        buckets,
+                        &decl_type,
+                        Some(range.cloc(env.types.file)),
+                        expr,
+                    )?;
                     tstmts.push(TCStmt {
                         range: *range,
                         kind: TCStmtKind::Decl { init: expr },
@@ -678,13 +684,9 @@ pub fn check_expr<'b>(
             let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
             let value = check_expr(buckets, env, local_env, decl_idx, value)?;
 
-            let value = env.types.assign_convert(
-                buckets,
-                &target.target_type,
-                target.defn_loc.range,
-                target.defn_loc.file,
-                value,
-            )?;
+            let value =
+                env.types
+                    .assign_convert(buckets, &target.target_type, target.defn_loc, value)?;
 
             let value = buckets.add(value);
 
@@ -701,6 +703,29 @@ pub fn check_expr<'b>(
 
             let bin_op = get_overload(&env.types, op, &l, &r)?;
             return Ok(bin_op(&buckets, l, r));
+        }
+
+        ExprKind::Deref(ptr) => {
+            let value = check_expr(buckets, env, local_env, decl_idx, ptr)?;
+
+            let map_err = || cant_dereference(value.range, env.types.file, &value.expr_type);
+            let expr_type = value.expr_type.deref().ok_or_else(map_err)?;
+            return Ok(TCExpr {
+                expr_type,
+                range: expr.range,
+                kind: TCExprKind::Deref(buckets.add(value)),
+            });
+        }
+
+        ExprKind::Ref(target) => {
+            let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
+            let mut expr_type = target.target_type;
+            expr_type.pointer_count += 1;
+            return Ok(TCExpr {
+                expr_type,
+                range: expr.range,
+                kind: TCExprKind::Ref(target),
+            });
         }
 
         ExprKind::Call { function, params } => {
@@ -753,11 +778,10 @@ pub fn check_expr<'b>(
                 let mut expr = check_expr(buckets, &env, &local_env, decl_idx, param)?;
                 if idx < func_type.params.len() {
                     let param_type = &func_type.params[idx];
-                    expr = env.types.assign_convert(
+                    expr = env.assign_convert(
                         buckets,
                         &param_type.decl_type,
-                        func_type.loc.range,
-                        func_type.loc.file,
+                        Some(func_type.loc),
                         expr,
                     )?;
                 }
@@ -785,7 +809,7 @@ pub fn check_assign_target<'b>(
     local_env: &LocalTypeEnv,
     decl_idx: u32,
     expr: &Expr,
-) -> Result<TCAssignTarget, Error> {
+) -> Result<TCAssignTarget<'b>, Error> {
     match &expr.kind {
         ExprKind::Ident(id) => {
             let tc_var = match local_env.var(*id) {
@@ -801,10 +825,24 @@ pub fn check_assign_target<'b>(
 
             return Ok(TCAssignTarget {
                 kind,
-                defn_loc: tc_var.loc,
+                defn_loc: Some(tc_var.loc),
                 target_range: expr.range,
                 target_type: tc_var.decl_type,
             });
+        }
+        ExprKind::Deref(expr) => {
+            let ptr = check_expr(buckets, env, local_env, decl_idx, expr)?;
+
+            if let Some(target_type) = ptr.expr_type.deref() {
+                return Ok(TCAssignTarget {
+                    kind: TCAssignKind::Ptr(buckets.add(ptr)),
+                    target_range: expr.range,
+                    defn_loc: None,
+                    target_type,
+                });
+            } else {
+                return Err(cant_dereference(ptr.range, env.types.file, &ptr.expr_type));
+            }
         }
         _ => {
             return Err(error!(
@@ -813,6 +851,18 @@ pub fn check_assign_target<'b>(
             ))
         }
     }
+}
+
+pub fn cant_dereference(range: Range, file: u32, expr_type: &TCType) -> Error {
+    error!(
+        "cannot dereference values that aren't pointers",
+        range,
+        file,
+        format!(
+            "value has type {:?}, which cannot be dereferenced",
+            expr_type
+        )
+    )
 }
 
 pub fn ident_not_found(env: &TypeEnv, range: Range) -> Error {

@@ -99,10 +99,12 @@ pub enum Opcode {
     MakeTempInt64(i64),
     MakeTempFloat64(f64),
     MakeTempBinaryPtr { var: u32, offset: u32 },
+    MakeTempLocalStackPtr { var: i16, offset: u32 },
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
-    PushUndef { bytes: u32 },
+    PushUndef { bytes: u32 }, // Push undefined bytes onto the stack
+    PushDup { bytes: u32 },   // Push bytes duplicated from the top of the stack
     PopIntoTopVar { offset: u32, bytes: u32 },
 
     SExtend8To16,
@@ -315,6 +317,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let ptr = VarPointer::new_binary(var, offset);
                 self.push_stack(ptr, pc);
             }
+            Opcode::MakeTempLocalStackPtr { var, offset } => {
+                let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
+                self.push_stack(ptr, pc);
+            }
 
             Opcode::Pop { bytes } => self.pop_bytes(bytes, pc)?,
             Opcode::PopKeep { keep, drop } => self.pop_keep_bytes(keep, drop, pc)?,
@@ -322,6 +328,9 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.add_stack_var(bytes, pc);
                 self.pop_stack_var_onto_stack(pc)
                     .expect("should never fail");
+            }
+            Opcode::PushDup { bytes } => {
+                self.dup_top_stack_bytes(bytes, pc)?;
             }
             Opcode::PopIntoTopVar { offset, bytes } => {
                 let ptr = VarPointer::new_stack(self.stack_length(), offset);

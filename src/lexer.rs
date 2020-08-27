@@ -233,7 +233,7 @@ pub fn lex_token<'a, 'b>(
     *current += 1;
 
     match data[begin] {
-        x if (x >= b'a' && x <= b'z') => {
+        x if (x >= b'a' && x <= b'z') || x == b'_' => {
             let mut cur = data[*current];
 
             while (cur >= b'a' && cur <= b'z')

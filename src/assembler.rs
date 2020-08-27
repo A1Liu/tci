@@ -17,8 +17,7 @@ pub struct ASMFunc<'a> {
 
 pub enum ASMAssignKind<'a> {
     StackLocal { var: i16 },
-    StackGlobal { var: u16 },
-    Ptr(TCExpr<'a>),
+    Ptr(&'a TCExpr<'a>),
 }
 
 pub struct ASMAssign<'a> {
@@ -219,6 +218,7 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::AddU64;
+
                 ops.push(tagged);
             }
             TCExprKind::SubI32(l, r) => {
@@ -253,6 +253,27 @@ impl<'a> Assembler<'a> {
             TCExprKind::Assign { target, value } => {
                 ops.append(&mut self.translate_expr(value));
                 ops.append(&mut self.translate_assign(target));
+            }
+
+            TCExprKind::Deref(ptr) => {
+                ops.append(&mut self.translate_expr(ptr));
+                tagged.op = Opcode::Get {
+                    offset: 0,
+                    bytes: expr.expr_type.size(),
+                };
+                ops.push(tagged);
+            }
+            TCExprKind::Ref(lvalue) => {
+                let lvalue = self.translate_lvalue(lvalue);
+                match lvalue.kind {
+                    ASMAssignKind::StackLocal { var } => {
+                        tagged.op = Opcode::MakeTempLocalStackPtr { var, offset: 0 };
+                        ops.push(tagged);
+                    }
+                    ASMAssignKind::Ptr(expr) => {
+                        ops.append(&mut self.translate_expr(expr));
+                    }
+                }
             }
 
             TCExprKind::Call {
@@ -310,25 +331,29 @@ impl<'a> Assembler<'a> {
         return ops;
     }
 
-    pub fn translate_assign(&self, assign: &TCAssignTarget) -> Vec<TaggedOpcode> {
+    pub fn translate_assign(&mut self, assign: &TCAssignTarget) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
             range: assign.target_range,
         };
 
-        let assign = self.translate_assign_rec(assign);
+        let assign = self.translate_lvalue(assign);
         match assign.kind {
-            ASMAssignKind::Ptr(expr) => unimplemented!(),
-            ASMAssignKind::StackGlobal { var } => unimplemented!(),
+            ASMAssignKind::Ptr(expr) => {
+                let bytes = expr.expr_type.deref().unwrap().size();
+                tagged.op = Opcode::PushDup { bytes };
+                ops.push(tagged);
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                ops.push(tagged);
+            }
             ASMAssignKind::StackLocal { var } => {
-                tagged.op = Opcode::SetLocal {
-                    var,
-                    offset: assign.offset,
+                tagged.op = Opcode::PushDup {
                     bytes: assign.bytes,
                 };
                 ops.push(tagged);
-                tagged.op = Opcode::GetLocal {
+                tagged.op = Opcode::SetLocal {
                     var,
                     offset: assign.offset,
                     bytes: assign.bytes,
@@ -340,11 +365,19 @@ impl<'a> Assembler<'a> {
         return ops;
     }
 
-    pub fn translate_assign_rec(&self, assign: &TCAssignTarget) -> ASMAssign {
+    pub fn translate_lvalue<'b>(&self, assign: &TCAssignTarget<'b>) -> ASMAssign<'b> {
         match &assign.kind {
             TCAssignKind::LocalIdent { var_offset } => {
                 return ASMAssign {
                     kind: ASMAssignKind::StackLocal { var: *var_offset },
+                    offset: 0,
+                    bytes: assign.target_type.size(),
+                    assign_type: assign.target_type,
+                };
+            }
+            TCAssignKind::Ptr(expr) => {
+                return ASMAssign {
+                    kind: ASMAssignKind::Ptr(expr),
                     offset: 0,
                     bytes: assign.target_type.size(),
                     assign_type: assign.target_type,

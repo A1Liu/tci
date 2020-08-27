@@ -866,6 +866,50 @@ impl<Tag: Copy> Memory<Tag> {
         return Ok(());
     }
 
+    pub fn dup_top_stack_bytes(&mut self, bytes: u32, tag: Tag) -> Result<(), IError> {
+        if self.stack.data.len() < bytes as usize {
+            return err!(
+                "StackTooShort",
+                "tried to read {} bytes from stack when stack is only {} bytes long",
+                bytes,
+                self.stack.data.len(),
+            );
+        }
+
+        if let Some(var) = self.stack.vars.last() {
+            if self.stack.data.len() - var.upper() < bytes as usize {
+                return err!(
+                    "StackDupReadsVar",
+                    "Duplicating stack data would read from a stack variable"
+                );
+            }
+        }
+
+        let dup_start = self.stack.data.len() - bytes as usize;
+        let dup_end = self.stack.data.len();
+        let value_start = self.historical_data.len();
+        self.historical_data
+            .extend_from_slice(&self.stack.data[dup_start..]);
+        let value_end = self.historical_data.len();
+
+        self.stack
+            .data
+            .resize(self.stack.data.len() + bytes as usize, 0);
+        let (from_bytes, to_bytes) = self.stack.data.split_at_mut(dup_end);
+        let from_bytes = &from_bytes[dup_start..];
+        to_bytes.copy_from_slice(from_bytes);
+
+        self.push_history(
+            MAKind::PushStack {
+                value_start,
+                value_end,
+            },
+            tag,
+        );
+
+        return Ok(());
+    }
+
     pub fn pop_stack<T: Copy>(&mut self, tag: Tag) -> Result<T, IError> {
         let len = mem::size_of::<T>();
         if self.stack.data.len() < len {

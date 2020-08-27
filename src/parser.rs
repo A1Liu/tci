@@ -159,7 +159,28 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     pub fn parse_prefix(&mut self) -> Result<Expr<'b>, Error> {
-        self.parse_postfix()
+        let tok = self.peek();
+        match tok.kind {
+            TokenKind::Amp => {
+                self.pop();
+                let target = self.parse_prefix()?;
+                let target = self.buckets.add(target);
+                return Ok(Expr {
+                    range: r_from(tok.range, target.range),
+                    kind: ExprKind::Ref(target),
+                });
+            }
+            TokenKind::Star => {
+                self.pop();
+                let target = self.parse_prefix()?;
+                let target = self.buckets.add(target);
+                return Ok(Expr {
+                    range: r_from(tok.range, target.range),
+                    kind: ExprKind::Deref(target),
+                });
+            }
+            _ => return self.parse_postfix(),
+        }
     }
 
     pub fn parse_postfix(&mut self) -> Result<Expr<'b>, Error> {

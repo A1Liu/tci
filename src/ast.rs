@@ -33,6 +33,8 @@ pub enum ExprKind<'a> {
     List(&'a [Expr<'a>]),
     PostIncr(&'a Expr<'a>),
     PostDecr(&'a Expr<'a>),
+    Ref(&'a Expr<'a>),
+    Deref(&'a Expr<'a>),
     Uninit,
 }
 
@@ -249,14 +251,15 @@ pub struct TCFunc<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum TCAssignKind {
+pub enum TCAssignKind<'a> {
     LocalIdent { var_offset: i16 },
+    Ptr(&'a TCExpr<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub struct TCAssignTarget {
-    pub kind: TCAssignKind,
-    pub defn_loc: CodeLoc,
+pub struct TCAssignTarget<'a> {
+    pub kind: TCAssignKind<'a>,
+    pub defn_loc: Option<CodeLoc>,
     pub target_range: Range,
     pub target_type: TCType,
 }
@@ -296,9 +299,12 @@ pub enum TCExprKind<'a> {
     ZConv32To64(&'a TCExpr<'a>),
 
     Assign {
-        target: TCAssignTarget,
+        target: TCAssignTarget<'a>,
         value: &'a TCExpr<'a>,
     },
+
+    Deref(&'a TCExpr<'a>),
+    Ref(TCAssignTarget<'a>),
 
     Call {
         func: u32,
@@ -328,6 +334,16 @@ impl TCType {
             TCTypeKind::Struct { ident, size } => TCShallowType::Struct,
             TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
         }
+    }
+
+    pub fn deref(&self) -> Option<TCType> {
+        if self.pointer_count == 0 {
+            return None;
+        }
+
+        let mut other = *self;
+        other.pointer_count -= 1;
+        return Some(other);
     }
 
     pub fn size(&self) -> u32 {
