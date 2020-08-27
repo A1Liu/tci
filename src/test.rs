@@ -48,3 +48,8 @@ fn test_file_should_fail(filename: &str) {
 fn test_hello_world() {
     test_file_should_succeed("test/hello_world.c");
 }
+
+#[test]
+fn test_assign() {
+    test_file_should_succeed("test/assign.c");
+}

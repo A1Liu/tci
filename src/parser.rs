@@ -66,7 +66,21 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     pub fn parse_assignment(&mut self) -> Result<Expr<'b>, Error> {
-        self.parse_ternary()
+        let left = self.parse_ternary()?;
+        match self.peek().kind {
+            TokenKind::Eq => {
+                self.pop();
+                let right = self.parse_assignment()?;
+                let (right, left) = self.buckets.add((right, left));
+                return Ok(Expr {
+                    range: r_from(left.range, right.range),
+                    kind: ExprKind::BinOp(BinOp::Assign, left, right),
+                });
+            }
+            _ => {
+                return Ok(left);
+            }
+        }
     }
 
     pub fn parse_ternary(&mut self) -> Result<Expr<'b>, Error> {

@@ -15,6 +15,13 @@ pub struct ASMFunc<'a> {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
+pub struct ASMStackAssign {
+    var: i16,
+    offset: u32,
+    bytes: u32,
+    assign_type: TCType,
+}
+
 lazy_static! {
     pub static ref LIB_FUNCS: HashSet<u32> = {
         let mut m = HashSet::new();
@@ -215,6 +222,12 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::ZExtend32To64;
                 ops.push(tagged);
+            }
+
+            TCExprKind::Assign { target, value } => {
+                // ops.append(&mut self.translate_expr(value));
+
+                unimplemented!();
             }
 
             TCExprKind::Call {

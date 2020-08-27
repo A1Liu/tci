@@ -599,6 +599,27 @@ pub fn check_expr<'b>(
             });
         }
 
+        ExprKind::BinOp(BinOp::Assign, target, value) => {
+            let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
+            let value = check_expr(buckets, env, local_env, decl_idx, value)?;
+
+            let value = env.structs.assign_convert(
+                buckets,
+                &target.target_type,
+                target.defn_loc.range,
+                target.defn_loc.file,
+                value,
+            )?;
+
+            let value = buckets.add(value);
+
+            return Ok(TCExpr {
+                expr_type: target.target_type,
+                range: expr.range,
+                kind: TCExprKind::Assign { target, value },
+            });
+        }
+
         ExprKind::BinOp(op, l, r) => {
             let l = check_expr(buckets, env, local_env, decl_idx, l)?;
             let r = check_expr(buckets, env, local_env, decl_idx, r)?;
@@ -681,6 +702,45 @@ pub fn check_expr<'b>(
         }
         _ => panic!("unimplemented"),
     }
+}
+
+pub fn check_assign_target<'b>(
+    buckets: BucketListRef<'b>,
+    env: &TypeEnvInterim<'b>,
+    local_env: &LocalTypeEnv,
+    decl_idx: u32,
+    expr: &Expr,
+) -> Result<TCAssignTarget, Error> {
+    match &expr.kind {
+        ExprKind::Ident(id) => {
+            let tc_var = match local_env.var(*id) {
+                Some(tc_var) => tc_var,
+                None => {
+                    return Err(ident_not_found(&env.structs, expr.range));
+                }
+            };
+
+            let kind = TCAssignKind::LocalIdent {
+                offset: tc_var.var_offset,
+            };
+
+            return Ok(TCAssignTarget {
+                kind,
+                defn_loc: tc_var.loc,
+                target_type: tc_var.decl_type,
+            });
+        }
+        _ => {
+            return Err(error!(
+                "expression is not assignable",
+                expr.range, env.structs.file, "expression found here"
+            ))
+        }
+    }
+}
+
+pub fn ident_not_found(env: &StructEnv, range: Range) -> Error {
+    return error!("couldn't find name", range, env.file, "identifier here");
 }
 
 pub fn func_decl_mismatch(original: CodeLoc, new: CodeLoc) -> Error {

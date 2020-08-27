@@ -4,6 +4,7 @@ use crate::*;
 pub enum BinOp {
     Add,
     Sub,
+    Assign,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -247,6 +248,18 @@ pub struct TCFunc<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub enum TCAssignKind {
+    LocalIdent { offset: i16 },
+}
+
+#[derive(Debug, Clone)]
+pub struct TCAssignTarget {
+    pub kind: TCAssignKind,
+    pub defn_loc: CodeLoc,
+    pub target_type: TCType,
+}
+
+#[derive(Debug, Clone)]
 pub enum TCStmtKind<'a> {
     RetVal(TCExpr<'a>),
     Ret,
@@ -277,6 +290,11 @@ pub enum TCExprKind<'a> {
 
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
+
+    Assign {
+        target: TCAssignTarget,
+        value: &'a TCExpr<'a>,
+    },
 
     Call {
         func: u32,
