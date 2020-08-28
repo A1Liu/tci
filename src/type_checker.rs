@@ -453,7 +453,7 @@ pub fn check_types<'a>(
                 return Err(func_decl_mismatch(prev_tc_func_type.loc, tc_func_type.loc));
             }
 
-            if let Some(body) = unchecked_functions.get(ident) {
+            if let Some((ftype, Some(fbody))) = unchecked_functions.get(ident) {
                 if let Some(body) = func_body {
                     return Err(func_redef(prev_tc_func_type.loc, tc_func_type.loc));
                 }

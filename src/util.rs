@@ -62,7 +62,7 @@ macro_rules! error {
                     message: $msg1.to_string(),
                 },
                 util::ErrorSection {
-                    location: $loc1,
+                    location: $loc2,
                     message: $msg2.to_string(),
                 },
             ],

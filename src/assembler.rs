@@ -341,7 +341,7 @@ impl<'a> Assembler<'a> {
         let assign = self.translate_lvalue(assign);
         match assign.kind {
             ASMAssignKind::Ptr(expr) => {
-                let bytes = expr.expr_type.deref().unwrap().size();
+                let bytes = assign.assign_type.size();
                 tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
                 ops.append(&mut self.translate_expr(expr));
@@ -349,15 +349,10 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
             ASMAssignKind::StackLocal { var } => {
-                tagged.op = Opcode::PushDup {
-                    bytes: assign.bytes,
-                };
+                let (bytes, offset) = (assign.bytes, assign.offset);
+                tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
-                tagged.op = Opcode::SetLocal {
-                    var,
-                    offset: assign.offset,
-                    bytes: assign.bytes,
-                };
+                tagged.op = Opcode::SetLocal { var, offset, bytes };
                 ops.push(tagged);
             }
         }
