@@ -28,7 +28,7 @@ fn test_file_should_succeed(filename: &str) {
     };
 
     match read_to_string(String::from(filename) + ".out") {
-        Ok(expected) => assert_eq!(output, expected),
+        Ok(expected) => assert_eq!(output.trim(), expected.trim()),
         Err(_) => {}
     }
 }
@@ -52,4 +52,9 @@ fn test_hello_world() {
 #[test]
 fn test_assign() {
     test_file_should_succeed("test/assign.c");
+}
+
+#[test]
+fn test_structs() {
+    test_file_should_succeed("test/structs.c");
 }

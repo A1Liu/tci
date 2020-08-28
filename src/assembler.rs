@@ -256,7 +256,17 @@ impl<'a> Assembler<'a> {
             }
 
             TCExprKind::Member { base, offset } => {
-                unimplemented!();
+                let base_bytes = base.expr_type.size();
+                ops.append(&mut self.translate_expr(base));
+                let want_bytes = expr.expr_type.size();
+                let top_bytes = base_bytes - want_bytes - offset;
+                tagged.op = Opcode::Pop { bytes: top_bytes };
+                ops.push(tagged);
+                tagged.op = Opcode::PopKeep {
+                    drop: *offset,
+                    keep: want_bytes,
+                };
+                ops.push(tagged);
             }
 
             TCExprKind::Deref(ptr) => {
@@ -268,13 +278,12 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
             TCExprKind::Ref(lvalue) => {
-                let lvalue = self.translate_lvalue(lvalue);
                 match lvalue.kind {
-                    ASMAssignKind::StackLocal { var } => {
-                        tagged.op = Opcode::MakeTempLocalStackPtr { var, offset: 0 };
+                    TCAssignKind::LocalIdent { var_offset } => {
+                        tagged.op = Opcode::MakeTempLocalStackPtr { var: var_offset, offset: 0 };
                         ops.push(tagged);
                     }
-                    ASMAssignKind::Ptr(expr) => {
+                    TCAssignKind::Ptr(expr) => {
                         ops.append(&mut self.translate_expr(expr));
                     }
                 }
@@ -342,21 +351,24 @@ impl<'a> Assembler<'a> {
             range: assign.target_range,
         };
 
-        let assign = self.translate_lvalue(assign);
         match assign.kind {
-            ASMAssignKind::Ptr(expr) => {
-                let bytes = assign.assign_type.size();
+            TCAssignKind::Ptr(expr) => {
+                let bytes = assign.target_type.size();
                 tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::Set { offset: 0, bytes };
                 ops.push(tagged);
             }
-            ASMAssignKind::StackLocal { var } => {
-                let (bytes, offset) = (assign.bytes, assign.offset);
+            TCAssignKind::LocalIdent { var_offset } => {
+                let (bytes, offset) = (assign.target_type.size(), assign.offset);
                 tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
-                tagged.op = Opcode::SetLocal { var, offset, bytes };
+                tagged.op = Opcode::SetLocal {
+                    var: var_offset,
+                    offset,
+                    bytes,
+                };
                 ops.push(tagged);
             }
         }

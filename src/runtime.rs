@@ -843,7 +843,7 @@ impl<Tag: Copy> Memory<Tag> {
         let push_value_end = self.historical_data.len();
 
         let mutate_slice = &mut self.stack.data[pop_start..];
-        for i in 0..mutate_slice.len() {
+        for i in 0..(keep as usize) {
             mutate_slice[i] = mutate_slice[i + pop as usize];
         }
         self.stack.data.resize(pop_start + keep as usize, 0);

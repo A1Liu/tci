@@ -131,7 +131,7 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
             r.range,
             env.file,
             format!("this has type {:?}", r.expr_type)
-        );
+            );
     }
 
     return error!(
@@ -471,14 +471,14 @@ pub fn check_file<'a>(
 
     struct UncheckedStructDefn {
         defn_idx: u32,
-        members: HashMap<u32, (TCType, Range)>,
+        members: Vec<(u32, TCType, Range)>,
         range: Range,
     }
 
     struct UncheckedStruct {
         decl_idx: u32,
         decl_range: Range,
-        defn: Option<UncheckedStructDefn>, // This TCType will be invalid
+        defn: Option<UncheckedStructDefn>,
     }
 
     // Add all types to the type table
@@ -524,7 +524,8 @@ pub fn check_file<'a>(
             }
         };
 
-        let mut semi_typed_members = HashMap::new();
+        let mut names = HashMap::new();
+        let mut semi_typed_members = Vec::new();
         for member in members {
             let kind = match &member.decl_type.kind {
                 ASTTypeKind::Int => TCTypeKind::I32,
@@ -540,9 +541,8 @@ pub fn check_file<'a>(
                 pointer_count: member.pointer_count,
             };
 
-            if let Some((_, original_range)) =
-                semi_typed_members.insert(member.ident, (member_type, member.range))
-            {
+            semi_typed_members.push((member.ident, member_type, member.range));
+            if let Some(original_range) = names.insert(member.ident, member.range) {
                 return Err(error!(
                     "name redefined in struct",
                     original_range.cloc(types.file),
@@ -604,7 +604,7 @@ pub fn check_file<'a>(
         let mut size: u32 = 0;
         let mut align: u32 = 0;
         let mut typed_members = Vec::new();
-        for (m_ident, (m_type, m_range)) in defn.members.iter() {
+        for (m_ident, m_type, m_range) in defn.members.iter() {
             let offset = size;
             let mut m_type = *m_type;
 
@@ -668,7 +668,7 @@ pub fn check_file<'a>(
             typed_members.push(TCStructMember {
                 ident: *m_ident,
                 decl_type: m_type,
-                range: *m_range,
+                loc: m_range.cloc(types.file),
                 offset,
             });
         }
@@ -1195,11 +1195,34 @@ fn check_assign_target<'b>(
                 defn_loc: Some(tc_var.loc),
                 target_range: expr.range,
                 target_type: tc_var.decl_type,
+                offset: 0,
             });
         }
 
-        ExprKind::Deref(expr) => {
-            let ptr = check_expr(buckets, env, local_env, decl_idx, expr)?;
+        ExprKind::Member { base, member } => {
+            let base_range = base.range;
+            let base = check_assign_target(buckets, env, local_env, decl_idx, base)?;
+
+            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.target_type.kind {
+                ident
+            } else {
+                return Err(member_of_non_struct(base.target_range, env.types.file));
+            };
+
+            let member_info =
+                env.check_struct_member(struct_id, decl_idx, base.target_range, *member)?;
+
+            return Ok(TCAssignTarget {
+                kind: base.kind,
+                defn_loc: Some(member_info.loc),
+                target_range: expr.range,
+                target_type: member_info.decl_type,
+                offset: member_info.offset,
+            });
+        }
+
+        ExprKind::Deref(ptr) => {
+            let ptr = check_expr(buckets, env, local_env, decl_idx, ptr)?;
 
             let target_type = env.deref(&ptr.expr_type, ptr.range)?;
             return Ok(TCAssignTarget {
@@ -1207,6 +1230,7 @@ fn check_assign_target<'b>(
                 target_range: expr.range,
                 defn_loc: None,
                 target_type,
+                offset: 0,
             });
         }
         _ => {
@@ -1216,6 +1240,13 @@ fn check_assign_target<'b>(
             ))
         }
     }
+}
+
+pub fn member_of_non_struct(range: Range, file: u32) -> Error {
+    error!(
+        "cannot access member of non-struct",
+        range, file, "access happened here"
+    )
 }
 
 pub fn ident_not_found(env: &TypeEnv, range: Range) -> Error {

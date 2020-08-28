@@ -186,7 +186,7 @@ pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
 pub struct TCStructMember {
     pub decl_type: TCType,
     pub ident: u32,
-    pub range: Range,
+    pub loc: CodeLoc,
     pub offset: u32,
 }
 
@@ -281,6 +281,7 @@ pub struct TCAssignTarget<'a> {
     pub defn_loc: Option<CodeLoc>,
     pub target_range: Range,
     pub target_type: TCType,
+    pub offset: u32,
 }
 
 #[derive(Debug, Clone)]
