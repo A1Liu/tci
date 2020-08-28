@@ -226,11 +226,19 @@ impl LocalTypeEnv {
     }
 }
 
-pub struct TypeEnv {
+pub struct TypeEnv<'a> {
     file: u32,
+    structs: HashMap<u32, TCStruct<'a>>,
 }
 
-impl TypeEnv {
+impl<'a> TypeEnv<'a> {
+    pub fn new(file: u32) -> Self {
+        Self {
+            file,
+            structs: HashMap::new(),
+        }
+    }
+
     pub fn check_type(
         &self,
         decl_idx: u32,
@@ -241,29 +249,55 @@ impl TypeEnv {
             ASTTypeKind::Int => TCTypeKind::I32,
             ASTTypeKind::Char => TCTypeKind::Char,
             ASTTypeKind::Void => TCTypeKind::Void,
-            &ASTTypeKind::Struct { ident } => TCTypeKind::Struct { ident, size: 0 },
+            &ASTTypeKind::Struct { ident } => {
+                let (size, align) =
+                    self.check_struct_type(ident, decl_idx, pointer_count, ast_type.range)?;
+                TCTypeKind::Struct { ident, size, align }
+            }
         };
 
-        let mut unchecked_type = TCType {
+        return Ok(TCType {
             kind,
             pointer_count,
-        };
+        });
+    }
 
-        if let TCTypeKind::Struct { ident, size } = &mut unchecked_type.kind {
-            *size = self.check_struct_type(*ident, decl_idx, pointer_count, ast_type.range)?;
+    pub fn deref(&self, tc_type: &TCType, value_range: Range) -> Result<TCType, Error> {
+        if tc_type.pointer_count == 0 {
+            return Err(error!(
+                "cannot dereference values that aren't pointers",
+                value_range,
+                self.file,
+                format!("value has type {:?}, which cannot be dereferenced", tc_type)
+            ));
         }
 
-        return Ok(unchecked_type);
+        if let TCTypeKind::Struct {
+            size: TC_UNKNOWN_SIZE,
+            ..
+        } = tc_type.kind
+        {
+            return Err(error!(
+                "cannot dereference pointer to struct of unknown size",
+                value_range,
+                self.file,
+                format!("value has type {:?}, which cannot be dereferenced", tc_type)
+            ));
+        }
+
+        let mut other = *tc_type;
+        other.pointer_count -= 1;
+        return Ok(other);
     }
 
     // TODO make this work with implicit type conversions
-    pub fn assign_convert<'a>(
+    pub fn assign_convert<'b>(
         &self,
-        buckets: BucketListRef<'a>,
+        buckets: BucketListRef<'b>,
         assign_to: &TCType,
         assign_to_loc: Option<CodeLoc>,
-        expr: TCExpr<'a>,
-    ) -> Result<TCExpr<'a>, Error> {
+        expr: TCExpr<'b>,
+    ) -> Result<TCExpr<'b>, Error> {
         if let TCTypeKind::Uninit { .. } = expr.expr_type.kind {
             return Ok(TCExpr {
                 kind: TCExprKind::Uninit,
@@ -298,34 +332,57 @@ impl TypeEnv {
         decl_idx: u32,
         pointer_count: u32,
         range: Range,
-    ) -> Result<u32, Error> {
-        // if let Some(struct_type) = self.struct_types.get(&struct_ident) {
-        //     if let Some((type_defn_idx, _)) = struct_type.defn {
-        //         if pointer_count == 0 && type_defn_idx > decl_idx {
-        //             return Err(Error::struct_misordered_type(struct_type, &range));
-        //         }
-        //     } else if pointer_count == 0 {
-        //         return Err(Error::struct_incomplete_type(struct_type, &range));
-        //     }
-        // } else {
-        //     return Err(Error::struct_doesnt_exist(&range));
-        // }
+    ) -> Result<(u32, u32), Error> {
+        let no_struct = || {
+            error!(
+                "referenced struct doesn't exist",
+                range.cloc(self.file),
+                "struct used here"
+            )
+        };
 
-        return Ok(0);
+        let struct_type = self.structs.get(&struct_ident).ok_or_else(no_struct)?;
+        if struct_type.decl_idx > decl_idx {
+            return Err(error!(
+                "used type declared later in file",
+                struct_type.decl_loc,
+                "type is declared here",
+                range.cloc(self.file),
+                "type is used here"
+            ));
+        }
+
+        if let Some(defn) = &struct_type.defn {
+            if pointer_count == 0 && defn.defn_idx > decl_idx {
+                return Err(error!(
+                    "used type defined later in file",
+                    defn.loc,
+                    "type is defined here",
+                    range.cloc(self.file),
+                    "type is used here"
+                ));
+            }
+
+            return Ok((defn.size, defn.align));
+        } else if pointer_count == 0 {
+            return Err(error!(
+                "reference incomplete type without pointer indirection",
+                struct_type.decl_loc,
+                "incomplete type declared here",
+                range.cloc(self.file),
+                "type used here"
+            ));
+        } else {
+            // type incomplete but we have a pointer to it
+            return Ok((TC_UNKNOWN_SIZE, 0));
+        }
     }
 }
 
 // internal
-pub struct UncheckedFunction<'a> {
-    defn_idx: u32,
-    rtype_range: Range,
-    range: Range,
-    body: &'a [Stmt<'a>],
-}
-
 // internal
 pub struct TypeEnvInterim<'b> {
-    pub types: TypeEnv,
+    pub types: TypeEnv<'b>,
     pub func_types: HashMap<u32, TCFuncType<'b>>,
 }
 
@@ -338,6 +395,11 @@ impl<'b> TypeEnvInterim<'b> {
         pointer_count: u32,
     ) -> Result<TCType, Error> {
         return self.types.check_type(decl_idx, ast_type, pointer_count);
+    }
+
+    #[inline]
+    pub fn deref(&self, tc_type: &TCType, value_range: Range) -> Result<TCType, Error> {
+        self.types.deref(tc_type, value_range)
     }
 
     #[inline]
@@ -355,7 +417,7 @@ impl<'b> TypeEnvInterim<'b> {
 }
 
 pub struct TypedFuncs<'a> {
-    pub structs: TypeEnv,
+    pub structs: TypeEnv<'a>,
     pub functions: HashMap<u32, TCFunc<'a>>,
 }
 
@@ -364,12 +426,131 @@ pub fn check_types<'a>(
     file: u32,
     stmts: &[GlobalStmt],
 ) -> Result<TypedFuncs<'a>, Error> {
-    let struct_env = TypeEnv { file };
+    let mut types = TypeEnv::new(file);
+
+    struct UncheckedStructDefn {
+        defn_idx: u32,
+        members: HashMap<u32, (TCType, Range)>,
+        range: Range,
+    }
+
+    struct UncheckedStruct {
+        decl_idx: u32,
+        decl_range: Range,
+        defn: Option<UncheckedStructDefn>, // This TCType will be invalid
+    }
+
+    // Add all types to the type table
+    let mut unchecked_types: HashMap<u32, UncheckedStruct> = HashMap::new();
+    for (decl_idx, stmt) in stmts.iter().enumerate() {
+        let decl_type = match &stmt.kind {
+            GlobalStmtKind::StructDecl(decl_type) => decl_type,
+            _ => continue,
+        };
+
+        let defn_idx = decl_idx as u32;
+        let mut decl_range = decl_type.range;
+        let mut decl_idx = decl_idx as u32;
+        if let Some(original) = unchecked_types.get(&decl_type.ident) {
+            match (&original.defn, &decl_type.members) {
+                (Some(_), Some(_)) => {
+                    return Err(error!(
+                        "redefinition of struct",
+                        original.decl_range.cloc(types.file),
+                        "original definition here",
+                        decl_type.range.cloc(types.file),
+                        "second definition here"
+                    ));
+                }
+                _ => {}
+            }
+
+            decl_idx = original.decl_idx;
+            decl_range = original.decl_range;
+        }
+
+        let mut unchecked_struct = UncheckedStruct {
+            decl_idx,
+            decl_range,
+            defn: None,
+        };
+
+        let members = match decl_type.members {
+            Some(members) => members,
+            None => {
+                unchecked_types.insert(decl_type.ident, unchecked_struct);
+                continue;
+            }
+        };
+
+        let mut semi_typed_members = HashMap::new();
+        for member in members {
+            let kind = match &member.decl_type.kind {
+                ASTTypeKind::Int => TCTypeKind::I32,
+                ASTTypeKind::Char => TCTypeKind::Char,
+                ASTTypeKind::Void => TCTypeKind::Void,
+                &ASTTypeKind::Struct { ident } => TCTypeKind::Struct {
+                    ident,
+                    size: TC_UNKNOWN_SIZE,
+                    align: 0,
+                },
+            };
+            let member_type = TCType {
+                kind,
+                pointer_count: member.pointer_count,
+            };
+
+            if let Some((_, original_range)) =
+                semi_typed_members.insert(member.ident, (member_type, member.range))
+            {
+                return Err(error!(
+                    "name redefined in struct",
+                    original_range.cloc(types.file),
+                    "first use of name here",
+                    member.range.cloc(types.file),
+                    "second use here"
+                ));
+            }
+        }
+
+        let struct_defn = UncheckedStructDefn {
+            defn_idx,
+            range: decl_type.range,
+            members: semi_typed_members,
+        };
+        unchecked_struct.defn = Some(struct_defn);
+        unchecked_types.insert(decl_type.ident, unchecked_struct);
+    }
+
+    for (ident, type_decl) in unchecked_types.iter() {
+        let defn = if let Some(defn) = &type_decl.defn {
+            defn
+        } else {
+            types.structs.insert(
+                *ident,
+                TCStruct {
+                    decl_idx: type_decl.decl_idx,
+                    decl_loc: type_decl.decl_range.cloc(types.file),
+                    defn: None,
+                },
+            );
+            continue;
+        };
+
+        unimplemented!();
+    }
 
     let mut env = TypeEnvInterim {
-        types: struct_env,
+        types,
         func_types: HashMap::new(),
     };
+
+    struct UncheckedFunction<'a> {
+        defn_idx: u32,
+        rtype_range: Range,
+        range: Range,
+        body: &'a [Stmt<'a>],
+    }
 
     let mut unchecked_functions = HashMap::new();
     for (decl_idx, stmt) in stmts.iter().enumerate() {
@@ -387,6 +568,7 @@ pub fn check_types<'a>(
                 params,
                 body,
             } => (return_type, pointer_count, ident, params, Some(body)),
+            GlobalStmtKind::StructDecl { .. } => continue,
             _ => panic!("unimplemented"),
         };
 
@@ -519,11 +701,10 @@ pub fn check_types<'a>(
         functions.insert(func_name, tc_func);
     }
 
-    let env = TypedFuncs {
+    return Ok(TypedFuncs {
         structs: env.types,
         functions,
-    };
-    return Ok(env);
+    });
 }
 
 pub fn check_stmts<'b>(
@@ -708,8 +889,7 @@ pub fn check_expr<'b>(
         ExprKind::Deref(ptr) => {
             let value = check_expr(buckets, env, local_env, decl_idx, ptr)?;
 
-            let map_err = || cant_dereference(value.range, env.types.file, &value.expr_type);
-            let expr_type = value.expr_type.deref().ok_or_else(map_err)?;
+            let expr_type = env.deref(&value.expr_type, value.range)?;
             return Ok(TCExpr {
                 expr_type,
                 range: expr.range,
@@ -833,16 +1013,13 @@ pub fn check_assign_target<'b>(
         ExprKind::Deref(expr) => {
             let ptr = check_expr(buckets, env, local_env, decl_idx, expr)?;
 
-            if let Some(target_type) = ptr.expr_type.deref() {
-                return Ok(TCAssignTarget {
-                    kind: TCAssignKind::Ptr(buckets.add(ptr)),
-                    target_range: expr.range,
-                    defn_loc: None,
-                    target_type,
-                });
-            } else {
-                return Err(cant_dereference(ptr.range, env.types.file, &ptr.expr_type));
-            }
+            let target_type = env.deref(&ptr.expr_type, ptr.range)?;
+            return Ok(TCAssignTarget {
+                kind: TCAssignKind::Ptr(buckets.add(ptr)),
+                target_range: expr.range,
+                defn_loc: None,
+                target_type,
+            });
         }
         _ => {
             return Err(error!(
@@ -851,18 +1028,6 @@ pub fn check_assign_target<'b>(
             ))
         }
     }
-}
-
-pub fn cant_dereference(range: Range, file: u32, expr_type: &TCType) -> Error {
-    error!(
-        "cannot dereference values that aren't pointers",
-        range,
-        file,
-        format!(
-            "value has type {:?}, which cannot be dereferenced",
-            expr_type
-        )
-    )
 }
 
 pub fn ident_not_found(env: &TypeEnv, range: Range) -> Error {
@@ -883,130 +1048,32 @@ pub fn func_redef(original: CodeLoc, redef: CodeLoc) -> Error {
     );
 }
 
-// pub struct TypeChecker<'b> {
-//     pub buckets: BucketListRef<'b>,
-//     pub func_types: HashMap<u32, TCFuncType<'b>>,
-//     pub functions: HashMap<u32, TCFunc<'b>>,
-// }
-//
-// impl<'b> TypeChecker<'b> {
-//     #[inline]
-//     pub fn type_width(&self, tc_type: &TCType) -> u32 {
-//         if tc_type.pointer_count > 0 {
-//             return 8;
-//         }
-//
-//         match tc_type.kind {
-//             TCTypeKind::I32 => 4,
-//             TCTypeKind::U64 => 8,
-//             TCTypeKind::Char => 1,
-//             TCTypeKind::Void => 0,
-//             TCTypeKind::Struct { ident } => panic!("unimplemented"),
-//         }
-//     }
-//
-//     #[inline]
-//     pub fn type_is_numeric(&self, tc_type: &TCType) -> bool {
-//         if tc_type.pointer_count > 0 {
-//             return true;
-//         }
-//
-//         match tc_type.kind {
-//             TCTypeKind::I32 | TCTypeKind::U64 | TCTypeKind::Char => true,
-//             TCTypeKind::Void | TCTypeKind::Struct { .. } => false,
-//         }
-//     }
-// }
-
 /*
-        // Add all types to the type table
-        for (decl_idx, stmt) in stmts.iter().enumerate() {
-            let decl_type = match &stmt.kind {
-                GlobalStmtKind::StructDecl(decl_type) => decl_type,
-                GlobalStmtKind::Decl { decl_type, decls } => {
-                    return err!(
-                        "global declarations not supported yet",
-                        r_from(decl_type.range, decls.last().unwrap().range),
-                        "declaration here"
-                    )
-                }
-                _ => continue,
-            };
+// Check all types are valid
+for (current_struct, type_defn) in self.env.struct_types.iter() {
+    if let Some((defn_idx, members)) = type_defn.defn {
+        let filter_map_struct_idents = |member: &TCStructMember| {
+            if let TCTypeKind::Struct { ident } = member.decl_type.kind {
+                Some((ident, member.range, member.decl_type.pointer_count))
+            } else {
+                None
+            }
+        };
 
-            let defn_idx = decl_idx as u32;
-            let mut decl_idx = decl_idx as u32;
-            if let Some(original) = self.env.struct_types.get(&decl_type.ident) {
-                Error::struct_redefinition(original, decl_type)?;
-                decl_idx = original.decl_idx;
+        let inner_struct_members = members.iter().filter_map(filter_map_struct_idents);
+        for (member_struct, range, pointer_count) in inner_struct_members {
+            if *current_struct == member_struct && pointer_count == 0 {
+                return Err(Error::new(
+                    "recursive struct",
+                    vec![
+                        (type_defn.ident_range, "struct here".to_string()),
+                        (range, "recursive member here".to_string()),
+                    ],
+                ));
             }
 
-            let mut tc_struct = TCStruct {
-                decl_idx,
-                ident_range: decl_type.ident_range,
-                range: decl_type.range,
-                defn: None,
-            };
-
-            let members = match decl_type.members {
-                None => {
-                    self.env.struct_types.insert(decl_type.ident, tc_struct);
-                    continue;
-                }
-                Some(members) => members,
-            };
-
-            let mut typed_members = Vec::new();
-            let mut names = HashMap::new();
-
-            for member in members {
-                if let Some(original_range) = names.get(&member.ident) {
-                    return Err(Error::struct_member_redefinition(
-                        original_range,
-                        &member.range,
-                    ));
-                } else {
-                    names.insert(member.ident, member.range);
-                }
-
-                let member_type = convert_type(&member.decl_type, member.pointer_count);
-                typed_members.push(TCStructMember {
-                    decl_type: member_type,
-                    ident: member.ident,
-                    range: member.range,
-                });
-            }
-
-            tc_struct.defn = Some((defn_idx, self.env.buckets.add_array(typed_members)));
-            self.env.struct_types.insert(decl_type.ident, tc_struct);
+            self.check_struct_type(member_struct, defn_idx, pointer_count, range)?;
         }
-
-        // Check all types are valid
-        for (current_struct, type_defn) in self.env.struct_types.iter() {
-            if let Some((defn_idx, members)) = type_defn.defn {
-                let filter_map_struct_idents = |member: &TCStructMember| {
-                    if let TCTypeKind::Struct { ident } = member.decl_type.kind {
-                        Some((ident, member.range, member.decl_type.pointer_count))
-                    } else {
-                        None
-                    }
-                };
-
-                let inner_struct_members = members.iter().filter_map(filter_map_struct_idents);
-                for (member_struct, range, pointer_count) in inner_struct_members {
-                    if *current_struct == member_struct && pointer_count == 0 {
-                        return Err(Error::new(
-                            "recursive struct",
-                            vec![
-                                (type_defn.ident_range, "struct here".to_string()),
-                                (range, "recursive member here".to_string()),
-                            ],
-                        ));
-                    }
-
-                    self.check_struct_type(member_struct, defn_idx, pointer_count, range)?;
-                }
-            }
-        }
-
-
+    }
+}
 */

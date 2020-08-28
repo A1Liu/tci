@@ -176,17 +176,21 @@ pub struct TCStructMember {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TCStructDefn<'a> {
-    defn_idx: u32,
-    members: &'a [TCStructMember],
+    pub defn_idx: u32,
+    pub members: &'a [TCStructMember],
+    pub loc: CodeLoc,
+    pub size: u32,
+    pub align: u32,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct TCStruct<'a> {
     pub decl_idx: u32,
     pub defn: Option<TCStructDefn<'a>>,
-    pub ident_range: Range,
-    pub loc: CodeLoc,
+    pub decl_loc: CodeLoc,
 }
+
+pub const TC_UNKNOWN_SIZE: u32 = !0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TCTypeKind {
@@ -194,7 +198,7 @@ pub enum TCTypeKind {
     U64, // unsigned long
     Char,
     Void,
-    Struct { ident: u32, size: u32 },
+    Struct { ident: u32, size: u32, align: u32 },
     Uninit { size: u32 },
 }
 
@@ -331,19 +335,9 @@ impl TCType {
             TCTypeKind::U64 => TCShallowType::U64,
             TCTypeKind::Char => TCShallowType::Char,
             TCTypeKind::Void => TCShallowType::Void,
-            TCTypeKind::Struct { ident, size } => TCShallowType::Struct,
+            TCTypeKind::Struct { .. } => TCShallowType::Struct,
             TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
         }
-    }
-
-    pub fn deref(&self) -> Option<TCType> {
-        if self.pointer_count == 0 {
-            return None;
-        }
-
-        let mut other = *self;
-        other.pointer_count -= 1;
-        return Some(other);
     }
 
     pub fn size(&self) -> u32 {
@@ -356,7 +350,28 @@ impl TCType {
             TCTypeKind::I32 => 4,
             TCTypeKind::Char => 1,
             TCTypeKind::Void => 0,
-            TCTypeKind::Struct { ident, size } => size,
+            TCTypeKind::Struct { size, .. } => {
+                debug_assert!(size != TC_UNKNOWN_SIZE);
+                size
+            }
+            TCTypeKind::Uninit { size } => size,
+        }
+    }
+
+    pub fn align(&self) -> u32 {
+        if self.pointer_count > 0 {
+            return 8;
+        }
+
+        match self.kind {
+            TCTypeKind::U64 => 8,
+            TCTypeKind::I32 => 4,
+            TCTypeKind::Char => 1,
+            TCTypeKind::Void => 0,
+            TCTypeKind::Struct { ident, size, align } => {
+                debug_assert!(size != TC_UNKNOWN_SIZE);
+                align
+            }
             TCTypeKind::Uninit { size } => size,
         }
     }
