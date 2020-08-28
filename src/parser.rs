@@ -256,11 +256,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                 TokenKind::Arrow => {
                     self.pop();
 
-                    let (member, range) = self.expect_ident()?;
+                    let (member, range) = self.expect_any_ident()?;
 
                     operand = Expr {
                         kind: ExprKind::PtrMember {
-                            expr: self.buckets.add(operand),
+                            base: self.buckets.add(operand),
                             member,
                         },
                         range: r(start, range.end),
@@ -269,11 +269,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                 TokenKind::Dot => {
                     self.pop();
 
-                    let (member, range) = self.expect_ident()?;
+                    let (member, range) = self.expect_any_ident()?;
 
                     operand = Expr {
                         kind: ExprKind::Member {
-                            expr: self.buckets.add(operand),
+                            base: self.buckets.add(operand),
                             member,
                         },
                         range: r(start, range.end),
@@ -397,7 +397,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let decl_type = match self.peek().kind {
             TokenKind::Struct => {
                 let start = self.pop().range.start;
-                let (ident, range) = self.expect_ident()?;
+                let (ident, range) = self.expect_any_ident()?;
 
                 ASTType {
                     kind: ASTTypeKind::Struct { ident },
@@ -463,7 +463,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let decl_type = match self.peek().kind {
             TokenKind::Struct => {
                 let start = self.pop().range.start;
-                let (ident, ident_range) = self.expect_ident()?;
+                let (ident, ident_range) = self.expect_any_ident()?;
                 let tok = self.peek();
 
                 if tok.kind == TokenKind::LBrace {
@@ -798,6 +798,34 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 });
             }
+            TokenKind::Struct => {
+                let decl_type = match self.peek().kind {
+                    TokenKind::Struct => {
+                        let start = self.pop().range.start;
+                        let (ident, range) = self.expect_any_ident()?;
+
+                        ASTType {
+                            kind: ASTTypeKind::Struct { ident },
+                            range: r(start, range.end),
+                        }
+                    }
+                    _ => self.parse_simple_type_prefix()?,
+                };
+
+                let range_start = decl_type.range.start;
+                let (mut decls, decl) = self.parse_multi_decl()?;
+                let range_end = decl.range.end;
+                decls.push(decl);
+                self.eat_semicolon()?;
+
+                return Ok(Stmt {
+                    range: r(range_start, range_end),
+                    kind: StmtKind::Decl {
+                        decl_type,
+                        decls: self.buckets.add_array(decls),
+                    },
+                });
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 self.eat_semicolon()?;
@@ -817,6 +845,25 @@ impl<'a, 'b> Parser<'a, 'b> {
             self.file_id,
             format!("this was interpreted as {:?}", tok)
         );
+    }
+
+    pub fn expect_any_ident(&mut self) -> Result<(u32, Range), Error> {
+        let tok = self.pop();
+        if let TokenKind::Ident(id) = tok.kind {
+            return Ok((id, tok.range));
+        } else if let TokenKind::TypeIdent(id) = tok.kind {
+            return Ok((id, tok.range));
+        } else {
+            return Err(error!(
+                "expected identifier token, got something else instead",
+                tok.range,
+                self.file_id,
+                format!(
+                    "this was interpreted as {:?} when it should be an identifier",
+                    tok
+                )
+            ));
+        }
     }
 
     pub fn expect_ident(&mut self) -> Result<(u32, Range), Error> {

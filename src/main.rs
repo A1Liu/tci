@@ -54,7 +54,7 @@ fn run<'a>(env: Environment<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Erro
     let iter = token_lists.into_iter().enumerate();
     let mut iter = iter.map(|(file, tokens)| {
         let ast = parser::parse_tokens(end, file as u32, &tokens)?;
-        let typed_ast = type_checker::check_types(end, file as u32, &ast)?;
+        let typed_ast = type_checker::check_file(end, file as u32, &ast)?;
         Ok(typed_ast)
     });
 

@@ -19,11 +19,11 @@ pub enum ExprKind<'a> {
         params: &'a [Expr<'a>],
     },
     Member {
-        expr: &'a Expr<'a>,
+        base: &'a Expr<'a>,
         member: u32,
     },
     PtrMember {
-        expr: &'a Expr<'a>,
+        base: &'a Expr<'a>,
         member: u32,
     },
     Index {
@@ -167,11 +167,27 @@ pub struct Stmt<'a> {
     pub range: Range,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub struct SizeAlign {
+    pub size: u32,
+    pub align: u32,
+}
+
+pub fn sa(size: u32, align: u32) -> SizeAlign {
+    SizeAlign { size, align }
+}
+
+pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
+    size: TC_UNKNOWN_SIZE,
+    align: 0,
+};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TCStructMember {
     pub decl_type: TCType,
     pub ident: u32,
     pub range: Range,
+    pub offset: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -179,8 +195,7 @@ pub struct TCStructDefn<'a> {
     pub defn_idx: u32,
     pub members: &'a [TCStructMember],
     pub loc: CodeLoc,
-    pub size: u32,
-    pub align: u32,
+    pub sa: SizeAlign,
 }
 
 #[derive(Debug, PartialEq)]
@@ -198,7 +213,7 @@ pub enum TCTypeKind {
     U64, // unsigned long
     Char,
     Void,
-    Struct { ident: u32, size: u32, align: u32 },
+    Struct { ident: u32, sa: SizeAlign },
     Uninit { size: u32 },
 }
 
@@ -307,6 +322,11 @@ pub enum TCExprKind<'a> {
         value: &'a TCExpr<'a>,
     },
 
+    Member {
+        base: &'a TCExpr<'a>,
+        offset: u32,
+    },
+
     Deref(&'a TCExpr<'a>),
     Ref(TCAssignTarget<'a>),
 
@@ -340,6 +360,7 @@ impl TCType {
         }
     }
 
+    #[inline]
     pub fn size(&self) -> u32 {
         if self.pointer_count > 0 {
             return 8;
@@ -350,14 +371,15 @@ impl TCType {
             TCTypeKind::I32 => 4,
             TCTypeKind::Char => 1,
             TCTypeKind::Void => 0,
-            TCTypeKind::Struct { size, .. } => {
-                debug_assert!(size != TC_UNKNOWN_SIZE);
-                size
+            TCTypeKind::Struct { sa, .. } => {
+                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+                sa.size
             }
             TCTypeKind::Uninit { size } => size,
         }
     }
 
+    #[inline]
     pub fn align(&self) -> u32 {
         if self.pointer_count > 0 {
             return 8;
@@ -368,9 +390,9 @@ impl TCType {
             TCTypeKind::I32 => 4,
             TCTypeKind::Char => 1,
             TCTypeKind::Void => 0,
-            TCTypeKind::Struct { ident, size, align } => {
-                debug_assert!(size != TC_UNKNOWN_SIZE);
-                align
+            TCTypeKind::Struct { sa, .. } => {
+                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+                sa.align
             }
             TCTypeKind::Uninit { size } => size,
         }

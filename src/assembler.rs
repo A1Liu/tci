@@ -255,6 +255,10 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_assign(target));
             }
 
+            TCExprKind::Member { base, offset } => {
+                unimplemented!();
+            }
+
             TCExprKind::Deref(ptr) => {
                 ops.append(&mut self.translate_expr(ptr));
                 tagged.op = Opcode::Get {

@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::buckets::{BucketList, BucketListRef};
+use crate::util::*;
 use crate::*;
 use std::collections::{HashMap, HashSet};
 
@@ -250,9 +251,8 @@ impl<'a> TypeEnv<'a> {
             ASTTypeKind::Char => TCTypeKind::Char,
             ASTTypeKind::Void => TCTypeKind::Void,
             &ASTTypeKind::Struct { ident } => {
-                let (size, align) =
-                    self.check_struct_type(ident, decl_idx, pointer_count, ast_type.range)?;
-                TCTypeKind::Struct { ident, size, align }
+                let sa = self.check_struct_type(ident, decl_idx, pointer_count, ast_type.range)?;
+                TCTypeKind::Struct { ident, sa }
             }
         };
 
@@ -273,8 +273,7 @@ impl<'a> TypeEnv<'a> {
         }
 
         if let TCTypeKind::Struct {
-            size: TC_UNKNOWN_SIZE,
-            ..
+            sa: TC_UNKNOWN_SA, ..
         } = tc_type.kind
         {
             return Err(error!(
@@ -332,7 +331,7 @@ impl<'a> TypeEnv<'a> {
         decl_idx: u32,
         pointer_count: u32,
         range: Range,
-    ) -> Result<(u32, u32), Error> {
+    ) -> Result<SizeAlign, Error> {
         let no_struct = || {
             error!(
                 "referenced struct doesn't exist",
@@ -363,7 +362,7 @@ impl<'a> TypeEnv<'a> {
                 ));
             }
 
-            return Ok((defn.size, defn.align));
+            return Ok(defn.sa);
         } else if pointer_count == 0 {
             return Err(error!(
                 "reference incomplete type without pointer indirection",
@@ -374,14 +373,44 @@ impl<'a> TypeEnv<'a> {
             ));
         } else {
             // type incomplete but we have a pointer to it
-            return Ok((TC_UNKNOWN_SIZE, 0));
+            return Ok(TC_UNKNOWN_SA);
         }
+    }
+
+    pub fn check_struct_member(
+        &self,
+        struct_ident: u32,
+        decl_idx: u32,
+        range: Range,
+        member_ident: u32,
+    ) -> Result<&TCStructMember, Error> {
+        let struct_info = self.structs.get(&struct_ident).unwrap();
+        let defn = if let Some(defn) = &struct_info.defn {
+            defn
+        } else {
+            return Err(error!(
+                "tried to get member of struct that's not defined",
+                range, self.file, "member access here"
+            ));
+        };
+
+        for member in defn.members {
+            if member.ident == member_ident {
+                return Ok(member);
+            }
+        }
+
+        return Err(error!(
+            "couldn't find member in struct definition",
+            defn.loc,
+            "struct defined here",
+            range.cloc(self.file),
+            "member accessed here"
+        ));
     }
 }
 
-// internal
-// internal
-pub struct TypeEnvInterim<'b> {
+struct TypeEnvInterim<'b> {
     pub types: TypeEnv<'b>,
     pub func_types: HashMap<u32, TCFuncType<'b>>,
 }
@@ -414,6 +443,18 @@ impl<'b> TypeEnvInterim<'b> {
             .types
             .assign_convert(buckets, assign_to, assign_to_loc, expr);
     }
+
+    #[inline]
+    pub fn check_struct_member(
+        &self,
+        struct_ident: u32,
+        decl_idx: u32,
+        range: Range,
+        member_ident: u32,
+    ) -> Result<&TCStructMember, Error> {
+        self.types
+            .check_struct_member(struct_ident, decl_idx, range, member_ident)
+    }
 }
 
 pub struct TypedFuncs<'a> {
@@ -421,7 +462,7 @@ pub struct TypedFuncs<'a> {
     pub functions: HashMap<u32, TCFunc<'a>>,
 }
 
-pub fn check_types<'a>(
+pub fn check_file<'a>(
     buckets: BucketListRef<'a>,
     file: u32,
     stmts: &[GlobalStmt],
@@ -491,8 +532,7 @@ pub fn check_types<'a>(
                 ASTTypeKind::Void => TCTypeKind::Void,
                 &ASTTypeKind::Struct { ident } => TCTypeKind::Struct {
                     ident,
-                    size: TC_UNKNOWN_SIZE,
-                    align: 0,
+                    sa: sa(TC_UNKNOWN_SIZE, 0),
                 },
             };
             let member_type = TCType {
@@ -522,22 +562,147 @@ pub fn check_types<'a>(
         unchecked_types.insert(decl_type.ident, unchecked_struct);
     }
 
-    for (ident, type_decl) in unchecked_types.iter() {
+    // return type meaning is (defn_idx, defn_range, sa), where defn_idx is the
+    // decl_idx if sa is not known, and same goes for defn_range
+    fn check_type<'b>(
+        buckets: BucketListRef<'b>,
+        visited: &mut HashSet<u32>,
+        types: &mut TypeEnv<'b>,
+        unchecked_types: &HashMap<u32, UncheckedStruct>,
+        current_ident: u32,
+        type_decl: &UncheckedStruct,
+    ) -> Result<(u32, Range, SizeAlign), Error> {
+        if !visited.insert(current_ident) {
+            if let Some(found) = types.structs.get(&current_ident) {
+                if let Some(defn) = &found.defn {
+                    return Ok((defn.defn_idx, defn.loc.range, defn.sa));
+                }
+                return Ok((found.decl_idx, found.decl_loc.range, TC_UNKNOWN_SA));
+            } else {
+                return Err(error!(
+                    "struct heirarchy contains cycle",
+                    type_decl.decl_range, types.file, "found cycle while solving this type"
+                ));
+            }
+        }
+
         let defn = if let Some(defn) = &type_decl.defn {
             defn
         } else {
             types.structs.insert(
-                *ident,
+                current_ident,
                 TCStruct {
                     decl_idx: type_decl.decl_idx,
                     decl_loc: type_decl.decl_range.cloc(types.file),
                     defn: None,
                 },
             );
-            continue;
+
+            return Ok((type_decl.decl_idx, type_decl.decl_range, TC_UNKNOWN_SA));
         };
 
-        unimplemented!();
+        let mut size: u32 = 0;
+        let mut align: u32 = 0;
+        let mut typed_members = Vec::new();
+        for (m_ident, (m_type, m_range)) in defn.members.iter() {
+            let offset = size;
+            let mut m_type = *m_type;
+
+            // m prefix to mean member's size align (msa), tprefix to mean target (tsa)
+            let m_sa = if let TCTypeKind::Struct { ident, sa: t_sa } = &mut m_type.kind {
+                if let Some(m_type_decl) = unchecked_types.get(m_ident) {
+                    if m_type.pointer_count == 0 {
+                        let (m_defn_idx, m_defn_range, m_sa) = check_type(
+                            buckets,
+                            visited,
+                            types,
+                            unchecked_types,
+                            *ident,
+                            m_type_decl,
+                        )?;
+
+                        if m_sa == TC_UNKNOWN_SA {
+                            return Err(error!(
+                                "struct has incomplete type",
+                                *m_range, types.file, "struct here"
+                            ));
+                        }
+
+                        if m_defn_idx > defn.defn_idx {
+                            return Err(error!(
+                                "struct is defined later in the file (order matters in C)",
+                                m_defn_range.cloc(types.file),
+                                "struct defined here",
+                                m_range.cloc(types.file),
+                                "struct referenced here"
+                            ));
+                        }
+
+                        *t_sa = m_sa;
+                        m_sa
+                    } else if m_type_decl.decl_idx > type_decl.decl_idx {
+                        return Err(error!(
+                            "struct is declared later in the file (order matters in C)",
+                            m_type_decl.decl_range.cloc(types.file),
+                            "struct declared here",
+                            m_range.cloc(types.file),
+                            "struct referenced here"
+                        ));
+                    } else {
+                        sa(8, 8)
+                    }
+                } else {
+                    // TODO check imported structs
+                    return Err(error!(
+                        "struct does not not exist",
+                        *m_range, types.file, "struct referenced here"
+                    ));
+                }
+            } else {
+                sa(m_type.size(), m_type.align())
+            };
+
+            size = align_u32(size, m_sa.align) + m_sa.size;
+            align = u32::max(m_sa.align, align);
+
+            typed_members.push(TCStructMember {
+                ident: *m_ident,
+                decl_type: m_type,
+                range: *m_range,
+                offset,
+            });
+        }
+
+        let sa = sa(align_u32(size, align), align);
+        let checked_defn = TCStructDefn {
+            defn_idx: defn.defn_idx,
+            loc: defn.range.cloc(types.file),
+            sa,
+            members: buckets.add_array(typed_members),
+        };
+
+        types.structs.insert(
+            current_ident,
+            TCStruct {
+                decl_idx: type_decl.decl_idx,
+                decl_loc: type_decl.decl_range.cloc(types.file),
+                defn: Some(checked_defn),
+            },
+        );
+
+        return Ok((defn.defn_idx, defn.range, sa));
+    }
+
+    let mut visited = HashSet::new();
+    for (ident, unchecked) in unchecked_types.iter() {
+        check_type(
+            buckets,
+            &mut visited,
+            &mut types,
+            &unchecked_types,
+            *ident,
+            unchecked,
+        )?;
     }
 
     let mut env = TypeEnvInterim {
@@ -568,8 +733,7 @@ pub fn check_types<'a>(
                 params,
                 body,
             } => (return_type, pointer_count, ident, params, Some(body)),
-            GlobalStmtKind::StructDecl { .. } => continue,
-            _ => panic!("unimplemented"),
+            _ => continue,
         };
 
         let decl_idx = decl_idx as u32;
@@ -707,7 +871,7 @@ pub fn check_types<'a>(
     });
 }
 
-pub fn check_stmts<'b>(
+fn check_stmts<'b>(
     buckets: BucketListRef<'b>,
     env: &TypeEnvInterim<'b>,
     local_env: &mut LocalTypeEnv,
@@ -803,7 +967,7 @@ pub fn check_stmts<'b>(
     return Ok(tstmts);
 }
 
-pub fn check_expr<'b>(
+fn check_expr<'b>(
     buckets: BucketListRef<'b>,
     env: &TypeEnvInterim<'b>,
     local_env: &LocalTypeEnv,
@@ -886,6 +1050,30 @@ pub fn check_expr<'b>(
             return Ok(bin_op(&buckets, l, r));
         }
 
+        ExprKind::Member { base, member } => {
+            let base = check_expr(buckets, env, local_env, decl_idx, base)?;
+
+            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
+                ident
+            } else {
+                return Err(error!(
+                    "cannot access member of non-struct",
+                    base.range, env.types.file, "access happened here"
+                ));
+            };
+
+            let member_info = env.check_struct_member(struct_id, decl_idx, base.range, member)?;
+
+            return Ok(TCExpr {
+                expr_type: member_info.decl_type,
+                range: expr.range,
+                kind: TCExprKind::Member {
+                    base: buckets.add(base),
+                    offset: member_info.offset,
+                },
+            });
+        }
+
         ExprKind::Deref(ptr) => {
             let value = check_expr(buckets, env, local_env, decl_idx, ptr)?;
 
@@ -896,7 +1084,6 @@ pub fn check_expr<'b>(
                 kind: TCExprKind::Deref(buckets.add(value)),
             });
         }
-
         ExprKind::Ref(target) => {
             let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
             let mut expr_type = target.target_type;
@@ -983,7 +1170,7 @@ pub fn check_expr<'b>(
     }
 }
 
-pub fn check_assign_target<'b>(
+fn check_assign_target<'b>(
     buckets: BucketListRef<'b>,
     env: &TypeEnvInterim<'b>,
     local_env: &LocalTypeEnv,
@@ -1010,6 +1197,7 @@ pub fn check_assign_target<'b>(
                 target_type: tc_var.decl_type,
             });
         }
+
         ExprKind::Deref(expr) => {
             let ptr = check_expr(buckets, env, local_env, decl_idx, expr)?;
 
@@ -1047,33 +1235,3 @@ pub fn func_redef(original: CodeLoc, redef: CodeLoc) -> Error {
         original, "original definition here", redef, "second definition here"
     );
 }
-
-/*
-// Check all types are valid
-for (current_struct, type_defn) in self.env.struct_types.iter() {
-    if let Some((defn_idx, members)) = type_defn.defn {
-        let filter_map_struct_idents = |member: &TCStructMember| {
-            if let TCTypeKind::Struct { ident } = member.decl_type.kind {
-                Some((ident, member.range, member.decl_type.pointer_count))
-            } else {
-                None
-            }
-        };
-
-        let inner_struct_members = members.iter().filter_map(filter_map_struct_idents);
-        for (member_struct, range, pointer_count) in inner_struct_members {
-            if *current_struct == member_struct && pointer_count == 0 {
-                return Err(Error::new(
-                    "recursive struct",
-                    vec![
-                        (type_defn.ident_range, "struct here".to_string()),
-                        (range, "recursive member here".to_string()),
-                    ],
-                ));
-            }
-
-            self.check_struct_type(member_struct, defn_idx, pointer_count, range)?;
-        }
-    }
-}
-*/
