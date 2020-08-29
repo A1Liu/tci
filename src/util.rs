@@ -5,13 +5,13 @@ use std::io;
 
 macro_rules! error {
     ($arg1:expr) => {
-        Error::new($arg1, vec![])
+        $crate::util::Error::new($arg1, vec![])
     };
 
     ($msg:expr, $range1:expr, $file1:expr, $msg1:expr) => {
-        Error::new(
+        $crate::util::Error::new(
             $msg,
-            vec![util::ErrorSection {
+            vec![$crate::util::ErrorSection {
                 location: CodeLoc {
                     range: $range1,
                     file: $file1,
@@ -22,9 +22,9 @@ macro_rules! error {
     };
 
     ($msg:expr, $loc1:expr, $msg1:expr) => {
-        Error::new(
+        $crate::util::Error::new(
             $msg,
-            vec![util::ErrorSection {
+            vec![$crate::util::ErrorSection {
                 location: $loc1,
                 message: $msg1.to_string(),
             }],
@@ -32,17 +32,17 @@ macro_rules! error {
     };
 
     ($msg:expr, $range1:expr, $file1:expr, $msg1:expr, $range2:expr, $file2:expr, $msg2:expr) => {
-        Error::new(
+        $crate::util::Error::new(
             $msg,
             vec![
-                util::ErrorSection {
+                $crate::util::ErrorSection {
                     location: CodeLoc {
                         range: $range1,
                         file: $file1,
                     },
                     message: $msg1.to_string(),
                 },
-                util::ErrorSection {
+                $crate::util::ErrorSection {
                     location: CodeLoc {
                         range: $range2,
                         file: $file2,
@@ -54,14 +54,14 @@ macro_rules! error {
     };
 
     ($msg:expr, $loc1:expr, $msg1:expr, $loc2:expr, $msg2:expr) => {
-        Error::new(
+        $crate::util::Error::new(
             $msg,
             vec![
-                util::ErrorSection {
+                $crate::util::ErrorSection {
                     location: $loc1,
                     message: $msg1.to_string(),
                 },
-                util::ErrorSection {
+                $crate::util::ErrorSection {
                     location: $loc2,
                     message: $msg2.to_string(),
                 },

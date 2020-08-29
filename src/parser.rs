@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::buckets::BucketListRef;
-use crate::lexer::{Token, TokenKind};
-use crate::*;
+use crate::lexer::*;
+use crate::util::*;
 use core::slice;
 
 pub struct Parser<'a, 'b> {
@@ -22,7 +22,7 @@ pub fn parse_tokens<'a, 'b>(
         let decl = parser.parse_global_decl()?;
         parse_result.push(decl);
 
-        if parser.peek().kind == lexer::TokenKind::End {
+        if parser.peek().kind == TokenKind::End {
             break;
         }
 

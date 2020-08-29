@@ -27,7 +27,7 @@ use core::mem;
 use runtime::{DefaultIO, RuntimeIO};
 use std::env;
 use std::fs::read_to_string;
-pub use util::{fold_binary, r, r_from, CodeLoc, Error, Range};
+use util::{r, CodeLoc, Error, Range};
 
 #[derive(Clone, Copy)]
 pub struct Environment<'a> {

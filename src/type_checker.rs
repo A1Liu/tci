@@ -1,7 +1,6 @@
 use crate::ast::*;
 use crate::buckets::{BucketList, BucketListRef};
 use crate::util::*;
-use crate::*;
 use std::collections::{HashMap, HashSet};
 
 type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
