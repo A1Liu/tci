@@ -28,7 +28,7 @@ fn test_file_should_succeed(filename: &str) {
     };
 
     match read_to_string(String::from(filename) + ".out") {
-        Ok(expected) => assert_eq!(output.trim(), expected.trim()),
+        Ok(expected) => assert_eq!(output, expected.replace("\r\n", "\n")),
         Err(_) => {}
     }
 }

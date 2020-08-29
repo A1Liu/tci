@@ -268,6 +268,15 @@ impl<'a> Assembler<'a> {
                 };
                 ops.push(tagged);
             }
+            TCExprKind::PtrMember { base, offset } => {
+                let bytes = expr.expr_type.size();
+                ops.append(&mut self.translate_expr(base));
+                tagged.op = Opcode::Get {
+                    offset: *offset,
+                    bytes,
+                };
+                ops.push(tagged);
+            }
 
             TCExprKind::Deref(ptr) => {
                 ops.append(&mut self.translate_expr(ptr));
@@ -277,17 +286,18 @@ impl<'a> Assembler<'a> {
                 };
                 ops.push(tagged);
             }
-            TCExprKind::Ref(lvalue) => {
-                match lvalue.kind {
-                    TCAssignKind::LocalIdent { var_offset } => {
-                        tagged.op = Opcode::MakeTempLocalStackPtr { var: var_offset, offset: 0 };
-                        ops.push(tagged);
-                    }
-                    TCAssignKind::Ptr(expr) => {
-                        ops.append(&mut self.translate_expr(expr));
-                    }
+            TCExprKind::Ref(lvalue) => match lvalue.kind {
+                TCAssignKind::LocalIdent { var_offset } => {
+                    tagged.op = Opcode::MakeTempLocalStackPtr {
+                        var: var_offset,
+                        offset: 0,
+                    };
+                    ops.push(tagged);
                 }
-            }
+                TCAssignKind::Ptr(expr) => {
+                    ops.append(&mut self.translate_expr(expr));
+                }
+            },
 
             TCExprKind::Call {
                 func,

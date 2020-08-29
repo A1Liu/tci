@@ -127,8 +127,8 @@ pub enum Opcode {
     GetLocal { var: i16, offset: u32, bytes: u32 },
     SetLocal { var: i16, offset: u32, bytes: u32 },
 
-    Get { offset: i32, bytes: u32 },
-    Set { offset: i32, bytes: u32 },
+    Get { offset: u32, bytes: u32 },
+    Set { offset: u32, bytes: u32 },
 
     AddU32,
     SubI32,

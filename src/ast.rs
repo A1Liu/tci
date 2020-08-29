@@ -327,6 +327,10 @@ pub enum TCExprKind<'a> {
         base: &'a TCExpr<'a>,
         offset: u32,
     },
+    PtrMember {
+        base: &'a TCExpr<'a>,
+        offset: u32,
+    },
 
     Deref(&'a TCExpr<'a>),
     Ref(TCAssignTarget<'a>),

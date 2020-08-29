@@ -264,12 +264,7 @@ impl<'a> TypeEnv<'a> {
 
     pub fn deref(&self, tc_type: &TCType, value_range: Range) -> Result<TCType, Error> {
         if tc_type.pointer_count == 0 {
-            return Err(error!(
-                "cannot dereference values that aren't pointers",
-                value_range,
-                self.file,
-                format!("value has type {:?}, which cannot be dereferenced", tc_type)
-            ));
+            return Err(dereference_of_non_pointer(value_range, self.file, tc_type));
         }
 
         if let TCTypeKind::Struct {
@@ -1056,10 +1051,7 @@ fn check_expr<'b>(
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
             } else {
-                return Err(error!(
-                    "cannot access member of non-struct",
-                    base.range, env.types.file, "access happened here"
-                ));
+                return Err(member_of_non_struct(base.range, env.types.file));
             };
 
             let member_info = env.check_struct_member(struct_id, decl_idx, base.range, member)?;
@@ -1068,6 +1060,35 @@ fn check_expr<'b>(
                 expr_type: member_info.decl_type,
                 range: expr.range,
                 kind: TCExprKind::Member {
+                    base: buckets.add(base),
+                    offset: member_info.offset,
+                },
+            });
+        }
+        ExprKind::PtrMember { base, member } => {
+            let base = check_expr(buckets, env, local_env, decl_idx, base)?;
+
+            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
+                ident
+            } else {
+                return Err(member_of_non_struct(base.range, env.types.file));
+            };
+
+            let deref_type = env.deref(&base.expr_type, base.range)?;
+            if deref_type.pointer_count != 0 {
+                return Err(ptr_member_of_poly_pointer(
+                    base.range,
+                    env.types.file,
+                    &deref_type,
+                ));
+            }
+
+            let member_info = env.check_struct_member(struct_id, decl_idx, base.range, member)?;
+
+            return Ok(TCExpr {
+                expr_type: member_info.decl_type,
+                range: expr.range,
+                kind: TCExprKind::PtrMember {
                     base: buckets.add(base),
                     offset: member_info.offset,
                 },
@@ -1220,6 +1241,35 @@ fn check_assign_target<'b>(
                 offset: member_info.offset,
             });
         }
+        ExprKind::PtrMember { base, member } => {
+            let base_range = base.range;
+            let base = check_expr(buckets, env, local_env, decl_idx, base)?;
+
+            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
+                ident
+            } else {
+                return Err(member_of_non_struct(base.range, env.types.file));
+            };
+
+            let deref_type = env.deref(&base.expr_type, base.range)?;
+            if deref_type.pointer_count != 0 {
+                return Err(ptr_member_of_poly_pointer(
+                    base.range,
+                    env.types.file,
+                    &deref_type,
+                ));
+            }
+
+            let member_info = env.check_struct_member(struct_id, decl_idx, base.range, *member)?;
+
+            return Ok(TCAssignTarget {
+                kind: TCAssignKind::Ptr(buckets.add(base)),
+                defn_loc: Some(member_info.loc),
+                target_range: expr.range,
+                target_type: member_info.decl_type,
+                offset: member_info.offset,
+            });
+        }
 
         ExprKind::Deref(ptr) => {
             let ptr = check_expr(buckets, env, local_env, decl_idx, ptr)?;
@@ -1240,6 +1290,29 @@ fn check_assign_target<'b>(
             ))
         }
     }
+}
+
+pub fn dereference_of_non_pointer(value_range: Range, file: u32, value_type: &TCType) -> Error {
+    return error!(
+        "cannot dereference values that aren't pointers",
+        value_range,
+        file,
+        format!(
+            "value has type {:?}, which cannot be dereferenced",
+            value_type
+        )
+    );
+}
+
+pub fn ptr_member_of_poly_pointer(ptr_range: Range, file: u32, ptr_type: &TCType) -> Error {
+    error!(
+        "need to dereference pointer before you can access its members",
+        ptr_range.cloc(file),
+        format!(
+            "this points to an object of type {:?}, which doesn't have any members",
+            ptr_type
+        )
+    )
 }
 
 pub fn member_of_non_struct(range: Range, file: u32) -> Error {
