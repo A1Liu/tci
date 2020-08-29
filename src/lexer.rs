@@ -3,7 +3,6 @@ use crate::*;
 use std::collections::HashMap;
 
 pub const CLOSING_CHAR: u8 = !0;
-pub const INVALID_CHAR: u8 = (!0) - 1;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TokenKind<'a> {
@@ -12,6 +11,9 @@ pub enum TokenKind<'a> {
     IntLiteral(i32),
     StringLiteral(&'a str),
     CharLiteral(u8),
+
+    Include(u32),
+    IncludeSys(u32),
 
     Void,
     Char,
@@ -168,6 +170,40 @@ pub fn peek_eq(data: &[u8], current: &mut usize, byte: u8) -> bool {
     return data[*current] == byte;
 }
 
+pub fn peek_eq_series(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
+    let byte_len = bytes.len();
+    if *current + bytes.len() >= data.len() {
+        return false;
+    }
+
+    let eq_slice = &data[(*current)..(*current + byte_len)];
+    return eq_slice == bytes;
+}
+
+#[inline]
+pub fn peek_neq(data: &[u8], current: &mut usize, byte: u8) -> bool {
+    if *current >= data.len() {
+        return false;
+    }
+
+    return data[*current] != byte;
+}
+
+#[inline]
+pub fn peek_neqs(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
+    if *current >= data.len() {
+        return false;
+    }
+
+    for byte in bytes {
+        if data[*current] == *byte {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 #[inline]
 pub fn peek_eqs(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
     if *current >= data.len() {
@@ -202,12 +238,10 @@ pub fn lex_file<'a, 'b>(
     let mut toks = Vec::new();
     let bytes = data.as_bytes();
     let mut current = 0;
-    let mut tok = lex_token(buckets, symbols, file, bytes, &mut current)?;
-    toks.push(tok);
+    let mut done = lex_token(buckets, symbols, file, bytes, &mut current, &mut toks)?;
 
-    while tok.kind != TokenKind::End {
-        tok = lex_token(buckets, symbols, file, bytes, &mut current)?;
-        toks.push(tok);
+    while !done {
+        done = lex_token(buckets, symbols, file, bytes, &mut current, &mut toks)?;
     }
 
     return Ok(toks);
@@ -219,74 +253,150 @@ pub fn lex_token<'a, 'b>(
     file: u32,
     data: &'a [u8],
     current: &mut usize,
-) -> Result<Token<'b>, Error> {
-    let whitespace = [b' ', b'\t', b'\n', b'\r'];
-    while peek_eqs(data, current, &whitespace) {
-        *current += 1;
+    output: &mut Vec<Token<'b>>,
+) -> Result<bool, Error> {
+    let whitespace = [b' ', b'\t'];
+    let crlf = [b'\r', b'\n'];
+
+    loop {
+        while peek_eqs(data, current, &whitespace) {
+            *current += 1;
+        }
+
+        // parse macros
+        if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
+            *current += 1;
+        } else {
+            break;
+        }
+
+        if peek_eq(data, current, b'#') {
+            *current += 1;
+        } else {
+            continue;
+        }
+
+        // macros!
+        let begin = *current;
+        while peek_neqs(data, current, &whitespace) {
+            *current += 1;
+        }
+
+        let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
+        match directive {
+            "include" => {
+                while peek_eqs(data, current, &whitespace) {
+                    *current += 1;
+                }
+
+                if peek_eq(data, current, b'"') {
+                    *current += 1;
+                    let name_begin = *current;
+                    while peek_neq(data, current, b'"') {
+                        *current += 1;
+                    }
+
+                    let word = &data[name_begin..*current];
+                    let word = unsafe { std::str::from_utf8_unchecked(word) };
+                    let id = symbols.translate_add(word);
+                    output.push(Token::new(TokenKind::Include(id), begin..*current));
+                    if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
+                        return Ok(false);
+                    } else {
+                        return Err(expected_newline("include", begin, *current, file));
+                    }
+                } else if peek_eq(data, current, b'<') {
+                    *current += 1;
+                    let name_begin = *current;
+
+                    while peek_neq(data, current, b'>') {
+                        *current += 1;
+                    }
+
+                    let word = &data[name_begin..*current];
+                    let word = unsafe { std::str::from_utf8_unchecked(word) };
+                    let id = symbols.translate_add(word);
+                    output.push(Token::new(TokenKind::Include(id), begin..*current));
+                    if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
+                        return Ok(false);
+                    } else {
+                        return Err(expected_newline("include", begin, *current, file));
+                    }
+                }
+            }
+            _ => {
+                return Err(error!(
+                    "invalid compiler directive",
+                    r(begin as u32, *current as u32),
+                    file,
+                    "directive found here"
+                ));
+            }
+        }
     }
 
     if *current == data.len() {
-        return Token::newr(TokenKind::End, *current..*current);
+        output.push(Token::new(TokenKind::End, *current..*current));
+        return Ok(true);
     }
 
     let begin = *current;
     *current += 1;
 
+    macro_rules! ret_tok {
+        ($arg1:expr) => {{
+            output.push(Token::new($arg1, begin..*current));
+            return Ok(false);
+        }};
+    }
+
+    let is_ident_char = |cur| {
+        (cur >= b'a' && cur <= b'z')
+            || (cur >= b'A' && cur <= b'Z')
+            || cur == b'_'
+            || (cur >= b'0' && cur <= b'9')
+    };
+
     match data[begin] {
         x if (x >= b'a' && x <= b'z') || x == b'_' => {
-            let mut cur = data[*current];
-
-            while (cur >= b'a' && cur <= b'z')
-                || (cur >= b'A' && cur <= b'Z')
-                || cur == b'_'
-                || (cur >= b'0' && cur <= b'9')
-            {
+            while peek_check(data, current, is_ident_char) {
                 *current += 1;
-                cur = data[*current];
             }
 
             let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
             match word {
-                "if" => return Token::newr(TokenKind::If, begin..*current),
-                "else" => return Token::newr(TokenKind::Else, begin..*current),
-                "do" => return Token::newr(TokenKind::Do, begin..*current),
-                "while" => return Token::newr(TokenKind::While, begin..*current),
-                "for" => return Token::newr(TokenKind::For, begin..*current),
-                "break" => return Token::newr(TokenKind::Break, begin..*current),
-                "continue" => return Token::newr(TokenKind::Continue, begin..*current),
-                "return" => return Token::newr(TokenKind::Return, begin..*current),
-                "struct" => return Token::newr(TokenKind::Struct, begin..*current),
-                "typedef" => return Token::newr(TokenKind::Typedef, begin..*current),
-                "void" => return Token::newr(TokenKind::Void, begin..*current),
-                "int" => return Token::newr(TokenKind::Int, begin..*current),
-                "char" => return Token::newr(TokenKind::Char, begin..*current),
+                "if" => ret_tok!(TokenKind::If),
+                "else" => ret_tok!(TokenKind::Else),
+                "do" => ret_tok!(TokenKind::Do),
+                "while" => ret_tok!(TokenKind::While),
+                "for" => ret_tok!(TokenKind::For),
+                "break" => ret_tok!(TokenKind::Break),
+                "continue" => ret_tok!(TokenKind::Continue),
+                "return" => ret_tok!(TokenKind::Return),
+                "struct" => ret_tok!(TokenKind::Struct),
+                "typedef" => ret_tok!(TokenKind::Typedef),
+                "void" => ret_tok!(TokenKind::Void),
+                "int" => ret_tok!(TokenKind::Int),
+                "char" => ret_tok!(TokenKind::Char),
                 word => {
                     let id = symbols.translate_add(word);
                     if word.ends_with("_t") || word == "va_list" {
-                        return Token::newr(TokenKind::TypeIdent(id), begin..*current);
+                        ret_tok!(TokenKind::TypeIdent(id));
                     } else {
-                        return Token::newr(TokenKind::Ident(id), begin..*current);
+                        ret_tok!(TokenKind::Ident(id));
                     }
                 }
             }
         }
 
         x if (x >= b'A' && x <= b'Z') => {
-            let mut cur = data[*current];
-
-            while (cur >= b'a' && cur <= b'z')
-                || (cur >= b'A' && cur <= b'Z')
-                || cur == b'_'
-                || (cur >= b'0' && cur <= b'9')
-            {
+            while peek_check(data, current, is_ident_char) {
                 *current += 1;
-                cur = data[*current];
             }
 
             let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
             let id = symbols.translate_add(word);
-
-            return Token::newr(TokenKind::TypeIdent(id), begin..*current);
+            ret_tok!(TokenKind::TypeIdent(id));
         }
 
         x if (x >= b'0' && x <= b'9') => {
@@ -297,7 +407,7 @@ pub fn lex_token<'a, 'b>(
                 *current += 1;
             }
 
-            return Token::newr(TokenKind::IntLiteral(int_value), begin..*current);
+            ret_tok!(TokenKind::IntLiteral(int_value));
         }
 
         b'\"' => {
@@ -310,7 +420,7 @@ pub fn lex_token<'a, 'b>(
 
             let string = unsafe { std::str::from_utf8_unchecked(&chars) };
             let string = buckets.add_str(string);
-            return Token::newr(TokenKind::StringLiteral(string), begin..*current);
+            ret_tok!(TokenKind::StringLiteral(string));
         }
 
         b'\'' => {
@@ -334,141 +444,141 @@ pub fn lex_token<'a, 'b>(
                 ));
             }
 
-            return Token::newr(TokenKind::CharLiteral(byte), begin..*current);
+            ret_tok!(TokenKind::CharLiteral(byte));
         }
 
-        b'{' => return Token::newr(TokenKind::LBrace, begin..*current),
-        b'}' => return Token::newr(TokenKind::RBrace, begin..*current),
-        b'(' => return Token::newr(TokenKind::LParen, begin..*current),
-        b')' => return Token::newr(TokenKind::RParen, begin..*current),
-        b'[' => return Token::newr(TokenKind::LBracket, begin..*current),
-        b']' => return Token::newr(TokenKind::RBracket, begin..*current),
-        b'~' => return Token::newr(TokenKind::Tilde, begin..*current),
-        b';' => return Token::newr(TokenKind::Semicolon, begin..*current),
-        b',' => return Token::newr(TokenKind::Comma, begin..*current),
+        b'{' => ret_tok!(TokenKind::LBrace),
+        b'}' => ret_tok!(TokenKind::RBrace),
+        b'(' => ret_tok!(TokenKind::LParen),
+        b')' => ret_tok!(TokenKind::RParen),
+        b'[' => ret_tok!(TokenKind::LBracket),
+        b']' => ret_tok!(TokenKind::RBracket),
+        b'~' => ret_tok!(TokenKind::Tilde),
+        b';' => ret_tok!(TokenKind::Semicolon),
+        b',' => ret_tok!(TokenKind::Comma),
 
         b'.' => {
             if peek_eq(data, current, b'.') {
                 *current += 1;
                 if peek_eq(data, current, b'.') {
                     *current += 1;
-                    return Token::newr(TokenKind::DotDotDot, begin..*current);
+                    ret_tok!(TokenKind::DotDotDot);
                 }
 
                 return Err(invalid_token(file, begin, *current));
             }
 
-            return Token::newr(TokenKind::Dot, begin..*current);
+            ret_tok!(TokenKind::Dot);
         }
         b'+' => {
             if peek_eq(data, current, b'+') {
                 *current += 1;
-                return Token::newr(TokenKind::PlusPlus, begin..*current);
+                ret_tok!(TokenKind::PlusPlus);
             } else if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::PlusEq, begin..*current);
+                ret_tok!(TokenKind::PlusEq);
             } else {
-                return Token::newr(TokenKind::Plus, begin..*current);
+                ret_tok!(TokenKind::Plus);
             }
         }
         b'-' => {
             if peek_eq(data, current, b'-') {
                 *current += 1;
-                return Token::newr(TokenKind::DashDash, begin..*current);
+                ret_tok!(TokenKind::DashDash);
             } else if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::DashEq, begin..*current);
+                ret_tok!(TokenKind::DashEq);
             } else if peek_eq(data, current, b'>') {
                 *current += 1;
-                return Token::newr(TokenKind::Arrow, begin..*current);
+                ret_tok!(TokenKind::Arrow);
             } else {
-                return Token::newr(TokenKind::Dash, begin..*current);
+                ret_tok!(TokenKind::Dash);
             }
         }
         b'/' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::SlashEq, begin..*current);
+                ret_tok!(TokenKind::SlashEq);
             } else {
-                return Token::newr(TokenKind::Slash, begin..*current);
+                ret_tok!(TokenKind::Slash);
             }
         }
         b'*' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::StarEq, begin..*current);
+                ret_tok!(TokenKind::StarEq);
             } else {
-                return Token::newr(TokenKind::Star, begin..*current);
+                ret_tok!(TokenKind::Star);
             }
         }
         b'%' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::PercentEq, begin..*current);
+                ret_tok!(TokenKind::PercentEq);
             } else {
-                return Token::newr(TokenKind::Percent, begin..*current);
+                ret_tok!(TokenKind::Percent);
             }
         }
         b'>' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::Geq, begin..*current);
+                ret_tok!(TokenKind::Geq);
             } else {
-                return Token::newr(TokenKind::Gt, begin..*current);
+                ret_tok!(TokenKind::Gt);
             }
         }
         b'<' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::Leq, begin..*current);
+                ret_tok!(TokenKind::Leq);
             } else {
-                return Token::newr(TokenKind::Gt, begin..*current);
+                ret_tok!(TokenKind::Gt);
             }
         }
         b'!' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::Neq, begin..*current);
+                ret_tok!(TokenKind::Neq);
             } else {
-                return Token::newr(TokenKind::Not, begin..*current);
+                ret_tok!(TokenKind::Not);
             }
         }
         b'=' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::EqEq, begin..*current);
+                ret_tok!(TokenKind::EqEq);
             } else {
-                return Token::newr(TokenKind::Eq, begin..*current);
+                ret_tok!(TokenKind::Eq);
             }
         }
         b'|' => {
             if peek_eq(data, current, b'|') {
                 *current += 1;
-                return Token::newr(TokenKind::LineLine, begin..*current);
+                ret_tok!(TokenKind::LineLine);
             } else if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::LineEq, begin..*current);
+                ret_tok!(TokenKind::LineEq);
             } else {
-                return Token::newr(TokenKind::Line, begin..*current);
+                ret_tok!(TokenKind::Line);
             }
         }
         b'&' => {
             if peek_eq(data, current, b'&') {
                 *current += 1;
-                return Token::newr(TokenKind::AmpAmp, begin..*current);
+                ret_tok!(TokenKind::AmpAmp);
             } else if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::AmpEq, begin..*current);
+                ret_tok!(TokenKind::AmpEq);
             } else {
-                return Token::newr(TokenKind::Amp, begin..*current);
+                ret_tok!(TokenKind::Amp);
             }
         }
         b'^' => {
             if peek_eq(data, current, b'=') {
                 *current += 1;
-                return Token::newr(TokenKind::CaretEq, begin..*current);
+                ret_tok!(TokenKind::CaretEq);
             } else {
-                return Token::newr(TokenKind::Caret, begin..*current);
+                ret_tok!(TokenKind::Caret);
             }
         }
 
@@ -525,6 +635,7 @@ pub fn lex_character(
             b'n' => return Ok(b'\n'),
             b'\n' => continue,
             b'\'' => return Ok(b'\''),
+            b'"' => return Ok(b'"'),
             _ => {
                 return Err(error!(
                     "invalid escape sequence",
@@ -535,4 +646,14 @@ pub fn lex_character(
             }
         }
     }
+}
+
+#[inline]
+pub fn expected_newline(directive_name: &'static str, begin: usize, current: usize, file: u32) -> Error {
+    return error!(
+        &format!("expected newline after {} directive", directive_name),
+        r(begin as u32, current as u32),
+        file,
+        "directive here"
+    );
 }
