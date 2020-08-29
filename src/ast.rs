@@ -177,6 +177,7 @@ pub fn sa(size: u32, align: u32) -> SizeAlign {
     SizeAlign { size, align }
 }
 
+pub const TC_UNKNOWN_SIZE: u32 = !0;
 pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     size: TC_UNKNOWN_SIZE,
     align: 0,
@@ -205,7 +206,6 @@ pub struct TCStruct<'a> {
     pub decl_loc: CodeLoc,
 }
 
-pub const TC_UNKNOWN_SIZE: u32 = !0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TCTypeKind {
@@ -222,6 +222,11 @@ pub struct TCType {
     pub kind: TCTypeKind,
     pub pointer_count: u32,
 }
+
+pub const VOID : TCType = TCType {
+    kind: TCTypeKind::Void,
+    pointer_count : 0,
+};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum TCShallowType {

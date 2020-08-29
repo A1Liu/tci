@@ -938,6 +938,14 @@ fn check_stmts<'b>(
                 } in *decls
                 {
                     let decl_type = env.check_type(decl_idx, decl_type, *pointer_count)?;
+                    if decl_type == VOID {
+                        return Err(error!(
+                            "cannot define a variable of type void",
+                            range.cloc(env.types.file),
+                            "incorrect variable definition here"
+                        ));
+                    }
+
                     let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
                     local_env.add_local(*ident, decl_type, range.cloc(env.types.file))?;
                     let expr = env.assign_convert(
