@@ -1,5 +1,4 @@
 use crate::filedb::*;
-use crate::lexer::*;
 use crate::runtime::*;
 use crate::util::*;
 use core::ops::{Deref, DerefMut};
@@ -159,7 +158,6 @@ pub struct TaggedOpcode {
 pub struct Program<'a> {
     pub files: FileDbRef<'a>,
     pub data: VarBufferRef<'a>,
-    pub symbols: &'a [&'a str],
     pub ops: &'a [TaggedOpcode],
     pub main_idx: u32,
 }

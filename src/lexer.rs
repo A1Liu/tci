@@ -1,6 +1,5 @@
 use crate::buckets::*;
 use crate::*;
-use std::collections::HashMap;
 
 pub const CLOSING_CHAR: u8 = !0;
 
@@ -102,45 +101,6 @@ impl<'a> Token<'a> {
     }
 }
 
-pub const MAIN_SYMBOL: u32 = 0;
-pub const VA_LIST_SYMBOL: u32 = 1;
-pub const PRINTF_SYMBOL: u32 = 2;
-pub const EXIT_SYMBOL: u32 = 3;
-
-pub struct Symbols<'a> {
-    pub translate: HashMap<&'a str, u32>,
-    pub names: Vec<&'a str>,
-}
-
-impl<'a> Symbols<'a> {
-    pub fn new() -> Self {
-        let mut new_symbols = Self {
-            names: Vec::new(),
-            translate: HashMap::new(),
-        };
-
-        assert_eq!(MAIN_SYMBOL, new_symbols.translate_add("main"));
-
-        assert_eq!(VA_LIST_SYMBOL, new_symbols.translate_add("va_list"));
-
-        assert_eq!(PRINTF_SYMBOL, new_symbols.translate_add("printf"));
-        assert_eq!(EXIT_SYMBOL, new_symbols.translate_add("exit"));
-
-        return new_symbols;
-    }
-
-    pub fn translate_add(&mut self, word: &'a str) -> u32 {
-        if let Some(id) = self.translate.get(word) {
-            return *id;
-        } else {
-            let idx = self.names.len() as u32;
-            self.names.push(word);
-            self.translate.insert(word, idx);
-            return idx;
-        }
-    }
-}
-
 #[inline]
 pub fn expect(data: &[u8], current: &mut usize) -> Result<u8, Error> {
     if *current == data.len() {
@@ -231,7 +191,7 @@ pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
 
 pub fn lex_file<'a, 'b>(
     buckets: BucketListRef<'b>,
-    symbols: &mut Symbols<'a>,
+    symbols: &mut FileDb<'a>,
     file: u32,
     data: &'a str,
 ) -> Result<Vec<Token<'b>>, Error> {
@@ -249,7 +209,7 @@ pub fn lex_file<'a, 'b>(
 
 pub fn lex_token<'a, 'b>(
     buckets: BucketListRef<'b>,
-    symbols: &mut Symbols<'a>,
+    symbols: &mut FileDb<'a>,
     file: u32,
     data: &'a [u8],
     current: &mut usize,
@@ -296,9 +256,7 @@ pub fn lex_token<'a, 'b>(
                         *current += 1;
                     }
 
-                    let word = &data[name_begin..*current];
-                    let word = unsafe { std::str::from_utf8_unchecked(word) };
-                    let id = symbols.translate_add(word);
+                    let id = symbols.translate_add(name_begin..*current, file);
                     output.push(Token::new(TokenKind::Include(id), begin..*current));
                     if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
                         return Ok(false);
@@ -313,9 +271,7 @@ pub fn lex_token<'a, 'b>(
                         *current += 1;
                     }
 
-                    let word = &data[name_begin..*current];
-                    let word = unsafe { std::str::from_utf8_unchecked(word) };
-                    let id = symbols.translate_add(word);
+                    let id = symbols.translate_add(name_begin..*current, file);
                     output.push(Token::new(TokenKind::Include(id), begin..*current));
                     if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
                         return Ok(false);
@@ -379,7 +335,7 @@ pub fn lex_token<'a, 'b>(
                 "int" => ret_tok!(TokenKind::Int),
                 "char" => ret_tok!(TokenKind::Char),
                 word => {
-                    let id = symbols.translate_add(word);
+                    let id = symbols.translate_add(begin..*current, file);
                     if word.ends_with("_t") || word == "va_list" {
                         ret_tok!(TokenKind::TypeIdent(id));
                     } else {
@@ -394,8 +350,7 @@ pub fn lex_token<'a, 'b>(
                 *current += 1;
             }
 
-            let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
-            let id = symbols.translate_add(word);
+            let id = symbols.translate_add(begin..*current, file);
             ret_tok!(TokenKind::TypeIdent(id));
         }
 

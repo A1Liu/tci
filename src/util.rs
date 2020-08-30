@@ -1,7 +1,7 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
-use core::{fmt, ops};
-use std::io;
+use core::{fmt, ops, slice};
+use std::{io, marker};
 
 macro_rules! error {
     ($arg1:expr) => {
@@ -546,5 +546,50 @@ pub fn write_utf8_lossy(mut write: impl io::Write, bytes: &[u8]) -> io::Result<u
         } else {
             return Ok(total);
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ShortSlice<'a, T> {
+    pub data: *const T,
+    pub len: u32,
+    pub meta: u32,
+    pub phantom: marker::PhantomData<&'a T>,
+}
+
+impl<'a, T> ShortSlice<'a, T> {
+    pub fn new(data: &'a [T], meta: u32) -> Self {
+        Self {
+            data: data.as_ptr(),
+            len: data.len() as u32, // TODO check for overflow
+            meta,
+            phantom: marker::PhantomData,
+        }
+    }
+}
+
+// impl<'a, T> ops::Deref for &ShortSlice<'a, T> {
+//     type Target = [T];
+// 
+//     fn deref(&self) -> &[T] {
+//         return unsafe { slice::from_raw_parts(self.data, self.len as usize) };
+//     }
+// }
+
+impl<'a, T> ops::Deref for ShortSlice<'a, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        return unsafe { slice::from_raw_parts(self.data, self.len as usize) };
+    }
+}
+
+impl<'a, T> fmt::Debug for ShortSlice<'a, T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use ops::Deref;
+        write!(fmt, "{:?}", self.deref())
     }
 }

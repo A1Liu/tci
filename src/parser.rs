@@ -840,7 +840,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     pub fn unexpected_token(&self, parsing_what: &str, tok: &Token) -> Error {
         return error!(
-            "unexpected token while parsing ",
+            &format!("unexpected token while parsing {}", parsing_what),
             tok.range,
             self.file_id,
             format!("this was interpreted as {:?}", tok)

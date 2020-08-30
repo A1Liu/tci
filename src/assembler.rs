@@ -1,11 +1,10 @@
 use crate::ast::*;
 use crate::buckets::*;
 use crate::interpreter::*;
-use crate::lexer::*;
 use crate::runtime::*;
 use crate::type_checker::*;
 use crate::util::*;
-use crate::*;
+use crate::filedb::*;
 use core::alloc;
 use core::mem::{align_of, size_of};
 use std::collections::{HashMap, HashSet};
@@ -409,8 +408,7 @@ impl<'a> Assembler<'a> {
 
     pub fn assemble<'b>(
         mut self,
-        env: &Environment,
-        symbols: &Symbols,
+        env: &FileDb,
     ) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
         let main_func = self.functions.get(&MAIN_SYMBOL).ok_or_else(no_main)?;
@@ -446,28 +444,23 @@ impl<'a> Assembler<'a> {
             }
         }
 
-        let file_size = env.files.size;
-        let symbols_size = align_usize(symbols.names.iter().map(|i| i.len()).sum(), 8)
-            + align_usize(symbols.names.len() * 16, align_of::<TaggedOpcode>());
+        let file_size = align_usize(env.size(), align_of::<TaggedOpcode>());
         let opcode_size = size_of::<TaggedOpcode>();
         let opcodes_size = self.opcodes.len() * opcode_size;
         let data_size = align_usize(self.data.data.len(), align_of::<Var>());
         let vars_size = self.data.vars.len() * size_of::<Var>();
 
-        let total_size = file_size + symbols_size + opcodes_size + data_size + vars_size + 8;
+        let total_size = file_size + opcodes_size + data_size + vars_size + 8;
         let buckets = BucketList::with_capacity(0);
         let layout = alloc::Layout::from_size_align(total_size, 8).expect("why did this fail?");
         let mut frame = buckets.alloc_frame(layout);
 
-        let files = env.files.clone_into_frame(&mut frame);
-        let symbols = symbols.names.iter().map(|i| &*frame.add_str(*i)).collect();
-        let symbols: &[&str] = frame.add_array(symbols);
+        let files = FileDbRef::new_from_frame(&mut frame, env);
         let ops = frame.add_array(self.opcodes);
         let data = self.data.write_to_ref(frame);
 
         let program = Program {
             files,
-            symbols,
             data,
             ops,
             main_idx,
