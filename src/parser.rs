@@ -4,26 +4,27 @@ use crate::lexer::*;
 use crate::util::*;
 use core::slice;
 
+
 pub struct Parser<'a, 'b> {
     pub buckets: BucketListRef<'b>,
-    pub file_id: u32,
     pub tokens: &'a [Token<'a>],
     pub current: usize,
 }
 
 pub fn parse_tokens<'a, 'b>(
     buckets: BucketListRef<'b>,
-    file_id: u32,
     tokens: &'a [Token<'a>],
-) -> Result<Vec<GlobalStmt<'b>>, Error> {
-    let mut parser = Parser::new(buckets, file_id, tokens);
+) -> Result<Option<ASTProgram<'b>>, Error> {
+    let mut parser = Parser::new(buckets, tokens);
     let mut parse_result = Vec::new();
-    loop {
-        let decl = parser.parse_global_decl()?;
-        parse_result.push(decl);
 
+    loop {
         if parser.peek_o().is_none() {
             break;
+        }
+
+        if parser.parse_global_decls(&mut parse_result)? { // failed from prior file
+            return Ok(None);
         }
 
         while let Some(next) = parser.buckets.next() {
@@ -31,15 +32,16 @@ pub fn parse_tokens<'a, 'b>(
         }
     }
 
-    return Ok(parse_result);
+    return Ok(Some(ASTProgram {
+        stmts: buckets.add_array(parse_result),
+    }));
 }
 
 impl<'a, 'b> Parser<'a, 'b> {
-    pub fn new(buckets: BucketListRef<'b>, file_id: u32, tokens: &'a [Token<'a>]) -> Self {
+    pub fn new(buckets: BucketListRef<'b>, tokens: &'a [Token<'a>]) -> Self {
         Self {
             buckets,
             tokens,
-            file_id,
             current: 0,
         }
     }
@@ -453,7 +455,14 @@ impl<'a, 'b> Parser<'a, 'b> {
         return Ok((decls, decl));
     }
 
-    pub fn parse_global_decl(&mut self) -> Result<GlobalStmt<'b>, Error> {
+    pub fn parse_global_decls(&mut self, decls: &mut Vec<GlobalStmt<'b>>) -> Result<bool, Error> {
+        macro_rules! ret_stmt {
+            ($stmt:expr) => {
+                decls.push($stmt);
+                return Ok(false)
+            };
+        }
+
         let decl_type = match self.peek()?.kind {
             TokenKind::Struct => {
                 let start_loc = self.pop().unwrap().loc;
@@ -473,7 +482,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let end_loc = self.pop().unwrap().loc;
                     self.eat_semicolon()?;
 
-                    return Ok(GlobalStmt {
+                    ret_stmt!(GlobalStmt {
                         kind: GlobalStmtKind::StructDecl(StructDecl {
                             ident,
                             ident_loc,
@@ -487,7 +496,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if tok.kind == TokenKind::Semicolon {
                     self.pop().unwrap();
 
-                    return Ok(GlobalStmt {
+                    ret_stmt!(GlobalStmt {
                         loc: l_from(start_loc, ident_loc),
                         kind: GlobalStmtKind::StructDecl(StructDecl {
                             ident,
@@ -513,7 +522,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             self.expect_semicolon(&tok)?;
             let end_loc = decl.loc;
             decls.push(decl);
-            return Ok(GlobalStmt {
+            ret_stmt!(GlobalStmt {
                 loc: l_from(decl_type.loc, end_loc),
                 kind: GlobalStmtKind::Decl {
                     decl_type,
@@ -526,7 +535,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             self.expect_semicolon(&tok)?;
             let end_loc = decl.loc;
             decls.push(decl);
-            return Ok(GlobalStmt {
+            ret_stmt!(GlobalStmt {
                 loc: l_from(decl_type.loc, end_loc),
                 kind: GlobalStmtKind::Decl {
                     decl_type,
@@ -538,7 +547,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         if tok.kind == TokenKind::Semicolon {
             let end_loc = decl.loc;
             decls.push(decl);
-            return Ok(GlobalStmt {
+            ret_stmt!(GlobalStmt {
                 loc: l_from(decl_type.loc, end_loc),
                 kind: GlobalStmtKind::Decl {
                     decl_type,
@@ -571,7 +580,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let params = self.buckets.add_array(params);
         let end_decl_tok = self.pop()?;
         if end_decl_tok.kind == TokenKind::Semicolon {
-            return Ok(GlobalStmt {
+            ret_stmt!(GlobalStmt {
                 loc: l_from(decl_type.loc, end_loc),
                 kind: GlobalStmtKind::FuncDecl {
                     pointer_count: decl.pointer_count,
@@ -599,7 +608,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let tok = self.pop().unwrap();
 
         let body = self.buckets.add_array(body);
-        return Ok(GlobalStmt {
+        ret_stmt!(GlobalStmt {
             loc: l_from(decl_type.loc, end_loc),
             kind: GlobalStmtKind::Func {
                 return_type: decl_type,

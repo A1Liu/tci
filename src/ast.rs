@@ -1,5 +1,10 @@
 use crate::util::*;
 
+#[derive(Clone, Copy)]
+pub struct ASTProgram<'a> {
+    pub stmts: &'a [GlobalStmt<'a>]
+}
+
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 pub enum BinOp {
     Add,

@@ -68,9 +68,15 @@ impl Error {
     }
 }
 
+impl Into<Vec<Error>> for Error {
+    fn into(self) -> Vec<Error> {
+        vec![self]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CodeLoc {
-    pub start: u32,
+    pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,
     pub file: u32,
 }

@@ -421,8 +421,7 @@ pub struct TypedFuncs<'a> {
 
 pub fn check_file<'a>(
     buckets: BucketListRef<'a>,
-    file: u32,
-    stmts: &[GlobalStmt],
+    program: ASTProgram,
 ) -> Result<TypedFuncs<'a>, Error> {
     let mut types = TypeEnv::new();
 
@@ -440,7 +439,7 @@ pub fn check_file<'a>(
 
     // Add all types to the type table
     let mut unchecked_types: HashMap<u32, UncheckedStruct> = HashMap::new();
-    for (decl_idx, stmt) in stmts.iter().enumerate() {
+    for (decl_idx, stmt) in program.stmts.iter().enumerate() {
         let decl_type = match &stmt.kind {
             GlobalStmtKind::StructDecl(decl_type) => decl_type,
             _ => continue,
@@ -669,7 +668,7 @@ pub fn check_file<'a>(
     }
 
     let mut unchecked_functions = HashMap::new();
-    for (decl_idx, stmt) in stmts.iter().enumerate() {
+    for (decl_idx, stmt) in program.stmts.iter().enumerate() {
         let (rtype, rpointer_count, ident, params, func_body) = match &stmt.kind {
             GlobalStmtKind::FuncDecl {
                 return_type,
@@ -718,10 +717,7 @@ pub fn check_file<'a>(
             if let Some(original) = names.insert(ident, param.loc) {
                 return Err(error!(
                     "redeclaration of function parameter",
-                    original,
-                    "original declaration here",
-                    param.loc,
-                    "second declaration here"
+                    original, "original declaration here", param.loc, "second declaration here"
                 ));
             }
 
@@ -1091,10 +1087,7 @@ fn check_expr<'b>(
             {
                 return Err(error!(
                     "function call has wrong number of parameters",
-                    expr.loc,
-                    "function called here",
-                    func_type.loc,
-                    "function declared here"
+                    expr.loc, "function called here", func_type.loc, "function declared here"
                 ));
             }
 
