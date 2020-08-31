@@ -18,29 +18,26 @@ macro_rules! err {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FuncDesc {
-    pub file: u32,
     pub name: u32,
 }
 
 impl FuncDesc {
-    pub fn new(file: u32, name: u32) -> Self {
-        Self { file, name }
+    pub fn new(name: u32) -> Self {
+        Self { name }
     }
 
-    pub fn into_callframe(self, range: Range) -> CallFrame {
+    pub fn into_callframe(self, loc: CodeLoc) -> CallFrame {
         CallFrame {
-            file: self.file,
             name: self.name,
-            range,
+            loc,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
-    pub file: u32,
     pub name: u32,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Program) -> String {
@@ -60,7 +57,7 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
     write!(out, "{}: {}\n", error.short_name, error.message).expect("cannot fail");
     for frame in stack_trace {
         let diagnostic = Diagnostic::new(Severity::Void)
-            .with_labels(vec![Label::primary(frame.file, frame.range)]);
+            .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
         codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic)
             .expect("why did this fail?");
     }
@@ -151,7 +148,7 @@ pub enum Opcode {
 #[derive(Debug, Clone, Copy)]
 pub struct TaggedOpcode {
     pub op: Opcode,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,7 +241,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             write!(self.io.log(), "op: {:?}\n", op.op)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            self.callstack.push(func_desc.into_callframe(op.range));
+            self.callstack.push(func_desc.into_callframe(op.loc));
             let directive = self.run_op(fp, pc, program, op.op)?;
             write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;

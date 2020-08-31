@@ -12,7 +12,7 @@ macro_rules! error {
         $crate::util::Error::new(
             $msg,
             vec![$crate::util::ErrorSection {
-                location: CodeLoc {
+                location: $crate::util::CodeLoc {
                     range: $range1,
                     file: $file1,
                 },
@@ -36,14 +36,14 @@ macro_rules! error {
             $msg,
             vec![
                 $crate::util::ErrorSection {
-                    location: CodeLoc {
+                    location: $crate::util::CodeLoc {
                         range: $range1,
                         file: $file1,
                     },
                     message: $msg1.to_string(),
                 },
                 $crate::util::ErrorSection {
-                    location: CodeLoc {
+                    location: $crate::util::CodeLoc {
                         range: $range2,
                         file: $file2,
                     },
@@ -152,6 +152,29 @@ impl Into<ops::Range<usize>> for Range {
 pub struct CodeLoc {
     pub range: Range,
     pub file: u32,
+}
+
+#[inline]
+pub fn l(begin: u32, end: u32, file: u32) -> CodeLoc {
+    CodeLoc {
+        range: r(begin, end),
+        file,
+    }
+}
+
+impl Into<ops::Range<usize>> for CodeLoc {
+    fn into(self) -> ops::Range<usize> {
+        (self.range.start as usize)..(self.range.end as usize)
+    }
+}
+
+#[inline]
+pub fn l_from(loc1: CodeLoc, loc2: CodeLoc) -> CodeLoc {
+    debug_assert_eq!(loc1.file, loc2.file);
+    CodeLoc {
+        range: r_from(loc1.range, loc2.range),
+        file: loc1.file
+    }
 }
 
 pub fn align_usize(size: usize, align: usize) -> usize {

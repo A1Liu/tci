@@ -41,7 +41,7 @@ pub enum ExprKind<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ pub struct InnerStructDecl {
     pub decl_type: ASTType,
     pub pointer_count: u32,
     pub ident: u32,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug)]
@@ -65,22 +65,22 @@ pub enum ParamKind {
 #[derive(Debug)]
 pub struct ParamDecl {
     pub kind: ParamKind,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug)]
 pub struct StructDecl<'a> {
     pub ident: u32,
-    pub ident_range: Range,
+    pub ident_loc: CodeLoc,
     pub members: Option<&'a [InnerStructDecl]>,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone)]
 pub struct Decl<'a> {
     pub pointer_count: u32,
     pub ident: u32,
-    pub range: Range,
+    pub loc: CodeLoc,
     pub expr: Expr<'a>,
 }
 
@@ -109,7 +109,7 @@ pub enum GlobalStmtKind<'a> {
 #[derive(Debug)]
 pub struct GlobalStmt<'a> {
     pub kind: GlobalStmtKind<'a>,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug)]
@@ -123,7 +123,7 @@ pub enum ASTTypeKind {
 #[derive(Debug)]
 pub struct ASTType {
     pub kind: ASTTypeKind,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug)]
@@ -164,7 +164,7 @@ pub enum StmtKind<'a> {
 #[derive(Debug)]
 pub struct Stmt<'a> {
     pub kind: StmtKind<'a>,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
@@ -249,7 +249,7 @@ pub struct TCVar {
 pub struct TCFuncParam {
     pub decl_type: TCType,
     pub ident: u32,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -284,7 +284,7 @@ pub enum TCAssignKind<'a> {
 pub struct TCAssignTarget<'a> {
     pub kind: TCAssignKind<'a>,
     pub defn_loc: Option<CodeLoc>,
-    pub target_range: Range,
+    pub target_loc: CodeLoc,
     pub target_type: TCType,
     pub offset: u32,
 }
@@ -300,7 +300,7 @@ pub enum TCStmtKind<'a> {
 #[derive(Debug, Clone)]
 pub struct TCStmt<'a> {
     pub kind: TCStmtKind<'a>,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone)]
@@ -351,7 +351,7 @@ pub enum TCExprKind<'a> {
 pub struct TCExpr<'a> {
     pub kind: TCExprKind<'a>,
     pub expr_type: TCType,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 impl TCType {

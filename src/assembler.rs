@@ -101,8 +101,8 @@ impl<'a> Assembler<'a> {
         let param_count = func_type.params.len() as u32;
 
         self.opcodes.push(TaggedOpcode {
-            op: Opcode::Func(FuncDesc::new(defn.loc.file, ident)),
-            range: defn.loc.range,
+            op: Opcode::Func(FuncDesc::new(ident)),
+            loc: defn.loc,
         });
 
         for stmt in defn.stmts {
@@ -112,7 +112,7 @@ impl<'a> Assembler<'a> {
 
         self.opcodes.push(TaggedOpcode {
             op: Opcode::Ret,
-            range: defn.loc.range,
+            loc: defn.loc,
         });
 
         self.functions.insert(ident, asm_func);
@@ -128,7 +128,7 @@ impl<'a> Assembler<'a> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
-            range: stmt.range,
+            loc: stmt.loc,
         };
 
         match &stmt.kind {
@@ -175,7 +175,7 @@ impl<'a> Assembler<'a> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
-            range: expr.range,
+            loc: expr.loc,
         };
 
         match &expr.kind {
@@ -357,7 +357,7 @@ impl<'a> Assembler<'a> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
-            range: assign.target_range,
+            loc: assign.target_loc,
         };
 
         match assign.kind {
@@ -414,12 +414,8 @@ impl<'a> Assembler<'a> {
         let main_func = self.functions.get(&MAIN_SYMBOL).ok_or_else(no_main)?;
         let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
-        let mut current_func = FuncDesc::new(!0, !0);
         for op in self.opcodes.iter_mut() {
             match &mut op.op {
-                Opcode::Func(func_desc) => {
-                    current_func = *func_desc;
-                }
                 Opcode::Call(addr) => {
                     let function = self.functions.get(addr).unwrap();
                     if let Some(func_header) = function.func_header {
@@ -431,11 +427,9 @@ impl<'a> Assembler<'a> {
                         let func_loc = function.func_type.loc;
                         return Err(error!(
                             "couldn't find definition for function",
-                            op.range,
-                            current_func.file,
+                            op.loc,
                             "called here",
-                            func_loc.range,
-                            func_loc.file,
+                            func_loc,
                             "declared here"
                         ));
                     }

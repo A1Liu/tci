@@ -12,7 +12,7 @@ fn add_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
     };
 
     return TCExpr {
-        range: r_from(l.range, r.range),
+        loc: l_from(l.loc, r.loc),
         kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
         expr_type: result_type,
     };
@@ -25,13 +25,13 @@ fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
     };
 
     let r = TCExpr {
-        range: l.range,
+        loc: l.loc,
         kind: TCExprKind::SConv8To32(buckets.add(r)),
         expr_type: result_type,
     };
 
     return TCExpr {
-        range: r_from(l.range, r.range),
+        loc: l_from(l.loc, r.loc),
         kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
         expr_type: result_type,
     };
@@ -44,13 +44,13 @@ fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
     };
 
     let l = TCExpr {
-        range: l.range,
+        loc: l.loc,
         kind: TCExprKind::SConv8To32(buckets.add(l)),
         expr_type: result_type,
     };
 
     return TCExpr {
-        range: r_from(l.range, r.range),
+        loc: l_from(l.loc, r.loc),
         kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
         expr_type: result_type,
     };
@@ -63,7 +63,7 @@ fn sub_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
     };
 
     return TCExpr {
-        range: r_from(l.range, r.range),
+        loc: l_from(l.loc, r.loc),
         kind: TCExprKind::SubI32(buckets.add(l), buckets.add(r)),
         expr_type: result_type,
     };
@@ -112,11 +112,9 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
     if BIN_LEFT_OVERLOADS.get(&lkey).is_none() {
         return error!(
             "invalid operands to binary expression (left expression is not valid for this operand)",
-            l.range,
-            env.file,
+            l.loc,
             format!("this has type {:?}", l.expr_type),
-            r.range,
-            env.file,
+            r.loc,
             format!("this has type {:?}", r.expr_type)
         );
     }
@@ -124,22 +122,18 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
     if BIN_RIGHT_OVERLOADS.get(&rkey).is_none() {
         return error!(
             "invalid operands to binary expression (right expression is not valid for this operand)",
-            l.range,
-            env.file,
+            l.loc,
             format!("this has type {:?}", l.expr_type),
-            r.range,
-            env.file,
+            r.loc,
             format!("this has type {:?}", r.expr_type)
             );
     }
 
     return error!(
         "invalid operands to binary expression",
-        l.range,
-        env.file,
+        l.loc,
         format!("this has type {:?}", l.expr_type),
-        r.range,
-        env.file,
+        r.loc,
         format!("this has type {:?}", r.expr_type)
     );
 }
@@ -147,17 +141,17 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
 pub struct LocalTypeEnv {
     pub symbols: HashMap<u32, TCVar>,
     pub return_type: TCType,
-    pub rtype_range: Range,
+    pub rtype_loc: CodeLoc,
     pub parent: *const LocalTypeEnv,
     pub decl_idx: i16,
 }
 
 impl LocalTypeEnv {
-    pub fn new(return_type: TCType, rtype_range: Range) -> Self {
+    pub fn new(return_type: TCType, rtype_loc: CodeLoc) -> Self {
         Self {
             symbols: HashMap::new(),
             return_type,
-            rtype_range,
+            rtype_loc,
             parent: core::ptr::null(),
             decl_idx: 0,
         }
@@ -169,7 +163,7 @@ impl LocalTypeEnv {
             Self {
                 symbols: HashMap::new(),
                 return_type: self.return_type,
-                rtype_range: self.rtype_range,
+                rtype_loc: self.rtype_loc,
                 parent: self.parent,
                 decl_idx: self.decl_idx,
             }
@@ -177,7 +171,7 @@ impl LocalTypeEnv {
             Self {
                 symbols: HashMap::new(),
                 return_type: self.return_type,
-                rtype_range: self.rtype_range,
+                rtype_loc: self.rtype_loc,
                 decl_idx: self.decl_idx,
                 parent: self,
             }
@@ -201,12 +195,7 @@ impl LocalTypeEnv {
         if let Some(var_type) = self.symbols.insert(ident, tc_value) {
             return Err(error!(
                 "name redefined in scope",
-                var_type.loc.range,
-                var_type.loc.file,
-                "first declaration defined here",
-                tc_loc.range,
-                tc_loc.file,
-                "redecaration defined here"
+                var_type.loc, "first declaration defined here", tc_loc, "redecaration defined here"
             ));
         }
 
@@ -227,14 +216,12 @@ impl LocalTypeEnv {
 }
 
 pub struct TypeEnv<'a> {
-    file: u32,
     structs: HashMap<u32, TCStruct<'a>>,
 }
 
 impl<'a> TypeEnv<'a> {
-    pub fn new(file: u32) -> Self {
+    pub fn new() -> Self {
         Self {
-            file,
             structs: HashMap::new(),
         }
     }
@@ -250,7 +237,7 @@ impl<'a> TypeEnv<'a> {
             ASTTypeKind::Char => TCTypeKind::Char,
             ASTTypeKind::Void => TCTypeKind::Void,
             &ASTTypeKind::Struct { ident } => {
-                let sa = self.check_struct_type(ident, decl_idx, pointer_count, ast_type.range)?;
+                let sa = self.check_struct_type(ident, decl_idx, pointer_count, ast_type.loc)?;
                 TCTypeKind::Struct { ident, sa }
             }
         };
@@ -261,9 +248,9 @@ impl<'a> TypeEnv<'a> {
         });
     }
 
-    pub fn deref(&self, tc_type: &TCType, value_range: Range) -> Result<TCType, Error> {
+    pub fn deref(&self, tc_type: &TCType, value_loc: CodeLoc) -> Result<TCType, Error> {
         if tc_type.pointer_count == 0 {
-            return Err(dereference_of_non_pointer(value_range, self.file, tc_type));
+            return Err(dereference_of_non_pointer(value_loc, tc_type));
         }
 
         if let TCTypeKind::Struct {
@@ -272,8 +259,7 @@ impl<'a> TypeEnv<'a> {
         {
             return Err(error!(
                 "cannot dereference pointer to struct of unknown size",
-                value_range,
-                self.file,
+                value_loc,
                 format!("value has type {:?}, which cannot be dereferenced", tc_type)
             ));
         }
@@ -295,7 +281,7 @@ impl<'a> TypeEnv<'a> {
             return Ok(TCExpr {
                 kind: TCExprKind::Uninit,
                 expr_type: *assign_to,
-                range: expr.range,
+                loc: expr.loc,
             });
         }
 
@@ -304,17 +290,12 @@ impl<'a> TypeEnv<'a> {
         } else if let Some(assign_loc) = assign_to_loc {
             return Err(error!(
                 "value cannot be converted to target type",
-                expr.range,
-                self.file,
-                "value found here",
-                assign_loc.range,
-                assign_loc.file,
-                "expected type defined here"
+                expr.loc, "value found here", assign_loc, "expected type defined here"
             ));
         } else {
             return Err(error!(
                 "value cannot be converted to target type",
-                expr.range, self.file, "value found here"
+                expr.loc, "value found here"
             ));
         }
     }
@@ -324,24 +305,15 @@ impl<'a> TypeEnv<'a> {
         struct_ident: u32,
         decl_idx: u32,
         pointer_count: u32,
-        range: Range,
+        loc: CodeLoc,
     ) -> Result<SizeAlign, Error> {
-        let no_struct = || {
-            error!(
-                "referenced struct doesn't exist",
-                range.cloc(self.file),
-                "struct used here"
-            )
-        };
+        let no_struct = || error!("referenced struct doesn't exist", loc, "struct used here");
 
         let struct_type = self.structs.get(&struct_ident).ok_or_else(no_struct)?;
         if struct_type.decl_idx > decl_idx {
             return Err(error!(
                 "used type declared later in file",
-                struct_type.decl_loc,
-                "type is declared here",
-                range.cloc(self.file),
-                "type is used here"
+                struct_type.decl_loc, "type is declared here", loc, "type is used here"
             ));
         }
 
@@ -349,10 +321,7 @@ impl<'a> TypeEnv<'a> {
             if pointer_count == 0 && defn.defn_idx > decl_idx {
                 return Err(error!(
                     "used type defined later in file",
-                    defn.loc,
-                    "type is defined here",
-                    range.cloc(self.file),
-                    "type is used here"
+                    defn.loc, "type is defined here", loc, "type is used here"
                 ));
             }
 
@@ -360,10 +329,7 @@ impl<'a> TypeEnv<'a> {
         } else if pointer_count == 0 {
             return Err(error!(
                 "reference incomplete type without pointer indirection",
-                struct_type.decl_loc,
-                "incomplete type declared here",
-                range.cloc(self.file),
-                "type used here"
+                struct_type.decl_loc, "incomplete type declared here", loc, "type used here"
             ));
         } else {
             // type incomplete but we have a pointer to it
@@ -375,7 +341,7 @@ impl<'a> TypeEnv<'a> {
         &self,
         struct_ident: u32,
         decl_idx: u32,
-        range: Range,
+        loc: CodeLoc,
         member_ident: u32,
     ) -> Result<&TCStructMember, Error> {
         let struct_info = self.structs.get(&struct_ident).unwrap();
@@ -384,7 +350,7 @@ impl<'a> TypeEnv<'a> {
         } else {
             return Err(error!(
                 "tried to get member of struct that's not defined",
-                range, self.file, "member access here"
+                loc, "member access here"
             ));
         };
 
@@ -396,10 +362,7 @@ impl<'a> TypeEnv<'a> {
 
         return Err(error!(
             "couldn't find member in struct definition",
-            defn.loc,
-            "struct defined here",
-            range.cloc(self.file),
-            "member accessed here"
+            defn.loc, "struct defined here", loc, "member accessed here"
         ));
     }
 }
@@ -421,8 +384,8 @@ impl<'b> TypeEnvInterim<'b> {
     }
 
     #[inline]
-    pub fn deref(&self, tc_type: &TCType, value_range: Range) -> Result<TCType, Error> {
-        self.types.deref(tc_type, value_range)
+    pub fn deref(&self, tc_type: &TCType, value_loc: CodeLoc) -> Result<TCType, Error> {
+        self.types.deref(tc_type, value_loc)
     }
 
     #[inline]
@@ -443,11 +406,11 @@ impl<'b> TypeEnvInterim<'b> {
         &self,
         struct_ident: u32,
         decl_idx: u32,
-        range: Range,
+        loc: CodeLoc,
         member_ident: u32,
     ) -> Result<&TCStructMember, Error> {
         self.types
-            .check_struct_member(struct_ident, decl_idx, range, member_ident)
+            .check_struct_member(struct_ident, decl_idx, loc, member_ident)
     }
 }
 
@@ -461,17 +424,17 @@ pub fn check_file<'a>(
     file: u32,
     stmts: &[GlobalStmt],
 ) -> Result<TypedFuncs<'a>, Error> {
-    let mut types = TypeEnv::new(file);
+    let mut types = TypeEnv::new();
 
     struct UncheckedStructDefn {
         defn_idx: u32,
-        members: Vec<(u32, TCType, Range)>,
-        range: Range,
+        members: Vec<(u32, TCType, CodeLoc)>,
+        loc: CodeLoc,
     }
 
     struct UncheckedStruct {
         decl_idx: u32,
-        decl_range: Range,
+        decl_loc: CodeLoc,
         defn: Option<UncheckedStructDefn>,
     }
 
@@ -484,16 +447,16 @@ pub fn check_file<'a>(
         };
 
         let defn_idx = decl_idx as u32;
-        let mut decl_range = decl_type.range;
+        let mut decl_loc = decl_type.loc;
         let mut decl_idx = decl_idx as u32;
         if let Some(original) = unchecked_types.get(&decl_type.ident) {
             match (&original.defn, &decl_type.members) {
                 (Some(_), Some(_)) => {
                     return Err(error!(
                         "redefinition of struct",
-                        original.decl_range.cloc(types.file),
+                        original.decl_loc,
                         "original definition here",
-                        decl_type.range.cloc(types.file),
+                        decl_type.loc,
                         "second definition here"
                     ));
                 }
@@ -501,12 +464,12 @@ pub fn check_file<'a>(
             }
 
             decl_idx = original.decl_idx;
-            decl_range = original.decl_range;
+            decl_loc = original.decl_loc;
         }
 
         let mut unchecked_struct = UncheckedStruct {
             decl_idx,
-            decl_range,
+            decl_loc,
             defn: None,
         };
 
@@ -535,29 +498,26 @@ pub fn check_file<'a>(
                 pointer_count: member.pointer_count,
             };
 
-            semi_typed_members.push((member.ident, member_type, member.range));
-            if let Some(original_range) = names.insert(member.ident, member.range) {
+            semi_typed_members.push((member.ident, member_type, member.loc));
+            if let Some(original_loc) = names.insert(member.ident, member.loc) {
                 return Err(error!(
                     "name redefined in struct",
-                    original_range.cloc(types.file),
-                    "first use of name here",
-                    member.range.cloc(types.file),
-                    "second use here"
+                    original_loc, "first use of name here", member.loc, "second use here"
                 ));
             }
         }
 
         let struct_defn = UncheckedStructDefn {
             defn_idx,
-            range: decl_type.range,
+            loc: decl_type.loc,
             members: semi_typed_members,
         };
         unchecked_struct.defn = Some(struct_defn);
         unchecked_types.insert(decl_type.ident, unchecked_struct);
     }
 
-    // return type meaning is (defn_idx, defn_range, sa), where defn_idx is the
-    // decl_idx if sa is not known, and same goes for defn_range
+    // return type meaning is (defn_idx, defn_loc, sa), where defn_idx is the
+    // decl_idx if sa is not known, and same goes for defn_loc
     fn check_type<'b>(
         buckets: BucketListRef<'b>,
         visited: &mut HashSet<u32>,
@@ -565,17 +525,17 @@ pub fn check_file<'a>(
         unchecked_types: &HashMap<u32, UncheckedStruct>,
         current_ident: u32,
         type_decl: &UncheckedStruct,
-    ) -> Result<(u32, Range, SizeAlign), Error> {
+    ) -> Result<(u32, CodeLoc, SizeAlign), Error> {
         if !visited.insert(current_ident) {
             if let Some(found) = types.structs.get(&current_ident) {
                 if let Some(defn) = &found.defn {
-                    return Ok((defn.defn_idx, defn.loc.range, defn.sa));
+                    return Ok((defn.defn_idx, defn.loc, defn.sa));
                 }
-                return Ok((found.decl_idx, found.decl_loc.range, TC_UNKNOWN_SA));
+                return Ok((found.decl_idx, found.decl_loc, TC_UNKNOWN_SA));
             } else {
                 return Err(error!(
                     "struct heirarchy contains cycle",
-                    type_decl.decl_range, types.file, "found cycle while solving this type"
+                    type_decl.decl_loc, "found cycle while solving this type"
                 ));
             }
         }
@@ -587,18 +547,18 @@ pub fn check_file<'a>(
                 current_ident,
                 TCStruct {
                     decl_idx: type_decl.decl_idx,
-                    decl_loc: type_decl.decl_range.cloc(types.file),
+                    decl_loc: type_decl.decl_loc,
                     defn: None,
                 },
             );
 
-            return Ok((type_decl.decl_idx, type_decl.decl_range, TC_UNKNOWN_SA));
+            return Ok((type_decl.decl_idx, type_decl.decl_loc, TC_UNKNOWN_SA));
         };
 
         let mut size: u32 = 0;
         let mut align: u32 = 0;
         let mut typed_members = Vec::new();
-        for (m_ident, m_type, m_range) in defn.members.iter() {
+        for (m_ident, m_type, m_loc) in defn.members.iter() {
             let offset = size;
             let mut m_type = *m_type;
 
@@ -606,7 +566,7 @@ pub fn check_file<'a>(
             let m_sa = if let TCTypeKind::Struct { ident, sa: t_sa } = &mut m_type.kind {
                 if let Some(m_type_decl) = unchecked_types.get(m_ident) {
                     if m_type.pointer_count == 0 {
-                        let (m_defn_idx, m_defn_range, m_sa) = check_type(
+                        let (m_defn_idx, m_defn_loc, m_sa) = check_type(
                             buckets,
                             visited,
                             types,
@@ -618,17 +578,14 @@ pub fn check_file<'a>(
                         if m_sa == TC_UNKNOWN_SA {
                             return Err(error!(
                                 "struct has incomplete type",
-                                *m_range, types.file, "struct here"
+                                *m_loc, "struct here"
                             ));
                         }
 
                         if m_defn_idx > defn.defn_idx {
                             return Err(error!(
                                 "struct is defined later in the file (order matters in C)",
-                                m_defn_range.cloc(types.file),
-                                "struct defined here",
-                                m_range.cloc(types.file),
-                                "struct referenced here"
+                                m_defn_loc, "struct defined here", *m_loc, "struct referenced here"
                             ));
                         }
 
@@ -637,9 +594,9 @@ pub fn check_file<'a>(
                     } else if m_type_decl.decl_idx > type_decl.decl_idx {
                         return Err(error!(
                             "struct is declared later in the file (order matters in C)",
-                            m_type_decl.decl_range.cloc(types.file),
+                            m_type_decl.decl_loc,
                             "struct declared here",
-                            m_range.cloc(types.file),
+                            *m_loc,
                             "struct referenced here"
                         ));
                     } else {
@@ -649,7 +606,7 @@ pub fn check_file<'a>(
                     // TODO check imported structs
                     return Err(error!(
                         "struct does not not exist",
-                        *m_range, types.file, "struct referenced here"
+                        *m_loc, "struct referenced here"
                     ));
                 }
             } else {
@@ -662,7 +619,7 @@ pub fn check_file<'a>(
             typed_members.push(TCStructMember {
                 ident: *m_ident,
                 decl_type: m_type,
-                loc: m_range.cloc(types.file),
+                loc: *m_loc,
                 offset,
             });
         }
@@ -670,7 +627,7 @@ pub fn check_file<'a>(
         let sa = sa(align_u32(size, align), align);
         let checked_defn = TCStructDefn {
             defn_idx: defn.defn_idx,
-            loc: defn.range.cloc(types.file),
+            loc: defn.loc,
             sa,
             members: buckets.add_array(typed_members),
         };
@@ -679,12 +636,12 @@ pub fn check_file<'a>(
             current_ident,
             TCStruct {
                 decl_idx: type_decl.decl_idx,
-                decl_loc: type_decl.decl_range.cloc(types.file),
+                decl_loc: type_decl.decl_loc,
                 defn: Some(checked_defn),
             },
         );
 
-        return Ok((defn.defn_idx, defn.range, sa));
+        return Ok((defn.defn_idx, defn.loc, sa));
     }
 
     let mut visited = HashSet::new();
@@ -706,8 +663,8 @@ pub fn check_file<'a>(
 
     struct UncheckedFunction<'a> {
         defn_idx: u32,
-        rtype_range: Range,
-        range: Range,
+        rtype_loc: CodeLoc,
+        loc: CodeLoc,
         body: &'a [Stmt<'a>],
     }
 
@@ -731,7 +688,7 @@ pub fn check_file<'a>(
         };
 
         let decl_idx = decl_idx as u32;
-        let rtype_range = rtype.range;
+        let rtype_loc = rtype.loc;
         let struct_env = &env.types;
         let return_type = struct_env.check_type(decl_idx, rtype, *rpointer_count)?;
 
@@ -739,16 +696,16 @@ pub fn check_file<'a>(
         let mut typed_params = Vec::new();
         let mut varargs = None;
         for param in params.iter() {
-            if let Some(range) = varargs {
+            if let Some(loc) = varargs {
                 return Err(error!(
                     "function parameter after vararg",
-                    range, file, "vararg indicator here", param.range, file, "parameter here"
+                    loc, "vararg indicator here", param.loc, "parameter here"
                 ));
             }
 
             let (decl_type, ppointer_count, ident) = match &param.kind {
                 ParamKind::Vararg => {
-                    varargs = Some(param.range);
+                    varargs = Some(param.loc);
                     continue;
                 }
                 ParamKind::StructLike {
@@ -758,14 +715,12 @@ pub fn check_file<'a>(
                 } => (decl_type, *pointer_count, *ident),
             };
 
-            if let Some(original) = names.insert(ident, param.range) {
+            if let Some(original) = names.insert(ident, param.loc) {
                 return Err(error!(
                     "redeclaration of function parameter",
                     original,
-                    file,
                     "original declaration here",
-                    param.range,
-                    file,
+                    param.loc,
                     "second declaration here"
                 ));
             }
@@ -775,14 +730,14 @@ pub fn check_file<'a>(
             typed_params.push(TCFuncParam {
                 decl_type: param_type,
                 ident: ident,
-                range: param.range,
+                loc: param.loc,
             });
         }
 
         let typed_params = buckets.add_array(typed_params);
         let tc_func_type = TCFuncType {
             return_type,
-            loc: stmt.range.cloc(file),
+            loc: stmt.loc,
             params: typed_params,
             decl_idx,
             varargs: varargs.is_some(),
@@ -805,8 +760,8 @@ pub fn check_file<'a>(
         if let Some(body) = func_body {
             let unchecked_func = UncheckedFunction {
                 defn_idx: decl_idx,
-                rtype_range,
-                range: stmt.range,
+                rtype_loc,
+                loc: stmt.loc,
                 body,
             };
             unchecked_functions.insert(*ident, (tc_func_type, Some(unchecked_func)));
@@ -830,7 +785,7 @@ pub fn check_file<'a>(
             }
         };
 
-        let mut local_env = LocalTypeEnv::new(ftype.return_type, func.rtype_range);
+        let mut local_env = LocalTypeEnv::new(ftype.return_type, func.rtype_loc);
         let param_count = if ftype.varargs {
             ftype.params.len() + 1
         } else {
@@ -842,7 +797,7 @@ pub fn check_file<'a>(
             let tc_value = TCVar {
                 decl_type: param.decl_type,
                 var_offset,
-                loc: param.range.cloc(file),
+                loc: param.loc,
             };
 
             local_env.add_var(param.ident, tc_value).unwrap();
@@ -852,7 +807,7 @@ pub fn check_file<'a>(
 
         tc_func.defn = Some(TCFuncDefn {
             defn_idx: func.defn_idx,
-            loc: func.range.cloc(file),
+            loc: func.loc,
             stmts: buckets.add_array(gstmts),
         });
 
@@ -884,19 +839,19 @@ fn check_stmts<'b>(
                 {
                     return Err(error!(
                         "void function should not return a value",
-                        expr.range, env.types.file, "value is here"
+                        expr.loc, "value is here"
                     ));
                 }
 
                 let expr = env.assign_convert(
                     buckets,
                     &local_env.return_type,
-                    Some(local_env.rtype_range.cloc(env.types.file)),
+                    Some(local_env.rtype_loc),
                     expr,
                 )?;
 
                 tstmts.push(TCStmt {
-                    range: stmt.range,
+                    loc: stmt.loc,
                     kind: TCStmtKind::RetVal(expr),
                 });
             }
@@ -905,17 +860,15 @@ fn check_stmts<'b>(
                 if rtype.pointer_count != 0 || rtype.kind != TCTypeKind::Void {
                     return Err(error!(
                         "expected value in return statement (return type is not void)",
-                        local_env.rtype_range,
-                        env.types.file,
+                        local_env.rtype_loc,
                         "target type is here".to_string(),
-                        stmt.range,
-                        env.types.file,
+                        stmt.loc,
                         "return statement is here".to_string()
                     ));
                 }
 
                 tstmts.push(TCStmt {
-                    range: stmt.range,
+                    loc: stmt.loc,
                     kind: TCStmtKind::Ret,
                 });
             }
@@ -923,7 +876,7 @@ fn check_stmts<'b>(
             StmtKind::Expr(expr) => {
                 let expr = check_expr(buckets, env, local_env, decl_idx, expr)?;
                 tstmts.push(TCStmt {
-                    range: expr.range,
+                    loc: expr.loc,
                     kind: TCStmtKind::Expr(expr),
                 });
             }
@@ -932,7 +885,7 @@ fn check_stmts<'b>(
                 for Decl {
                     pointer_count,
                     ident,
-                    range,
+                    loc,
                     expr,
                 } in *decls
                 {
@@ -940,22 +893,16 @@ fn check_stmts<'b>(
                     if decl_type == VOID {
                         return Err(error!(
                             "cannot define a variable of type void",
-                            range.cloc(env.types.file),
-                            "incorrect variable definition here"
+                            *loc, "incorrect variable definition here"
                         ));
                     }
 
                     let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
-                    local_env.add_local(*ident, decl_type, range.cloc(env.types.file))?;
-                    let expr = env.assign_convert(
-                        buckets,
-                        &decl_type,
-                        Some(range.cloc(env.types.file)),
-                        expr,
-                    )?;
+                    local_env.add_local(*ident, decl_type, *loc)?;
+                    let expr = env.assign_convert(buckets, &decl_type, Some(*loc), expr)?;
                     tstmts.push(TCStmt {
-                        range: *range,
                         kind: TCStmtKind::Decl { init: expr },
+                        loc: *loc,
                     });
                 }
             }
@@ -984,7 +931,7 @@ fn check_expr<'b>(
                     kind: TCTypeKind::Uninit { size: 0 },
                     pointer_count: 0,
                 },
-                range: expr.range,
+                loc: expr.loc,
             });
         }
         ExprKind::IntLiteral(val) => {
@@ -994,7 +941,7 @@ fn check_expr<'b>(
                     kind: TCTypeKind::I32,
                     pointer_count: 0,
                 },
-                range: expr.range,
+                loc: expr.loc,
             });
         }
         ExprKind::StringLiteral(val) => {
@@ -1004,17 +951,14 @@ fn check_expr<'b>(
                     kind: TCTypeKind::Char,
                     pointer_count: 1,
                 },
-                range: expr.range,
+                loc: expr.loc,
             });
         }
         ExprKind::Ident(id) => {
             let tc_var = match local_env.var(id) {
                 Some(tc_var) => tc_var,
                 None => {
-                    return Err(error!(
-                        "couldn't find name",
-                        expr.range, env.types.file, "identifier here"
-                    ));
+                    return Err(error!("couldn't find name", expr.loc, "identifier here"));
                 }
             };
 
@@ -1023,7 +967,7 @@ fn check_expr<'b>(
                     var_offset: tc_var.var_offset,
                 },
                 expr_type: tc_var.decl_type,
-                range: expr.range,
+                loc: expr.loc,
             });
         }
 
@@ -1039,7 +983,7 @@ fn check_expr<'b>(
 
             return Ok(TCExpr {
                 expr_type: target.target_type,
-                range: expr.range,
+                loc: expr.loc,
                 kind: TCExprKind::Assign { target, value },
             });
         }
@@ -1058,14 +1002,14 @@ fn check_expr<'b>(
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
             } else {
-                return Err(member_of_non_struct(base.range, env.types.file));
+                return Err(member_of_non_struct(base.loc));
             };
 
-            let member_info = env.check_struct_member(struct_id, decl_idx, base.range, member)?;
+            let member_info = env.check_struct_member(struct_id, decl_idx, base.loc, member)?;
 
             return Ok(TCExpr {
                 expr_type: member_info.decl_type,
-                range: expr.range,
+                loc: expr.loc,
                 kind: TCExprKind::Member {
                     base: buckets.add(base),
                     offset: member_info.offset,
@@ -1078,23 +1022,19 @@ fn check_expr<'b>(
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
             } else {
-                return Err(member_of_non_struct(base.range, env.types.file));
+                return Err(member_of_non_struct(base.loc));
             };
 
-            let deref_type = env.deref(&base.expr_type, base.range)?;
+            let deref_type = env.deref(&base.expr_type, base.loc)?;
             if deref_type.pointer_count != 0 {
-                return Err(ptr_member_of_poly_pointer(
-                    base.range,
-                    env.types.file,
-                    &deref_type,
-                ));
+                return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(struct_id, decl_idx, base.range, member)?;
+            let member_info = env.check_struct_member(struct_id, decl_idx, base.loc, member)?;
 
             return Ok(TCExpr {
                 expr_type: member_info.decl_type,
-                range: expr.range,
+                loc: expr.loc,
                 kind: TCExprKind::PtrMember {
                     base: buckets.add(base),
                     offset: member_info.offset,
@@ -1105,10 +1045,10 @@ fn check_expr<'b>(
         ExprKind::Deref(ptr) => {
             let value = check_expr(buckets, env, local_env, decl_idx, ptr)?;
 
-            let expr_type = env.deref(&value.expr_type, value.range)?;
+            let expr_type = env.deref(&value.expr_type, value.loc)?;
             return Ok(TCExpr {
                 expr_type,
-                range: expr.range,
+                loc: expr.loc,
                 kind: TCExprKind::Deref(buckets.add(value)),
             });
         }
@@ -1118,7 +1058,7 @@ fn check_expr<'b>(
             expr_type.pointer_count += 1;
             return Ok(TCExpr {
                 expr_type,
-                range: expr.range,
+                loc: expr.loc,
                 kind: TCExprKind::Ref(target),
             });
         }
@@ -1129,28 +1069,20 @@ fn check_expr<'b>(
             } else {
                 return Err(error!(
                     "calling an expression that isn't a function",
-                    function.range, env.types.file, "called here"
+                    function.loc, "called here"
                 ));
             };
 
             let func_type = if let Some(func_type) = env.func_types.get(&func_id) {
                 func_type
             } else {
-                return Err(error!(
-                    "function doesn't exist",
-                    expr.range, env.types.file, "called here"
-                ));
+                return Err(error!("function doesn't exist", expr.loc, "called here"));
             };
 
             if func_type.decl_idx > decl_idx {
                 return Err(error!(
                     "function hasn't been declared yet (declaration order matters in C)",
-                    expr.range,
-                    env.types.file,
-                    "function called here",
-                    func_type.loc.range,
-                    func_type.loc.file,
-                    "function declared here"
+                    expr.loc, "function called here", func_type.loc, "function declared here"
                 ));
             }
 
@@ -1159,11 +1091,9 @@ fn check_expr<'b>(
             {
                 return Err(error!(
                     "function call has wrong number of parameters",
-                    expr.range,
-                    env.types.file,
+                    expr.loc,
                     "function called here",
-                    func_type.loc.range,
-                    func_type.loc.file,
+                    func_type.loc,
                     "function declared here"
                 ));
             }
@@ -1191,7 +1121,7 @@ fn check_expr<'b>(
                     varargs: func_type.varargs,
                 },
                 expr_type: func_type.return_type,
-                range: expr.range,
+                loc: expr.loc,
             });
         }
         _ => panic!("unimplemented"),
@@ -1210,7 +1140,7 @@ fn check_assign_target<'b>(
             let tc_var = match local_env.var(*id) {
                 Some(tc_var) => tc_var,
                 None => {
-                    return Err(ident_not_found(&env.types, expr.range));
+                    return Err(ident_not_found(&env.types, expr.loc));
                 }
             };
 
@@ -1221,58 +1151,54 @@ fn check_assign_target<'b>(
             return Ok(TCAssignTarget {
                 kind,
                 defn_loc: Some(tc_var.loc),
-                target_range: expr.range,
+                target_loc: expr.loc,
                 target_type: tc_var.decl_type,
                 offset: 0,
             });
         }
 
         ExprKind::Member { base, member } => {
-            let base_range = base.range;
+            let base_loc = base.loc;
             let base = check_assign_target(buckets, env, local_env, decl_idx, base)?;
 
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.target_type.kind {
                 ident
             } else {
-                return Err(member_of_non_struct(base.target_range, env.types.file));
+                return Err(member_of_non_struct(base.target_loc));
             };
 
             let member_info =
-                env.check_struct_member(struct_id, decl_idx, base.target_range, *member)?;
+                env.check_struct_member(struct_id, decl_idx, base.target_loc, *member)?;
 
             return Ok(TCAssignTarget {
                 kind: base.kind,
                 defn_loc: Some(member_info.loc),
-                target_range: expr.range,
+                target_loc: expr.loc,
                 target_type: member_info.decl_type,
                 offset: member_info.offset,
             });
         }
         ExprKind::PtrMember { base, member } => {
-            let base_range = base.range;
+            let base_loc = base.loc;
             let base = check_expr(buckets, env, local_env, decl_idx, base)?;
 
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
             } else {
-                return Err(member_of_non_struct(base.range, env.types.file));
+                return Err(member_of_non_struct(base.loc));
             };
 
-            let deref_type = env.deref(&base.expr_type, base.range)?;
+            let deref_type = env.deref(&base.expr_type, base.loc)?;
             if deref_type.pointer_count != 0 {
-                return Err(ptr_member_of_poly_pointer(
-                    base.range,
-                    env.types.file,
-                    &deref_type,
-                ));
+                return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(struct_id, decl_idx, base.range, *member)?;
+            let member_info = env.check_struct_member(struct_id, decl_idx, base.loc, *member)?;
 
             return Ok(TCAssignTarget {
                 kind: TCAssignKind::Ptr(buckets.add(base)),
                 defn_loc: Some(member_info.loc),
-                target_range: expr.range,
+                target_loc: expr.loc,
                 target_type: member_info.decl_type,
                 offset: member_info.offset,
             });
@@ -1281,10 +1207,10 @@ fn check_assign_target<'b>(
         ExprKind::Deref(ptr) => {
             let ptr = check_expr(buckets, env, local_env, decl_idx, ptr)?;
 
-            let target_type = env.deref(&ptr.expr_type, ptr.range)?;
+            let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
                 kind: TCAssignKind::Ptr(buckets.add(ptr)),
-                target_range: expr.range,
+                target_loc: expr.loc,
                 defn_loc: None,
                 target_type,
                 offset: 0,
@@ -1293,17 +1219,16 @@ fn check_assign_target<'b>(
         _ => {
             return Err(error!(
                 "expression is not assignable",
-                expr.range, env.types.file, "expression found here"
+                expr.loc, "expression found here"
             ))
         }
     }
 }
 
-pub fn dereference_of_non_pointer(value_range: Range, file: u32, value_type: &TCType) -> Error {
+pub fn dereference_of_non_pointer(value_loc: CodeLoc, value_type: &TCType) -> Error {
     return error!(
         "cannot dereference values that aren't pointers",
-        value_range,
-        file,
+        value_loc,
         format!(
             "value has type {:?}, which cannot be dereferenced",
             value_type
@@ -1311,10 +1236,10 @@ pub fn dereference_of_non_pointer(value_range: Range, file: u32, value_type: &TC
     );
 }
 
-pub fn ptr_member_of_poly_pointer(ptr_range: Range, file: u32, ptr_type: &TCType) -> Error {
+pub fn ptr_member_of_poly_pointer(ptr_loc: CodeLoc, ptr_type: &TCType) -> Error {
     error!(
         "need to dereference pointer before you can access its members",
-        ptr_range.cloc(file),
+        ptr_loc,
         format!(
             "this points to an object of type {:?}, which doesn't have any members",
             ptr_type
@@ -1322,15 +1247,15 @@ pub fn ptr_member_of_poly_pointer(ptr_range: Range, file: u32, ptr_type: &TCType
     )
 }
 
-pub fn member_of_non_struct(range: Range, file: u32) -> Error {
+pub fn member_of_non_struct(loc: CodeLoc) -> Error {
     error!(
         "cannot access member of non-struct",
-        range, file, "access happened here"
+        loc, "access happened here"
     )
 }
 
-pub fn ident_not_found(env: &TypeEnv, range: Range) -> Error {
-    return error!("couldn't find name", range, env.file, "identifier here");
+pub fn ident_not_found(env: &TypeEnv, loc: CodeLoc) -> Error {
+    return error!("couldn't find name", loc, "identifier here");
 }
 
 pub fn func_decl_mismatch(original: CodeLoc, new: CodeLoc) -> Error {

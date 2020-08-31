@@ -1,5 +1,6 @@
 use crate::buckets::*;
-use crate::*;
+use crate::util::*;
+use crate::filedb::*;
 
 pub const CLOSING_CHAR: u8 = !0;
 
@@ -74,30 +75,20 @@ pub enum TokenKind<'a> {
 
     Semicolon,
     Comma,
-
-    Invalid,
-    End,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Token<'a> {
     pub kind: TokenKind<'a>,
-    pub range: Range,
+    pub loc: CodeLoc,
 }
 
 impl<'a> Token<'a> {
-    pub fn new(kind: TokenKind<'a>, range: core::ops::Range<usize>) -> Self {
+    pub fn new(kind: TokenKind<'a>, range: core::ops::Range<usize>, file: u32) -> Self {
         Self {
             kind,
-            range: r(range.start as u32, range.end as u32),
+            loc: l(range.start as u32, range.end as u32, file),
         }
-    }
-
-    pub fn newr<E>(kind: TokenKind<'a>, range: core::ops::Range<usize>) -> Result<Self, E> {
-        Ok(Self {
-            kind,
-            range: r(range.start as u32, range.end as u32),
-        })
     }
 }
 
@@ -257,7 +248,7 @@ pub fn lex_token<'a, 'b>(
                     }
 
                     let id = symbols.translate_add(name_begin..*current, file);
-                    output.push(Token::new(TokenKind::Include(id), begin..*current));
+                    output.push(Token::new(TokenKind::Include(id), begin..*current, file));
                     if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
                         return Ok(false);
                     } else {
@@ -272,7 +263,7 @@ pub fn lex_token<'a, 'b>(
                     }
 
                     let id = symbols.translate_add(name_begin..*current, file);
-                    output.push(Token::new(TokenKind::Include(id), begin..*current));
+                    output.push(Token::new(TokenKind::Include(id), begin..*current, file));
                     if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
                         return Ok(false);
                     } else {
@@ -292,7 +283,6 @@ pub fn lex_token<'a, 'b>(
     }
 
     if *current == data.len() {
-        output.push(Token::new(TokenKind::End, *current..*current));
         return Ok(true);
     }
 
@@ -301,7 +291,7 @@ pub fn lex_token<'a, 'b>(
 
     macro_rules! ret_tok {
         ($arg1:expr) => {{
-            output.push(Token::new($arg1, begin..*current));
+            output.push(Token::new($arg1, begin..*current, file));
             return Ok(false);
         }};
     }
@@ -604,7 +594,12 @@ pub fn lex_character(
 }
 
 #[inline]
-pub fn expected_newline(directive_name: &'static str, begin: usize, current: usize, file: u32) -> Error {
+pub fn expected_newline(
+    directive_name: &'static str,
+    begin: usize,
+    current: usize,
+    file: u32,
+) -> Error {
     return error!(
         &format!("expected newline after {} directive", directive_name),
         r(begin as u32, current as u32),
