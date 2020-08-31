@@ -117,13 +117,13 @@ impl<'a> FileDb<'a> {
 
     #[inline]
     pub fn translate_add(&mut self, range: ops::Range<usize>, file: u32) -> u32 {
-        let cloc = r(range.start as u32, range.end as u32).cloc(file); // TODO check for overflow
+        let cloc = l(range.start as u32, range.end as u32, file); // TODO check for overflow
         return self.translate_add_cloc(cloc);
     }
 
     #[inline]
     pub fn translate_add_cloc(&mut self, cloc: CodeLoc) -> u32 {
-        let range: ops::Range<usize> = cloc.range.into();
+        let range: ops::Range<usize> = cloc.into();
         let text = self.files.get(&cloc.file).unwrap()._source;
         let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
 
@@ -150,7 +150,7 @@ impl<'a> Files<'a> for FileDb<'a> {
 
     fn name(&self, file_id: u32) -> Option<&'a str> {
         let cloc = self.names.get(file_id as usize)?;
-        let range: ops::Range<usize> = cloc.range.into();
+        let range: ops::Range<usize> = (*cloc).into();
         let bytes = &self.files.get(&cloc.file)?._source.as_bytes()[range];
         Some(unsafe { str::from_utf8_unchecked(bytes) })
     }
@@ -210,7 +210,7 @@ impl<'a> FileDbRef<'a> {
         let mut symbols = Vec::new();
         for (id, symbol) in db.names.iter().enumerate() {
             let id = id as u32;
-            let range: ops::Range<usize> = symbol.range.into();
+            let range: ops::Range<usize> = (*symbol).into();
             let bytes = &file_sources[file_source_indices[&symbol.file]]
                 ._source
                 .as_bytes()[range];

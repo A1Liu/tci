@@ -174,8 +174,7 @@ pub fn peek_eqs(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
 pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
     return error!(
         "invalid token",
-        r(begin as u32, end as u32),
-        file,
+        l(begin as u32, end as u32, file),
         "token found here"
     );
 }
@@ -274,8 +273,7 @@ pub fn lex_token<'a, 'b>(
             _ => {
                 return Err(error!(
                     "invalid compiler directive",
-                    r(begin as u32, *current as u32),
-                    file,
+                    l(begin as u32, *current as u32, file),
                     "directive found here"
                 ));
             }
@@ -373,8 +371,7 @@ pub fn lex_token<'a, 'b>(
             if byte == CLOSING_CHAR {
                 return Err(error!(
                     "empty character literal",
-                    r(begin as u32, *current as u32),
-                    file,
+                    l(begin as u32, *current as u32, file),
                     "found here"
                 ));
             }
@@ -383,8 +380,7 @@ pub fn lex_token<'a, 'b>(
             if closing != b'\'' {
                 return Err(error!(
                     "expected closing single quote",
-                    r(begin as u32, *current as u32),
-                    file,
+                    l(begin as u32, *current as u32, file),
                     "this should be a closing single quote"
                 ));
             }
@@ -544,8 +540,7 @@ pub fn lex_character(
         if !cur.is_ascii() {
             return Err(error!(
                 "character is not valid ascii",
-                r(*current as u32 - 1, *current as u32),
-                file,
+                l(*current as u32 - 1, *current as u32, file),
                 "invalid character literal here"
             ));
         }
@@ -558,15 +553,13 @@ pub fn lex_character(
             if surround == b'\"' {
                 return Err(error!(
                     "invalid character found when parsing string literal",
-                    r(*current as u32 - 1, *current as u32),
-                    file,
+                    l(*current as u32 - 1, *current as u32, file),
                     "invalid character here"
                 ));
             } else {
                 return Err(error!(
                     "invalid character found when parsing character literal",
-                    r(*current as u32 - 1, *current as u32),
-                    file,
+                    l(*current as u32 - 1, *current as u32, file),
                     "invalid character here"
                 ));
             }
@@ -584,8 +577,7 @@ pub fn lex_character(
             _ => {
                 return Err(error!(
                     "invalid escape sequence",
-                    r(*current as u32 - 2, *current as u32),
-                    file,
+                    l(*current as u32 - 2, *current as u32, file),
                     "invalid escape sequence here"
                 ))
             }
@@ -602,8 +594,7 @@ pub fn expected_newline(
 ) -> Error {
     return error!(
         &format!("expected newline after {} directive", directive_name),
-        r(begin as u32, current as u32),
-        file,
+        l(begin as u32, current as u32, file),
         "directive here"
     );
 }

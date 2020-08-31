@@ -25,7 +25,7 @@ use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColo
 use core::mem;
 use runtime::{DefaultIO, RuntimeIO};
 use std::env;
-use util::{Error, };
+use util::Error;
 
 fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Error> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());

@@ -8,19 +8,6 @@ macro_rules! error {
         $crate::util::Error::new($arg1, vec![])
     };
 
-    ($msg:expr, $range1:expr, $file1:expr, $msg1:expr) => {
-        $crate::util::Error::new(
-            $msg,
-            vec![$crate::util::ErrorSection {
-                location: $crate::util::CodeLoc {
-                    range: $range1,
-                    file: $file1,
-                },
-                message: $msg1.to_string(),
-            }],
-        )
-    };
-
     ($msg:expr, $loc1:expr, $msg1:expr) => {
         $crate::util::Error::new(
             $msg,
@@ -28,28 +15,6 @@ macro_rules! error {
                 location: $loc1,
                 message: $msg1.to_string(),
             }],
-        )
-    };
-
-    ($msg:expr, $range1:expr, $file1:expr, $msg1:expr, $range2:expr, $file2:expr, $msg2:expr) => {
-        $crate::util::Error::new(
-            $msg,
-            vec![
-                $crate::util::ErrorSection {
-                    location: $crate::util::CodeLoc {
-                        range: $range1,
-                        file: $file1,
-                    },
-                    message: $msg1.to_string(),
-                },
-                $crate::util::ErrorSection {
-                    location: $crate::util::CodeLoc {
-                        range: $range2,
-                        file: $file2,
-                    },
-                    message: $msg2.to_string(),
-                },
-            ],
         )
     };
 
@@ -84,7 +49,7 @@ pub struct Error {
 
 impl Into<Label<u32>> for &ErrorSection {
     fn into(self) -> Label<u32> {
-        Label::primary(self.location.file, self.location.range).with_message(&self.message)
+        Label::primary(self.location.file, self.location).with_message(&self.message)
     }
 }
 
@@ -103,78 +68,30 @@ impl Error {
     }
 }
 
-#[derive(Clone, PartialEq, Copy)]
-pub struct Range {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl fmt::Debug for Range {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(fmt, "{}..{}", self.start, self.end)
-    }
-}
-
-impl fmt::Display for Range {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(fmt, "{}..{}", self.start, self.end)
-    }
-}
-
-pub fn r(start: u32, end: u32) -> Range {
-    assert!(start <= end);
-
-    Range { start, end }
-}
-
-pub fn r_from(range1: Range, range2: Range) -> Range {
-    assert!(range1.start <= range2.end);
-
-    Range {
-        start: range1.start,
-        end: range2.end,
-    }
-}
-
-impl Range {
-    pub fn cloc(self, file: u32) -> CodeLoc {
-        CodeLoc { range: self, file }
-    }
-}
-
-impl Into<ops::Range<usize>> for Range {
-    fn into(self) -> ops::Range<usize> {
-        (self.start as usize)..(self.end as usize)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CodeLoc {
-    pub range: Range,
+    pub start: u32,
+    pub end: u32,
     pub file: u32,
 }
 
 #[inline]
-pub fn l(begin: u32, end: u32, file: u32) -> CodeLoc {
-    CodeLoc {
-        range: r(begin, end),
-        file,
-    }
+pub fn l(start: u32, end: u32, file: u32) -> CodeLoc {
+    debug_assert!(start <= end);
+
+    CodeLoc { start, end, file }
 }
 
 impl Into<ops::Range<usize>> for CodeLoc {
     fn into(self) -> ops::Range<usize> {
-        (self.range.start as usize)..(self.range.end as usize)
+        (self.start as usize)..(self.end as usize)
     }
 }
 
 #[inline]
 pub fn l_from(loc1: CodeLoc, loc2: CodeLoc) -> CodeLoc {
     debug_assert_eq!(loc1.file, loc2.file);
-    CodeLoc {
-        range: r_from(loc1.range, loc2.range),
-        file: loc1.file
-    }
+    l(loc1.start, loc2.end, loc1.file)
 }
 
 pub fn align_usize(size: usize, align: usize) -> usize {
@@ -202,8 +119,8 @@ pub fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts(p as *const T as *const u8, std::mem::size_of::<T>()) }
 }
 
-pub fn u32_to_u16_tup(value: u32) -> (u16, u16) {
-    ((value >> 16) as u16, value as u16)
+pub fn u32_to_u32_tup(value: u32) -> (u32, u32) {
+    ((value >> 16) as u32, value as u32)
 }
 
 pub fn fold_binary<I, Iter: Iterator<Item = I>>(
@@ -593,7 +510,7 @@ impl<'a, T> ShortSlice<'a, T> {
 
 // impl<'a, T> ops::Deref for &ShortSlice<'a, T> {
 //     type Target = [T];
-// 
+//
 //     fn deref(&self) -> &[T] {
 //         return unsafe { slice::from_raw_parts(self.data, self.len as usize) };
 //     }
