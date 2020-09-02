@@ -2,6 +2,8 @@ use crate::buckets::*;
 use crate::util::*;
 use codespan_reporting::files::{line_starts, Files};
 use core::{mem, ops, str};
+use rust_embed::RustEmbed;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{canonicalize, read_to_string};
 use std::io;
@@ -17,6 +19,16 @@ pub struct File<'a> {
 }
 
 impl<'a> File<'a> {
+    pub fn new_static(name: &'static str, source: &'static str) -> Self {
+        let line_starts: Vec<usize> = line_starts(source).collect();
+        let line_starts: Box<[usize]> = line_starts.into();
+        File {
+            _name: name,
+            _source: source,
+            _line_starts: Box::leak(line_starts),
+        }
+    }
+
     pub fn new(buckets: BucketListRef<'a>, name: &str, source: &str) -> Self {
         let line_starts: Vec<usize> = line_starts(source).collect();
         File {
@@ -31,7 +43,7 @@ impl<'a> File<'a> {
         name: &str,
         source: &str,
         line_starts: &[usize],
-        ) -> Self {
+    ) -> Self {
         File {
             _name: frame.add_str(name),
             _source: frame.add_str(source),
@@ -77,15 +89,21 @@ pub struct FileDb<'a> {
     pub names: Vec<CodeLoc>,
 }
 
+#[derive(RustEmbed)]
+#[folder = "includes/"]
+pub struct Assets;
+
 pub struct InitSyms {
     pub names: Vec<&'static str>,
     pub translate: HashMap<&'static str, u32>,
+    pub files: Vec<File<'static>>,
 }
 
 lazy_static! {
-    pub static ref INITIAL_SYMBOLS : InitSyms = {
+    pub static ref INITIAL_SYMBOLS: InitSyms = {
         let mut names = Vec::new();
         let mut translate = HashMap::new();
+        let mut files = Vec::new();
         macro_rules! add_sym {
             ($arg:expr) => {
                 let begin = names.len() as u32;
@@ -94,12 +112,33 @@ lazy_static! {
             };
         }
 
+        macro_rules! add_syslib_sym {
+            ($arg:expr) => {
+                let begin = names.len() as u32;
+                names.push($arg);
+                translate.insert($arg, begin);
+                if let Cow::Borrowed(source_cow) = Assets::get($arg).unwrap() {
+                    let source = unsafe { str::from_utf8_unchecked(source_cow) };
+                    files.push(File::new_static($arg, source));
+                } else {
+                    panic!();
+                }
+            };
+        }
+
+        add_syslib_sym!("stdio.h");
+
         add_sym!("main");
-        add_sym!("stdio.h");
         add_sym!("va_list");
         add_sym!("printf");
         add_sym!("exit");
-        InitSyms {names, translate}
+
+
+        InitSyms {
+            names,
+            translate,
+            files,
+        }
     };
 }
 
@@ -118,9 +157,14 @@ impl<'a> FileDb<'a> {
         let line_starts: Vec<usize> = line_starts(&string).collect();
         let buckets = BucketList::with_capacity(16 * 1024 * 1024);
         let file = File::new(buckets, "", &string);
-        let _size = file.size() + mem::size_of::<File>();
+        let mut _size = file.size() + mem::size_of::<File>();
 
         let mut files = Vec::new();
+
+        for file in INITIAL_SYMBOLS.files.iter() {
+            files.push(file.clone());
+            _size += file.size() + mem::size_of::<File>();
+        }
         files.push(file);
 
         let mut new_self = Self {
@@ -128,7 +172,7 @@ impl<'a> FileDb<'a> {
             _size,
             files,
             file_names: HashMap::new(),
-            translate: HashMap::new(),
+            translate: INITIAL_SYMBOLS.translate.clone(),
             names: Vec::new(),
         };
 
@@ -146,9 +190,9 @@ impl<'a> FileDb<'a> {
     pub fn vec(&self) -> Vec<(u32, &'a str)> {
         let iter = self.files.iter();
         #[rustfmt::skip]
-        return iter.enumerate().skip(1)
-            .map(|(id, file)| (id as u32, file._source))
-            .collect();
+            return iter.enumerate().skip(INITIAL_SYMBOLS.files.len() + 1)
+                .map(|(id, file)| (id as u32, file._source))
+                .collect();
     }
 
     /// Add a file to the database, returning the handle that can be used to

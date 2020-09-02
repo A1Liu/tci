@@ -8,4 +8,7 @@ edition = "2018"
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
 lazy_static = "1.4.0"
-# rust-embed = "5.6.0"
+
+[dependencies.rust-embed]
+version = "5.6.0"
+features = ["debug-embed"]

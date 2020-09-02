@@ -160,7 +160,7 @@ pub struct Program<'a> {
     pub main_idx: u32,
 }
 
-type LibFunc<IO: RuntimeIO> = for<'a> fn(&'a mut Runtime<IO>, u32) -> Result<Option<i32>, IError>;
+type LibFunc<IO> = for<'a> fn(&'a mut Runtime<IO>, u32) -> Result<Option<i32>, IError>;
 
 pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory<u32>,

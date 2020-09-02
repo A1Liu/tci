@@ -1,3 +1,19 @@
+#include <stdio.h>
 
-#include "hello_world.c"
+int printf(char *str, ...);
+
+void goodbye() { return; }
+
+void hello(...) { return goodbye(); }
+
+int return_code(int hi);
+
+int main(int i, char **argv) {
+  hello();
+  printf("%s, %s!\n", "Hello", "world");
+
+  return return_code(12) - return_code(12);
+}
+
+int return_code(int hello) { return hello + 12; }
 

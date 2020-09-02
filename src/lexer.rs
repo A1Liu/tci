@@ -208,11 +208,22 @@ pub fn lex_file_rec<'a, 'b>(
     file: u32,
     data: &'a str,
 ) -> Result<&'b [Token<'b>], Error> {
-
     let mut toks = Vec::new();
     let bytes = data.as_bytes();
     let mut current = 0;
-    let mut done = lex_token(
+
+    lex_macro(
+        buckets,
+        incomplete,
+        token_db,
+        symbols,
+        file,
+        bytes,
+        &mut current,
+        &mut toks,
+    )?;
+
+    let mut done = lex_macro_or_token(
         buckets,
         incomplete,
         token_db,
@@ -224,7 +235,7 @@ pub fn lex_file_rec<'a, 'b>(
     )?;
 
     while !done {
-        done = lex_token(
+        done = lex_macro_or_token(
             buckets,
             incomplete,
             token_db,
@@ -246,7 +257,7 @@ pub fn lex_file_rec<'a, 'b>(
 const WHITESPACE: [u8; 2] = [b' ', b'\t'];
 const CRLF: [u8; 2] = [b'\r', b'\n'];
 
-pub fn lex_token<'a, 'b>(
+pub fn lex_macro_or_token<'a, 'b>(
     buckets: BucketListRef<'b>,
     incomplete: &mut HashSet<u32>,
     token_db: &mut TokenDb<'b>,
@@ -269,109 +280,150 @@ pub fn lex_token<'a, 'b>(
             break;
         }
 
-        if peek_eq(data, current, b'#') {
-            *current += 1;
-        } else {
-            continue;
-        }
-
-        // macros!
-        let begin = *current;
-        while peek_neqs(data, current, &WHITESPACE) {
-            *current += 1;
-        }
-
-        let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
-        match directive {
-            "include" => {
-                while peek_eqs(data, current, &WHITESPACE) {
-                    *current += 1;
-                }
-
-                if peek_eq(data, current, b'"') {
-                    *current += 1;
-                    let name_begin = *current;
-                    while peek_neq(data, current, b'"') {
-                        *current += 1;
-                    }
-
-                    let id = symbols.translate_add(name_begin..*current, file);
-                    *current += 1;
-                    if !peek_eq(data, current, b'\n') && !peek_eq_series(data, current, &CRLF) {
-                        return Err(expected_newline("include", begin, *current, file));
-                    }
-
-                    let map_err = |err| {
-                        error!(
-                            "Error finding file",
-                            l(begin as u32, *current as u32, file),
-                            format!("got error '{}'", err)
-                        )
-                    };
-                    let include_id = symbols.add_from_symbols(file, id).map_err(map_err)?;
-                    output.push(Token::new(
-                        TokenKind::Include(include_id),
-                        begin..*current,
-                        file,
-                    ));
-                    if incomplete.contains(&include_id) {
-                        return Err(error!(
-                            "include cycle detected",
-                            l(begin as u32, *current as u32, file),
-                            "found here"
-                        ));
-                    }
-
-                    if let Some(toks) = token_db.get(&include_id) {
-                        return Ok(false);
-                    }
-
-                    incomplete.insert(include_id);
-                    let include = symbols.source(include_id).unwrap();
-                    let toks =
-                        lex_file_rec(buckets, incomplete, token_db, symbols, include_id, include)?;
-                    token_db.insert(include_id, toks);
-                    incomplete.remove(&include_id);
-                    return Ok(false);
-                } else if peek_eq(data, current, b'<') {
-                    *current += 1;
-                    let name_begin = *current;
-
-                    while peek_neq(data, current, b'>') {
-                        *current += 1;
-                    }
-
-                    let id = symbols.translate_add(name_begin..*current, file);
-                    *current += 1;
-                    if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &CRLF) {
-                        output.push(Token::new(TokenKind::IncludeSys(id), begin..*current, file));
-                        return Ok(false);
-                    } else {
-                        return Err(expected_newline("include", begin, *current, file));
-                    }
-                }
-            }
-            _ => {
-                return Err(error!(
-                    "invalid compiler directive",
-                    l(begin as u32, *current as u32, file),
-                    "directive found here"
-                ));
-            }
-        }
+        lex_macro(
+            buckets, incomplete, token_db, symbols, file, data, current, output,
+        )?;
     }
 
     if *current == data.len() {
         return Ok(true);
     }
 
+    lex_token(
+        buckets, incomplete, token_db, symbols, file, data, current, output,
+    )?;
+    return Ok(false);
+}
+
+pub fn lex_macro<'a, 'b>(
+    buckets: BucketListRef<'b>,
+    incomplete: &mut HashSet<u32>,
+    token_db: &mut TokenDb<'b>,
+    symbols: &mut FileDb<'a>,
+    file: u32,
+    data: &'a [u8],
+    current: &mut usize,
+    output: &mut Vec<Token<'b>>,
+) -> Result<(), Error> {
+    if peek_eq(data, current, b'#') {
+        *current += 1;
+    } else {
+        return Ok(());
+    }
+
+    // macros!
+    let begin = *current;
+    while peek_neqs(data, current, &WHITESPACE) {
+        *current += 1;
+    }
+
+    let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
+    match directive {
+        "include" => {
+            while peek_eqs(data, current, &WHITESPACE) {
+                *current += 1;
+            }
+
+            if peek_eq(data, current, b'"') {
+                *current += 1;
+                let name_begin = *current;
+                while peek_neq(data, current, b'"') {
+                    *current += 1;
+                }
+
+                let id = symbols.translate_add(name_begin..*current, file);
+                *current += 1;
+                if !peek_eq(data, current, b'\n') && !peek_eq_series(data, current, &CRLF) {
+                    return Err(expected_newline("include", begin, *current, file));
+                }
+
+                let map_err = |err| {
+                    error!(
+                        "Error finding file",
+                        l(begin as u32, *current as u32, file),
+                        format!("got error '{}'", err)
+                    )
+                };
+                let include_id = symbols.add_from_symbols(file, id).map_err(map_err)?;
+                output.push(Token::new(
+                    TokenKind::Include(include_id),
+                    begin..*current,
+                    file,
+                ));
+                if incomplete.contains(&include_id) {
+                    return Err(error!(
+                        "include cycle detected",
+                        l(begin as u32, *current as u32, file),
+                        "found here"
+                    ));
+                }
+
+                if let Some(toks) = token_db.get(&include_id) {
+                    return Ok(());
+                }
+
+                incomplete.insert(include_id);
+                let include = symbols.source(include_id).unwrap();
+                let toks =
+                    lex_file_rec(buckets, incomplete, token_db, symbols, include_id, include)?;
+                token_db.insert(include_id, toks);
+                incomplete.remove(&include_id);
+                return Ok(());
+            } else if peek_eq(data, current, b'<') {
+                *current += 1;
+                let name_begin = *current;
+
+                while peek_neq(data, current, b'>') {
+                    *current += 1;
+                }
+
+                let id = symbols.translate_add(name_begin..*current, file);
+                *current += 1;
+                if !peek_eq(data, current, b'\n') && !peek_eq_series(data, current, &CRLF) {
+                    return Err(expected_newline("include", begin, *current, file));
+                }
+                output.push(Token::new(TokenKind::IncludeSys(id), begin..*current, file));
+
+                if let Some(toks) = token_db.get(&id) {
+                    return Ok(());
+                }
+
+                let include = symbols.source(id).unwrap();
+                let toks =
+                    lex_file_rec(buckets, incomplete, token_db, symbols, id, include).unwrap();
+                token_db.insert(id, toks);
+                return Ok(());
+            }
+        }
+        _ => {
+            return Err(error!(
+                "invalid compiler directive",
+                l(begin as u32, *current as u32, file),
+                "directive found here"
+            ));
+        }
+    }
+
+    return Ok(());
+}
+
+pub fn lex_token<'a, 'b>(
+    buckets: BucketListRef<'b>,
+    incomplete: &mut HashSet<u32>,
+    token_db: &mut TokenDb<'b>,
+    symbols: &mut FileDb<'a>,
+    file: u32,
+    data: &'a [u8],
+    current: &mut usize,
+    output: &mut Vec<Token<'b>>,
+) -> Result<(), Error> {
     let begin = *current;
     *current += 1;
 
     macro_rules! ret_tok {
         ($arg1:expr) => {{
             output.push(Token::new($arg1, begin..*current, file));
-            return Ok(false);
+            return Ok(());
         }};
     }
 
@@ -605,7 +657,6 @@ pub fn lex_token<'a, 'b>(
         }
 
         x => {
-            println!("invalid token: {:?}", char::from(x));
             return Err(invalid_token(file, begin, *current));
         }
     }
