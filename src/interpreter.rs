@@ -2,6 +2,7 @@ use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
 use core::ops::{Deref, DerefMut};
+use std::collections::HashMap;
 use std::io::Write;
 
 macro_rules! error {
@@ -159,9 +160,12 @@ pub struct Program<'a> {
     pub main_idx: u32,
 }
 
+type LibFunc<IO: RuntimeIO> = for<'a> fn(&'a mut Runtime<IO>, u32) -> Result<Option<i32>, IError>;
+
 pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory<u32>,
     pub callstack: Vec<CallFrame>,
+    pub lib_funcs: HashMap<u32, LibFunc<IO>>,
     pub io: IO,
 }
 
@@ -180,9 +184,14 @@ impl<IO: RuntimeIO> Deref for Runtime<IO> {
 
 impl<IO: RuntimeIO> Runtime<IO> {
     pub fn new(io: IO) -> Self {
+        let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
+
+        lib_funcs.insert(INITIAL_SYMBOLS.translate["printf"], printf);
+
         Self {
             memory: Memory::new(),
             callstack: Vec::new(),
+            lib_funcs,
             io,
         }
     }
@@ -509,93 +518,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<i32>, IError> {
-        if func_name == INITIAL_SYMBOLS.translate["printf"] {
-            return self.printf(pc);
+        if let Some(lib_func) = self.lib_funcs.get(&func_name) {
+            return lib_func(self, pc);
         }
+
         return Err(error!(
             "InvalidLibraryFunction",
             "library function symbol {} is invalid (this is a problem with tci)", func_name
         ));
-    }
-
-    pub fn printf(&mut self, pc: u32) -> Result<Option<i32>, IError> {
-        let top_ptr_offset = self.stack_length();
-        let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
-        let param_len = i32::from_be(self.get_var(top_ptr)?);
-
-        let mut current_offset = top_ptr_offset - (param_len as u16);
-        let return_offset = current_offset - 1;
-        let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
-        current_offset += 1;
-
-        // OPTIMIZE This does an unnecessary linear scan
-        let format_str = self.cstring_bytes(self.get_var(format_ptr)?)?;
-
-        let mut out = StringWriter::new();
-        let mut idx = 0;
-        while idx < format_str.len() {
-            let mut idx2 = idx;
-            while idx2 < format_str.len() && format_str[idx2] != b'%' {
-                idx2 += 1;
-            }
-
-            write_utf8_lossy(&mut out, &format_str[idx..idx2]).expect("this shouldn't fail");
-
-            if idx2 == format_str.len() {
-                break;
-            }
-
-            // format_str[idx2] == b'%'
-
-            idx2 += 1;
-            if idx2 == format_str.len() {
-                return Err(error!(
-                    "InvalidFormatString",
-                    "format string ends with a single '%'; to print out a '%' use '%%'"
-                ));
-            }
-
-            match format_str[idx2] {
-                b'%' => {
-                    write_utf8_lossy(&mut out, &[b'%']).expect("this shouldn't fail");
-                }
-                b's' => {
-                    let var_ptr = VarPointer::new_stack(current_offset, 0);
-                    let char_ptr = self.get_var(var_ptr)?;
-                    current_offset += 1;
-
-                    write_utf8_lossy(&mut out, self.cstring_bytes(char_ptr)?)
-                        .expect("this shouldn't fail");
-                }
-                b'd' => {
-                    let var_ptr = VarPointer::new_stack(current_offset, 0);
-                    let value = i32::from_be(self.get_var(var_ptr)?);
-                    current_offset += 1;
-
-                    write!(&mut out, "{}", value).expect("this shouldn't fail");
-                }
-                byte => {
-                    return Err(error!(
-                        "InvalidFormatString",
-                        "got byte '{}' after '%'",
-                        char::from(byte)
-                    ))
-                }
-            }
-
-            idx = idx2 + 1;
-        }
-
-        let out = out.into_string();
-        let len = out.len() as i32;
-        let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
-        write!(self.io.out(), "{}", &out).map_err(map_err)?;
-
-        // Return value for function
-        let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
-        self.set(return_ptr, len.to_be(), pc)?;
-
-        return Ok(None);
     }
 
     pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {
@@ -615,4 +545,84 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         return Ok(&str_bytes[0..idx]);
     }
+}
+
+pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>, pc: u32) -> Result<Option<i32>, IError> {
+    let top_ptr_offset = sel.stack_length();
+    let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
+    let param_len = i32::from_be(sel.get_var(top_ptr)?);
+
+    let mut current_offset = top_ptr_offset - (param_len as u16);
+    let return_offset = current_offset - 1;
+    let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
+    current_offset += 1;
+
+    // OPTIMIZE This does an unnecessary linear scan
+    let format_str = sel.cstring_bytes(sel.memory.get_var(format_ptr)?)?;
+
+    let mut out = StringWriter::new();
+    let mut idx = 0;
+    while idx < format_str.len() {
+        let mut idx2 = idx;
+        while idx2 < format_str.len() && format_str[idx2] != b'%' {
+            idx2 += 1;
+        }
+
+        write_utf8_lossy(&mut out, &format_str[idx..idx2]).expect("this shouldn't fail");
+
+        if idx2 == format_str.len() {
+            break;
+        }
+
+        // format_str[idx2] == b'%'
+
+        idx2 += 1;
+        if idx2 == format_str.len() {
+            return Err(error!(
+                "InvalidFormatString",
+                "format string ends with a single '%'; to print out a '%' use '%%'"
+            ));
+        }
+
+        match format_str[idx2] {
+            b'%' => {
+                write_utf8_lossy(&mut out, &[b'%']).expect("this shouldn't fail");
+            }
+            b's' => {
+                let var_ptr = VarPointer::new_stack(current_offset, 0);
+                let char_ptr = sel.get_var(var_ptr)?;
+                current_offset += 1;
+
+                write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?)
+                    .expect("this shouldn't fail");
+            }
+            b'd' => {
+                let var_ptr = VarPointer::new_stack(current_offset, 0);
+                let value = i32::from_be(sel.memory.get_var(var_ptr)?);
+                current_offset += 1;
+
+                write!(&mut out, "{}", value).expect("this shouldn't fail");
+            }
+            byte => {
+                return Err(error!(
+                    "InvalidFormatString",
+                    "got byte '{}' after '%'",
+                    char::from(byte)
+                ))
+            }
+        }
+
+        idx = idx2 + 1;
+    }
+
+    let out = out.into_string();
+    let len = out.len() as i32;
+    let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
+    write!(sel.io.out(), "{}", &out).map_err(map_err)?;
+
+    // Return value for function
+    let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
+    sel.set(return_ptr, len.to_be(), pc)?;
+
+    return Ok(None);
 }
