@@ -29,7 +29,6 @@ pub struct ASMAssign<'a> {
 lazy_static! {
     pub static ref LIB_FUNCS: HashSet<u32> = {
         let mut m = HashSet::new();
-        m.insert(INITIAL_SYMBOLS.translate["main"]);
         m.insert(INITIAL_SYMBOLS.translate["printf"]);
         m.insert(INITIAL_SYMBOLS.translate["exit"]);
         m
