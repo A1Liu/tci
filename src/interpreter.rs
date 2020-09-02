@@ -509,15 +509,13 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<i32>, IError> {
-        match func_name {
-            PRINTF_SYMBOL => return self.printf(pc),
-            n => {
-                return Err(error!(
-                    "InvalidLibraryFunction",
-                    "library function symbol {} is invalid (this is a problem with tci)", n
-                ))
-            }
+        if func_name == INITIAL_SYMBOLS.translate["printf"] {
+            return self.printf(pc);
         }
+        return Err(error!(
+            "InvalidLibraryFunction",
+            "library function symbol {} is invalid (this is a problem with tci)", func_name
+        ));
     }
 
     pub fn printf(&mut self, pc: u32) -> Result<Option<i32>, IError> {

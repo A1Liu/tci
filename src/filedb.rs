@@ -31,7 +31,7 @@ impl<'a> File<'a> {
         name: &str,
         source: &str,
         line_starts: &[usize],
-    ) -> Self {
+        ) -> Self {
         File {
             _name: frame.add_str(name),
             _source: frame.add_str(source),
@@ -77,31 +77,43 @@ pub struct FileDb<'a> {
     pub names: Vec<CodeLoc>,
 }
 
-pub const MAIN_SYMBOL: u32 = 0;
-pub const VA_LIST_SYMBOL: u32 = 1;
-pub const PRINTF_SYMBOL: u32 = 2;
-pub const EXIT_SYMBOL: u32 = 3;
+pub struct InitSyms {
+    pub names: Vec<&'static str>,
+    pub translate: HashMap<&'static str, u32>,
+}
 
-pub const STATIC_FILE: u32 = !0;
-pub const NOT_A_FILE: u32 = !0;
+lazy_static! {
+    pub static ref INITIAL_SYMBOLS : InitSyms = {
+        let mut names = Vec::new();
+        let mut translate = HashMap::new();
+        macro_rules! add_sym {
+            ($arg:expr) => {
+                let begin = names.len() as u32;
+                names.push($arg);
+                translate.insert($arg, begin);
+            };
+        }
+
+        add_sym!("main");
+        add_sym!("stdio.h");
+        add_sym!("va_list");
+        add_sym!("printf");
+        add_sym!("exit");
+        InitSyms {names, translate}
+    };
+}
 
 impl<'a> FileDb<'a> {
     /// Create a new files database.
     pub fn new() -> Self {
         let mut string = String::new();
-        macro_rules! add_static_name {
-            ($arg:expr) => {{
-                let begin = string.len();
-                string.push_str($arg);
-                let end = string.len();
-                begin..end
-            }};
+        let mut symbols = Vec::new();
+        for name in INITIAL_SYMBOLS.names.iter() {
+            let begin = string.len();
+            string.push_str(name);
+            let end = string.len();
+            symbols.push(begin..end);
         }
-
-        let main = add_static_name!("main");
-        let va_list = add_static_name!("va_list");
-        let printf = add_static_name!("printf");
-        let exit = add_static_name!("exit");
 
         let line_starts: Vec<usize> = line_starts(&string).collect();
         let buckets = BucketList::with_capacity(16 * 1024 * 1024);
@@ -120,12 +132,9 @@ impl<'a> FileDb<'a> {
             names: Vec::new(),
         };
 
-        debug_assert_eq!(MAIN_SYMBOL, new_self.translate_add(main, 0));
-
-        debug_assert_eq!(VA_LIST_SYMBOL, new_self.translate_add(va_list, 0));
-
-        debug_assert_eq!(PRINTF_SYMBOL, new_self.translate_add(printf, 0));
-        debug_assert_eq!(EXIT_SYMBOL, new_self.translate_add(exit, 0));
+        for symbol in symbols {
+            new_self.translate_add(symbol, 0);
+        }
 
         new_self
     }
@@ -160,15 +169,22 @@ impl<'a> FileDb<'a> {
     }
 
     pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
-        let cloc = self.names[symbol as usize];
-        let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize]._source;
-        let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
-
+        let text = self.symbol_to_str(symbol);
         let base_path = parent_if_file(self.files[base_file as usize]._name);
         let path = Path::new(base_path).join(text);
         let path_str = path.to_str().unwrap();
         return self.add(&path_str);
+    }
+
+    pub fn symbol_to_str(&self, symbol: u32) -> &'a str {
+        let cloc = self.names[symbol as usize];
+        return self.cloc_to_str(cloc);
+    }
+
+    pub fn cloc_to_str(&self, cloc: CodeLoc) -> &'a str {
+        let range: ops::Range<usize> = cloc.into();
+        let text = self.files[cloc.file as usize]._source;
+        return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
     }
 
     #[inline]
@@ -179,9 +195,7 @@ impl<'a> FileDb<'a> {
 
     #[inline]
     pub fn translate_add_cloc(&mut self, cloc: CodeLoc) -> u32 {
-        let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize]._source;
-        let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
+        let text = self.cloc_to_str(cloc);
 
         if let Some(id) = self.translate.get(text) {
             return *id;

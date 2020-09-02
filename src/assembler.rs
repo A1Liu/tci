@@ -1,10 +1,10 @@
 use crate::ast::*;
 use crate::buckets::*;
+use crate::filedb::*;
 use crate::interpreter::*;
 use crate::runtime::*;
 use crate::type_checker::*;
 use crate::util::*;
-use crate::filedb::*;
 use core::alloc;
 use core::mem::{align_of, size_of};
 use std::collections::{HashMap, HashSet};
@@ -29,8 +29,9 @@ pub struct ASMAssign<'a> {
 lazy_static! {
     pub static ref LIB_FUNCS: HashSet<u32> = {
         let mut m = HashSet::new();
-        m.insert(PRINTF_SYMBOL);
-        m.insert(EXIT_SYMBOL);
+        m.insert(INITIAL_SYMBOLS.translate["main"]);
+        m.insert(INITIAL_SYMBOLS.translate["printf"]);
+        m.insert(INITIAL_SYMBOLS.translate["exit"]);
         m
     };
 }
@@ -406,12 +407,9 @@ impl<'a> Assembler<'a> {
         }
     }
 
-    pub fn assemble<'b>(
-        mut self,
-        env: &FileDb,
-    ) -> Result<Program<'b>, Error> {
+    pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
-        let main_func = self.functions.get(&MAIN_SYMBOL).ok_or_else(no_main)?;
+        let main_func = self.functions.get(&INITIAL_SYMBOLS.translate["main"]).ok_or_else(no_main)?;
         let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
         for op in self.opcodes.iter_mut() {
@@ -427,10 +425,7 @@ impl<'a> Assembler<'a> {
                         let func_loc = function.func_type.loc;
                         return Err(error!(
                             "couldn't find definition for function",
-                            op.loc,
-                            "called here",
-                            func_loc,
-                            "declared here"
+                            op.loc, "called here", func_loc, "declared here"
                         ));
                     }
                 }
