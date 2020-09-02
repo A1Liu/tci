@@ -30,35 +30,40 @@ use util::Error;
 fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
-    let token_lists: Vec<_>;
+    let mut asts = parser::AstDb::new();
     let mut errors: Vec<Error> = Vec::new();
 
-    let files: Vec<(u32, &str)> = env.iter().collect();
-    let files = files.iter();
-    let files = files.map(|(id, source)| lexer::lex_file(buckets, &mut tokens, env, *id, *source));
-    let files = files.filter_map(|lexed| match lexed {
-        Err(err) => {
-            errors.push(err);
-            return None;
+    let files_list = env.vec();
+    let files = files_list.iter();
+    files.for_each(|&(id, source)| {
+        let result = lexer::lex_file(buckets, &mut tokens, env, id, source);
+        match result {
+            Err(err) => {
+                errors.push(err);
+            }
+            Ok(_) => {}
         }
-        Ok(x) => return Some(x),
     });
-    token_lists = files.collect();
+
+    if errors.len() != 0 {
+        return Err(errors);
+    }
 
     while let Some(n) = buckets.next() {
         buckets = n;
     }
     buckets = buckets.force_next();
 
-    #[rustfmt::skip]
-    let iter = token_lists.into_iter().map(|tokens| Ok(parser::parse_tokens(buckets, &tokens)?));
-    let iter = iter.filter_map(|parsed| match parsed {
-        Ok(x) => return x,
-        Err(err) => {
-            errors.push(err);
-            return None;
-        }
-    });
+    let iter =
+        files_list.into_iter().filter_map(|(file, file_source)| {
+            match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
+                Ok(x) => return Some(x),
+                Err(err) => {
+                    errors.push(err);
+                    return None;
+                }
+            }
+        });
     let asts: Vec<ast::ASTProgram> = iter.collect();
 
     let mut assembler = assembler::Assembler::new();

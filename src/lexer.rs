@@ -190,8 +190,14 @@ pub fn lex_file<'a, 'b>(
     file: u32,
     data: &'a str,
 ) -> Result<&'b [Token<'b>], Error> {
+    if let Some(toks) = token_db.get(&file) {
+        return Ok(toks);
+    }
+
     let mut incomplete = HashSet::new();
-    return lex_file_rec(buckets, &mut incomplete, token_db, symbols, file, data);
+    let tokens = lex_file_rec(buckets, &mut incomplete, token_db, symbols, file, data)?;
+    token_db.insert(file, tokens);
+    return Ok(tokens);
 }
 
 pub fn lex_file_rec<'a, 'b>(
@@ -288,7 +294,6 @@ pub fn lex_token<'a, 'b>(
                         return Err(expected_newline("include", begin, *current, file));
                     }
 
-                    output.push(Token::new(TokenKind::Include(id), begin..*current, file));
                     let map_err = |err| {
                         error!(
                             "Error finding file",
@@ -297,6 +302,11 @@ pub fn lex_token<'a, 'b>(
                         )
                     };
                     let include_id = symbols.add_from_symbols(file, id).map_err(map_err)?;
+                    output.push(Token::new(
+                        TokenKind::Include(include_id),
+                        begin..*current,
+                        file,
+                    ));
                     if incomplete.contains(&include_id) {
                         return Err(error!(
                             "include cycle detected",

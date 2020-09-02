@@ -2,7 +2,7 @@ use crate::util::*;
 
 #[derive(Clone, Copy)]
 pub struct ASTProgram<'a> {
-    pub stmts: &'a [GlobalStmt<'a>]
+    pub stmts: &'a [GlobalStmt<'a>],
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
@@ -57,7 +57,7 @@ pub struct InnerStructDecl {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParamKind {
     StructLike {
         decl_type: ASTType,
@@ -67,13 +67,13 @@ pub enum ParamKind {
     Vararg,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParamDecl {
     pub kind: ParamKind,
     pub loc: CodeLoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructDecl<'a> {
     pub ident: u32,
     pub ident_loc: CodeLoc,
@@ -89,7 +89,7 @@ pub struct Decl<'a> {
     pub expr: Expr<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum GlobalStmtKind<'a> {
     Func {
         return_type: ASTType,
@@ -111,13 +111,13 @@ pub enum GlobalStmtKind<'a> {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GlobalStmt<'a> {
     pub kind: GlobalStmtKind<'a>,
     pub loc: CodeLoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ASTTypeKind {
     Int,
     Struct { ident: u32 },
@@ -125,7 +125,7 @@ pub enum ASTTypeKind {
     Void,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ASTType {
     pub kind: ASTTypeKind,
     pub loc: CodeLoc,
@@ -211,7 +211,6 @@ pub struct TCStruct<'a> {
     pub decl_loc: CodeLoc,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TCTypeKind {
     I32, // int
@@ -228,9 +227,9 @@ pub struct TCType {
     pub pointer_count: u32,
 }
 
-pub const VOID : TCType = TCType {
+pub const VOID: TCType = TCType {
     kind: TCTypeKind::Void,
-    pointer_count : 0,
+    pointer_count: 0,
 };
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]

@@ -7,17 +7,32 @@ use std::collections::HashMap;
 
 pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
 
-pub struct Parser<'a, 'b> {
-    pub buckets: BucketListRef<'b>,
-    pub tokens: &'a [Token<'a>],
-    pub current: usize,
+pub fn parse_tokens<'a, 'b>(
+    buckets: BucketListRef<'b>,
+    token_db: &TokenDb<'a>,
+    ast_db: &mut AstDb<'b>,
+    file: u32,
+) -> Result<ASTProgram<'b>, Error> {
+    if let Some(stmts) = ast_db.get(&file) {
+        return Ok(ASTProgram { stmts });
+    }
+
+    let mut parse_result = Vec::new();
+    parse_tokens_rec(buckets, token_db, ast_db, file, &mut parse_result)?;
+    let stmts = buckets.add_array(parse_result);
+    let prev = ast_db.insert(file, stmts);
+    debug_assert!(prev.is_none());
+    return Ok(ASTProgram { stmts });
 }
 
-pub fn parse_tokens<'a, 'b>(
+pub fn parse_tokens_rec<'a, 'b>(
     mut buckets: BucketListRef<'b>,
-    tokens: &'a [Token<'a>],
-) -> Result<Option<ASTProgram<'b>>, Error> {
-    let mut parse_result = Vec::new();
+    tdb: &TokenDb<'a>,
+    adb: &mut AstDb<'b>,
+    file: u32,
+    parse_result: &mut Vec<GlobalStmt<'b>>,
+) -> Result<(), Error> {
+    let tokens = tdb[&file];
     let mut current = 0;
 
     loop {
@@ -25,19 +40,14 @@ pub fn parse_tokens<'a, 'b>(
             break;
         }
 
-        if parse_global_decls(buckets, tokens, &mut current, &mut parse_result)? {
-            // failed from prior file
-            return Ok(None);
-        }
+        parse_global_decls(buckets, tdb, adb, tokens, &mut current, parse_result)?;
 
         while let Some(next) = buckets.next() {
             buckets = next;
         }
     }
 
-    return Ok(Some(ASTProgram {
-        stmts: buckets.add_array(parse_result),
-    }));
+    return Ok(());
 }
 
 pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
@@ -529,18 +539,34 @@ fn parse_multi_decl<'a, 'b>(
 
 pub fn parse_global_decls<'a, 'b>(
     buckets: BucketListRef<'b>,
+    token_db: &TokenDb<'a>,
+    ast_db: &mut AstDb<'b>,
     tokens: &'a [Token<'a>],
     current: &mut usize,
     decls: &mut Vec<GlobalStmt<'b>>,
-) -> Result<bool, Error> {
+) -> Result<(), Error> {
     macro_rules! ret_stmt {
         ($stmt:expr) => {
             decls.push($stmt);
-            return Ok(false);
+            return Ok(());
         };
     }
 
     let decl_type = match peek(tokens, current)?.kind {
+        TokenKind::Include(include_id) => {
+            if let Some(include_stmts) = ast_db.get(&include_id) {
+                decls.extend_from_slice(include_stmts);
+                return Ok(());
+            }
+
+            let mut include_stmts = Vec::new();
+            parse_tokens_rec(buckets, token_db, ast_db, include_id, &mut include_stmts)?;
+            let stmts = buckets.add_array(include_stmts);
+            let prev = ast_db.insert(include_id, stmts);
+            debug_assert!(prev.is_none());
+
+            return Ok(());
+        }
         TokenKind::Struct => {
             let start_loc = pop(tokens, current).unwrap().loc;
             let (ident, ident_loc) = expect_any_ident(tokens, current)?;

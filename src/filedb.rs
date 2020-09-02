@@ -131,14 +131,15 @@ impl<'a> FileDb<'a> {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (u32, &'a str)> {
+        return self.vec().into_iter();
+    }
+
+    pub fn vec(&self) -> Vec<(u32, &'a str)> {
         let iter = self.files.iter();
-        let sources: Vec<(u32, &'a str)> = iter
-            .enumerate()
-            .skip(1)
+        #[rustfmt::skip]
+        return iter.enumerate().skip(1)
             .map(|(id, file)| (id as u32, file._source))
             .collect();
-
-        return sources.into_iter();
     }
 
     /// Add a file to the database, returning the handle that can be used to
