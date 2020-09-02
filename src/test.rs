@@ -58,3 +58,8 @@ fn test_assign() {
 fn test_structs() {
     test_file_should_succeed("test/structs.c");
 }
+
+#[test]
+fn test_include() {
+    test_file_should_succeed("test/includes.c");
+}

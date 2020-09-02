@@ -1,6 +1,6 @@
 use crate::util::*;
 
-#[derive(Clone, Copy)]
+#[derive(Debug,Clone, Copy)]
 pub struct ASTProgram<'a> {
     pub stmts: &'a [GlobalStmt<'a>],
 }

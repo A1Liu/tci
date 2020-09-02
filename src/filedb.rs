@@ -104,9 +104,9 @@ impl<'a> FileDb<'a> {
         let exit = add_static_name!("exit");
 
         let line_starts: Vec<usize> = line_starts(&string).collect();
-        let _size = align_usize(string.len(), 8) + line_starts.len() * 8 + mem::size_of::<File>();
         let buckets = BucketList::with_capacity(16 * 1024 * 1024);
         let file = File::new(buckets, "", &string);
+        let _size = file.size() + mem::size_of::<File>();
 
         let mut files = Vec::new();
         files.push(file);
@@ -154,24 +154,21 @@ impl<'a> FileDb<'a> {
         let file_id = self.files.len() as u32;
         let source = read_to_string(&file_name)?;
         let file = File::new(self.buckets, file_name, &source);
-        self._size += file.size();
+        self._size += file.size() + mem::size_of::<File>();
         self.files.push(file);
         Ok(file_id)
     }
 
     pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
-        let base_path = self.files[base_file as usize]._name;
         let cloc = self.names[symbol as usize];
         let range: ops::Range<usize> = cloc.into();
         let text = self.files[cloc.file as usize]._source;
         let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
-        let path = path_clean(
-            Path::new(parent_if_file(base_path))
-                .join(text)
-                .to_str()
-                .unwrap(),
-        );
-        return self.add(&path);
+
+        let base_path = parent_if_file(self.files[base_file as usize]._name);
+        let path = Path::new(base_path).join(text);
+        let path_str = path.to_str().unwrap();
+        return self.add(&path_str);
     }
 
     #[inline]
@@ -192,7 +189,7 @@ impl<'a> FileDb<'a> {
             let idx = self.names.len() as u32;
             self.names.push(cloc);
             self.translate.insert(text, idx);
-            self._size += mem::size_of::<ShortSlice<u8>>();
+            self._size += mem::size_of::<&str>();
             return idx;
         }
     }
@@ -295,11 +292,10 @@ pub fn parent_if_file<'a>(path: &'a str) -> &'a str {
     let bytes = path.as_bytes();
     let mut idx = bytes.len() - 1;
     while bytes[idx] != PATH_SEP {
+        if idx == 0 {
+            panic!("got relative file path {}", path);
+        }
         idx -= 1;
-    }
-
-    if idx == 0 {
-        panic!("got relative file path {}", path);
     }
 
     unsafe { str::from_utf8_unchecked(&bytes[..idx]) }

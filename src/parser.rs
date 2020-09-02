@@ -554,6 +554,7 @@ pub fn parse_global_decls<'a, 'b>(
 
     let decl_type = match peek(tokens, current)?.kind {
         TokenKind::Include(include_id) => {
+            pop(tokens, current).unwrap();
             if let Some(include_stmts) = ast_db.get(&include_id) {
                 decls.extend_from_slice(include_stmts);
                 return Ok(());
@@ -564,6 +565,7 @@ pub fn parse_global_decls<'a, 'b>(
             let stmts = buckets.add_array(include_stmts);
             let prev = ast_db.insert(include_id, stmts);
             debug_assert!(prev.is_none());
+            decls.extend_from_slice(stmts);
 
             return Ok(());
         }

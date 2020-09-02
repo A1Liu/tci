@@ -66,6 +66,8 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
         });
     let asts: Vec<ast::ASTProgram> = iter.collect();
 
+    println!("{:?}", asts);
+
     let mut assembler = assembler::Assembler::new();
     let iter = asts.into_iter().for_each(|ast| {
         let tfuncs = match type_checker::check_file(buckets, ast) {
