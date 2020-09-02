@@ -1,6 +1,8 @@
 use crate::buckets::*;
-use crate::util::*;
 use crate::filedb::*;
+use crate::util::*;
+use codespan_reporting::files::Files;
+use std::collections::{HashMap, HashSet};
 
 pub const CLOSING_CHAR: u8 = !0;
 
@@ -179,26 +181,61 @@ pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
     );
 }
 
+pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
+
 pub fn lex_file<'a, 'b>(
     buckets: BucketListRef<'b>,
+    token_db: &mut TokenDb<'b>,
     symbols: &mut FileDb<'a>,
     file: u32,
     data: &'a str,
-) -> Result<Vec<Token<'b>>, Error> {
+) -> Result<&'b [Token<'b>], Error> {
+    let mut incomplete = HashSet::new();
+    return lex_file_rec(buckets, &mut incomplete, token_db, symbols, file, data);
+}
+
+pub fn lex_file_rec<'a, 'b>(
+    buckets: BucketListRef<'b>,
+    incomplete: &mut HashSet<u32>,
+    token_db: &mut TokenDb<'b>,
+    symbols: &mut FileDb<'a>,
+    file: u32,
+    data: &'a str,
+) -> Result<&'b [Token<'b>], Error> {
     let mut toks = Vec::new();
     let bytes = data.as_bytes();
     let mut current = 0;
-    let mut done = lex_token(buckets, symbols, file, bytes, &mut current, &mut toks)?;
+    let mut done = lex_token(
+        buckets,
+        incomplete,
+        token_db,
+        symbols,
+        file,
+        bytes,
+        &mut current,
+        &mut toks,
+    )?;
 
     while !done {
-        done = lex_token(buckets, symbols, file, bytes, &mut current, &mut toks)?;
+        done = lex_token(
+            buckets,
+            incomplete,
+            token_db,
+            symbols,
+            file,
+            bytes,
+            &mut current,
+            &mut toks,
+        )?;
     }
 
-    return Ok(toks);
+    return Ok(buckets.add_array(toks));
 }
 
 pub fn lex_token<'a, 'b>(
     buckets: BucketListRef<'b>,
+    incomplete: &mut HashSet<u32>,
+    token_db: &mut TokenDb<'b>,
     symbols: &mut FileDb<'a>,
     file: u32,
     data: &'a [u8],
@@ -247,12 +284,35 @@ pub fn lex_token<'a, 'b>(
                     }
 
                     let id = symbols.translate_add(name_begin..*current, file);
-                    output.push(Token::new(TokenKind::Include(id), begin..*current, file));
-                    if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
-                        return Ok(false);
-                    } else {
+                    if !peek_eq(data, current, b'\n') && !peek_eq_series(data, current, &crlf) {
                         return Err(expected_newline("include", begin, *current, file));
                     }
+
+                    output.push(Token::new(TokenKind::Include(id), begin..*current, file));
+                    let map_err = |err| {
+                        error!(
+                            "Error finding file",
+                            l(begin as u32, *current as u32, file),
+                            format!("got error {}", err)
+                        )
+                    };
+                    let include_id = symbols.add_from_symbols(file, id).map_err(map_err)?;
+                    if incomplete.contains(&include_id) {
+                        return Err(error!(
+                            "include cycle detected",
+                            l(begin as u32, *current as u32, file),
+                            "found here"
+                        ));
+                    }
+
+                    if let Some(toks) = token_db.get(&include_id) {
+                        return Ok(false);
+                    }
+
+                    let include = symbols.source(include_id).unwrap();
+                    let toks = lex_file_rec(buckets, incomplete, token_db, symbols, file, include)?;
+                    token_db.insert(include_id, toks);
+                    return Ok(false);
                 } else if peek_eq(data, current, b'<') {
                     *current += 1;
                     let name_begin = *current;
@@ -262,8 +322,8 @@ pub fn lex_token<'a, 'b>(
                     }
 
                     let id = symbols.translate_add(name_begin..*current, file);
-                    output.push(Token::new(TokenKind::Include(id), begin..*current, file));
                     if peek_eq(data, current, b'\n') || peek_eq_series(data, current, &crlf) {
+                        output.push(Token::new(TokenKind::IncludeSys(id), begin..*current, file));
                         return Ok(false);
                     } else {
                         return Err(expected_newline("include", begin, *current, file));

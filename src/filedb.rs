@@ -71,6 +71,7 @@ impl<'a> File<'a> {
 pub struct FileDb<'a> {
     pub buckets: BucketListRef<'a>,
     pub _size: usize,
+    pub file_names: HashMap<&'a str, u32>,
     pub files: Vec<File<'a>>,
     pub translate: HashMap<&'a str, u32>,
     pub names: Vec<CodeLoc>,
@@ -114,6 +115,7 @@ impl<'a> FileDb<'a> {
             buckets,
             _size,
             files,
+            file_names: HashMap::new(),
             translate: HashMap::new(),
             names: Vec::new(),
         };
@@ -142,10 +144,15 @@ impl<'a> FileDb<'a> {
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again.
     pub fn add(&mut self, file_name: &str) -> Result<u32, io::Error> {
-        let file_name = canonicalize(file_name)?;
+        let file_name_owned = canonicalize(file_name)?;
+        let file_name = file_name_owned.to_str().unwrap();
+        if let Some(id) = self.file_names.get(file_name) {
+            return Ok(*id);
+        }
+
         let file_id = self.files.len() as u32;
         let source = read_to_string(&file_name)?;
-        let file = File::new(self.buckets, file_name.to_str().unwrap(), &source);
+        let file = File::new(self.buckets, file_name, &source);
         self._size += file.size();
         self.files.push(file);
         Ok(file_id)
@@ -157,7 +164,12 @@ impl<'a> FileDb<'a> {
         let range: ops::Range<usize> = cloc.into();
         let text = self.files[cloc.file as usize]._source;
         let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
-        let path = path_clean(Path::new(parent_if_file(base_path)).join(text).to_str().unwrap());
+        let path = path_clean(
+            Path::new(parent_if_file(base_path))
+                .join(text)
+                .to_str()
+                .unwrap(),
+        );
         return self.add(&path);
     }
 

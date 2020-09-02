@@ -29,12 +29,13 @@ use util::Error;
 
 fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
+    let mut tokens = lexer::TokenDb::new();
     let token_lists: Vec<_>;
     let mut errors: Vec<Error> = Vec::new();
 
     let files: Vec<(u32, &str)> = env.iter().collect();
     let files = files.iter();
-    let files = files.map(|(id, source)| lexer::lex_file(buckets, env, *id, *source));
+    let files = files.map(|(id, source)| lexer::lex_file(buckets, &mut tokens, env, *id, *source));
     let files = files.filter_map(|lexed| match lexed {
         Err(err) => {
             errors.push(err);

@@ -40,10 +40,10 @@ pub trait Files<'a> {
     type Source: 'a + AsRef<str>;
 
     /// The user-facing name of a file.
-    fn name(&'a self, id: Self::FileId) -> Option<Self::Name>;
+    fn name(&self, id: Self::FileId) -> Option<Self::Name>;
 
     /// The source code of a file.
-    fn source(&'a self, id: Self::FileId) -> Option<Self::Source>;
+    fn source(&self, id: Self::FileId) -> Option<Self::Source>;
 
     /// The index of the line at the given byte index.
     ///
@@ -56,7 +56,7 @@ pub trait Files<'a> {
     ///
     /// [`line_starts`]: crate::files::line_starts
     /// [`files`]: crate::files
-    fn line_index(&'a self, id: Self::FileId, byte_index: usize) -> Option<usize>;
+    fn line_index(&self, id: Self::FileId, byte_index: usize) -> Option<usize>;
 
     /// The user-facing line number at the given line index.
     ///
@@ -68,7 +68,7 @@ pub trait Files<'a> {
     ///
     /// [line-macro]: https://en.cppreference.com/w/c/preprocessor/line
     #[allow(unused_variables)]
-    fn line_number(&'a self, id: Self::FileId, line_index: usize) -> Option<usize> {
+    fn line_number(&self, id: Self::FileId, line_index: usize) -> Option<usize> {
         Some(line_index + 1)
     }
 
@@ -83,7 +83,7 @@ pub trait Files<'a> {
     /// [`files`]: crate::files
     /// [`column_index`]: crate::files::column_index
     fn column_number(
-        &'a self,
+        &self,
         id: Self::FileId,
         line_index: usize,
         byte_index: usize,
@@ -97,7 +97,7 @@ pub trait Files<'a> {
 
     /// Convenience method for returning line and column number at the given a
     /// byte index in the file.
-    fn location(&'a self, id: Self::FileId, byte_index: usize) -> Option<Location> {
+    fn location(&self, id: Self::FileId, byte_index: usize) -> Option<Location> {
         let line_index = self.line_index(id, byte_index)?;
 
         Some(Location {
@@ -107,7 +107,7 @@ pub trait Files<'a> {
     }
 
     /// The byte range of line in the source of the file.
-    fn line_range(&'a self, id: Self::FileId, line_index: usize) -> Option<Range<usize>>;
+    fn line_range(&self, id: Self::FileId, line_index: usize) -> Option<Range<usize>>;
 }
 
 /// A user-facing location in a source file.
@@ -194,189 +194,4 @@ pub fn column_index(source: &str, line_range: Range<usize>, byte_index: usize) -
 // NOTE: this is copied in `codespan::file::line_starts` and should be kept in sync.
 pub fn line_starts<'source>(source: &'source str) -> impl 'source + Iterator<Item = usize> {
     std::iter::once(0).chain(source.match_indices('\n').map(|(i, _)| i + 1))
-}
-
-/// A file database that contains a single source file.
-///
-/// Because there is only single file in this database we use `()` as a [`FileId`].
-///
-/// This is useful for simple language tests, but it might be worth creating a
-/// custom implementation when a language scales beyond a certain size.
-///
-/// [`FileId`]: Files::FileId
-#[derive(Debug, Clone)]
-pub struct SimpleFile<Name, Source> {
-    /// The name of the file.
-    name: Name,
-    /// The source code of the file.
-    source: Source,
-    /// The starting byte indices in the source code.
-    line_starts: Vec<usize>,
-}
-
-impl<Name, Source> SimpleFile<Name, Source>
-where
-    Name: std::fmt::Display,
-    Source: AsRef<str>,
-{
-    /// Create a new source file.
-    pub fn new(name: Name, source: Source) -> SimpleFile<Name, Source> {
-        SimpleFile {
-            name,
-            line_starts: line_starts(source.as_ref()).collect(),
-            source,
-        }
-    }
-
-    /// Return the name of the file.
-    pub fn name(&self) -> &Name {
-        &self.name
-    }
-
-    /// Return the source of the file.
-    pub fn source(&self) -> &Source {
-        &self.source
-    }
-
-    fn line_start(&self, line_index: usize) -> Option<usize> {
-        use std::cmp::Ordering;
-
-        match line_index.cmp(&self.line_starts.len()) {
-            Ordering::Less => self.line_starts.get(line_index).cloned(),
-            Ordering::Equal => Some(self.source.as_ref().len()),
-            Ordering::Greater => None,
-        }
-    }
-}
-
-impl<'a, Name, Source> Files<'a> for SimpleFile<Name, Source>
-where
-    Name: 'a + std::fmt::Display + Clone,
-    Source: 'a + AsRef<str>,
-{
-    type FileId = ();
-    type Name = Name;
-    type Source = &'a str;
-
-    fn name(&self, (): ()) -> Option<Name> {
-        Some(self.name.clone())
-    }
-
-    fn source(&self, (): ()) -> Option<&str> {
-        Some(self.source.as_ref())
-    }
-
-    fn line_index(&self, (): (), byte_index: usize) -> Option<usize> {
-        match self.line_starts.binary_search(&byte_index) {
-            Ok(line) => Some(line),
-            Err(next_line) => Some(next_line - 1),
-        }
-    }
-
-    fn line_range(&self, (): (), line_index: usize) -> Option<Range<usize>> {
-        let line_start = self.line_start(line_index)?;
-        let next_line_start = self.line_start(line_index + 1)?;
-
-        Some(line_start..next_line_start)
-    }
-}
-
-/// A file database that can store multiple source files.
-///
-/// This is useful for simple language tests, but it might be worth creating a
-/// custom implementation when a language scales beyond a certain size.
-#[derive(Debug, Clone)]
-pub struct SimpleFiles<Name, Source> {
-    files: Vec<SimpleFile<Name, Source>>,
-}
-
-impl<Name, Source> SimpleFiles<Name, Source>
-where
-    Name: std::fmt::Display,
-    Source: AsRef<str>,
-{
-    /// Create a new files database.
-    pub fn new() -> SimpleFiles<Name, Source> {
-        SimpleFiles { files: Vec::new() }
-    }
-
-    /// Add a file to the database, returning the handle that can be used to
-    /// refer to it again.
-    pub fn add(&mut self, name: Name, source: Source) -> u32 {
-        let file_id = self.files.len() as u32;
-        self.files.push(SimpleFile::new(name, source));
-        file_id
-    }
-
-    /// Iterate through the files contained in this instance
-    pub fn iter(&self) -> core::ops::Range<u32> {
-        return 0..(self.files.len() as u32);
-    }
-
-    /// Get the file corresponding to the given id.
-    pub fn get(&self, file_id: u32) -> Option<&SimpleFile<Name, Source>> {
-        self.files.get(file_id as usize)
-    }
-}
-
-impl<'a, Name, Source> Files<'a> for SimpleFiles<Name, Source>
-where
-    Name: 'a + std::fmt::Display + Clone,
-    Source: 'a + AsRef<str>,
-{
-    type FileId = u32;
-    type Name = Name;
-    type Source = &'a str;
-
-    fn name(&self, file_id: u32) -> Option<Name> {
-        Some(self.files.get(file_id as usize)?.name().clone())
-    }
-
-    fn source(&self, file_id: u32) -> Option<&str> {
-        Some(self.files.get(file_id as usize)?.source().as_ref())
-    }
-
-    fn line_index(&self, file_id: u32, byte_index: usize) -> Option<usize> {
-        self.files.get(file_id as usize)?.line_index((), byte_index)
-    }
-
-    fn line_range(&self, file_id: u32, line_index: usize) -> Option<Range<usize>> {
-        self.files.get(file_id as usize)?.line_range((), line_index)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    const TEST_SOURCE: &str = "foo\nbar\r\n\nbaz";
-
-    #[test]
-    fn line_starts() {
-        let file = SimpleFile::new("test", TEST_SOURCE);
-
-        assert_eq!(
-            file.line_starts,
-            [
-                0,  // "foo\n"
-                4,  // "bar\r\n"
-                9,  // ""
-                10, // "baz"
-            ],
-        );
-    }
-
-    #[test]
-    fn line_span_sources() {
-        let file = SimpleFile::new("test", TEST_SOURCE);
-
-        let line_sources = (0..4)
-            .map(|line| {
-                let line_range = file.line_range((), line).unwrap();
-                &file.source[line_range]
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(line_sources, ["foo\n", "bar\r\n", "\n", "baz"]);
-    }
 }
