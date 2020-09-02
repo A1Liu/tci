@@ -29,7 +29,7 @@ use util::Error;
 
 fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
-    let token_lists : Vec<_>;
+    let token_lists: Vec<_>;
     let mut errors: Vec<Error> = Vec::new();
 
     let files: Vec<(u32, &str)> = env.iter().collect();
@@ -97,7 +97,8 @@ fn run_on_file(
     writer: &mut impl WriteColor,
 ) -> Result<i32, Vec<Error>> {
     let buckets = buckets::BucketList::new();
-    let mut files = FileDb::new(&[filename]);
+    let mut files = FileDb::new();
+    files.add(filename).unwrap();
     match run(&mut files, runtime_io) {
         Ok(x) => return Ok(x),
         Err(errs) => {
@@ -119,20 +120,23 @@ fn main() {
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();
 
-    let mut file_names: Vec<&str> = Vec::new();
-    let arg_strs = args.iter().skip(1);
-    for arg in arg_strs {
-        file_names.push(&*arg);
+    let mut files = FileDb::new();
+    for arg in args.iter().skip(1) {
+        files.add(&arg).unwrap();
     }
 
-    let mut files = FileDb::new(&file_names);
     mem::drop(args);
     match run(&mut files, runtime_io) {
         Err(errs) => {
             let config = codespan_reporting::term::Config::default();
             for err in errs {
-                codespan_reporting::term::emit(&mut writer.lock(), &config, &files, &err.diagnostic())
-                    .expect("why did this fail?");
+                codespan_reporting::term::emit(
+                    &mut writer.lock(),
+                    &config,
+                    &files,
+                    &err.diagnostic(),
+                )
+                .expect("why did this fail?");
             }
         }
         Ok(ret_code) => {
