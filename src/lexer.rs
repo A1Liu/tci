@@ -305,6 +305,8 @@ pub fn lex_token<'a, 'b>(
                         ));
                     }
 
+                    incomplete.insert(include_id);
+
                     if let Some(toks) = token_db.get(&include_id) {
                         return Ok(false);
                     }
@@ -312,6 +314,7 @@ pub fn lex_token<'a, 'b>(
                     let include = symbols.source(include_id).unwrap();
                     let toks = lex_file_rec(buckets, incomplete, token_db, symbols, file, include)?;
                     token_db.insert(include_id, toks);
+                    incomplete.remove(&include_id);
                     return Ok(false);
                 } else if peek_eq(data, current, b'<') {
                     *current += 1;
