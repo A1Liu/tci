@@ -158,7 +158,25 @@ pub fn parse_comparison<'a, 'b>(
     tokens: &'a [Token<'a>],
     current: &mut usize,
 ) -> Result<Expr<'b>, Error> {
-    parse_shift(buckets, tokens, current)
+    let mut expr = parse_shift(buckets, tokens, current)?;
+    loop {
+        let start_loc = expr.loc;
+        match peek(tokens, current)?.kind {
+            TokenKind::Lt => {
+                pop(tokens, current).expect("shouldn't fail");
+                let right = parse_shift(buckets, tokens, current)?;
+                let end_loc = right.loc;
+                let left = buckets.add(expr);
+                let right = buckets.add(right);
+
+                expr = Expr {
+                    kind: ExprKind::BinOp(BinOp::Lt, left, right),
+                    loc: l_from(start_loc, end_loc),
+                };
+            }
+            _ => return Ok(expr),
+        }
+    }
 }
 
 pub fn parse_shift<'a, 'b>(
@@ -745,7 +763,7 @@ pub fn parse_block<'a, 'b>(
     buckets: BucketListRef<'b>,
     tokens: &'a [Token<'a>],
     current: &mut usize,
-) -> Result<(&'b [Stmt<'b>], CodeLoc), Error> {
+) -> Result<Block<'b>, Error> {
     match peek(tokens, current)?.kind {
         TokenKind::LBrace => {
             let start_loc = pop(tokens, current)?.loc;
@@ -757,19 +775,27 @@ pub fn parse_block<'a, 'b>(
             let end_loc = pop(tokens, current)?.loc;
 
             if stmts.len() == 1 {
-                if let StmtKind::Block(stmts) = stmts[0].kind {
-                    return Ok((stmts, l_from(start_loc, end_loc)));
+                if let StmtKind::Block(block) = stmts[0].kind {
+                    return Ok(block);
                 } else {
-                    return Ok((buckets.add_array(stmts), l_from(start_loc, end_loc)));
+                    return Ok(Block {
+                        stmts: buckets.add_array(stmts),
+                        loc: l_from(start_loc, end_loc),
+                    });
                 }
             } else {
-                return Ok((&*buckets.add_array(stmts), l_from(start_loc, end_loc)));
+                return Ok(Block {
+                    stmts: buckets.add_array(stmts),
+                    loc: l_from(start_loc, end_loc),
+                });
             }
         }
         _ => {
             let stmt = parse_stmt(buckets, tokens, current)?;
-            let loc = stmt.loc;
-            return Ok((slice::from_ref(buckets.add(stmt)), loc));
+            return Ok(Block {
+                loc: stmt.loc,
+                stmts: slice::from_ref(buckets.add(stmt)),
+            });
         }
     }
 }
@@ -836,7 +862,7 @@ pub fn parse_stmt<'a, 'b>(
 
             let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc).unwrap();
 
-            let (body, body_loc) = parse_block(buckets, tokens, current)?;
+            let body = parse_block(buckets, tokens, current)?;
 
             let post_exprs = buckets.add_array(post_exprs);
             let post_expr = Expr {
@@ -847,6 +873,7 @@ pub fn parse_stmt<'a, 'b>(
             match first_part {
                 Ok((decl_type, decls)) => {
                     return Ok(Stmt {
+                        loc: l_from(start_loc, body.loc),
                         kind: StmtKind::ForDecl {
                             at_start_decl_type: decl_type,
                             at_start: buckets.add_array(decls),
@@ -854,18 +881,17 @@ pub fn parse_stmt<'a, 'b>(
                             post_expr,
                             body,
                         },
-                        loc: l_from(start_loc, body_loc),
                     });
                 }
                 Err(at_start) => {
                     return Ok(Stmt {
+                        loc: l_from(start_loc, body.loc),
                         kind: StmtKind::For {
                             at_start,
                             condition,
                             post_expr,
                             body,
                         },
-                        loc: l_from(start_loc, body_loc),
                     })
                 }
             }
@@ -883,42 +909,45 @@ pub fn parse_stmt<'a, 'b>(
             let if_cond = parse_expr(buckets, tokens, current)?;
             expect_rparen(tokens, current, lparen_tok.loc)?;
 
-            let (if_body, if_body_loc) = parse_block(buckets, tokens, current)?;
+            let if_body = parse_block(buckets, tokens, current)?;
 
             if peek(tokens, current)?.kind != TokenKind::Else {
                 return Ok(Stmt {
+                    loc: l_from(tok.loc, if_body.loc),
                     kind: StmtKind::Branch {
+                        else_body: Block {
+                            stmts: buckets.add_slice(&[]),
+                            loc: l(if_body.loc.end, if_body.loc.end, if_body.loc.file),
+                        },
                         if_cond,
                         if_body,
-                        else_body: buckets.add_slice(&[]),
                     },
-                    loc: l_from(tok.loc, if_body_loc),
                 });
             }
 
             pop(tokens, current).unwrap();
-            let (else_body, else_body_loc) = parse_block(buckets, tokens, current)?;
+            let else_body = parse_block(buckets, tokens, current)?;
 
             return Ok(Stmt {
+                loc: l_from(tok.loc, else_body.loc),
                 kind: StmtKind::Branch {
                     if_cond,
                     if_body,
-                    else_body: else_body,
+                    else_body,
                 },
-                loc: l_from(tok.loc, else_body_loc),
             });
         }
         TokenKind::LBrace => {
-            let (stmts, loc) = parse_block(buckets, tokens, current)?;
-            if stmts.len() == 0 {
+            let block = parse_block(buckets, tokens, current)?;
+            if block.stmts.len() == 0 {
                 return Ok(Stmt {
                     kind: StmtKind::Nop,
-                    loc,
+                    loc: block.loc,
                 });
             } else {
                 return Ok(Stmt {
-                    kind: StmtKind::Block(stmts),
-                    loc,
+                    loc: block.loc,
+                    kind: StmtKind::Block(block),
                 });
             }
         }

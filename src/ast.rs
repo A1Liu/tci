@@ -10,9 +10,15 @@ pub enum BinOp {
     Add,
     Sub,
     Assign,
+    Lt,
+    Gt,
+    Leq,
+    Geq,
+    Eq,
+    Neq,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExprKind<'a> {
     IntLiteral(i32),
     CharLiteral(u8),
@@ -43,7 +49,7 @@ pub enum ExprKind<'a> {
     Uninit,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
     pub loc: CodeLoc,
@@ -143,32 +149,38 @@ pub enum StmtKind<'a> {
     RetVal(Expr<'a>),
     Branch {
         if_cond: Expr<'a>,
-        if_body: &'a [Stmt<'a>],
-        else_body: &'a [Stmt<'a>],
+        if_body: Block<'a>,
+        else_body: Block<'a>,
     },
-    Block(&'a [Stmt<'a>]),
+    Block(Block<'a>),
     For {
         at_start: Expr<'a>,
         condition: Expr<'a>,
         post_expr: Expr<'a>,
-        body: &'a [Stmt<'a>],
+        body: Block<'a>,
     },
     ForDecl {
         at_start_decl_type: ASTType,
         at_start: &'a [Decl<'a>],
         condition: Expr<'a>,
         post_expr: Expr<'a>,
-        body: &'a [Stmt<'a>],
+        body: Block<'a>,
     },
     While {
         condition: Expr<'a>,
-        body: &'a [Stmt<'a>],
+        body: Block<'a>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct Stmt<'a> {
     pub kind: StmtKind<'a>,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Block<'a> {
+    pub stmts: &'a [Stmt<'a>],
     pub loc: CodeLoc,
 }
 
@@ -303,14 +315,24 @@ pub enum TCStmtKind<'a> {
     },
     Branch {
         cond: TCExpr<'a>,
-        if_body: &'a [TCStmt<'a>],
-        else_body: &'a [TCStmt<'a>],
+        if_body: TCBlock<'a>,
+        else_body: TCBlock<'a>,
     },
+    Block(TCBlock<'a>),
+    Loop(TCBlock<'a>),
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
 pub struct TCStmt<'a> {
     pub kind: TCStmtKind<'a>,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCBlock<'a> {
+    pub stmts: &'a [TCStmt<'a>],
     pub loc: CodeLoc,
 }
 
@@ -323,10 +345,14 @@ pub enum TCExprKind<'a> {
         var_offset: i16,
     },
 
+    List(&'a [TCExpr<'a>]),
+
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SubI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    LtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),

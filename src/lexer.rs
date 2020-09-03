@@ -606,7 +606,7 @@ pub fn lex_token<'a, 'b>(
                 *current += 1;
                 ret_tok!(TokenKind::Leq);
             } else {
-                ret_tok!(TokenKind::Gt);
+                ret_tok!(TokenKind::Lt);
             }
         }
         b'!' => {

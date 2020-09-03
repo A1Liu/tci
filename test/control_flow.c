@@ -9,8 +9,8 @@ void print_a(int a) {
 }
 
 int main(int argc, char **argv) {
-  int a = 12;
-  print_a(a);
-  a = 0;
-  print_a(a);
+  int a;
+  for (a = 0; a < 10; a = a + 1) {
+    print_a(a);
+  }
 }

@@ -6,6 +6,7 @@ use crate::runtime::*;
 use crate::type_checker::*;
 use crate::util::*;
 use core::alloc;
+use core::mem;
 use core::mem::{align_of, size_of};
 use std::collections::{HashMap, HashSet};
 
@@ -105,10 +106,8 @@ impl<'a> Assembler<'a> {
             loc: defn.loc,
         });
 
-        for stmt in defn.stmts {
-            let mut ops = self.translate_statement(&func_type, param_count, stmt);
-            self.opcodes.append(&mut ops);
-        }
+        let mut ops = self.translate_block(param_count, defn.stmts, defn.loc, 0);
+        self.opcodes.append(&mut ops);
 
         self.opcodes.push(TaggedOpcode {
             op: Opcode::Ret,
@@ -121,91 +120,134 @@ impl<'a> Assembler<'a> {
 
     pub fn translate_block(
         &mut self,
-        func_type: &TCFuncType,
         param_count: u32,
         block: &[TCStmt],
-    ) -> Vec<TaggedOpcode> {
-        let mut opcodes = Vec::new();
-        for stmt in block {
-            let mut ops = self.translate_statement(func_type, param_count, stmt);
-            opcodes.append(&mut ops);
-        }
-        return opcodes;
-    }
-
-    pub fn translate_statement(
-        &mut self,
-        func_type: &TCFuncType,
-        param_count: u32,
-        stmt: &TCStmt,
+        block_loc: CodeLoc,
+        cb_idx: u32, // docs for this later in the match statement: stands for continue-break
     ) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
-        let mut tagged = TaggedOpcode {
+        let mut decl_count = 0;
+
+        macro_rules! cb {
+            () => {{
+                cb_idx + ops.len() as u32
+            }};
+        }
+
+        for stmt in block {
+            let mut tagged = TaggedOpcode {
+                op: Opcode::StackDealloc,
+                loc: stmt.loc,
+            };
+
+            match &stmt.kind {
+                TCStmtKind::RetVal(expr) => {
+                    ops.append(&mut self.translate_expr(expr));
+
+                    let ret_idx = (param_count as i16 * -1) - 1;
+                    tagged.op = Opcode::SetLocal {
+                        var: ret_idx,
+                        offset: 0,
+                        bytes: expr.expr_type.size(),
+                    };
+                    ops.push(tagged);
+                    tagged.op = Opcode::Ret;
+                    ops.push(tagged);
+                }
+                TCStmtKind::Ret => {
+                    tagged.op = Opcode::Ret;
+                    ops.push(tagged);
+                }
+
+                TCStmtKind::Expr(expr) => {
+                    ops.append(&mut self.translate_expr(expr));
+                    tagged.op = Opcode::Pop {
+                        bytes: expr.expr_type.size(),
+                    };
+                    ops.push(tagged);
+                }
+
+                TCStmtKind::Decl { init } => {
+                    decl_count += 1;
+                    let bytes = init.expr_type.size();
+                    tagged.op = Opcode::StackAlloc(bytes);
+                    ops.push(tagged);
+                    ops.append(&mut self.translate_expr(init));
+                    tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
+                    ops.push(tagged);
+                }
+
+                TCStmtKind::Branch {
+                    cond,
+                    if_body: if_,
+                    else_body: else_,
+                } => {
+                    let cond_bytes = cond.expr_type.size();
+                    ops.append(&mut self.translate_expr(cond));
+
+                    let mut if_ops =
+                        self.translate_block(param_count, if_.stmts, if_.loc, cb!() + 1); // +1 to cb here because of jump instruction
+                    let ifbr_len = if_ops.len() as u32 + 2;
+
+                    tagged.op = match cond_bytes {
+                        1 => Opcode::JumpIfZero8(ifbr_len),
+                        2 => Opcode::JumpIfZero16(ifbr_len),
+                        4 => Opcode::JumpIfZero32(ifbr_len),
+                        8 => Opcode::JumpIfZero64(ifbr_len),
+                        _ => unreachable!(),
+                    };
+                    ops.push(tagged);
+                    ops.append(&mut if_ops);
+                    mem::drop(if_ops);
+
+                    let cb_else = cb_idx + ops.len() as u32;
+                    let mut else_ops =
+                        self.translate_block(param_count, else_.stmts, else_.loc, cb!());
+                    let elsebr_len = else_ops.len() as u32 + 1;
+
+                    tagged.op = Opcode::Jump(elsebr_len);
+                    ops.push(tagged);
+                    ops.append(&mut else_ops);
+                }
+
+                TCStmtKind::Block(block) => {
+                    let mut block =
+                        self.translate_block(param_count, block.stmts, block.loc, cb!());
+                    ops.append(&mut block);
+                }
+
+                TCStmtKind::Loop(block) => {
+                    // cb_idx is the way we track loop structures and handle break and continue
+
+                    tagged.op = Opcode::Jump(2);
+                    ops.push(tagged);
+
+                    let mut block = self.translate_block(param_count, block.stmts, block.loc, 0);
+                    tagged.op = Opcode::Jump(block.len() as u32 + 2); // break out of loop
+                    ops.push(tagged);
+                    tagged.op = Opcode::Jump(0u32.wrapping_sub(block.len() as u32));
+                    ops.append(&mut block);
+                    ops.push(tagged);
+                }
+
+                TCStmtKind::Break => {
+                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 2));
+                    ops.push(tagged);
+                }
+                TCStmtKind::Continue => {
+                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 1));
+                    ops.push(tagged);
+                }
+            }
+        }
+
+        let dealloc = TaggedOpcode {
             op: Opcode::StackDealloc,
-            loc: stmt.loc,
+            loc: block_loc,
         };
 
-        match &stmt.kind {
-            TCStmtKind::RetVal(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-
-                let ret_idx = (param_count as i16 * -1) - 1;
-                tagged.op = Opcode::SetLocal {
-                    var: ret_idx,
-                    offset: 0,
-                    bytes: expr.expr_type.size(),
-                };
-                ops.push(tagged);
-                tagged.op = Opcode::Ret;
-                ops.push(tagged);
-            }
-            TCStmtKind::Ret => {
-                tagged.op = Opcode::Ret;
-                ops.push(tagged);
-            }
-
-            TCStmtKind::Expr(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::Pop {
-                    bytes: expr.expr_type.size(),
-                };
-                ops.push(tagged);
-            }
-
-            TCStmtKind::Decl { init } => {
-                let bytes = init.expr_type.size();
-                tagged.op = Opcode::StackAlloc(bytes);
-                ops.push(tagged);
-                ops.append(&mut self.translate_expr(init));
-                tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
-                ops.push(tagged);
-            }
-
-            TCStmtKind::Branch {
-                cond,
-                if_body,
-                else_body,
-            } => {
-                let cond_bytes = cond.expr_type.size();
-                ops.append(&mut self.translate_expr(cond));
-                let mut if_ops = self.translate_block(func_type, param_count, if_body);
-                let ifbr_len = if_ops.len() as u32 + 2;
-                let mut else_ops = self.translate_block(func_type, param_count, else_body);
-                let elsebr_len = else_ops.len() as u32 + 1;
-
-                tagged.op = match cond_bytes {
-                    1 => Opcode::JumpIfZero8(ifbr_len),
-                    2 => Opcode::JumpIfZero16(ifbr_len),
-                    4 => Opcode::JumpIfZero32(ifbr_len),
-                    8 => Opcode::JumpIfZero64(ifbr_len),
-                    _ => unreachable!(),
-                };
-                ops.push(tagged);
-                ops.append(&mut if_ops);
-                tagged.op = Opcode::Jump(elsebr_len);
-                ops.push(tagged);
-                ops.append(&mut else_ops);
-            }
+        for _ in 0..decl_count {
+            ops.push(dealloc);
         }
 
         return ops;
@@ -247,6 +289,18 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
 
+            TCExprKind::List(exprs) => {
+                for (idx, expr) in exprs.iter().enumerate() {
+                    ops.append(&mut self.translate_expr(expr));
+                    if idx + 1 < exprs.len() {
+                        tagged.op = Opcode::Pop {
+                            bytes: expr.expr_type.size(),
+                        };
+                        ops.push(tagged);
+                    }
+                }
+            }
+
             TCExprKind::AddI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
@@ -264,6 +318,13 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::SubI32;
+                ops.push(tagged);
+            }
+
+            TCExprKind::LtI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::CompI32;
                 ops.push(tagged);
             }
 

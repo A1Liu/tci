@@ -69,6 +69,19 @@ fn sub_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
     };
 }
 
+fn lt_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::Char,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        loc: l_from(l.loc, r.loc),
+        kind: TCExprKind::LtI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
 lazy_static! {
     pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
         use TCShallowType::*;
@@ -77,6 +90,7 @@ lazy_static! {
         m.insert((BinOp::Add, I32, Char), add_int_char);
         m.insert((BinOp::Add, Char, I32), add_char_int);
         m.insert((BinOp::Sub, I32, I32), sub_int_int);
+        m.insert((BinOp::Lt, I32, I32), lt_int_int);
         m
     };
     pub static ref BIN_LEFT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
@@ -85,6 +99,7 @@ lazy_static! {
         m.insert((BinOp::Add, I32));
         m.insert((BinOp::Add, Char));
         m.insert((BinOp::Sub, I32));
+        m.insert((BinOp::Lt, I32));
         m
     };
     pub static ref BIN_RIGHT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
@@ -93,6 +108,7 @@ lazy_static! {
         m.insert((BinOp::Add, I32));
         m.insert((BinOp::Add, Char));
         m.insert((BinOp::Sub, I32));
+        m.insert((BinOp::Lt, I32));
         m
     };
 }
@@ -910,34 +926,101 @@ fn check_stmts<'b>(
                 if_body,
                 else_body,
             } => {
-                let cond = check_expr(buckets, env, local_env, decl_idx, &if_cond)?;
+                let cond = check_expr(buckets, env, local_env, decl_idx, if_cond)?;
                 if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
-                    return Err(error!(
-                        "tried to check truth value of struct",
-                        cond.loc, "this is a struct, when it should be a number or pointer"
-                    ));
+                    return Err(truth_value_of_struct(cond.loc));
                 }
 
                 let mut if_env = local_env.child();
-                let if_body = check_stmts(buckets, env, &mut if_env, decl_idx, if_body)?;
+                let tc_if_body = check_stmts(buckets, env, &mut if_env, decl_idx, if_body.stmts)?;
 
                 let mut else_env = local_env.child();
-                let else_body = check_stmts(buckets, env, &mut else_env, decl_idx, else_body)?;
+                let tc_else_body =
+                    check_stmts(buckets, env, &mut else_env, decl_idx, else_body.stmts)?;
 
-                let if_body = buckets.add_array(if_body);
-                let else_body = buckets.add_array(else_body);
+                let tc_if_body = buckets.add_array(tc_if_body);
+                let tc_else_body = buckets.add_array(tc_else_body);
 
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Branch {
                         cond,
-                        if_body,
-                        else_body,
+                        if_body: TCBlock {
+                            stmts: tc_if_body,
+                            loc: if_body.loc,
+                        },
+                        else_body: TCBlock {
+                            stmts: tc_else_body,
+                            loc: else_body.loc,
+                        },
                     },
                     loc: stmt.loc,
                 });
             }
 
-            _ => panic!("unimplemented"),
+            StmtKind::For {
+                at_start,
+                condition,
+                post_expr,
+                body,
+            } => {
+                let mut block_stmts = Vec::new();
+                let at_start = check_expr(buckets, env, local_env, decl_idx, at_start)?;
+                block_stmts.push(TCStmt {
+                    loc: at_start.loc,
+                    kind: TCStmtKind::Expr(at_start),
+                });
+
+                let cond = check_expr(buckets, env, local_env, decl_idx, condition)?;
+                if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
+                    return Err(truth_value_of_struct(cond.loc));
+                }
+
+                let post = check_expr(buckets, env, local_env, decl_idx, post_expr)?;
+
+                let mut loop_stmts = check_stmts(buckets, env, local_env, decl_idx, body.stmts)?;
+                loop_stmts.push(TCStmt {
+                    loc: post.loc,
+                    kind: TCStmtKind::Expr(post),
+                });
+
+                loop_stmts.push(TCStmt {
+                    loc: condition.loc,
+                    kind: TCStmtKind::Branch {
+                        if_body: TCBlock {
+                            stmts: &[],
+                            loc: condition.loc,
+                        },
+                        else_body: TCBlock {
+                            stmts: buckets.add_array(vec![TCStmt {
+                                kind: TCStmtKind::Break,
+                                loc: condition.loc,
+                            }]),
+                            loc: condition.loc,
+                        },
+                        cond,
+                    },
+                });
+
+                loop_stmts.rotate_right(1);
+
+                block_stmts.push(TCStmt {
+                    loc: body.loc,
+                    kind: TCStmtKind::Loop(TCBlock {
+                        loc: body.loc,
+                        stmts: buckets.add_array(loop_stmts),
+                    }),
+                });
+
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Block(TCBlock {
+                        loc: stmt.loc,
+                        stmts: buckets.add_array(block_stmts),
+                    }),
+                    loc: stmt.loc,
+                });
+            }
+
+            x => panic!("{:?} is unimplemented", x),
         }
     }
 
@@ -998,6 +1081,20 @@ fn check_expr<'b>(
                 loc: expr.loc,
             });
         }
+
+        ExprKind::List(exprs) => {
+            let mut tc_exprs = Vec::new();
+            for expr in exprs {
+                tc_exprs.push(check_expr(buckets, env, local_env, decl_idx, expr)?);
+            }
+
+            return Ok(TCExpr {
+                expr_type: tc_exprs[tc_exprs.len() - 1].expr_type,
+                kind: TCExprKind::List(buckets.add_array(tc_exprs)),
+                loc: expr.loc,
+            });
+        }
+
 
         ExprKind::BinOp(BinOp::Assign, target, value) => {
             let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
@@ -1149,7 +1246,7 @@ fn check_expr<'b>(
                 loc: expr.loc,
             });
         }
-        _ => panic!("unimplemented"),
+        x => panic!("{:?} is unimplemented", x),
     }
 }
 
@@ -1248,6 +1345,13 @@ fn check_assign_target<'b>(
             ))
         }
     }
+}
+
+pub fn truth_value_of_struct(loc: CodeLoc) -> Error {
+    error!(
+        "tried to check truth value of struct",
+        loc, "this is a struct, when it should be a number or pointer"
+    )
 }
 
 pub fn dereference_of_non_pointer(value_loc: CodeLoc, value_type: &TCType) -> Error {

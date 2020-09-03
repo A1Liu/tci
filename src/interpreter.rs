@@ -71,6 +71,10 @@ pub enum Directive {
 ///   determined by popping the top of the stack first
 /// - PopKeep pops keep-many bytes off the stack, then pops drop-many bytes off the stack and
 ///   repushes the first set of popped bytes back onto  the stack
+/// - Comp compares pops t, the top of the stack, and compares it to n, the next item on the stack.
+///   it pushes the byte 1 onto the stack if t < n, and the byte 0 onto the stack if t >= n.
+/// - CompEq compares pops t, the top of the stack, and compares it to n, the next item on the stack.
+///   it pushes the byte 1 onto the stack if t == n, and the byte 0 onto the stack if t != n.
 #[derive(Debug, Clone, Copy)]
 pub enum Opcode {
     Func(u32), // Function header used for callstack manipulation
@@ -114,6 +118,9 @@ pub enum Opcode {
 
     AddU32,
     SubI32,
+
+    CompI32,
+    CompEqI32,
 
     AddU64,
     SubI64,
@@ -417,6 +424,18 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let word1 = i32::from_be(self.pop_stack(pc)?);
                 self.push_stack(word1.wrapping_sub(word2).to_be(), pc);
             }
+
+            Opcode::CompI32 => {
+                let word2 = i32::from_be(self.pop_stack(pc)?);
+                let word1 = i32::from_be(self.pop_stack(pc)?);
+                self.push_stack((word1 < word2) as u8, pc);
+            }
+            Opcode::CompEqI32 => {
+                let word2 = i32::from_be(self.pop_stack(pc)?);
+                let word1 = i32::from_be(self.pop_stack(pc)?);
+                self.push_stack((word1 == word2) as u8, pc);
+            }
+
 
             Opcode::AddU64 => {
                 let word2 = u64::from_be(self.pop_stack(pc)?);
