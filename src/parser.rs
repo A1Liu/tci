@@ -786,30 +786,63 @@ pub fn parse_stmt<'a, 'b>(
 
             let lparen_tok = expect_lparen(tokens, current)?;
 
-            let is_decl = match peek(tokens, current)?.kind {
-                TokenKind::Char | TokenKind::Int | TokenKind::Void => true,
-                _ => false,
+            let (first_part, semi_tok) = match peek(tokens, current)?.kind {
+                TokenKind::Char | TokenKind::Int | TokenKind::Void => {
+                    let decl_type = parse_simple_type_prefix(tokens, current)?;
+                    let (mut decls, decl) = parse_multi_decl(buckets, tokens, current)?;
+                    decls.push(decl);
+                    let semi = eat_semicolon(tokens, current)?;
+                    (Ok((decl_type, decls)), semi)
+                }
+                TokenKind::Semicolon => {
+                    let semi = eat_semicolon(tokens, current).unwrap();
+                    let expr = Expr {
+                        kind: ExprKind::Uninit,
+                        loc: l(lparen_tok.loc.end, semi.loc.start, semi.loc.file),
+                    };
+                    (Err(expr), semi)
+                }
+                _ => {
+                    let expr = parse_expr(buckets, tokens, current)?;
+                    let semi = eat_semicolon(tokens, current)?;
+                    (Err(expr), semi)
+                }
             };
 
-            let first_part = if is_decl {
-                let decl_type = parse_simple_type_prefix(tokens, current)?;
-                let (mut decls, decl) = parse_multi_decl(buckets, tokens, current)?;
-                decls.push(decl);
-                Ok((decl_type, decls))
-            } else {
-                Err(parse_expr(buckets, tokens, current)?)
+            let (condition, semi2) = match peek(tokens, current)?.kind {
+                TokenKind::Semicolon => {
+                    let semi2 = eat_semicolon(tokens, current).unwrap();
+                    let expr = Expr {
+                        kind: ExprKind::IntLiteral(1),
+                        loc: l(semi_tok.loc.end, semi2.loc.start, semi2.loc.file),
+                    };
+                    (expr, semi2)
+                }
+                _ => {
+                    let expr = parse_expr(buckets, tokens, current)?;
+                    let semi2 = eat_semicolon(tokens, current)?;
+                    (expr, semi2)
+                }
             };
-            eat_semicolon(tokens, current)?;
 
-            let condition = parse_expr(buckets, tokens, current)?;
-            eat_semicolon(tokens, current)?;
+            let mut post_exprs = Vec::new();
+            if TokenKind::RParen != peek(tokens, current)?.kind {
+                post_exprs.push(parse_expr(buckets, tokens, current)?);
+                while TokenKind::RParen != peek(tokens, current)?.kind {
+                    expect_comma(tokens, current)?;
+                    post_exprs.push(parse_expr(buckets, tokens, current)?);
+                }
+            }
 
-            let post_expr = parse_expr(buckets, tokens, current)?;
-            eat_semicolon(tokens, current)?;
-
-            expect_rparen(tokens, current, lparen_tok.loc)?;
+            let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc).unwrap();
 
             let (body, body_loc) = parse_block(buckets, tokens, current)?;
+
+            let post_exprs = buckets.add_array(post_exprs);
+            let post_expr = Expr {
+                kind: ExprKind::List(post_exprs),
+                loc: l(semi2.loc.end, rparen_loc.start, rparen_loc.file),
+            };
 
             match first_part {
                 Ok((decl_type, decls)) => {
@@ -1061,9 +1094,22 @@ pub fn expect_lparen<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result
     return Ok(tok);
 }
 
-pub fn eat_semicolon(tokens: &[Token], current: &mut usize) -> Result<(), Error> {
+pub fn expect_comma<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
     let tok = pop(tokens, current)?;
-    return expect_semicolon(&tok);
+    if tok.kind != TokenKind::Comma {
+        return Err(error!(
+            "expected ',' token, got something else instead",
+            tok.loc,
+            format!("this was interpreted as {:?} when it should be a ','", tok)
+        ));
+    }
+    return Ok(tok);
+}
+
+pub fn eat_semicolon<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
+    let tok = pop(tokens, current)?;
+    expect_semicolon(&tok)?;
+    return Ok(tok);
 }
 
 pub fn expect_semicolon(tok: &Token) -> Result<(), Error> {
