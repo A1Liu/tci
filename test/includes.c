@@ -1,7 +1,5 @@
 #include <stdio.h>
 
-int printf(char *str, ...);
-
 void goodbye() { return; }
 
 void hello(...) { return goodbye(); }
