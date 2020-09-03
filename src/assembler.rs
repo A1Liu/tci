@@ -119,6 +119,20 @@ impl<'a> Assembler<'a> {
         return Ok(());
     }
 
+    pub fn translate_block(
+        &mut self,
+        func_type: &TCFuncType,
+        param_count: u32,
+        block: &[TCStmt],
+    ) -> Vec<TaggedOpcode> {
+        let mut opcodes = Vec::new();
+        for stmt in block {
+            let mut ops = self.translate_statement(func_type, param_count, stmt);
+            opcodes.append(&mut ops);
+        }
+        return opcodes;
+    }
+
     pub fn translate_statement(
         &mut self,
         func_type: &TCFuncType,
@@ -165,6 +179,32 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(init));
                 tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
                 ops.push(tagged);
+            }
+
+            TCStmtKind::Branch {
+                cond,
+                if_body,
+                else_body,
+            } => {
+                let cond_bytes = cond.expr_type.size();
+                ops.append(&mut self.translate_expr(cond));
+                let mut if_ops = self.translate_block(func_type, param_count, if_body);
+                let ifbr_len = if_ops.len() as u32 + 2;
+                let mut else_ops = self.translate_block(func_type, param_count, else_body);
+                let elsebr_len = else_ops.len() as u32 + 1;
+
+                tagged.op = match cond_bytes {
+                    1 => Opcode::JumpIfZero8(ifbr_len),
+                    2 => Opcode::JumpIfZero16(ifbr_len),
+                    4 => Opcode::JumpIfZero32(ifbr_len),
+                    8 => Opcode::JumpIfZero64(ifbr_len),
+                    _ => unreachable!(),
+                };
+                ops.push(tagged);
+                ops.append(&mut if_ops);
+                tagged.op = Opcode::Jump(elsebr_len);
+                ops.push(tagged);
+                ops.append(&mut else_ops);
             }
         }
 
@@ -408,10 +448,14 @@ impl<'a> Assembler<'a> {
 
     pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
-        let main_func = self.functions.get(&INITIAL_SYMBOLS.translate["main"]).ok_or_else(no_main)?;
+        let main_func = self
+            .functions
+            .get(&INITIAL_SYMBOLS.translate["main"])
+            .ok_or_else(no_main)?;
         let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
-        for op in self.opcodes.iter_mut() {
+        for (op_idx, op) in self.opcodes.iter_mut().enumerate() {
+            let op_idx = op_idx as u32;
             match &mut op.op {
                 Opcode::Call(addr) => {
                     let function = self.functions.get(addr).unwrap();
@@ -427,6 +471,33 @@ impl<'a> Assembler<'a> {
                             op.loc, "called here", func_loc, "declared here"
                         ));
                     }
+                }
+                Opcode::Jump(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfZero8(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfZero16(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfZero32(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfZero64(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfNotZero8(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfNotZero16(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfNotZero32(target) => {
+                    *target = op_idx.wrapping_add(*target);
+                }
+                Opcode::JumpIfNotZero64(target) => {
+                    *target = op_idx.wrapping_add(*target);
                 }
                 _ => {}
             }

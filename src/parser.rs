@@ -857,7 +857,7 @@ pub fn parse_stmt<'a, 'b>(
                     kind: StmtKind::Branch {
                         if_cond,
                         if_body,
-                        else_body: None,
+                        else_body: buckets.add_slice(&[]),
                     },
                     loc: l_from(tok.loc, if_body_loc),
                 });
@@ -870,7 +870,7 @@ pub fn parse_stmt<'a, 'b>(
                 kind: StmtKind::Branch {
                     if_cond,
                     if_body,
-                    else_body: Some(else_body),
+                    else_body: else_body,
                 },
                 loc: l_from(tok.loc, else_body_loc),
             });

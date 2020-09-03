@@ -63,3 +63,8 @@ fn test_structs() {
 fn test_include() {
     test_file_should_succeed("test/includes.c");
 }
+
+#[test]
+fn test_control_flow() {
+    test_file_should_succeed("test/control_flow.c");
+}

@@ -1,21 +1,6 @@
 // THIS FILE ISN'T USED IN THE CODEBASE RIGHT NOW; IT'S PURELY FOR REFERENCE WHEN
 // IMPLEMENTING FUTURE STUFF
 
-pub fn truth_value_of_struct(value: &Expr, value_type: &TCType) -> Result<(), Error> {
-    if let TCType {
-        kind: TCTypeKind::Struct { .. },
-        ..
-    } = value_type
-    {
-        return Err(Error::new(
-            "tried to check truth value of struct",
-            vec![(value.range.clone(), "value is a struct type".to_string())],
-        ));
-    }
-
-    return Ok(());
-}
-
 pub fn variable_is_void(decl_range: Range) -> Error {
     return Error::new(
         "variable has type void",

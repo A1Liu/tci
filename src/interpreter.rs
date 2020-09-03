@@ -106,9 +106,6 @@ pub enum Opcode {
     ZExtend16To64,
     ZExtend32To64,
 
-    GetGlobal { var: u16, offset: u32, bytes: u32 },
-    SetGlobal { var: u16, offset: u32, bytes: u32 },
-
     GetLocal { var: i16, offset: u32, bytes: u32 },
     SetLocal { var: i16, offset: u32, bytes: u32 },
 
@@ -124,7 +121,16 @@ pub enum Opcode {
     DivI64,
     ModI64,
 
+    Jump(u32),
+
+    JumpIfZero8(u32),
+    JumpIfZero16(u32),
+    JumpIfZero32(u32),
     JumpIfZero64(u32),
+
+    JumpIfNotZero8(u32),
+    JumpIfNotZero16(u32),
+    JumpIfNotZero32(u32),
     JumpIfNotZero64(u32),
 
     Ret, // Returns to caller
@@ -175,6 +181,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
 
         lib_funcs.insert(INITIAL_SYMBOLS.translate["printf"], printf);
+        lib_funcs.insert(INITIAL_SYMBOLS.translate["exit"], exit);
 
         Self {
             memory: Memory::new(),
@@ -219,7 +226,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<i32>, IError> {
-        let func= match program.ops[pcounter as usize].op {
+        let func = match program.ops[pcounter as usize].op {
             Opcode::Func(name) => name,
             op => {
                 return err!(
@@ -379,15 +386,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.push_stack(val as u64, pc);
             }
 
-            Opcode::GetGlobal { var, offset, bytes } => {
-                let ptr = VarPointer::new_stack(var, offset);
-                self.push_stack_bytes_from(ptr, bytes, pc)?;
-            }
-            Opcode::SetGlobal { var, offset, bytes } => {
-                let ptr = VarPointer::new_stack(var, offset);
-                self.pop_stack_bytes_into(ptr, bytes, pc)?;
-            }
-
             Opcode::GetLocal { var, offset, bytes } => {
                 let ptr = VarPointer::new_stack(Self::fp_offset(fp, var), offset);
                 self.push_stack_bytes_from(ptr, bytes, pc)?;
@@ -446,9 +444,50 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.push_stack((word1 % word2).to_be(), pc);
             }
 
+            Opcode::Jump(target) => {
+                return Ok(Directive::ChangePC(target));
+            }
+
+            Opcode::JumpIfZero8(target) => {
+                let value: u8 = self.pop_stack(pc)?;
+                if value == 0 {
+                    return Ok(Directive::ChangePC(target));
+                }
+            }
+            Opcode::JumpIfZero16(target) => {
+                let value: u16 = self.pop_stack(pc)?;
+                if value == 0 {
+                    return Ok(Directive::ChangePC(target));
+                }
+            }
+            Opcode::JumpIfZero32(target) => {
+                let value: u32 = self.pop_stack(pc)?;
+                if value == 0 {
+                    return Ok(Directive::ChangePC(target));
+                }
+            }
             Opcode::JumpIfZero64(target) => {
                 let value: u64 = self.pop_stack(pc)?;
                 if value == 0 {
+                    return Ok(Directive::ChangePC(target));
+                }
+            }
+
+            Opcode::JumpIfNotZero8(target) => {
+                let value: u8 = self.pop_stack(pc)?;
+                if value != 0 {
+                    return Ok(Directive::ChangePC(target));
+                }
+            }
+            Opcode::JumpIfNotZero16(target) => {
+                let value: u16 = self.pop_stack(pc)?;
+                if value != 0 {
+                    return Ok(Directive::ChangePC(target));
+                }
+            }
+            Opcode::JumpIfNotZero32(target) => {
+                let value: u32 = self.pop_stack(pc)?;
+                if value != 0 {
                     return Ok(Directive::ChangePC(target));
                 }
             }
@@ -533,6 +572,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         return Ok(&str_bytes[0..idx]);
     }
+}
+
+pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>, pc: u32) -> Result<Option<i32>, IError> {
+    let top_ptr = VarPointer::new_stack(sel.stack_length(), 0);
+    let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
+    return Ok(Some(exit_code));
 }
 
 pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>, pc: u32) -> Result<Option<i32>, IError> {

@@ -1,6 +1,6 @@
 use crate::util::*;
 
-#[derive(Debug,Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct ASTProgram<'a> {
     pub stmts: &'a [GlobalStmt<'a>],
 }
@@ -131,7 +131,7 @@ pub struct ASTType {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StmtKind<'a> {
     Decl {
         decl_type: ASTType,
@@ -144,7 +144,7 @@ pub enum StmtKind<'a> {
     Branch {
         if_cond: Expr<'a>,
         if_body: &'a [Stmt<'a>],
-        else_body: Option<&'a [Stmt<'a>]>,
+        else_body: &'a [Stmt<'a>],
     },
     Block(&'a [Stmt<'a>]),
     For {
@@ -166,7 +166,7 @@ pub enum StmtKind<'a> {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stmt<'a> {
     pub kind: StmtKind<'a>,
     pub loc: CodeLoc,
@@ -298,7 +298,14 @@ pub enum TCStmtKind<'a> {
     RetVal(TCExpr<'a>),
     Ret,
     Expr(TCExpr<'a>),
-    Decl { init: TCExpr<'a> },
+    Decl {
+        init: TCExpr<'a>,
+    },
+    Branch {
+        cond: TCExpr<'a>,
+        if_body: &'a [TCStmt<'a>],
+        else_body: &'a [TCStmt<'a>],
+    },
 }
 
 #[derive(Debug, Clone)]

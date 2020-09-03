@@ -905,6 +905,38 @@ fn check_stmts<'b>(
 
             StmtKind::Nop => {}
 
+            StmtKind::Branch {
+                if_cond,
+                if_body,
+                else_body,
+            } => {
+                let cond = check_expr(buckets, env, local_env, decl_idx, &if_cond)?;
+                if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
+                    return Err(error!(
+                        "tried to check truth value of struct",
+                        cond.loc, "this is a struct, when it should be a number or pointer"
+                    ));
+                }
+
+                let mut if_env = local_env.child();
+                let if_body = check_stmts(buckets, env, &mut if_env, decl_idx, if_body)?;
+
+                let mut else_env = local_env.child();
+                let else_body = check_stmts(buckets, env, &mut else_env, decl_idx, else_body)?;
+
+                let if_body = buckets.add_array(if_body);
+                let else_body = buckets.add_array(else_body);
+
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Branch {
+                        cond,
+                        if_body,
+                        else_body,
+                    },
+                    loc: stmt.loc,
+                });
+            }
+
             _ => panic!("unimplemented"),
         }
     }
