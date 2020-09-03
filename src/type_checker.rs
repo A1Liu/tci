@@ -1095,7 +1095,58 @@ fn check_stmts<'b>(
                 });
             }
 
-            x => panic!("{:?} is unimplemented", x),
+            StmtKind::While { condition, body } => {
+                let cond = check_expr(buckets, env, local_env, decl_idx, condition)?;
+                if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
+                    return Err(truth_value_of_struct(cond.loc));
+                }
+
+                let mut while_env = local_env.child();
+                let mut loop_stmts =
+                    check_stmts(buckets, env, &mut while_env, decl_idx, body.stmts)?;
+
+                loop_stmts.push(TCStmt {
+                    loc: condition.loc,
+                    kind: TCStmtKind::Branch {
+                        if_body: TCBlock {
+                            stmts: &[],
+                            loc: condition.loc,
+                        },
+                        else_body: TCBlock {
+                            stmts: buckets.add_array(vec![TCStmt {
+                                kind: TCStmtKind::Break,
+                                loc: condition.loc,
+                            }]),
+                            loc: condition.loc,
+                        },
+                        cond,
+                    },
+                });
+
+                loop_stmts.rotate_right(1);
+
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Loop(TCBlock {
+                        loc: body.loc,
+                        stmts: buckets.add_array(loop_stmts),
+                    }),
+                    loc: stmt.loc,
+                });
+            }
+
+            StmtKind::Block(block) => {
+                let mut block_env = local_env.child();
+                let block_stmts = check_stmts(buckets, env, &mut block_env, decl_idx, block.stmts)?;
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Block(TCBlock {
+                        loc: stmt.loc,
+                        stmts: buckets.add_array(block_stmts),
+                    }),
+                    loc: stmt.loc,
+                });
+            }
+
+            // x => panic!("{:?} is unimplemented", x),
         }
     }
 

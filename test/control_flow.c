@@ -14,6 +14,8 @@ int main(int argc, char **argv) {
     print_a(b);
   }
 
-  int c = 10;
-  print_a(c);
+  {
+    int c = 10;
+    print_a(c);
+  }
 }
