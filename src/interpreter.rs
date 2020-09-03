@@ -18,27 +18,15 @@ macro_rules! err {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FuncDesc {
-    pub name: u32,
-}
-
-impl FuncDesc {
-    pub fn new(name: u32) -> Self {
-        Self { name }
-    }
-
-    pub fn into_callframe(self, loc: CodeLoc) -> CallFrame {
-        CallFrame {
-            name: self.name,
-            loc,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
     pub name: u32,
     pub loc: CodeLoc,
+}
+
+impl CallFrame {
+    pub fn new(name: u32, loc: CodeLoc) -> Self {
+        Self { name, loc }
+    }
 }
 
 pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Program) -> String {
@@ -85,7 +73,7 @@ pub enum Directive {
 ///   repushes the first set of popped bytes back onto  the stack
 #[derive(Debug, Clone, Copy)]
 pub enum Opcode {
-    Func(FuncDesc), // Function header used for callstack manipulation
+    Func(u32), // Function header used for callstack manipulation
 
     StackAlloc(u32), // Allocates space on the stack
     StackDealloc,    // Pops a variable off of the stack
@@ -231,8 +219,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<i32>, IError> {
-        let func_desc = match program.ops[pcounter as usize].op {
-            Opcode::Func(desc) => desc,
+        let func= match program.ops[pcounter as usize].op {
+            Opcode::Func(name) => name,
             op => {
                 return err!(
                     "InvalidFunctionHeader",
@@ -250,7 +238,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             write!(self.io.log(), "op: {:?}\n", op.op)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            self.callstack.push(func_desc.into_callframe(op.loc));
+            self.callstack.push(CallFrame::new(func, op.loc));
             let directive = self.run_op(fp, pc, program, op.op)?;
             write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;

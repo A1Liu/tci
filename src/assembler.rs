@@ -101,7 +101,7 @@ impl<'a> Assembler<'a> {
         let param_count = func_type.params.len() as u32;
 
         self.opcodes.push(TaggedOpcode {
-            op: Opcode::Func(FuncDesc::new(ident)),
+            op: Opcode::Func(ident),
             loc: defn.loc,
         });
 
