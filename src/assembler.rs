@@ -231,10 +231,20 @@ impl<'a> Assembler<'a> {
                 }
 
                 TCStmtKind::Break => {
+                    tagged.op = Opcode::StackDealloc;
+                    for _ in 0..decl_count {
+                        ops.push(tagged);
+                    }
+
                     tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 2));
                     ops.push(tagged);
                 }
                 TCStmtKind::Continue => {
+                    tagged.op = Opcode::StackDealloc;
+                    for _ in 0..decl_count {
+                        ops.push(tagged);
+                    }
+
                     tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 1));
                     ops.push(tagged);
                 }

@@ -903,10 +903,7 @@ fn check_stmts<'b>(
                 {
                     let decl_type = env.check_type(decl_idx, decl_type, *pointer_count)?;
                     if decl_type == VOID {
-                        return Err(error!(
-                            "cannot define a variable of type void",
-                            *loc, "incorrect variable definition here"
-                        ));
+                        return Err(void_variable(*loc));
                     }
 
                     let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
@@ -977,7 +974,85 @@ fn check_stmts<'b>(
 
                 let post = check_expr(buckets, env, local_env, decl_idx, post_expr)?;
 
-                let mut loop_stmts = check_stmts(buckets, env, local_env, decl_idx, body.stmts)?;
+                let mut for_env = local_env.child();
+                let mut loop_stmts = check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts)?;
+
+                loop_stmts.push(TCStmt {
+                    loc: post.loc,
+                    kind: TCStmtKind::Expr(post),
+                });
+
+                loop_stmts.push(TCStmt {
+                    loc: condition.loc,
+                    kind: TCStmtKind::Branch {
+                        if_body: TCBlock {
+                            stmts: &[],
+                            loc: condition.loc,
+                        },
+                        else_body: TCBlock {
+                            stmts: buckets.add_array(vec![TCStmt {
+                                kind: TCStmtKind::Break,
+                                loc: condition.loc,
+                            }]),
+                            loc: condition.loc,
+                        },
+                        cond,
+                    },
+                });
+
+                loop_stmts.rotate_right(1);
+
+                block_stmts.push(TCStmt {
+                    loc: body.loc,
+                    kind: TCStmtKind::Loop(TCBlock {
+                        loc: body.loc,
+                        stmts: buckets.add_array(loop_stmts),
+                    }),
+                });
+
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Block(TCBlock {
+                        loc: stmt.loc,
+                        stmts: buckets.add_array(block_stmts),
+                    }),
+                    loc: stmt.loc,
+                });
+            }
+            StmtKind::ForDecl {
+                at_start_decl_type,
+                at_start,
+                condition,
+                post_expr,
+                body,
+            } => {
+                let mut block_stmts = Vec::new();
+                let mut for_env = local_env.child();
+
+                for decl in *at_start {
+                    let decl_type =
+                        env.check_type(decl_idx, at_start_decl_type, decl.pointer_count)?;
+                    if decl_type == VOID {
+                        return Err(void_variable(decl.loc));
+                    }
+
+                    let expr = check_expr(buckets, env, &mut for_env, decl_idx, &decl.expr)?;
+                    let expr = env.assign_convert(buckets, &decl_type, Some(decl.loc), expr)?;
+                    for_env.add_local(decl.ident, decl_type, decl.loc)?;
+                    block_stmts.push(TCStmt {
+                        kind: TCStmtKind::Decl { init: expr },
+                        loc: decl.loc,
+                    });
+                }
+
+                let cond = check_expr(buckets, env, &for_env, decl_idx, condition)?;
+                if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
+                    return Err(truth_value_of_struct(cond.loc));
+                }
+
+                let post = check_expr(buckets, env, &for_env, decl_idx, post_expr)?;
+
+                let mut loop_stmts = check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts)?;
+
                 loop_stmts.push(TCStmt {
                     loc: post.loc,
                     kind: TCStmtKind::Expr(post),
@@ -1094,7 +1169,6 @@ fn check_expr<'b>(
                 loc: expr.loc,
             });
         }
-
 
         ExprKind::BinOp(BinOp::Assign, target, value) => {
             let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
@@ -1345,6 +1419,13 @@ fn check_assign_target<'b>(
             ))
         }
     }
+}
+
+pub fn void_variable(loc: CodeLoc) -> Error {
+    return error!(
+        "cannot define a variable of type void",
+        loc, "incorrect variable definition here"
+    );
 }
 
 pub fn truth_value_of_struct(loc: CodeLoc) -> Error {
