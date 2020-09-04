@@ -262,8 +262,53 @@ pub fn parse_prefix<'a, 'b>(
             });
         }
         TokenKind::LParen => {
-            // Eventually parse casts here
-            return parse_postfix(buckets, tokens, current);
+            let type_tok = if let Some(tok) = peek2_o(tokens, current) {
+                tok
+            } else {
+                return parse_postfix(buckets, tokens, current);
+            };
+
+            let (lparen, cast_to) = match type_tok.kind {
+                TokenKind::Struct => {
+                    let lparen = pop(tokens, current).unwrap();
+                    let start_loc = pop(tokens, current).unwrap().loc;
+                    let (ident, ident_loc) = expect_any_ident(tokens, current)?;
+
+                    let ast_type = ASTType {
+                        kind: ASTTypeKind::Struct { ident },
+                        loc: l_from(start_loc, ident_loc),
+                    };
+
+                    (lparen, ast_type)
+                }
+                TokenKind::Char | TokenKind::Void | TokenKind::Int => {
+                    let lparen = pop(tokens, current).unwrap();
+                    let ast_type = parse_simple_type_prefix(tokens, current)?;
+                    (lparen, ast_type)
+                }
+                _ => return parse_postfix(buckets, tokens, current),
+            };
+
+            let mut pointer_count: u32 = 0;
+            while peek(tokens, current)?.kind == TokenKind::Star {
+                pop(tokens, current).unwrap();
+                pointer_count += 1;
+            }
+
+            let end_loc = expect_rparen(tokens, current, lparen.loc)?;
+
+            let target = parse_prefix(buckets, tokens, current)?;
+            let target = buckets.add(target);
+
+            return Ok(Expr {
+                loc: l_from(lparen.loc, target.loc),
+                kind: ExprKind::Cast {
+                    cast_to,
+                    cast_to_loc: l_from(lparen.loc, end_loc),
+                    pointer_count,
+                    expr: target,
+                },
+            });
         }
         _ => return parse_postfix(buckets, tokens, current),
     }
@@ -677,7 +722,8 @@ pub fn parse_global_decls<'a, 'b>(
         });
     }
 
-    if decl.expr.kind != ExprKind::Uninit {
+    if let ExprKind::Uninit = decl.expr.kind {
+    } else {
         expect_semicolon(&tok)?;
         let end_loc = decl.loc;
         decls.push(decl);

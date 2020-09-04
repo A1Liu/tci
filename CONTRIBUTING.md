@@ -1,5 +1,8 @@
 # Contributing
 
+### Implicit Contracts
+- Never have a `TCType` with `kind = TCTypeKind::Uninit` and `pointer_count > 0`
+
 ### Assembly Calling Convention
 The caller first pushes space for the return value onto the stack, as a stack var.
 Then the caller pushes the parameters in order onto the stack, as stack vars. Then,

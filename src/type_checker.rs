@@ -1,11 +1,15 @@
 use crate::ast::*;
-use crate::buckets::{BucketList, BucketListRef};
+use crate::buckets::*;
 use crate::util::*;
+use core::ops::Deref;
 use std::collections::{HashMap, HashSet};
 
-type BinOpTransform = for<'a, 'b> fn(&'a BucketList<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
+type BinOpTransform = for<'b> fn(BucketListRef<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
+type Transform = for<'b> fn(BucketListRef<'b>, TCExpr<'b>) -> TCExpr<'b>;
 
-fn add_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+// Bin Op Transforms
+
+fn add_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::I32,
         pointer_count: 0,
@@ -18,7 +22,7 @@ fn add_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
     };
 }
 
-fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+fn add_int_char<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::I32,
         pointer_count: 0,
@@ -37,7 +41,7 @@ fn add_int_char<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
     };
 }
 
-fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+fn add_char_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::I32,
         pointer_count: 0,
@@ -56,7 +60,7 @@ fn add_char_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b
     };
 }
 
-fn sub_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+fn sub_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::I32,
         pointer_count: 0,
@@ -69,7 +73,7 @@ fn sub_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>
     };
 }
 
-fn lt_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+fn lt_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::Char,
         pointer_count: 0,
@@ -78,6 +82,21 @@ fn lt_int_int<'a, 'b>(buckets: &'a BucketList<'b>, l: TCExpr<'b>, r: TCExpr<'b>)
     return TCExpr {
         loc: l_from(l.loc, r.loc),
         kind: TCExprKind::LtI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
+// Implicit Transforms
+
+pub fn assign_char_int<'b>(buckets: BucketListRef<'b>, e: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::I32,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        loc: e.loc,
+        kind: TCExprKind::SConv8To32(buckets.add(e)),
         expr_type: result_type,
     };
 }
@@ -109,6 +128,11 @@ lazy_static! {
         m.insert((BinOp::Add, Char));
         m.insert((BinOp::Sub, I32));
         m.insert((BinOp::Lt, I32));
+        m
+    };
+    pub static ref ASSIGN_EXPR_TO_TYPE: HashMap<(TCTypeKind, TCTypeKind), Transform> = {
+        let mut m: HashMap<(TCTypeKind, TCTypeKind), Transform> = HashMap::new();
+        m.insert((TCTypeKind::Char, TCTypeKind::I32), assign_char_int);
         m
     };
 }
@@ -303,6 +327,11 @@ impl<'a> TypeEnv<'a> {
 
         if assign_to == &expr.expr_type {
             return Ok(expr);
+        } else if let Some(converter) = ASSIGN_EXPR_TO_TYPE
+            .deref()
+            .get(&(expr.expr_type.kind, assign_to.kind))
+        {
+            return Ok(converter(buckets, expr));
         } else if let Some(assign_loc) = assign_to_loc {
             return Err(error!(
                 "value cannot be converted to target type",
@@ -314,6 +343,19 @@ impl<'a> TypeEnv<'a> {
                 expr.loc, "value found here"
             ));
         }
+    }
+
+    pub fn cast_convert<'b>(
+        &self,
+        buckets: BucketListRef<'b>,
+        cast_to: &TCType,
+        cast_to_loc: CodeLoc,
+        expr: TCExpr<'b>,
+    ) -> Result<TCExpr<'b>, Error> {
+        return Err(error!(
+            "not implemented",
+            cast_to_loc, "casts aren't implemented yet"
+        ));
     }
 
     pub fn check_struct_type(
@@ -412,9 +454,19 @@ impl<'b> TypeEnvInterim<'b> {
         assign_to_loc: Option<CodeLoc>,
         expr: TCExpr<'a>,
     ) -> Result<TCExpr<'a>, Error> {
-        return self
-            .types
-            .assign_convert(buckets, assign_to, assign_to_loc, expr);
+        #[rustfmt::skip]
+        return self.types.assign_convert(buckets, assign_to, assign_to_loc, expr);
+    }
+
+    #[inline]
+    pub fn cast_convert<'a>(
+        &self,
+        buckets: BucketListRef<'a>,
+        cast_to: &TCType,
+        cast_to_loc: CodeLoc,
+        expr: TCExpr<'a>,
+    ) -> Result<TCExpr<'a>, Error> {
+        return self.types.cast_convert(buckets, cast_to, cast_to_loc, expr);
     }
 
     #[inline]
@@ -1144,9 +1196,7 @@ fn check_stmts<'b>(
                     }),
                     loc: stmt.loc,
                 });
-            }
-
-            // x => panic!("{:?} is unimplemented", x),
+            } // x => panic!("{:?} is unimplemented", x),
         }
     }
 
@@ -1243,7 +1293,7 @@ fn check_expr<'b>(
             let r = check_expr(buckets, env, local_env, decl_idx, r)?;
 
             let bin_op = get_overload(&env.types, op, &l, &r)?;
-            return Ok(bin_op(&buckets, l, r));
+            return Ok(bin_op(buckets, l, r));
         }
 
         ExprKind::Member { base, member } => {
@@ -1347,7 +1397,7 @@ fn check_expr<'b>(
 
             let mut tparams = Vec::new();
             for (idx, param) in params.iter().enumerate() {
-                let mut expr = check_expr(buckets, &env, &local_env, decl_idx, param)?;
+                let mut expr = check_expr(buckets, env, local_env, decl_idx, param)?;
                 if idx < func_type.params.len() {
                     let param_type = &func_type.params[idx];
                     expr = env.assign_convert(
@@ -1371,6 +1421,18 @@ fn check_expr<'b>(
                 loc: expr.loc,
             });
         }
+
+        ExprKind::Cast {
+            cast_to,
+            cast_to_loc,
+            pointer_count,
+            expr,
+        } => {
+            let cast_to = env.check_type(decl_idx, &cast_to, pointer_count)?;
+            let expr = check_expr(buckets, env, local_env, decl_idx, expr)?;
+            return env.cast_convert(buckets, &cast_to, cast_to_loc, expr);
+        }
+
         x => panic!("{:?} is unimplemented", x),
     }
 }

@@ -18,7 +18,7 @@ pub enum BinOp {
     Neq,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExprKind<'a> {
     IntLiteral(i32),
     CharLiteral(u8),
@@ -30,7 +30,9 @@ pub enum ExprKind<'a> {
         params: &'a [Expr<'a>],
     },
     Cast {
-        type_id: u32,
+        cast_to: ASTType,
+        pointer_count: u32,
+        cast_to_loc: CodeLoc,
         expr: &'a Expr<'a>,
     },
     Member {
@@ -53,7 +55,7 @@ pub enum ExprKind<'a> {
     Uninit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
     pub loc: CodeLoc,
@@ -127,7 +129,7 @@ pub struct GlobalStmt<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ASTTypeKind {
     Int,
     Struct { ident: u32 },
@@ -135,7 +137,7 @@ pub enum ASTTypeKind {
     Void,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ASTType {
     pub kind: ASTTypeKind,
     pub loc: CodeLoc,
@@ -188,7 +190,7 @@ pub struct Block<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
 pub struct SizeAlign {
     pub size: u32,
     pub align: u32,
@@ -227,7 +229,7 @@ pub struct TCStruct<'a> {
     pub decl_loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub enum TCTypeKind {
     I32, // int
     U64, // unsigned long
