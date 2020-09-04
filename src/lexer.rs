@@ -21,6 +21,8 @@ pub enum TokenKind<'a> {
     Char,
     Int,
     Struct,
+    Sizeof,
+    Typedef,
 
     If,
     Else,
@@ -30,10 +32,6 @@ pub enum TokenKind<'a> {
     Break,
     Continue,
     Return,
-    Typedef,
-
-    Sizeof,
-    Cast,
 
     Dot,
     DotDotDot,
@@ -452,6 +450,7 @@ pub fn lex_token<'a, 'b>(
                 "return" => ret_tok!(TokenKind::Return),
                 "struct" => ret_tok!(TokenKind::Struct),
                 "typedef" => ret_tok!(TokenKind::Typedef),
+                "sizeof" => ret_tok!(TokenKind::Sizeof),
                 "void" => ret_tok!(TokenKind::Void),
                 "int" => ret_tok!(TokenKind::Int),
                 "char" => ret_tok!(TokenKind::Char),

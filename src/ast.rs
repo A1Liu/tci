@@ -29,6 +29,10 @@ pub enum ExprKind<'a> {
         function: &'a Expr<'a>,
         params: &'a [Expr<'a>],
     },
+    Cast {
+        type_id: u32,
+        expr: &'a Expr<'a>,
+    },
     Member {
         base: &'a Expr<'a>,
         member: u32,

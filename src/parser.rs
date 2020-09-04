@@ -51,8 +51,11 @@ pub fn parse_tokens_rec<'a, 'b>(
 }
 
 pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
-    let tok = *tokens.get(*current)?;
-    return Some(tok);
+    return Some(*tokens.get(*current)?);
+}
+
+pub fn peek2_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
+    return Some(*tokens.get(*current + 1)?);
 }
 
 pub fn peek<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
@@ -257,6 +260,10 @@ pub fn parse_prefix<'a, 'b>(
                 loc: l_from(tok.loc, target.loc),
                 kind: ExprKind::Deref(target),
             });
+        }
+        TokenKind::LParen => {
+            // Eventually parse casts here
+            return parse_postfix(buckets, tokens, current);
         }
         _ => return parse_postfix(buckets, tokens, current),
     }
@@ -1008,6 +1015,12 @@ pub fn parse_stmt<'a, 'b>(
                     decls: buckets.add_array(decls),
                 },
             });
+        }
+        TokenKind::Include(_) | TokenKind::IncludeSys(_) => {
+            return Err(error!(
+                "include directives aren't allowed inside functions",
+                tok.loc, "found here"
+            ));
         }
         _ => {
             let expr = parse_expr(buckets, tokens, current)?;
