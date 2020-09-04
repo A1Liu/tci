@@ -258,6 +258,7 @@ pub enum TCShallowType {
     Void,
     Struct,
     Pointer,
+    VoidPointer,
 }
 
 #[derive(Debug, Clone)]
@@ -400,6 +401,9 @@ pub struct TCExpr<'a> {
 impl TCType {
     pub fn to_shallow(&self) -> TCShallowType {
         if self.pointer_count > 0 {
+            if let TCTypeKind::Void = self.kind {
+                return TCShallowType::VoidPointer;
+            }
             return TCShallowType::Pointer;
         }
 

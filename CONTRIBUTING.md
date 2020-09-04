@@ -2,6 +2,9 @@
 
 ### Implicit Contracts
 - Never have a `TCType` with `kind = TCTypeKind::Uninit` and `pointer_count > 0`
+- The `cb!()` macro relies on the length of `ops`. When you use it, make sure you've
+  first added all relevant temporaries to ops, or add the length of those teporaries
+  to the value of `cb!()`
 
 ### Assembly Calling Convention
 The caller first pushes space for the return value onto the stack, as a stack var.

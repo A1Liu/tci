@@ -46,7 +46,8 @@ pub struct BucketListRef<'a> {
 
 impl<'a> BucketListRef<'a> {
     pub unsafe fn dealloc(self) -> Option<Self> {
-        todo!()
+        // TODO
+        return None;
     }
 }
 

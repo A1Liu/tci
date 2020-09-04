@@ -593,7 +593,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 }
 
-pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>, pc: u32) -> Result<Option<i32>, IError> {
+pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>, _pc: u32) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     return Ok(Some(exit_code));

@@ -133,7 +133,6 @@ lazy_static! {
         add_sym!("printf");
         add_sym!("exit");
 
-
         InitSyms {
             names,
             translate,
@@ -154,7 +153,6 @@ impl<'a> FileDb<'a> {
             symbols.push(begin..end);
         }
 
-        let line_starts: Vec<usize> = line_starts(&string).collect();
         let buckets = BucketList::with_capacity(16 * 1024 * 1024);
         let file = File::new(buckets, "", &string);
         let mut _size = file.size() + mem::size_of::<File>();
@@ -298,8 +296,7 @@ impl<'a> FileDbRef<'a> {
         }
 
         let mut symbols = Vec::new();
-        for (id, symbol) in db.names.iter().enumerate() {
-            let id = id as u32;
+        for symbol in db.names.iter() {
             let range: ops::Range<usize> = (*symbol).into();
             let bytes = &file_sources[symbol.file as usize]._source.as_bytes()[range];
             symbols.push(unsafe { str::from_utf8_unchecked(bytes) });

@@ -29,6 +29,7 @@ use util::Error;
 
 fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
+    let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();
     let mut asts = parser::AstDb::new();
     let mut errors: Vec<Error> = Vec::new();
@@ -54,20 +55,24 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
     }
     buckets = buckets.force_next();
 
-    let iter =
-        files_list.into_iter().filter_map(|(file, file_source)| {
-            match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
-                Ok(x) => return Some(x),
-                Err(err) => {
-                    errors.push(err);
-                    return None;
-                }
+    let iter = files_list.into_iter().filter_map(|(file, _)| {
+        match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
+            Ok(x) => return Some(x),
+            Err(err) => {
+                errors.push(err);
+                return None;
             }
-        });
+        }
+    });
     let asts: Vec<ast::ASTProgram> = iter.collect();
 
+    while let Some(n) = buckets.next() {
+        buckets = n;
+    }
+    buckets = buckets.force_next();
+
     let mut assembler = assembler::Assembler::new();
-    let iter = asts.into_iter().for_each(|ast| {
+    asts.into_iter().for_each(|ast| {
         let tfuncs = match type_checker::check_file(buckets, ast) {
             Ok(x) => x,
             Err(err) => {
@@ -93,6 +98,10 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
         Err(err) => return Err(err.into()),
     };
 
+    while let Some(b) = unsafe { buckets_begin.dealloc() } {
+        buckets_begin = b;
+    }
+
     for (idx, op) in program.ops.iter().enumerate() {
         println!("{} {:?}", idx, op.op);
     }
@@ -105,7 +114,6 @@ fn run_on_file(
     filename: &str,
     writer: &mut impl WriteColor,
 ) -> Result<i32, Vec<Error>> {
-    let buckets = buckets::BucketList::new();
     let mut files = FileDb::new();
     files.add(filename).unwrap();
     match run(&mut files, runtime_io) {
@@ -123,8 +131,6 @@ fn run_on_file(
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
-    let buckets = buckets::BucketList::new();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();

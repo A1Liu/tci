@@ -225,7 +225,7 @@ impl WriteColor for StringWriter {
         false
     }
 
-    fn set_color(&mut self, color: &ColorSpec) -> io::Result<()> {
+    fn set_color(&mut self, _color: &ColorSpec) -> io::Result<()> {
         return Ok(());
     }
 
@@ -276,7 +276,7 @@ where
         false
     }
 
-    fn set_color(&mut self, color: &ColorSpec) -> io::Result<()> {
+    fn set_color(&mut self, _color: &ColorSpec) -> io::Result<()> {
         return Ok(());
     }
 

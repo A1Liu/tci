@@ -94,7 +94,7 @@ impl<'a> Assembler<'a> {
             }
         };
 
-        if let Some((func_header, defn_loc)) = func_header {
+        if let Some((_func_header, defn_loc)) = func_header {
             return Err(func_redef(defn_loc, defn.loc));
         }
 
@@ -106,7 +106,7 @@ impl<'a> Assembler<'a> {
             loc: defn.loc,
         });
 
-        let mut ops = self.translate_block(param_count, defn.stmts, defn.loc, 0);
+        let mut ops = self.translate_block(param_count, defn.stmts, defn.loc, 0, 0);
         self.opcodes.append(&mut ops);
 
         self.opcodes.push(TaggedOpcode {
@@ -124,6 +124,7 @@ impl<'a> Assembler<'a> {
         block: &[TCStmt],
         block_loc: CodeLoc,
         cb_idx: u32, // docs for this later in the match statement: stands for continue-break
+        mut ld_count: u32, // loop declaration count
     ) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut decl_count = 0;
@@ -169,6 +170,7 @@ impl<'a> Assembler<'a> {
 
                 TCStmtKind::Decl { init } => {
                     decl_count += 1;
+                    ld_count += 1;
                     let bytes = init.expr_type.size();
                     tagged.op = Opcode::StackAlloc(bytes);
                     ops.push(tagged);
@@ -186,7 +188,7 @@ impl<'a> Assembler<'a> {
                     ops.append(&mut self.translate_expr(cond));
 
                     let mut if_ops =
-                        self.translate_block(param_count, if_.stmts, if_.loc, cb!() + 1); // +1 to cb here because of jump instruction
+                        self.translate_block(param_count, if_.stmts, if_.loc, cb!() + 1, ld_count); // +1 to cb here because of jump instruction
                     let ifbr_len = if_ops.len() as u32 + 2;
 
                     tagged.op = match cond_bytes {
@@ -200,9 +202,8 @@ impl<'a> Assembler<'a> {
                     ops.append(&mut if_ops);
                     mem::drop(if_ops);
 
-                    let cb_else = cb_idx + ops.len() as u32;
                     let mut else_ops =
-                        self.translate_block(param_count, else_.stmts, else_.loc, cb!());
+                        self.translate_block(param_count, else_.stmts, else_.loc, cb!(), ld_count);
                     let elsebr_len = else_ops.len() as u32 + 1;
 
                     tagged.op = Opcode::Jump(elsebr_len);
@@ -212,7 +213,7 @@ impl<'a> Assembler<'a> {
 
                 TCStmtKind::Block(block) => {
                     let mut block =
-                        self.translate_block(param_count, block.stmts, block.loc, cb!());
+                        self.translate_block(param_count, block.stmts, block.loc, cb!(), ld_count);
                     ops.append(&mut block);
                 }
 
@@ -222,7 +223,7 @@ impl<'a> Assembler<'a> {
                     tagged.op = Opcode::Jump(2);
                     ops.push(tagged);
 
-                    let mut block = self.translate_block(param_count, block.stmts, block.loc, 0);
+                    let mut block = self.translate_block(param_count, block.stmts, block.loc, 0, 0);
                     tagged.op = Opcode::Jump(block.len() as u32 + 2); // break out of loop
                     ops.push(tagged);
                     tagged.op = Opcode::Jump(0u32.wrapping_sub(block.len() as u32));
@@ -232,7 +233,7 @@ impl<'a> Assembler<'a> {
 
                 TCStmtKind::Break => {
                     tagged.op = Opcode::StackDealloc;
-                    for _ in 0..decl_count {
+                    for _ in 0..ld_count {
                         ops.push(tagged);
                     }
 
@@ -241,7 +242,7 @@ impl<'a> Assembler<'a> {
                 }
                 TCStmtKind::Continue => {
                     tagged.op = Opcode::StackDealloc;
-                    for _ in 0..decl_count {
+                    for _ in 0..ld_count {
                         ops.push(tagged);
                     }
 
@@ -443,7 +444,7 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
 
                 tagged.op = Opcode::StackDealloc;
-                for param in *params {
+                for _ in 0..params.len() {
                     ops.push(tagged);
                 }
 
@@ -531,7 +532,7 @@ impl<'a> Assembler<'a> {
                 Opcode::Call(addr) => {
                     let function = self.functions.get(addr).unwrap();
                     if let Some(func_header) = function.func_header {
-                        let (fptr, loc) = func_header;
+                        let (fptr, _loc) = func_header;
                         *addr = fptr;
                     } else if LIB_FUNCS.contains(addr) {
                         op.op = Opcode::LibCall(*addr);

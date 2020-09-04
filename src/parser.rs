@@ -797,11 +797,11 @@ pub fn parse_global_decls<'a, 'b>(
     while peek(tokens, current)?.kind != TokenKind::RBrace {
         body.push(parse_stmt(buckets, tokens, current)?);
     }
-    let tok = pop(tokens, current).unwrap();
+    let _tok = pop(tokens, current).unwrap();
 
     let body = buckets.add_array(body);
     ret_stmt!(GlobalStmt {
-        loc: l_from(decl_type.loc, end_loc),
+        loc: l_from(decl_type.loc, end_loc), // TODO change end_loc to tok.loc and add header_loc to func
         kind: GlobalStmtKind::Func {
             return_type: decl_type,
             pointer_count: decl.pointer_count,
@@ -966,7 +966,7 @@ pub fn parse_stmt<'a, 'b>(
 
             if peek(tokens, current)?.kind != TokenKind::Else {
                 return Ok(Stmt {
-                    loc: l_from(tok.loc, if_body.loc),
+                    loc: l_from(start_loc, if_body.loc),
                     kind: StmtKind::Branch {
                         else_body: Block {
                             stmts: buckets.add_slice(&[]),

@@ -287,9 +287,7 @@ pub fn lex_macro_or_token<'a, 'b>(
         return Ok(true);
     }
 
-    lex_token(
-        buckets, incomplete, token_db, symbols, file, data, current, output,
-    )?;
+    lex_token(buckets, symbols, file, data, current, output)?;
     return Ok(false);
 }
 
@@ -356,7 +354,7 @@ pub fn lex_macro<'a, 'b>(
                     ));
                 }
 
-                if let Some(toks) = token_db.get(&include_id) {
+                if let Some(_) = token_db.get(&include_id) {
                     return Ok(());
                 }
 
@@ -382,7 +380,7 @@ pub fn lex_macro<'a, 'b>(
                 }
                 output.push(Token::new(TokenKind::IncludeSys(id), begin..*current, file));
 
-                if let Some(toks) = token_db.get(&id) {
+                if let Some(_) = token_db.get(&id) {
                     return Ok(());
                 }
 
@@ -407,8 +405,6 @@ pub fn lex_macro<'a, 'b>(
 
 pub fn lex_token<'a, 'b>(
     buckets: BucketListRef<'b>,
-    incomplete: &mut HashSet<u32>,
-    token_db: &mut TokenDb<'b>,
     symbols: &mut FileDb<'a>,
     file: u32,
     data: &'a [u8],
@@ -655,7 +651,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
 
-        x => {
+        _ => {
             return Err(invalid_token(file, begin, *current));
         }
     }
