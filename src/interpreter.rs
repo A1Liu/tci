@@ -72,9 +72,9 @@ pub enum Directive {
 /// - PopKeep pops keep-many bytes off the stack, then pops drop-many bytes off the stack and
 ///   repushes the first set of popped bytes back onto  the stack
 /// - Comp compares pops t, the top of the stack, and compares it to n, the next item on the stack.
-///   it pushes the byte 1 onto the stack if t < n, and the byte 0 onto the stack if t >= n.
+///   it pushes the byte 1 onto the stack if n < t, and the byte 0 onto the stack if n >= t.
 /// - CompEq compares pops t, the top of the stack, and compares it to n, the next item on the stack.
-///   it pushes the byte 1 onto the stack if t == n, and the byte 0 onto the stack if t != n.
+///   it pushes the byte 1 onto the stack if n == t, and the byte 0 onto the stack if n != t.
 #[derive(Debug, Clone, Copy)]
 pub enum Opcode {
     Func(u32), // Function header used for callstack manipulation
@@ -117,13 +117,14 @@ pub enum Opcode {
     Set { offset: u32, bytes: u32 },
 
     AddU32,
+    AddU64,
+
     SubI32,
+    SubI64,
 
     CompI32,
     CompEqI32,
 
-    AddU64,
-    SubI64,
     MulI64,
     DivI64,
     ModI64,
