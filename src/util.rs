@@ -37,47 +37,45 @@ macro_rules! error {
     };
 }
 
-pub struct LazyStatic<Obj, F: Fn() -> Obj> {
-    init: AtomicU8,
-    constructor: F,
-    data: MaybeUninit<Obj>,
+pub struct LazyStatic<Obj> {
+    pub init: AtomicU8,
+    pub constructor: fn() -> Obj,
+    pub data: MaybeUninit<Obj>,
 }
 
-impl<Obj, F: Fn() -> Obj> From<F> for LazyStatic<Obj, F> {
-    fn from(f: F) -> Self {
-        Self::new(f)
-    }
-}
+macro_rules! lazy_static {
+    ($id:ident, $ret:ty, $fn_body:tt) => {{
+        fn $id() -> $ret $fn_body
 
-impl<Obj, F: Fn() -> Obj> LazyStatic<Obj, F> {
-    const UNINIT: u8 = 0;
-    const INIT_RUN: u8 = 1;
-    const INIT: u8 = 2;
-    const KILL_RUN: u8 = 3;
-
-    pub const fn new(constructor: F) -> Self {
-        Self {
-            init: AtomicU8::new(0),
-            constructor,
-            data: MaybeUninit::uninit(),
+        LazyStatic {
+            init: core::sync::atomic::AtomicU8::new($crate::util::LS_UNINIT),
+            constructor: $id,
+            data: core::mem::MaybeUninit::<$ret>::uninit(),
         }
-    }
+    }};
+}
 
+pub const LS_UNINIT: u8 = 0;
+pub const LS_INIT_RUN: u8 = 1;
+pub const LS_INIT: u8 = 2;
+pub const LS_KILL_RUN: u8 = 3;
+
+impl<Obj> LazyStatic<Obj> {
     pub fn init(&self) -> bool {
         let init_ref = &self.init;
         loop {
-            let state = init_ref.compare_and_swap(Self::UNINIT, Self::INIT_RUN, Ordering::SeqCst);
+            let state = init_ref.compare_and_swap(LS_UNINIT, LS_INIT_RUN, Ordering::SeqCst);
 
             match state {
-                Self::INIT_RUN => {
-                    while Self::INIT_RUN == init_ref.load(Ordering::SeqCst) {}
+                LS_INIT_RUN => {
+                    while LS_INIT_RUN == init_ref.load(Ordering::SeqCst) {}
                     continue;
                 }
-                Self::INIT => {
+                LS_INIT => {
                     return true;
                 }
-                Self::UNINIT => break,
-                Self::KILL_RUN => return false,
+                LS_UNINIT => break,
+                LS_KILL_RUN => return false,
                 _ => unreachable!(),
             }
         }
@@ -86,35 +84,35 @@ impl<Obj, F: Fn() -> Obj> LazyStatic<Obj, F> {
         let data = constructor();
         unsafe { (self.data.as_ptr() as *mut Obj).write(data) };
 
-        let state = init_ref.compare_and_swap(Self::INIT_RUN, Self::INIT, Ordering::SeqCst);
-        debug_assert!(state == Self::INIT_RUN);
+        let state = init_ref.compare_and_swap(LS_INIT_RUN, LS_INIT, Ordering::SeqCst);
+        debug_assert!(state == LS_INIT_RUN);
         return true;
     }
 
     pub unsafe fn kill(&self) {
         let init_ref = &self.init;
         loop {
-            let state = init_ref.compare_and_swap(Self::INIT, Self::KILL_RUN, Ordering::SeqCst);
+            let state = init_ref.compare_and_swap(LS_INIT, LS_KILL_RUN, Ordering::SeqCst);
 
             match state {
-                Self::INIT_RUN => {
-                    while Self::INIT_RUN == init_ref.load(Ordering::SeqCst) {}
+                LS_INIT_RUN => {
+                    while LS_INIT_RUN == init_ref.load(Ordering::SeqCst) {}
                     continue;
                 }
-                Self::INIT => break,
-                Self::UNINIT | Self::KILL_RUN => return,
+                LS_INIT => break,
+                LS_UNINIT | LS_KILL_RUN => return,
                 _ => unreachable!(),
             }
         }
 
         let data = &mut *(self.data.as_ptr() as *mut Obj);
 
-        let state = init_ref.compare_and_swap(Self::KILL_RUN, Self::UNINIT, Ordering::SeqCst);
-        debug_assert!(state == Self::KILL_RUN);
+        let state = init_ref.compare_and_swap(LS_KILL_RUN, LS_UNINIT, Ordering::SeqCst);
+        debug_assert!(state == LS_KILL_RUN);
     }
 }
 
-impl<Obj, F: Fn() -> Obj> ops::Deref for LazyStatic<Obj, F> {
+impl<Obj> ops::Deref for LazyStatic<Obj> {
     type Target = Obj;
 
     fn deref(&self) -> &Obj {

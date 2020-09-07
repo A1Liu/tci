@@ -94,7 +94,7 @@ pub struct InitSyms {
     pub files: Vec<File<'static>>,
 }
 
-pub static INIT_SYMS: LazyStatic<InitSyms, impl Fn() -> InitSyms> = LazyStatic::new(|| {
+pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static, InitSyms, {
     let mut names = Vec::new();
     let mut translate = HashMap::new();
     let mut files = Vec::new();

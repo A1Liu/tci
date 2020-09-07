@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
-#![feature(const_fn)]
-#![feature(impl_trait_in_bindings)]
 
 #[macro_use]
 mod util;

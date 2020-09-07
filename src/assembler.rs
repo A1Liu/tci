@@ -15,7 +15,7 @@ pub struct ASMFunc<'a> {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
-pub static LIB_FUNCS: LazyStatic<HashSet<u32>, impl Fn() -> HashSet<u32>> = LazyStatic::new(|| {
+pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet<u32>, {
     let mut m = HashSet::new();
     m.insert(INIT_SYMS.translate["printf"]);
     m.insert(INIT_SYMS.translate["exit"]);
