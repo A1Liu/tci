@@ -1,9 +1,8 @@
 use crate::buckets::*;
 use crate::util::*;
 use codespan_reporting::files::{line_starts, Files};
+use core::include_bytes;
 use core::{mem, ops, str};
-use rust_embed::RustEmbed;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{canonicalize, read_to_string};
 use std::io;
@@ -89,64 +88,55 @@ pub struct FileDb<'a> {
     pub names: Vec<CodeLoc>,
 }
 
-#[derive(RustEmbed)]
-#[folder = "includes/"]
-pub struct Assets;
-
 pub struct InitSyms {
     pub names: Vec<&'static str>,
     pub translate: HashMap<&'static str, u32>,
     pub files: Vec<File<'static>>,
 }
 
-lazy_static! {
-    pub static ref INITIAL_SYMBOLS: InitSyms = {
-        let mut names = Vec::new();
-        let mut translate = HashMap::new();
-        let mut files = Vec::new();
-        macro_rules! add_sym {
-            ($arg:expr) => {
-                let begin = names.len() as u32;
-                names.push($arg);
-                translate.insert($arg, begin);
-            };
-        }
+pub static INIT_SYMS: LazyStatic<InitSyms, impl Fn() -> InitSyms> = LazyStatic::new(|| {
+    let mut names = Vec::new();
+    let mut translate = HashMap::new();
+    let mut files = Vec::new();
+    macro_rules! add_sym {
+        ($arg:expr) => {
+            let begin = names.len() as u32;
+            names.push($arg);
+            translate.insert($arg, begin);
+        };
+    }
 
-        macro_rules! add_syslib_sym {
-            ($arg:expr) => {
-                let begin = names.len() as u32;
-                names.push($arg);
-                translate.insert($arg, begin);
-                if let Cow::Borrowed(source_cow) = Assets::get($arg).unwrap() {
-                    let source = unsafe { str::from_utf8_unchecked(source_cow) };
-                    files.push(File::new_static($arg, source));
-                } else {
-                    panic!();
-                }
-            };
-        }
+    macro_rules! add_syslib_sym {
+        ($arg:expr) => {
+            let begin = names.len() as u32;
+            names.push($arg);
+            translate.insert($arg, begin);
+            let source = include_bytes!(concat!("../includes/", $arg));
+            let source = unsafe { str::from_utf8_unchecked(source) };
+            files.push(File::new_static($arg, source));
+        };
+    }
 
-        add_syslib_sym!("stdio.h");
+    add_syslib_sym!("stdio.h");
 
-        add_sym!("main");
-        add_sym!("va_list");
-        add_sym!("printf");
-        add_sym!("exit");
+    add_sym!("main");
+    add_sym!("va_list");
+    add_sym!("printf");
+    add_sym!("exit");
 
-        InitSyms {
-            names,
-            translate,
-            files,
-        }
-    };
-}
+    InitSyms {
+        names,
+        translate,
+        files,
+    }
+});
 
 impl<'a> FileDb<'a> {
     /// Create a new files database.
     pub fn new() -> Self {
         let mut string = String::new();
         let mut symbols = Vec::new();
-        for name in INITIAL_SYMBOLS.names.iter() {
+        for name in INIT_SYMS.names.iter() {
             let begin = string.len();
             string.push_str(name);
             let end = string.len();
@@ -159,7 +149,7 @@ impl<'a> FileDb<'a> {
 
         let mut files = Vec::new();
 
-        for file in INITIAL_SYMBOLS.files.iter() {
+        for file in INIT_SYMS.files.iter() {
             files.push(file.clone());
             _size += file.size() + mem::size_of::<File>();
         }
@@ -170,7 +160,7 @@ impl<'a> FileDb<'a> {
             _size,
             files,
             file_names: HashMap::new(),
-            translate: INITIAL_SYMBOLS.translate.clone(),
+            translate: INIT_SYMS.translate.clone(),
             names: Vec::new(),
         };
 
@@ -188,7 +178,7 @@ impl<'a> FileDb<'a> {
     pub fn vec(&self) -> Vec<(u32, &'a str)> {
         let iter = self.files.iter();
         #[rustfmt::skip]
-            return iter.enumerate().skip(INITIAL_SYMBOLS.files.len() + 1)
+            return iter.enumerate().skip(INIT_SYMS.files.len() + 1)
                 .map(|(id, file)| (id as u32, file._source))
                 .collect();
     }

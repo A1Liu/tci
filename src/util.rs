@@ -1,6 +1,8 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
+use core::mem::MaybeUninit;
 use core::{fmt, ops, slice};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::{io, marker};
 
 macro_rules! error {
@@ -33,6 +35,92 @@ macro_rules! error {
             ],
         )
     };
+}
+
+pub struct LazyStatic<Obj, F: Fn() -> Obj> {
+    init: AtomicU8,
+    constructor: F,
+    data: MaybeUninit<Obj>,
+}
+
+impl<Obj, F: Fn() -> Obj> From<F> for LazyStatic<Obj, F> {
+    fn from(f: F) -> Self {
+        Self::new(f)
+    }
+}
+
+impl<Obj, F: Fn() -> Obj> LazyStatic<Obj, F> {
+    const UNINIT: u8 = 0;
+    const INIT_RUN: u8 = 1;
+    const INIT: u8 = 2;
+    const KILL_RUN: u8 = 3;
+
+    pub const fn new(constructor: F) -> Self {
+        Self {
+            init: AtomicU8::new(0),
+            constructor,
+            data: MaybeUninit::uninit(),
+        }
+    }
+
+    pub fn init(&self) -> bool {
+        let init_ref = &self.init;
+        loop {
+            let state = init_ref.compare_and_swap(Self::UNINIT, Self::INIT_RUN, Ordering::SeqCst);
+
+            match state {
+                Self::INIT_RUN => {
+                    while Self::INIT_RUN == init_ref.load(Ordering::SeqCst) {}
+                    continue;
+                }
+                Self::INIT => {
+                    return true;
+                }
+                Self::UNINIT => break,
+                Self::KILL_RUN => return false,
+                _ => unreachable!(),
+            }
+        }
+
+        let constructor = &self.constructor;
+        let data = constructor();
+        unsafe { (self.data.as_ptr() as *mut Obj).write(data) };
+
+        let state = init_ref.compare_and_swap(Self::INIT_RUN, Self::INIT, Ordering::SeqCst);
+        debug_assert!(state == Self::INIT_RUN);
+        return true;
+    }
+
+    pub unsafe fn kill(&self) {
+        let init_ref = &self.init;
+        loop {
+            let state = init_ref.compare_and_swap(Self::INIT, Self::KILL_RUN, Ordering::SeqCst);
+
+            match state {
+                Self::INIT_RUN => {
+                    while Self::INIT_RUN == init_ref.load(Ordering::SeqCst) {}
+                    continue;
+                }
+                Self::INIT => break,
+                Self::UNINIT | Self::KILL_RUN => return,
+                _ => unreachable!(),
+            }
+        }
+
+        let data = &mut *(self.data.as_ptr() as *mut Obj);
+
+        let state = init_ref.compare_and_swap(Self::KILL_RUN, Self::UNINIT, Ordering::SeqCst);
+        debug_assert!(state == Self::KILL_RUN);
+    }
+}
+
+impl<Obj, F: Fn() -> Obj> ops::Deref for LazyStatic<Obj, F> {
+    type Target = Obj;
+
+    fn deref(&self) -> &Obj {
+        assert!(self.init());
+        return unsafe { &*self.data.as_ptr() };
+    }
 }
 
 #[derive(Debug)]

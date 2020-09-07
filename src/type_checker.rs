@@ -101,45 +101,52 @@ pub fn assign_char_int<'b>(buckets: BucketListRef<'b>, e: TCExpr<'b>) -> TCExpr<
     };
 }
 
-lazy_static! {
-    pub static ref BIN_OP_OVERLOADS: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = {
+pub type BinOpOverloads = HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform>;
+pub type BinOpValids = HashSet<(BinOp, TCShallowType)>;
+pub type AssignOL = HashMap<(TCTypeKind, TCTypeKind), Transform>;
+
+pub static BIN_OP_OL: LazyStatic<BinOpOverloads, impl Fn() -> BinOpOverloads> =
+    LazyStatic::new(|| {
         use TCShallowType::*;
-        let mut m: HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform> = HashMap::new();
+        let mut m: BinOpOverloads = HashMap::new();
         m.insert((BinOp::Add, I32, I32), add_int_int);
         m.insert((BinOp::Add, I32, Char), add_int_char);
         m.insert((BinOp::Add, Char, I32), add_char_int);
         m.insert((BinOp::Sub, I32, I32), sub_int_int);
         m.insert((BinOp::Lt, I32, I32), lt_int_int);
         m
-    };
-    pub static ref BIN_LEFT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
-        use TCShallowType::*;
-        let mut m = HashSet::new();
-        m.insert((BinOp::Add, I32));
-        m.insert((BinOp::Add, Char));
-        m.insert((BinOp::Sub, I32));
-        m.insert((BinOp::Lt, I32));
-        m
-    };
-    pub static ref BIN_RIGHT_OVERLOADS: HashSet<(BinOp, TCShallowType)> = {
-        use TCShallowType::*;
-        let mut m = HashSet::new();
-        m.insert((BinOp::Add, I32));
-        m.insert((BinOp::Add, Char));
-        m.insert((BinOp::Sub, I32));
-        m.insert((BinOp::Lt, I32));
-        m
-    };
-    pub static ref ASSIGN_EXPR_TO_TYPE: HashMap<(TCTypeKind, TCTypeKind), Transform> = {
+    });
+
+pub static BINL_OL: LazyStatic<BinOpValids, impl Fn() -> BinOpValids> = LazyStatic::new(|| {
+    use TCShallowType::*;
+    let mut m = HashSet::new();
+    m.insert((BinOp::Add, I32));
+    m.insert((BinOp::Add, Char));
+    m.insert((BinOp::Sub, I32));
+    m.insert((BinOp::Lt, I32));
+    m
+});
+
+pub static BINR_OL: LazyStatic<BinOpValids, impl Fn() -> BinOpValids> = LazyStatic::new(|| {
+    use TCShallowType::*;
+    let mut m = HashSet::new();
+    m.insert((BinOp::Add, I32));
+    m.insert((BinOp::Add, Char));
+    m.insert((BinOp::Sub, I32));
+    m.insert((BinOp::Lt, I32));
+    m
+});
+
+pub static ASSIGN_EXPR_TO_TYPE: LazyStatic<AssignOL, impl Fn() -> AssignOL> =
+    LazyStatic::new(|| {
         let mut m: HashMap<(TCTypeKind, TCTypeKind), Transform> = HashMap::new();
         m.insert((TCTypeKind::Char, TCTypeKind::I32), assign_char_int);
         m
-    };
-}
+    });
 
 fn get_overload(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
     let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
-    match BIN_OP_OVERLOADS.get(&key) {
+    match BIN_OP_OL.get(&key) {
         Some(bin_op) => return Ok(*bin_op),
         None => return Err(invalid_operands_bin_expr(env, op, l, r)),
     }
@@ -149,7 +156,7 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
     let lkey = (op, l.expr_type.to_shallow());
     let rkey = (op, r.expr_type.to_shallow());
 
-    if BIN_LEFT_OVERLOADS.get(&lkey).is_none() {
+    if BINL_OL.get(&lkey).is_none() {
         return error!(
             "invalid operands to binary expression (left expression is not valid for this operand)",
             l.loc,
@@ -159,7 +166,7 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
         );
     }
 
-    if BIN_RIGHT_OVERLOADS.get(&rkey).is_none() {
+    if BINR_OL.get(&rkey).is_none() {
         return error!(
             "invalid operands to binary expression (right expression is not valid for this operand)",
             l.loc,

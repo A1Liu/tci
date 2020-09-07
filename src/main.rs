@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
-
-#[macro_use]
-extern crate lazy_static;
+#![allow(incomplete_features)]
+#![feature(const_fn)]
+#![feature(impl_trait_in_bindings)]
 
 #[macro_use]
 mod util;
@@ -56,6 +56,10 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
     buckets = buckets.force_next();
 
     let iter = files_list.into_iter().filter_map(|(file, _)| {
+        while let Some(n) = buckets.next() {
+            buckets = n;
+        }
+
         match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
             Ok(x) => return Some(x),
             Err(err) => {
@@ -73,6 +77,10 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
 
     let mut assembler = assembler::Assembler::new();
     asts.into_iter().for_each(|ast| {
+        while let Some(n) = buckets.next() {
+            buckets = n;
+        }
+
         let tfuncs = match type_checker::check_file(buckets, ast) {
             Ok(x) => x,
             Err(err) => {

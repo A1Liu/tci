@@ -188,8 +188,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
     pub fn new(io: IO) -> Self {
         let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
 
-        lib_funcs.insert(INITIAL_SYMBOLS.translate["printf"], printf);
-        lib_funcs.insert(INITIAL_SYMBOLS.translate["exit"], exit);
+        lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
+        lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
 
         Self {
             memory: Memory::new(),

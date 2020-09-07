@@ -15,26 +15,12 @@ pub struct ASMFunc<'a> {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
-pub enum ASMAssignKind<'a> {
-    StackLocal { var: i16 },
-    Ptr(&'a TCExpr<'a>),
-}
-
-pub struct ASMAssign<'a> {
-    kind: ASMAssignKind<'a>,
-    assign_type: TCType,
-    offset: u32,
-    bytes: u32,
-}
-
-lazy_static! {
-    pub static ref LIB_FUNCS: HashSet<u32> = {
-        let mut m = HashSet::new();
-        m.insert(INITIAL_SYMBOLS.translate["printf"]);
-        m.insert(INITIAL_SYMBOLS.translate["exit"]);
-        m
-    };
-}
+pub static LIB_FUNCS: LazyStatic<HashSet<u32>, impl Fn() -> HashSet<u32>> = LazyStatic::new(|| {
+    let mut m = HashSet::new();
+    m.insert(INIT_SYMS.translate["printf"]);
+    m.insert(INIT_SYMS.translate["exit"]);
+    m
+});
 
 pub struct Assembler<'a> {
     pub opcodes: Vec<TaggedOpcode>,
@@ -497,32 +483,11 @@ impl<'a> Assembler<'a> {
         return ops;
     }
 
-    pub fn translate_lvalue<'b>(&self, assign: &TCAssignTarget<'b>) -> ASMAssign<'b> {
-        match &assign.kind {
-            TCAssignKind::LocalIdent { var_offset } => {
-                return ASMAssign {
-                    kind: ASMAssignKind::StackLocal { var: *var_offset },
-                    offset: 0,
-                    bytes: assign.target_type.size(),
-                    assign_type: assign.target_type,
-                };
-            }
-            TCAssignKind::Ptr(expr) => {
-                return ASMAssign {
-                    kind: ASMAssignKind::Ptr(expr),
-                    offset: 0,
-                    bytes: assign.target_type.size(),
-                    assign_type: assign.target_type,
-                };
-            }
-        }
-    }
-
     pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
         let main_func = self
             .functions
-            .get(&INITIAL_SYMBOLS.translate["main"])
+            .get(&INIT_SYMS.translate["main"])
             .ok_or_else(no_main)?;
         let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
