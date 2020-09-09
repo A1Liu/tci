@@ -36,6 +36,7 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
     let files = files_list.iter();
     files.for_each(|&(id, source)| {
         let result = lexer::lex_file(buckets, &mut tokens, env, id, source);
+        // println!("Tokens: {:?}", result);
         match result {
             Err(err) => {
                 errors.push(err);

@@ -60,11 +60,16 @@ fn test_structs() {
 }
 
 #[test]
-fn test_include() {
+fn test_includes() {
     test_file_should_succeed("test/includes.c");
 }
 
 #[test]
 fn test_control_flow() {
     test_file_should_succeed("test/control_flow.c");
+}
+
+#[test]
+fn test_macros() {
+    test_file_should_succeed("test/macros.c");
 }

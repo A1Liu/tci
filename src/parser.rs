@@ -655,6 +655,9 @@ pub fn parse_global_decls<'a, 'b>(
 
             return Ok(());
         }
+        TokenKind::MacroDef(ident) => {
+            unimplemented!();
+        }
         TokenKind::Struct => {
             let start_loc = pop(tokens, current).unwrap().loc;
             let (ident, ident_loc) = expect_any_ident(tokens, current)?;

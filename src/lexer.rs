@@ -16,6 +16,8 @@ pub enum TokenKind<'a> {
 
     Include(u32),
     IncludeSys(u32),
+    MacroDef(u32),
+    MacroDefEnd,
 
     Void,
     Char,
@@ -291,6 +293,13 @@ pub fn lex_macro_or_token<'a, 'b>(
     return Ok(false);
 }
 
+pub fn is_ident_char(cur: u8) -> bool {
+    (cur >= b'a' && cur <= b'z')
+        || (cur >= b'A' && cur <= b'Z')
+        || cur == b'_'
+        || (cur >= b'0' && cur <= b'9')
+}
+
 pub fn lex_macro<'a, 'b>(
     buckets: BucketListRef<'b>,
     incomplete: &mut HashSet<u32>,
@@ -315,6 +324,63 @@ pub fn lex_macro<'a, 'b>(
 
     let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
     match directive {
+        "define" => {
+            while peek_eqs(data, current, &WHITESPACE) {
+                *current += 1;
+            }
+
+            let begin = *current;
+            if begin == data.len() {
+                return Err(error!(
+                    "unexpected end of file",
+                    l(begin as u32, begin as u32, file),
+                    "EOF found here"
+                ));
+            }
+
+            while peek_check(data, current, is_ident_char) {
+                *current += 1;
+            }
+
+            // Don't add the empty string
+            if *current - begin == 0 {
+                return Err(error!(
+                    "expected an identifer for macro declaration",
+                    l(begin as u32, begin as u32 + 1, file),
+                    "This should be an identifier"
+                ));
+            }
+
+            let id = symbols.translate_add(begin..*current, file);
+            output.push(Token::new(TokenKind::MacroDef(id), begin..*current, file));
+
+            loop {
+                while peek_eqs(data, current, &WHITESPACE) {
+                    *current += 1;
+                }
+
+                if *current == data.len() {
+                    break;
+                }
+
+                if peek_eq(data, current, b'\n') {
+                    break;
+                } else if peek_eqs(data, current, &CRLF) {
+                    break;
+                } else if peek_eqs(data, current, &[b'\\', b'\n']) {
+                    *current += 2;
+                    continue;
+                } else if peek_eqs(data, current, &[b'\\', b'\r', b'\n']) {
+                    *current += 3;
+                    continue;
+                }
+
+                lex_token(buckets, symbols, file, data, current, output)?;
+            }
+
+            output.push(Token::new(TokenKind::MacroDefEnd, *current..*current, file));
+            return Ok(());
+        }
         "include" => {
             while peek_eqs(data, current, &WHITESPACE) {
                 *current += 1;
@@ -420,13 +486,6 @@ pub fn lex_token<'a, 'b>(
             return Ok(());
         }};
     }
-
-    let is_ident_char = |cur| {
-        (cur >= b'a' && cur <= b'z')
-            || (cur >= b'A' && cur <= b'Z')
-            || cur == b'_'
-            || (cur >= b'0' && cur <= b'9')
-    };
 
     match data[begin] {
         x if (x >= b'a' && x <= b'z') || x == b'_' => {
@@ -651,7 +710,7 @@ pub fn lex_token<'a, 'b>(
             }
         }
 
-        _ => {
+        x => {
             return Err(invalid_token(file, begin, *current));
         }
     }
