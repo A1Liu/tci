@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::buckets::*;
+use crate::filedb::*;
 use crate::util::*;
 use core::ops::Deref;
 use std::collections::{HashMap, HashSet};
@@ -839,6 +840,38 @@ pub fn check_file<'a>(
         }
     }
 
+    if let Some((ftype, func)) = unchecked_functions.get(&INIT_SYMS.translate["main"]) {
+        if ftype.return_type.pointer_count != 0 {
+            return Err(main_return_type(ftype.loc));
+        }
+
+        match ftype.return_type.kind {
+            TCTypeKind::Void | TCTypeKind::I32 => {}
+            _ => {
+                return Err(main_return_type(ftype.loc));
+            }
+        }
+
+        let int_type = TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        };
+        let char_ss_type = TCType {
+            kind: TCTypeKind::Char,
+            pointer_count: 2,
+        };
+
+        if ftype.params.len() == 2 {
+            if ftype.params[0].decl_type != int_type {
+                return Err(main_param_types(ftype.params[0].loc));
+            } else if ftype.params[1].decl_type != char_ss_type {
+                return Err(main_param_types(ftype.loc));
+            }
+        } else if ftype.params.len() != 0 {
+            return Err(main_param_types(ftype.loc));
+        }
+    }
+
     let mut functions = HashMap::new();
     for (func_name, (ftype, func)) in unchecked_functions.into_iter() {
         let mut tc_func = TCFunc {
@@ -1537,6 +1570,20 @@ fn check_assign_target<'b>(
             ))
         }
     }
+}
+
+pub fn main_param_types(loc: CodeLoc) -> Error {
+    return error!(
+        "can only have param types of (int, char**) or no params for the main function",
+        loc, "invalid param types found here"
+    );
+}
+
+pub fn main_return_type(loc: CodeLoc) -> Error {
+    return error!(
+        "can only have return type of void or int for the main function",
+        loc, "invalid return type found here"
+    );
 }
 
 pub fn void_variable(loc: CodeLoc) -> Error {
