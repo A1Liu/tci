@@ -548,7 +548,7 @@ impl<'a> Assembler<'a> {
 
         let total_size = file_size + opcodes_size + data_size + vars_size + 8;
         let buckets = BucketList::with_capacity(0);
-        let layout = alloc::Layout::from_size_align(total_size, 8).expect("why did this fail?");
+        let layout = alloc::Layout::from_size_align(total_size, 8).unwrap();
         let mut frame = buckets.alloc_frame(layout);
 
         let files = FileDbRef::new_from_frame(&mut frame, env);

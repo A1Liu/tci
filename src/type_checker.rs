@@ -2,7 +2,6 @@ use crate::ast::*;
 use crate::buckets::*;
 use crate::filedb::*;
 use crate::util::*;
-use core::ops::Deref;
 use std::collections::{HashMap, HashSet};
 
 type BinOpTransform = for<'b> fn(BucketListRef<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
@@ -333,9 +332,8 @@ impl<'a> TypeEnv<'a> {
 
         if assign_to == &expr.expr_type {
             return Ok(expr);
-        } else if let Some(converter) = ASSIGN_EXPR_TO_TYPE
-            .deref()
-            .get(&(expr.expr_type.kind, assign_to.kind))
+        } else if let Some(converter) =
+            ASSIGN_EXPR_TO_TYPE.get(&(expr.expr_type.kind, assign_to.kind))
         {
             return Ok(converter(buckets, expr));
         } else if let Some(assign_loc) = assign_to_loc {
