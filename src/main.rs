@@ -21,11 +21,12 @@ mod test;
 use crate::filedb::FileDb;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
+use interpreter::Program;
 use runtime::{DefaultIO, RuntimeIO};
 use std::env;
 use util::Error;
 
-fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<Error>> {
+fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();
@@ -109,31 +110,20 @@ fn run<'a>(env: &mut FileDb<'a>, runtime_io: impl RuntimeIO) -> Result<i32, Vec<
         buckets_begin = b;
     }
 
-    for (idx, op) in program.ops.iter().enumerate() {
-        println!("{} {:?}", idx, op.op);
-    }
-    let mut runtime = interpreter::Runtime::new(runtime_io);
-    Ok(runtime.run_program(program))
+    Ok(program)
 }
 
-fn run_on_file(
-    runtime_io: impl RuntimeIO,
-    filename: &str,
-    writer: &mut impl WriteColor,
-) -> Result<i32, Vec<Error>> {
-    let mut files = FileDb::new();
-    files.add(filename).unwrap();
-    match run(&mut files, runtime_io) {
-        Ok(x) => return Ok(x),
-        Err(errs) => {
-            let config = codespan_reporting::term::Config::default();
-            for err in &errs {
-                codespan_reporting::term::emit(writer, &config, &files, &err.diagnostic())
-                    .expect("why did this fail?");
-            }
-            return Err(errs);
-        }
+fn emit_err(errs: &Vec<Error>, files: &FileDb, writer: &mut impl WriteColor) {
+    let config = codespan_reporting::term::Config::default();
+    for err in errs {
+        codespan_reporting::term::emit(writer, &config, files, &err.diagnostic())
+            .expect("why did this fail?");
     }
+}
+
+fn run(program: interpreter::Program, runtime_io: impl RuntimeIO) -> i32 {
+    let mut runtime = interpreter::Runtime::new(runtime_io);
+    runtime.run_program(program)
 }
 
 fn main() {
@@ -146,9 +136,10 @@ fn main() {
     for arg in args.iter().skip(1) {
         files.add(&arg).unwrap();
     }
-
     mem::drop(args);
-    match run(&mut files, runtime_io) {
+
+    let program = match compile(&mut files) {
+        Ok(program) => program,
         Err(errs) => {
             let config = codespan_reporting::term::Config::default();
             for err in errs {
@@ -160,10 +151,12 @@ fn main() {
                 )
                 .expect("why did this fail?");
             }
+
+            return;
         }
-        Ok(ret_code) => {
-            eprintln!("TCI: return code was {}", ret_code);
-            std::process::exit(ret_code as i32);
-        }
-    }
+    };
+
+    let ret_code = run(program, runtime_io);
+    eprintln!("TCI: return code was {}", ret_code);
+    std::process::exit(ret_code as i32);
 }
