@@ -23,6 +23,7 @@ use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColo
 use core::mem;
 use interpreter::Program;
 use runtime::{DefaultIO, RuntimeIO};
+use std::collections::HashSet;
 use std::env;
 use util::Error;
 
@@ -126,14 +127,21 @@ fn run(program: interpreter::Program, runtime_io: impl RuntimeIO) -> i32 {
     runtime.run_program(program)
 }
 
-fn main() {
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();
 
+    let mut flags = HashSet::new();
+
     let mut files = FileDb::new();
     for arg in args.iter().skip(1) {
+        if arg.starts_with("-") {
+            flags.insert(arg.clone());
+            continue;
+        }
         files.add(&arg).unwrap();
     }
     mem::drop(args);
@@ -152,11 +160,18 @@ fn main() {
                 .expect("why did this fail?");
             }
 
-            return;
+            return Ok(());
         }
     };
 
-    let ret_code = run(program, runtime_io);
-    eprintln!("TCI: return code was {}", ret_code);
-    std::process::exit(ret_code as i32);
+    if !flags.contains("--debug") {
+        let ret_code = run(program, runtime_io);
+        eprintln!("TCI: return code was {}", ret_code);
+        std::process::exit(ret_code as i32);
+    }
+
+    actix_web::HttpServer::new(|| actix_web::App::new())
+        .bind("127.0.0.1:8080")?
+        .run()
+        .await
 }

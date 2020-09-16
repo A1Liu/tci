@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
+actix-web = "3"
