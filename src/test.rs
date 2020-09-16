@@ -2,6 +2,7 @@ use crate::filedb::FileDb;
 use crate::runtime::InMemoryIO;
 use crate::util::StringWriter;
 use crate::{compile, emit_err, run};
+use core::mem;
 use std::fs::read_to_string;
 
 fn test_file_should_succeed(filename: &str) {
@@ -20,6 +21,7 @@ fn test_file_should_succeed(filename: &str) {
             panic!();
         }
     };
+    mem::drop(files);
 
     let code = run(program, &mut io);
 
@@ -45,15 +47,13 @@ fn test_file_compile_should_fail(filename: &str) {
 
     files.add(filename).unwrap();
 
-    let program = match compile(&mut files) {
+    match compile(&mut files) {
         Err(errs) => {
             emit_err(&errs, &files, &mut writer);
             println!("{}", writer.to_string());
         }
-        _ => {
-            panic!("should have failed");
-        }
-    };
+        _ => panic!("should have failed"),
+    }
 }
 
 #[test]

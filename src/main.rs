@@ -135,8 +135,8 @@ async fn main() -> std::io::Result<()> {
     let runtime_io = DefaultIO::new();
 
     let mut flags = HashSet::new();
-
     let mut files = FileDb::new();
+
     for arg in args.iter().skip(1) {
         if arg.starts_with("-") {
             flags.insert(arg.clone());
@@ -163,6 +163,7 @@ async fn main() -> std::io::Result<()> {
             return Ok(());
         }
     };
+    mem::drop(files);
 
     if !flags.contains("--debug") {
         let ret_code = run(program, runtime_io);

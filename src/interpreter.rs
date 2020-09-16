@@ -437,7 +437,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.push_stack((word1 == word2) as u8, pc);
             }
 
-
             Opcode::AddU64 => {
                 let word2 = u64::from_be(self.pop_stack(pc)?);
                 let word1 = u64::from_be(self.pop_stack(pc)?);

@@ -8,7 +8,7 @@ use std::fs::{canonicalize, read_to_string};
 use std::io;
 use std::path::Path;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct File<'a> {
     pub _name: &'a str,
     /// The source code of the file.
@@ -80,7 +80,8 @@ impl<'a> File<'a> {
 }
 
 pub struct FileDb<'a> {
-    pub buckets: BucketListRef<'a>,
+    buckets: BucketListRef<'a>,
+    pub buckets_next: BucketListRef<'a>,
     pub _size: usize,
     pub file_names: HashMap<&'a str, u32>,
     pub files: Vec<File<'a>>,
@@ -131,6 +132,14 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     }
 });
 
+impl<'a> Drop for FileDb<'a> {
+    fn drop(&mut self) {
+        while let Some(b) = unsafe { self.buckets.dealloc() } {
+            self.buckets = b;
+        }
+    }
+}
+
 impl<'a> FileDb<'a> {
     /// Create a new files database.
     pub fn new() -> Self {
@@ -150,13 +159,14 @@ impl<'a> FileDb<'a> {
         let mut files = Vec::new();
 
         for file in INIT_SYMS.files.iter() {
-            files.push(file.clone());
+            files.push(*file);
             _size += file.size() + mem::size_of::<File>();
         }
         files.push(file);
 
         let mut new_self = Self {
             buckets,
+            buckets_next: buckets,
             _size,
             files,
             file_names: HashMap::new(),
@@ -194,9 +204,14 @@ impl<'a> FileDb<'a> {
 
         let file_id = self.files.len() as u32;
         let source = read_to_string(&file_name)?;
-        let file = File::new(self.buckets, file_name, &source);
+        let file = File::new(self.buckets_next, file_name, &source);
         self._size += file.size() + mem::size_of::<File>();
         self.files.push(file);
+
+        while let Some(b) = self.buckets_next.next() {
+            self.buckets_next = b;
+        }
+
         Ok(file_id)
     }
 
