@@ -291,6 +291,12 @@ impl StringWriter {
     pub fn to_string(&self) -> String {
         return unsafe { String::from_utf8_unchecked(self.buf.clone()) };
     }
+
+    pub fn flush_string(&mut self) -> String {
+        let ret_val = unsafe { String::from_utf8_unchecked(self.buf.clone()) };
+        self.buf.clear();
+        return ret_val;
+    }
 }
 
 impl io::Write for StringWriter {

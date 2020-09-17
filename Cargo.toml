@@ -6,4 +6,5 @@ edition = "2018"
 
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
-actix-web = "3"
+tokio = { version = "0.2", features = ["full"] }
+hyper = "0.13.7"
