@@ -18,13 +18,15 @@ mod type_checker;
 #[cfg(test)]
 mod test;
 
-use crate::filedb::FileDb;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
+use filedb::FileDb;
 use interpreter::Program;
 use runtime::{DefaultIO, RuntimeIO};
 use std::env;
+use std::sync::Mutex;
 use util::Error;
+use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
@@ -126,8 +128,16 @@ fn run(program: interpreter::Program, runtime_io: impl RuntimeIO) -> i32 {
     runtime.run_program(program)
 }
 
-#[tokio::main]
-async fn main() {
+enum GlobalState {
+    Uninit,
+    Args(Vec<String>),
+}
+
+static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<GlobalState>, {
+    Mutex::new(GlobalState::Uninit)
+});
+
+fn main() {
     let args: Vec<String> = env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);

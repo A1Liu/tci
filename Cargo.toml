@@ -6,5 +6,4 @@ edition = "2018"
 
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
-tokio = { version = "0.2", features = ["full"] }
-hyper = "0.13.7"
+tiny_http = { path = "tiny-http" }
