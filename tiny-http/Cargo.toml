@@ -9,14 +9,10 @@ keywords = ["http", "server", "web"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tiny-http/tiny-http"
 
-[features]
-default = []
-ssl = ["openssl"]
-
 [dependencies]
 ascii = "1.0"
 chunked_transfer = "1"
-openssl = { version = "0.10", optional = true }
+openssl = "0.10"
 url = "2"
 chrono = "0.4"
 log = "0.4"
