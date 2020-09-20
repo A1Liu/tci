@@ -20,11 +20,19 @@ mod test;
 
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
+use embedded_websocket as ws;
+use embedded_websocket::{
+    HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType, WebSocketServer,
+    WebSocketState,
+};
 use filedb::FileDb;
 use interpreter::Program;
 use runtime::{DefaultIO, RuntimeIO};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::str::Utf8Error;
 use std::sync::Mutex;
-use util::Error;
+use std::thread;
 use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
@@ -137,7 +145,7 @@ static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<Glo
     Mutex::new(GlobalState::Uninit)
 });
 
-fn main() {
+fn compile_from_program_args() {
     let args: Vec<String> = std::env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
@@ -168,3 +176,197 @@ fn main() {
 
     mem::drop(files);
 }
+
+// Below is licensed via the MIT License (MIT)
+// Below is Copyright (c) 2019 David Haig
+
+fn main() -> std::io::Result<()> {
+    let addr = "127.0.0.1:3000";
+    let listener = TcpListener::bind(addr)?;
+    println!("Listening on: {}", addr);
+
+    // accept connections and process them serially
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                thread::spawn(|| {
+                    let buckets = buckets::BucketList::with_capacity(8192);
+                    let send = buckets.uninit(4096).unwrap();
+                    let receive = buckets.uninit(4096).unwrap();
+
+                    match handle_client(stream, send, receive) {
+                        Ok(()) => {}
+                        Err(e) => println!("Error: {:?}", e),
+                    }
+
+                    unsafe { buckets.dealloc() };
+                });
+            }
+            Err(e) => println!("Failed to establish a connection: {}", e),
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum WebServerError {
+    Io(std::io::Error),
+    WebSocket(ws::Error),
+    RequestTooLarge(usize),
+    Utf8Error,
+}
+
+impl From<std::io::Error> for WebServerError {
+    fn from(err: std::io::Error) -> WebServerError {
+        WebServerError::Io(err)
+    }
+}
+
+impl From<ws::Error> for WebServerError {
+    fn from(err: ws::Error) -> WebServerError {
+        WebServerError::WebSocket(err)
+    }
+}
+
+impl From<Utf8Error> for WebServerError {
+    fn from(_: Utf8Error) -> WebServerError {
+        WebServerError::Utf8Error
+    }
+}
+
+fn handle_client(
+    mut stream: TcpStream,
+    receive: &mut [u8],
+    send: &mut [u8],
+) -> Result<(), WebServerError> {
+    let mut web_socket = WebSocketServer::new_server();
+    let mut num_bytes = 0;
+
+    // read until the stream is closed (zero bytes read from the stream)
+    loop {
+        if num_bytes >= receive.len() {
+            println!("Not a valid http request or buffer too small");
+            return Err(WebServerError::RequestTooLarge(num_bytes));
+        }
+
+        num_bytes = num_bytes + stream.read(&mut receive[num_bytes..])?;
+        if num_bytes == 0 {
+            return Ok(());
+        }
+
+        if web_socket.state == WebSocketState::Open {
+            // if the tcp stream has already been upgraded to a websocket connection
+            if !web_socket_read(&mut web_socket, &mut stream, receive, send, num_bytes)? {
+                println!("Websocket closed");
+                return Ok(());
+            }
+            num_bytes = 0;
+        } else {
+            // assume that the client has sent us an http request. Since we may not read the
+            // header all in one go we need to check for HttpHeaderIncomplete and continue reading
+            if !match ws::read_http_header(&receive[..num_bytes]) {
+                Ok(http_header) => {
+                    num_bytes = 0;
+                    respond_to_http_request(http_header, &mut web_socket, send, &mut stream)
+                }
+                Err(ws::Error::HttpHeaderIncomplete) => Ok(true),
+                Err(e) => Err(WebServerError::WebSocket(e)),
+            }? {
+                return Ok(());
+            }
+        }
+    }
+}
+
+// returns true to keep the connection open
+fn respond_to_http_request(
+    http_header: HttpHeader,
+    web_socket: &mut WebSocketServer,
+    buffer2: &mut [u8],
+    stream: &mut TcpStream,
+) -> Result<bool, WebServerError> {
+    if let Some(websocket_context) = http_header.websocket_context {
+        // this is a web socket upgrade request
+        println!("Received websocket upgrade request");
+        let to_send =
+            web_socket.server_accept(&websocket_context.sec_websocket_key, None, buffer2)?;
+        write_to_stream(stream, &buffer2[..to_send])?;
+        Ok(true)
+    } else {
+        // this is a regular http request
+        match http_header.path.as_str() {
+            "/" => write_to_stream(stream, &ROOT_HTML.as_bytes())?,
+            _ => {
+                let html =
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                write_to_stream(stream, &html.as_bytes())?;
+            }
+        };
+        Ok(false)
+    }
+}
+
+fn write_to_stream(stream: &mut TcpStream, buffer: &[u8]) -> Result<(), WebServerError> {
+    let mut start = 0;
+    loop {
+        let bytes_sent = stream.write(&buffer[start..])?;
+        start += bytes_sent;
+
+        if start == buffer.len() {
+            return Ok(());
+        }
+    }
+}
+
+fn web_socket_read(
+    web_socket: &mut WebSocketServer,
+    stream: &mut TcpStream,
+    tcp_buffer: &mut [u8],
+    ws_buffer: &mut [u8],
+    num_bytes: usize,
+) -> Result<bool, WebServerError> {
+    let ws_result = web_socket.read(&tcp_buffer[..num_bytes], ws_buffer)?;
+    match ws_result.message_type {
+        WebSocketReceiveMessageType::Text => {
+            let s = std::str::from_utf8(&ws_buffer[..ws_result.len_to])?;
+            println!("Received Text: {}", s);
+            let to_send = web_socket.write(
+                WebSocketSendMessageType::Text,
+                true,
+                &ws_buffer[..ws_result.len_to],
+                tcp_buffer,
+            )?;
+            write_to_stream(stream, &tcp_buffer[..to_send])?;
+            Ok(true)
+        }
+        WebSocketReceiveMessageType::Binary => {
+            // ignored
+            Ok(true)
+        }
+        WebSocketReceiveMessageType::CloseCompleted => Ok(false),
+        WebSocketReceiveMessageType::CloseMustReply => {
+            let to_send = web_socket.write(
+                WebSocketSendMessageType::CloseReply,
+                true,
+                &ws_buffer[..ws_result.len_to],
+                tcp_buffer,
+            )?;
+            write_to_stream(stream, &tcp_buffer[..to_send])?;
+            Ok(true)
+        }
+        WebSocketReceiveMessageType::Ping => {
+            let to_send = web_socket.write(
+                WebSocketSendMessageType::Pong,
+                true,
+                &ws_buffer[..ws_result.len_to],
+                tcp_buffer,
+            )?;
+            write_to_stream(stream, &tcp_buffer[..to_send])?;
+            Ok(true)
+        }
+        WebSocketReceiveMessageType::Pong => Ok(true),
+    }
+}
+
+const ROOT_HTML : &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: 2590\r\nConnection: close\r\n\r\n<!doctype html><html></html>";

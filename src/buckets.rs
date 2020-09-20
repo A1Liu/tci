@@ -1,4 +1,4 @@
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{alloc, dealloc, Layout, LayoutErr};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -209,6 +209,14 @@ impl<'a> BucketList<'a> {
         }
     }
 
+    pub fn uninit(&self, len: usize) -> Result<&'a mut [u8], LayoutErr> {
+        let layout = Layout::from_size_align(len, 1)?;
+        unsafe {
+            let block = self.data.alloc(layout) as *mut u8;
+            return Ok(slice::from_raw_parts_mut(block, len));
+        }
+    }
+
     pub fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T] {
         unsafe {
             let len = vec.len();
@@ -276,6 +284,14 @@ impl<'a> Frame<'a> {
             let location = self.alloc(Layout::new::<T>()) as *mut T;
             ptr::write(location, t);
             return &mut *location;
+        }
+    }
+
+    pub fn uninit(&mut self, len: usize) -> Result<&'a mut [u8], LayoutErr> {
+        let layout = Layout::from_size_align(len, 1)?;
+        unsafe {
+            let block = self.alloc(layout) as *mut u8;
+            return Ok(slice::from_raw_parts_mut(block, len));
         }
     }
 
