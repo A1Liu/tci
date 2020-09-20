@@ -6,4 +6,4 @@ edition = "2018"
 
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
-tiny_http = { path = "tiny-http" }
+tungstenite = { path = "tungstenite-rs" }

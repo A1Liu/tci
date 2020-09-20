@@ -23,7 +23,6 @@ use core::mem;
 use filedb::FileDb;
 use interpreter::Program;
 use runtime::{DefaultIO, RuntimeIO};
-use std::env;
 use std::sync::Mutex;
 use util::Error;
 use util::*;
@@ -131,6 +130,7 @@ fn run(program: interpreter::Program, runtime_io: impl RuntimeIO) -> i32 {
 enum GlobalState {
     Uninit,
     Args(Vec<String>),
+    Compiled(Program<'static>),
 }
 
 static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<GlobalState>, {
@@ -138,7 +138,7 @@ static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<Glo
 });
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = std::env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();
