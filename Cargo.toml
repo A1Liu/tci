@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 codespan-reporting = { path = "codespan-reporting" }
-embedded-websocket = "0.3.1"
+embedded-websocket = { path = "embedded-websocket" }
 # tokio = "0.1.13"
 # smol = "1.0.1"
 

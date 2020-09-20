@@ -46,7 +46,6 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     let files = files_list.iter();
     files.for_each(|&(id, source)| {
         let result = lexer::lex_file(buckets, &mut tokens, env, id, source);
-        // println!("Tokens: {:?}", result);
         match result {
             Err(err) => {
                 errors.push(err);
@@ -183,7 +182,7 @@ fn compile_from_program_args() {
 fn main() -> std::io::Result<()> {
     let addr = "127.0.0.1:3000";
     let listener = TcpListener::bind(addr)?;
-    println!("Listening on: {}", addr);
+    println!("listening on: {}", addr);
 
     // accept connections and process them serially
     for stream in listener.incoming() {
@@ -196,13 +195,13 @@ fn main() -> std::io::Result<()> {
 
                     match handle_client(stream, send, receive) {
                         Ok(()) => {}
-                        Err(e) => println!("Error: {:?}", e),
+                        Err(e) => println!("error: {:?}", e),
                     }
 
                     unsafe { buckets.dealloc() };
                 });
             }
-            Err(e) => println!("Failed to establish a connection: {}", e),
+            Err(e) => println!("failed to establish a connection: {}", e),
         }
     }
 
@@ -235,46 +234,83 @@ impl From<Utf8Error> for WebServerError {
     }
 }
 
+fn process_data<'a, 'b: 'a>(
+    stream: &mut TcpStream,
+    headers: &'a mut [ws::httparse::Header<'b>],
+    web_socket: &mut WebSocketServer,
+    num_bytes: &mut usize,
+    tcp_receive: &'b mut [u8],
+    ws_send: &mut [u8],
+) -> Result<bool, WebServerError> {
+    if web_socket.state == WebSocketState::Open {
+        // if the tcp stream has already been upgraded to a websocket connection
+        if !web_socket_respond(web_socket, stream, tcp_receive, ws_send, *num_bytes)? {
+            println!("websocket closed");
+            return Ok(false);
+        }
+        *num_bytes = 0;
+        return Ok(true);
+    } else {
+        // assume that the client has sent us an http request. Since we may not read the
+        // header all in one go we need to check for HttpHeaderIncomplete and continue reading
+        let http_header = match ws::read_http_header(headers, &tcp_receive[..*num_bytes]) {
+            Ok(header) => {
+                *num_bytes = 0;
+                header
+            }
+            Err(ws::Error::HttpHeaderIncomplete) => return Ok(true),
+            Err(e) => return Err(WebServerError::WebSocket(e)),
+        };
+
+        return respond_to_http_request(http_header, web_socket, ws_send, stream);
+    }
+}
+
 fn handle_client(
     mut stream: TcpStream,
-    receive: &mut [u8],
-    send: &mut [u8],
+    tcp_recv: &mut [u8],
+    ws_send: &mut [u8],
 ) -> Result<(), WebServerError> {
+    println!("received connection");
     let mut web_socket = WebSocketServer::new_server();
     let mut num_bytes = 0;
 
     // read until the stream is closed (zero bytes read from the stream)
     loop {
-        if num_bytes >= receive.len() {
-            println!("Not a valid http request or buffer too small");
+        let mut headers = [ws::httparse::EMPTY_HEADER; 32];
+
+        if num_bytes >= tcp_recv.len() {
             return Err(WebServerError::RequestTooLarge(num_bytes));
         }
 
-        num_bytes = num_bytes + stream.read(&mut receive[num_bytes..])?;
+        num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
         if num_bytes == 0 {
             return Ok(());
         }
 
+        // if the tcp stream has already been upgraded to a websocket connection
         if web_socket.state == WebSocketState::Open {
-            // if the tcp stream has already been upgraded to a websocket connection
-            if !web_socket_read(&mut web_socket, &mut stream, receive, send, num_bytes)? {
-                println!("Websocket closed");
+            if !web_socket_respond(&mut web_socket, &mut stream, tcp_recv, ws_send, num_bytes)? {
+                println!("websocket closed");
                 return Ok(());
             }
             num_bytes = 0;
-        } else {
-            // assume that the client has sent us an http request. Since we may not read the
-            // header all in one go we need to check for HttpHeaderIncomplete and continue reading
-            if !match ws::read_http_header(&receive[..num_bytes]) {
-                Ok(http_header) => {
-                    num_bytes = 0;
-                    respond_to_http_request(http_header, &mut web_socket, send, &mut stream)
-                }
-                Err(ws::Error::HttpHeaderIncomplete) => Ok(true),
-                Err(e) => Err(WebServerError::WebSocket(e)),
-            }? {
-                return Ok(());
+            continue;
+        }
+
+        // assume that the client has sent us an http request. Since we may not read the
+        // header all in one go we need to check for HttpHeaderIncomplete and continue reading
+        let http_header = match ws::read_http_header(&mut headers, &tcp_recv[..num_bytes]) {
+            Ok(header) => {
+                num_bytes = 0;
+                header
             }
+            Err(ws::Error::HttpHeaderIncomplete) => continue,
+            Err(e) => return Err(WebServerError::WebSocket(e)),
+        };
+
+        if !respond_to_http_request(http_header, &mut web_socket, ws_send, &mut stream)? {
+            return Ok(());
         }
     }
 }
@@ -295,7 +331,7 @@ fn respond_to_http_request(
         Ok(true)
     } else {
         // this is a regular http request
-        match http_header.path.as_str() {
+        match http_header.path {
             "/" => write_to_stream(stream, &ROOT_HTML.as_bytes())?,
             _ => {
                 let html =
@@ -319,7 +355,7 @@ fn write_to_stream(stream: &mut TcpStream, buffer: &[u8]) -> Result<(), WebServe
     }
 }
 
-fn web_socket_read(
+fn web_socket_respond(
     web_socket: &mut WebSocketServer,
     stream: &mut TcpStream,
     tcp_buffer: &mut [u8],
@@ -330,7 +366,6 @@ fn web_socket_read(
     match ws_result.message_type {
         WebSocketReceiveMessageType::Text => {
             let s = std::str::from_utf8(&ws_buffer[..ws_result.len_to])?;
-            println!("Received Text: {}", s);
             let to_send = web_socket.write(
                 WebSocketSendMessageType::Text,
                 true,
