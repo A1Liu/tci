@@ -23,18 +23,12 @@ mod test;
 
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
-use embedded_websocket as ws;
-use embedded_websocket::{
-    HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType, WebSocketServer,
-};
+use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType};
 use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
 use runtime::{DefaultIO, RuntimeIO};
-use std::io::Read;
-use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
-use std::thread;
 use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
@@ -178,141 +172,36 @@ static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<Glo
     Mutex::new(GlobalState::Uninit)
 });
 
-fn main() -> std::io::Result<()> {
-    let addr = "127.0.0.1:3000";
-    let listener = TcpListener::bind(addr)?;
-    println!("listening on: {}", addr);
+fn main() -> Result<(), net_io::WebServerError> {
+    let server = net_io::WebServer {
+        http_handler: respond_to_http_request,
+        ws_handler: ws_respond,
+    };
 
-    // accept connections and process them serially
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                thread::spawn(|| match handle_client(stream) {
-                    Ok(()) => {}
-                    Err(e) => println!("error: {:?}", e),
-                });
-            }
-            Err(e) => println!("failed to establish a connection: {}", e),
-        }
-    }
-
+    server.serve()?;
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
-    println!("received connection");
-
-    let buckets = buckets::BucketList::with_capacity(12288);
-
-    // In lieu of defer
-    struct BucketDealloc<'a>(buckets::BucketListRef<'a>);
-    impl<'a> Drop for BucketDealloc<'a> {
-        fn drop(&mut self) {
-            unsafe { self.0.dealloc() };
-        }
-    }
-    let dealloc_buckets = BucketDealloc(buckets);
-    let tcp_recv = buckets.uninit(4096).unwrap();
-    let ws_buf = buckets.uninit(4096).unwrap();
-    let scratch_buf = buckets.uninit(4096).unwrap();
-
-    let mut web_socket = WebSocketServer::new_server();
-    let mut num_bytes = 0;
-
-    loop {
-        let mut headers = [ws::httparse::EMPTY_HEADER; 32];
-
-        if num_bytes >= tcp_recv.len() {
-            return Err(WebServerError::RequestTooLarge(num_bytes));
-        }
-
-        num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
-
-        // read until the stream is closed (zero bytes read from the stream)
-        if num_bytes == 0 {
-            return Ok(());
-        }
-
-        // assume that the client has sent us an http request. Since we may not read the
-        // header all in one go we need to check for HttpHeaderIncomplete and continue reading
-        let http_header = match ws::read_http_header(&mut headers, &tcp_recv[..num_bytes]) {
-            Ok(header) => {
-                num_bytes = 0;
-                header
-            }
-            Err(ws::Error::HttpHeaderIncomplete) => continue,
-            Err(e) => return Err(WebServerError::WebSocket(e)),
-        };
-
-        if let Some(ws_context) = &http_header.websocket_context {
-            let to_send = web_socket.server_accept(&ws_context.sec_websocket_key, None, ws_buf)?;
-            net_io::write_to_stream(&mut stream, &ws_buf[..to_send])?;
-            break;
-        } else {
-            respond_to_http_request(http_header, ws_buf, &mut stream)?;
-            return Ok(());
-        }
-    }
-
-    let mut ws_num_bytes = 0;
-    loop {
-        if num_bytes >= tcp_recv.len() {
-            return Err(WebServerError::PayloadTooLarge(num_bytes));
-        }
-
-        num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
-        if num_bytes == 0 {
-            return Ok(());
-        }
-
-        let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[ws_num_bytes..])?;
-        ws_num_bytes += ws_result.len_to;
-
-        if ws_num_bytes == ws_buf.len() {
-            return Err(WebServerError::RequestTooLarge(ws_num_bytes));
-        }
-
-        num_bytes -= ws_result.len_from;
-        for i in 0..num_bytes {
-            tcp_recv[i] = tcp_recv[i + ws_result.len_from];
-        }
-
-        if !ws_result.end_of_message {
-            continue;
-        }
-
-        let ws_buffer = &ws_buf[..ws_num_bytes];
-        ws_num_bytes = 0;
-        let response = ws_respond(ws_result.message_type, ws_buffer, scratch_buf)?;
-        match response {
-            net_io::WSResponse::Response {
-                message_type,
-                message,
-            } => {
-                let to_send = web_socket.write(message_type, true, message, ws_buf)?;
-                net_io::write_to_stream(&mut stream, &ws_buf[..to_send])?;
-            }
-            net_io::WSResponse::None => {}
-            net_io::WSResponse::Close => return Ok(()),
-        }
-    }
-}
-
 // returns true to keep the connection open
-fn respond_to_http_request(
+fn respond_to_http_request<'a>(
     http_header: HttpHeader,
-    buffer2: &mut [u8],
-    stream: &mut TcpStream,
-) -> Result<(), WebServerError> {
+    buffer2: &'a mut [u8],
+) -> Result<net_io::HttpResponse<'a>, WebServerError> {
+    const ROOT_HTML: &str = "<!doctype html><html></html>";
     match http_header.path {
-        "/" => net_io::write_to_stream(stream, &ROOT_HTML.as_bytes())?,
+        "/" => {
+            return Ok(net_io::HttpResponse {
+                status: 200,
+                body: ROOT_HTML.as_bytes(),
+            });
+        }
         _ => {
-            let html = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            net_io::write_to_stream(stream, &html.as_bytes())?;
+            return Ok(net_io::HttpResponse {
+                status: 404,
+                body: ROOT_HTML.as_bytes(),
+            });
         }
     }
-
-    return Ok(());
 }
 
 fn ws_respond<'a>(
@@ -352,5 +241,3 @@ fn ws_respond<'a>(
         _ => return Ok(net_io::WSResponse::None),
     }
 }
-
-const ROOT_HTML : &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: 2590\r\nConnection: close\r\n\r\n<!doctype html><html></html>";

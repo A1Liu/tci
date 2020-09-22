@@ -82,6 +82,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd179ae861f0c2e53da70d892f5f3029f9594be0c41dc5269cd371691b1dc2f9"
 
 [[package]]
+name = "numtoa"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e521b6adefa0b2c1fa5d2abdf9a5216288686fe6146249215d884c0e5ab320b0"
+
+[[package]]
 name = "rand_core"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -105,6 +111,7 @@ version = "0.1.0"
 dependencies = [
  "codespan-reporting",
  "embedded-websocket",
+ "numtoa",
 ]
 
 [[package]]
