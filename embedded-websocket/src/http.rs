@@ -4,8 +4,9 @@ use heapless::Vec;
 // NOTE: this struct is re-exported
 /// An http header struct that exposes websocket details
 pub struct HttpHeader<'headers, 'buf: 'headers> {
+    pub method: &'buf str,
     pub path: &'buf str,
-    pub version: Option<u8>,
+    pub version: u8,
     pub headers: &'headers mut [httparse::Header<'buf>],
     /// If the http header was a valid upgrade request then this could contain the websocket
     /// detail relating to it
@@ -107,7 +108,8 @@ pub fn read_http_header<'headers, 'buf: 'headers>(
 
     Ok(HttpHeader {
         path,
-        version: request.version,
+        method: request.method.unwrap(),
+        version: request.version.unwrap(),
         headers: request.headers,
         websocket_context,
     })

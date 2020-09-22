@@ -5,6 +5,9 @@
 #[macro_use]
 mod util;
 
+#[macro_use]
+mod net_io;
+
 mod assembler;
 mod ast;
 mod buckets;
@@ -23,14 +26,13 @@ use core::mem;
 use embedded_websocket as ws;
 use embedded_websocket::{
     HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType, WebSocketServer,
-    WebSocketState,
 };
 use filedb::FileDb;
 use interpreter::Program;
+use net_io::WebServerError;
 use runtime::{DefaultIO, RuntimeIO};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::{TcpListener, TcpStream};
-use std::str::Utf8Error;
 use std::sync::Mutex;
 use std::thread;
 use util::*;
@@ -134,16 +136,6 @@ fn run(program: interpreter::Program, runtime_io: impl RuntimeIO) -> i32 {
     runtime.run_program(program)
 }
 
-enum GlobalState {
-    Uninit,
-    Args(Vec<String>),
-    Compiled(Program<'static>),
-}
-
-static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<GlobalState>, {
-    Mutex::new(GlobalState::Uninit)
-});
-
 fn compile_from_program_args() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -176,8 +168,15 @@ fn compile_from_program_args() {
     mem::drop(files);
 }
 
-// Below is licensed via the MIT License (MIT)
-// Below is Copyright (c) 2019 David Haig
+enum GlobalState {
+    Uninit,
+    Args(Vec<String>),
+    Compiled(Program<'static>),
+}
+
+static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<GlobalState>, {
+    Mutex::new(GlobalState::Uninit)
+});
 
 fn main() -> std::io::Result<()> {
     let addr = "127.0.0.1:3000";
@@ -188,17 +187,9 @@ fn main() -> std::io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                thread::spawn(|| {
-                    let buckets = buckets::BucketList::with_capacity(8192);
-                    let send = buckets.uninit(4096).unwrap();
-                    let receive = buckets.uninit(4096).unwrap();
-
-                    match handle_client(stream, send, receive) {
-                        Ok(()) => {}
-                        Err(e) => println!("error: {:?}", e),
-                    }
-
-                    unsafe { buckets.dealloc() };
+                thread::spawn(|| match handle_client(stream) {
+                    Ok(()) => {}
+                    Err(e) => println!("error: {:?}", e),
                 });
             }
             Err(e) => println!("failed to establish a connection: {}", e),
@@ -208,74 +199,26 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
-pub enum WebServerError {
-    Io(std::io::Error),
-    WebSocket(ws::Error),
-    RequestTooLarge(usize),
-    Utf8Error,
-}
-
-impl From<std::io::Error> for WebServerError {
-    fn from(err: std::io::Error) -> WebServerError {
-        WebServerError::Io(err)
-    }
-}
-
-impl From<ws::Error> for WebServerError {
-    fn from(err: ws::Error) -> WebServerError {
-        WebServerError::WebSocket(err)
-    }
-}
-
-impl From<Utf8Error> for WebServerError {
-    fn from(_: Utf8Error) -> WebServerError {
-        WebServerError::Utf8Error
-    }
-}
-
-fn process_data<'a, 'b: 'a>(
-    stream: &mut TcpStream,
-    headers: &'a mut [ws::httparse::Header<'b>],
-    web_socket: &mut WebSocketServer,
-    num_bytes: &mut usize,
-    tcp_receive: &'b mut [u8],
-    ws_send: &mut [u8],
-) -> Result<bool, WebServerError> {
-    if web_socket.state == WebSocketState::Open {
-        // if the tcp stream has already been upgraded to a websocket connection
-        if !web_socket_respond(web_socket, stream, tcp_receive, ws_send, *num_bytes)? {
-            println!("websocket closed");
-            return Ok(false);
-        }
-        *num_bytes = 0;
-        return Ok(true);
-    } else {
-        // assume that the client has sent us an http request. Since we may not read the
-        // header all in one go we need to check for HttpHeaderIncomplete and continue reading
-        let http_header = match ws::read_http_header(headers, &tcp_receive[..*num_bytes]) {
-            Ok(header) => {
-                *num_bytes = 0;
-                header
-            }
-            Err(ws::Error::HttpHeaderIncomplete) => return Ok(true),
-            Err(e) => return Err(WebServerError::WebSocket(e)),
-        };
-
-        return respond_to_http_request(http_header, web_socket, ws_send, stream);
-    }
-}
-
-fn handle_client(
-    mut stream: TcpStream,
-    tcp_recv: &mut [u8],
-    ws_send: &mut [u8],
-) -> Result<(), WebServerError> {
+fn handle_client(mut stream: TcpStream) -> Result<(), WebServerError> {
     println!("received connection");
+
+    let buckets = buckets::BucketList::with_capacity(12288);
+
+    // In lieu of defer
+    struct BucketDealloc<'a>(buckets::BucketListRef<'a>);
+    impl<'a> Drop for BucketDealloc<'a> {
+        fn drop(&mut self) {
+            unsafe { self.0.dealloc() };
+        }
+    }
+    let dealloc_buckets = BucketDealloc(buckets);
+    let tcp_recv = buckets.uninit(4096).unwrap();
+    let ws_buf = buckets.uninit(4096).unwrap();
+    let scratch_buf = buckets.uninit(4096).unwrap();
+
     let mut web_socket = WebSocketServer::new_server();
     let mut num_bytes = 0;
 
-    // read until the stream is closed (zero bytes read from the stream)
     loop {
         let mut headers = [ws::httparse::EMPTY_HEADER; 32];
 
@@ -284,18 +227,10 @@ fn handle_client(
         }
 
         num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
+
+        // read until the stream is closed (zero bytes read from the stream)
         if num_bytes == 0 {
             return Ok(());
-        }
-
-        // if the tcp stream has already been upgraded to a websocket connection
-        if web_socket.state == WebSocketState::Open {
-            if !web_socket_respond(&mut web_socket, &mut stream, tcp_recv, ws_send, num_bytes)? {
-                println!("websocket closed");
-                return Ok(());
-            }
-            num_bytes = 0;
-            continue;
         }
 
         // assume that the client has sent us an http request. Since we may not read the
@@ -309,8 +244,56 @@ fn handle_client(
             Err(e) => return Err(WebServerError::WebSocket(e)),
         };
 
-        if !respond_to_http_request(http_header, &mut web_socket, ws_send, &mut stream)? {
+        if let Some(ws_context) = &http_header.websocket_context {
+            let to_send = web_socket.server_accept(&ws_context.sec_websocket_key, None, ws_buf)?;
+            net_io::write_to_stream(&mut stream, &ws_buf[..to_send])?;
+            break;
+        } else {
+            respond_to_http_request(http_header, ws_buf, &mut stream)?;
             return Ok(());
+        }
+    }
+
+    let mut ws_num_bytes = 0;
+    loop {
+        if num_bytes >= tcp_recv.len() {
+            return Err(WebServerError::PayloadTooLarge(num_bytes));
+        }
+
+        num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
+        if num_bytes == 0 {
+            return Ok(());
+        }
+
+        let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[ws_num_bytes..])?;
+        ws_num_bytes += ws_result.len_to;
+
+        if ws_num_bytes == ws_buf.len() {
+            return Err(WebServerError::RequestTooLarge(ws_num_bytes));
+        }
+
+        num_bytes -= ws_result.len_from;
+        for i in 0..num_bytes {
+            tcp_recv[i] = tcp_recv[i + ws_result.len_from];
+        }
+
+        if !ws_result.end_of_message {
+            continue;
+        }
+
+        let ws_buffer = &ws_buf[..ws_num_bytes];
+        ws_num_bytes = 0;
+        let response = ws_respond(ws_result.message_type, ws_buffer, scratch_buf)?;
+        match response {
+            net_io::WSResponse::Response {
+                message_type,
+                message,
+            } => {
+                let to_send = web_socket.write(message_type, true, message, ws_buf)?;
+                net_io::write_to_stream(&mut stream, &ws_buf[..to_send])?;
+            }
+            net_io::WSResponse::None => {}
+            net_io::WSResponse::Close => return Ok(()),
         }
     }
 }
@@ -318,89 +301,55 @@ fn handle_client(
 // returns true to keep the connection open
 fn respond_to_http_request(
     http_header: HttpHeader,
-    web_socket: &mut WebSocketServer,
     buffer2: &mut [u8],
     stream: &mut TcpStream,
-) -> Result<bool, WebServerError> {
-    if let Some(websocket_context) = http_header.websocket_context {
-        // this is a web socket upgrade request
-        println!("Received websocket upgrade request");
-        let to_send =
-            web_socket.server_accept(&websocket_context.sec_websocket_key, None, buffer2)?;
-        write_to_stream(stream, &buffer2[..to_send])?;
-        Ok(true)
-    } else {
-        // this is a regular http request
-        match http_header.path {
-            "/" => write_to_stream(stream, &ROOT_HTML.as_bytes())?,
-            _ => {
-                let html =
-                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                write_to_stream(stream, &html.as_bytes())?;
-            }
-        };
-        Ok(false)
-    }
-}
-
-fn write_to_stream(stream: &mut TcpStream, buffer: &[u8]) -> Result<(), WebServerError> {
-    let mut start = 0;
-    loop {
-        let bytes_sent = stream.write(&buffer[start..])?;
-        start += bytes_sent;
-
-        if start == buffer.len() {
-            return Ok(());
+) -> Result<(), WebServerError> {
+    match http_header.path {
+        "/" => net_io::write_to_stream(stream, &ROOT_HTML.as_bytes())?,
+        _ => {
+            let html = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            net_io::write_to_stream(stream, &html.as_bytes())?;
         }
     }
+
+    return Ok(());
 }
 
-fn web_socket_respond(
-    web_socket: &mut WebSocketServer,
-    stream: &mut TcpStream,
-    tcp_buffer: &mut [u8],
-    ws_buffer: &mut [u8],
-    num_bytes: usize,
-) -> Result<bool, WebServerError> {
-    let ws_result = web_socket.read(&tcp_buffer[..num_bytes], ws_buffer)?;
-    match ws_result.message_type {
+fn ws_respond<'a>(
+    message_type: WebSocketReceiveMessageType,
+    ws_buffer: &[u8],
+    out_buffer: &'a mut [u8],
+) -> Result<net_io::WSResponse<'a>, WebServerError> {
+    match message_type {
         WebSocketReceiveMessageType::Text => {
-            let s = std::str::from_utf8(&ws_buffer[..ws_result.len_to])?;
-            let to_send = web_socket.write(
-                WebSocketSendMessageType::Text,
-                true,
-                &ws_buffer[..ws_result.len_to],
-                tcp_buffer,
-            )?;
-            write_to_stream(stream, &tcp_buffer[..to_send])?;
-            Ok(true)
+            let message = &mut out_buffer[..ws_buffer.len()];
+            message.copy_from_slice(ws_buffer);
+
+            return Ok(net_io::WSResponse::Response {
+                message_type: WebSocketSendMessageType::Text,
+                message,
+            });
         }
-        WebSocketReceiveMessageType::Binary => {
-            // ignored
-            Ok(true)
-        }
-        WebSocketReceiveMessageType::CloseCompleted => Ok(false),
+        WebSocketReceiveMessageType::CloseCompleted => return Ok(net_io::WSResponse::Close),
         WebSocketReceiveMessageType::CloseMustReply => {
-            let to_send = web_socket.write(
-                WebSocketSendMessageType::CloseReply,
-                true,
-                &ws_buffer[..ws_result.len_to],
-                tcp_buffer,
-            )?;
-            write_to_stream(stream, &tcp_buffer[..to_send])?;
-            Ok(true)
+            let message = &mut out_buffer[..ws_buffer.len()];
+            message.copy_from_slice(ws_buffer);
+
+            return Ok(net_io::WSResponse::Response {
+                message_type: WebSocketSendMessageType::CloseReply,
+                message,
+            });
         }
         WebSocketReceiveMessageType::Ping => {
-            let to_send = web_socket.write(
-                WebSocketSendMessageType::Pong,
-                true,
-                &ws_buffer[..ws_result.len_to],
-                tcp_buffer,
-            )?;
-            write_to_stream(stream, &tcp_buffer[..to_send])?;
-            Ok(true)
+            let message = &mut out_buffer[..ws_buffer.len()];
+            message.copy_from_slice(ws_buffer);
+
+            return Ok(net_io::WSResponse::Response {
+                message_type: WebSocketSendMessageType::Pong,
+                message,
+            });
         }
-        WebSocketReceiveMessageType::Pong => Ok(true),
+        _ => return Ok(net_io::WSResponse::None),
     }
 }
 
