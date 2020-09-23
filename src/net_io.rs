@@ -137,6 +137,13 @@ impl WebServer {
                 let to_send =
                     web_socket.server_accept(&ws_context.sec_websocket_key, None, ws_buf)?;
                 write_to_stream(&mut stream, &ws_buf[..to_send])?;
+
+                let bytes_read = http_header.bytes_read;
+                num_bytes -= bytes_read;
+                for i in 0..num_bytes {
+                    tcp_recv[i] = tcp_recv[i + bytes_read];
+                }
+
                 break;
             } else {
                 let resp = http_handler(http_header, ws_buf)?;

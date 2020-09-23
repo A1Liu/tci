@@ -11,6 +11,7 @@ pub struct HttpHeader<'headers, 'buf: 'headers> {
     /// If the http header was a valid upgrade request then this could contain the websocket
     /// detail relating to it
     pub websocket_context: Option<WebSocketContext>,
+    pub bytes_read: usize,
 }
 
 // NOTE: this struct is re-exported
@@ -61,9 +62,10 @@ pub fn read_http_header<'headers, 'buf: 'headers>(
 ) -> Result<HttpHeader<'headers, 'buf>> {
     let mut request = httparse::Request::new(headers);
 
-    if !request.parse(buffer)?.is_complete() {
-        return Err(Error::HttpHeaderIncomplete);
-    }
+    let bytes_read = match request.parse(buffer)? {
+        httparse::Status::Complete(len) => len,
+        httparse::Status::Partial => return Err(Error::HttpHeaderIncomplete),
+    };
 
     let path = match request.path {
         Some(x) => x,
@@ -112,6 +114,7 @@ pub fn read_http_header<'headers, 'buf: 'headers>(
         version: request.version.unwrap(),
         headers: request.headers,
         websocket_context,
+        bytes_read,
     })
 }
 
