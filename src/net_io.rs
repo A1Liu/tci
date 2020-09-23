@@ -1,7 +1,6 @@
 use crate::buckets::*;
 use embedded_websocket as ws;
 use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType};
-use numtoa::NumToA;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::str::Utf8Error;
@@ -13,6 +12,7 @@ pub enum WebServerError {
     WebSocket(ws::Error),
     RequestTooLarge(usize),
     PayloadTooLarge(usize),
+    ResponseTooLarge(usize),
     Utf8Error,
 }
 
@@ -140,28 +140,8 @@ impl WebServer {
                 break;
             } else {
                 let resp = http_handler(http_header, ws_buf)?;
-
-                write_to_stream(&mut stream, "HTTP/1.1 ".as_bytes())?;
-
-                write_to_stream(
-                    &mut stream,
-                    resp.status.numtoa_str(10, scratch_buf).as_bytes(),
-                )?;
-
-                write_to_stream(&mut stream, " Ok\r\nContent-Length: ".as_bytes())?;
-
-                write_to_stream(
-                    &mut stream,
-                    resp.body.len().numtoa_str(10, scratch_buf).as_bytes(),
-                )?;
-
-                write_to_stream(
-                    &mut stream,
-                    "\r\nContent-Type: text;html; charset=UTF-8\r\nConnection: close\r\n\r\n"
-                        .as_bytes(),
-                )?;
-
-                write_to_stream(&mut stream, resp.body)?;
+                let bytes = serialize_http_response(resp, scratch_buf)?;
+                write_to_stream(&mut stream, bytes)?;
                 return Ok(());
             }
         }
@@ -209,6 +189,40 @@ impl WebServer {
             }
         }
     }
+}
+
+pub fn serialize_http_response<'a>(
+    resp: HttpResponse,
+    bytes: &'a mut [u8],
+) -> Result<&'a [u8], WebServerError> {
+    let mut num_bytes = 0;
+    macro_rules! write_to_bytes {
+        ($str:expr) => {
+            let string = $str.as_bytes();
+
+            for byte in string {
+                let map_err = || WebServerError::ResponseTooLarge(num_bytes);
+                let slot = bytes.get_mut(num_bytes).ok_or_else(map_err)?;
+                *slot = *byte;
+                num_bytes += 1;
+            }
+        };
+    };
+
+    write_to_bytes!("HTTP/1.1 ");
+    num_bytes += itoa::write(&mut bytes[num_bytes..], resp.status)?;
+    write_to_bytes!(" Ok\r\nContent-Length: ");
+    num_bytes += itoa::write(&mut bytes[num_bytes..], resp.body.len())?;
+    write_to_bytes!("\r\nContent-Type: text;html; charset=UTF-8\r\nConnection: close\r\n\r\n");
+
+    if resp.body.len() + num_bytes > bytes.len() {
+        return Err(WebServerError::ResponseTooLarge(num_bytes));
+    }
+
+    bytes[num_bytes..(resp.body.len() + num_bytes)].copy_from_slice(resp.body);
+    num_bytes += resp.body.len();
+
+    return Ok(&bytes[..num_bytes]);
 }
 
 // Below is licensed via the MIT License (MIT)

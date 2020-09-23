@@ -195,6 +195,12 @@ fn respond_to_http_request<'a>(
                 body: ROOT_HTML.as_bytes(),
             });
         }
+        "/favicon.ico" => {
+            return Ok(net_io::HttpResponse {
+                status: 404,
+                body: "".as_bytes(),
+            });
+        }
         _ => {
             return Ok(net_io::HttpResponse {
                 status: 404,
