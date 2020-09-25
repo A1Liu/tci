@@ -217,6 +217,18 @@ fn ws_respond<'a>(
 ) -> Result<net_io::WSResponse<'a>, WebServerError> {
     match message_type {
         WebSocketReceiveMessageType::Text => {
+            let message = match std::str::from_utf8(ws_buffer) {
+                Ok(m) => m,
+                Err(err) => {
+                    let len = write_b!(out_buffer, "received invalid UTF-8 ({})", err)?;
+
+                    return Ok(net_io::WSResponse::Response {
+                        message_type: WebSocketSendMessageType::Text,
+                        message: &out_buffer[..len],
+                    });
+                }
+            };
+
             let message = &mut out_buffer[..ws_buffer.len()];
             message.copy_from_slice(ws_buffer);
 
