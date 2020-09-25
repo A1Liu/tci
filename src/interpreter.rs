@@ -21,11 +21,13 @@ macro_rules! err {
 pub struct CallFrame {
     pub name: u32,
     pub loc: CodeLoc,
+    pub fp: u16,
+    pub pc: u32,
 }
 
 impl CallFrame {
-    pub fn new(name: u32, loc: CodeLoc) -> Self {
-        Self { name, loc }
+    pub fn new(name: u32, loc: CodeLoc, fp: u16, pc: u32) -> Self {
+        Self { name, loc, fp, pc }
     }
 }
 
@@ -59,7 +61,9 @@ pub const ECALL_EXIT: u32 = 1;
 pub const ECALL_EXIT_WITH_CODE: u32 = 2;
 
 pub enum Directive {
-    ChangePC(u32),
+    ChangePC(u32), // add next
+    Call(u32),
+    LibCall(u32),
     Return,
     Exit(i32),
 }
@@ -168,6 +172,11 @@ pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory<u32>,
     pub callstack: Vec<CallFrame>,
     pub lib_funcs: HashMap<u32, LibFunc<IO>>,
+    pub program: Program<'static>,
+    pub current_func: u32,
+    pub ret_addr: VarPointer,
+    pub fp: u16,
+    pub pc: u32,
     pub io: IO,
 }
 
@@ -185,18 +194,40 @@ impl<IO: RuntimeIO> Deref for Runtime<IO> {
 }
 
 impl<IO: RuntimeIO> Runtime<IO> {
-    pub fn new(io: IO) -> Self {
+    pub fn new(program: Program<'static>, io: IO) -> Self {
         let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
 
         lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
 
-        Self {
-            memory: Memory::new(),
+        let main_func = match program.ops[program.main_idx as usize].op {
+            Opcode::Func(name) => name,
+            op => panic!("found function header {:?} (this is an error in tci)", op),
+        };
+
+        let mut memory = Memory::new_with_binary(program.data);
+        let ret_addr = memory.add_stack_var(4, 0);
+        #[rustfmt::skip]
+        memory.set(ret_addr, 0u32, 0).expect("failed write of ret_addr of main");
+
+        let _argc = memory.add_stack_var(4, 0);
+        let _argv = memory.add_stack_var(8, 0);
+
+        let s = Self {
+            fp: memory.stack_length() + 1,
+            memory,
             callstack: Vec::new(),
+            pc: program.main_idx + 1,
+            current_func: main_func,
+            ret_addr,
+            program,
             lib_funcs,
             io,
-        }
+        };
+
+        // TODO initialize _argc and _argv
+
+        return s;
     }
 
     pub fn fp_offset(fp: u16, var: i16) -> u16 {
@@ -209,52 +240,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run_program(&mut self, program: Program) -> i32 {
-        self.memory = Memory::new_with_binary(program.data);
-        let ret_addr = self.add_stack_var(4, 0);
-        self.set(ret_addr, 0u32, 0)
-            .expect("failed to write to return address location of main");
-
-        let _argc = self.add_stack_var(4, 0);
-        let _argv = self.add_stack_var(8, 0);
-
-        // TODO populate argc and argv
-
-        let result = match self.run_func(&program, program.main_idx) {
-            Ok(res) => res,
-            Err(err) => {
-                let err_str = render_err(&err, &self.callstack, &program);
-                write!(self.io.err(), "{}", err_str).expect("why did this fail?");
-
-                return 1;
-            }
-        };
-
-        return result.unwrap_or(i32::from_be(self.get_var(ret_addr).unwrap()));
-    }
-
-    pub fn run_func(&mut self, program: &Program, pcounter: u32) -> Result<Option<i32>, IError> {
-        let func = match program.ops[pcounter as usize].op {
-            Opcode::Func(name) => name,
-            op => {
-                return err!(
-                    "InvalidFunctionHeader",
-                    "found function header {:?} (this is an error in your compiler)",
-                    op
-                )
-            }
-        };
-
-        let fp = self.memory.stack_length() + 1;
-        let mut pc: u32 = pcounter + 1;
-
+    pub fn run(&mut self) -> Result<i32, IError> {
         loop {
-            let op = program.ops[pc as usize];
+            let op = self.program.ops[self.pc as usize];
+            println!("{:?}", op);
 
             write!(self.io.log(), "op: {:?}\n", op.op)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            self.callstack.push(CallFrame::new(func, op.loc));
-            let directive = self.run_op(fp, pc, program, op.op)?;
+            self.callstack
+                .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
+            let directive = self.run_op(self.fp, self.pc, op.op)?;
             write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
             write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
@@ -262,44 +257,48 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             match directive {
                 Directive::ChangePC(new_pc) => {
-                    if self.callstack.pop().is_none() {
-                        return err!(
-                            "CallstackEmpty",
-                            "tried to pop callstack when callstack was empty"
-                        );
-                    }
-
-                    pc = new_pc;
+                    self.callstack.pop().unwrap();
+                    self.pc = new_pc;
                 }
                 Directive::Return => {
-                    if self.callstack.pop().is_none() {
-                        return err!(
-                            "CallstackEmpty",
-                            "tried to pop callstack when callstack was empty"
-                        );
+                    self.callstack.pop().unwrap();
+
+                    let frame = match self.callstack.pop() {
+                        None => return Ok(i32::from_be(self.get_var(self.ret_addr).unwrap())),
+                        Some(frame) => frame,
+                    };
+                    while self.memory.stack_length() >= self.fp {
+                        self.memory.pop_stack_var(self.pc).unwrap();
                     }
 
-                    while self.memory.stack_length() >= fp {
-                        self.memory.pop_stack_var(pc)?;
-                    }
+                    self.current_func = frame.name;
+                    self.fp = frame.fp;
+                    self.pc = frame.pc + 1;
+                }
+                Directive::Call(func) => {
+                    self.fp = self.memory.stack_length() + 1;
 
-                    return Ok(None);
+                    let func_name = match self.program.ops[func as usize].op {
+                        Opcode::Func(name) => name,
+                        op => panic!("found function header {:?} (this is an error in tci)", op),
+                    };
+                    self.current_func = func_name;
+                    self.pc = func + 1;
+                }
+                Directive::LibCall(func_name) => {
+                    self.dispatch_lib_func(func_name, self.pc)?;
+                    self.pc += 1;
+                    self.callstack.pop().unwrap();
                 }
                 Directive::Exit(val) => {
-                    return Ok(Some(val));
+                    return Ok(val);
                 }
             }
         }
     }
 
     #[inline]
-    pub fn run_op(
-        &mut self,
-        fp: u16,
-        pc: u32,
-        program: &Program,
-        opcode: Opcode,
-    ) -> Result<Directive, IError> {
+    pub fn run_op(&mut self, fp: u16, pc: u32, opcode: Opcode) -> Result<Directive, IError> {
         match opcode {
             Opcode::Func(_) => {}
 
@@ -520,14 +519,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Ret => return Ok(Directive::Return),
 
             Opcode::Call(func) => {
-                if let Some(exit_code) = self.run_func(program, func)? {
-                    return Ok(Directive::Exit(exit_code));
-                }
+                return Ok(Directive::Call(func));
             }
             Opcode::LibCall(func_name) => {
-                if let Some(exit_code) = self.dispatch_lib_func(func_name, pc)? {
-                    return Ok(Directive::Exit(exit_code));
-                }
+                return Ok(Directive::LibCall(func_name));
             }
 
             Opcode::Ecall(ECALL_PRINT_STR) => {

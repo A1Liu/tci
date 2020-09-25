@@ -23,7 +23,7 @@ fn test_file_should_succeed(filename: &str) {
     };
     mem::drop(files);
 
-    let code = run(program, &mut io);
+    let code = run(program, &mut io).expect("shouldn't exception");
 
     println!("return code: {}", code);
     if code != 0 {

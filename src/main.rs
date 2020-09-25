@@ -27,6 +27,7 @@ use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendM
 use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
+use runtime::IError;
 use runtime::{DefaultIO, RuntimeIO};
 use std::sync::Mutex;
 use util::*;
@@ -125,9 +126,9 @@ fn emit_err(errs: &Vec<Error>, files: &FileDb, writer: &mut impl WriteColor) {
     }
 }
 
-fn run(program: interpreter::Program, runtime_io: impl RuntimeIO) -> i32 {
-    let mut runtime = interpreter::Runtime::new(runtime_io);
-    runtime.run_program(program)
+fn run(program: interpreter::Program<'static>, runtime_io: impl RuntimeIO) -> Result<i32, IError> {
+    let mut runtime = interpreter::Runtime::new(program, runtime_io);
+    runtime.run()
 }
 
 fn compile_from_program_args() {
