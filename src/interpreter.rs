@@ -31,6 +31,12 @@ impl CallFrame {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum LocOrRetCode {
+    Loc(CodeLoc),
+    Code(i32),
+}
+
 pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Program) -> String {
     use codespan_reporting::diagnostic::*;
     use codespan_reporting::term::*;
@@ -61,7 +67,8 @@ pub const ECALL_EXIT: u32 = 1;
 pub const ECALL_EXIT_WITH_CODE: u32 = 2;
 
 pub enum Directive {
-    ChangePC(u32), // add next
+    ChangePC(u32),
+    Next,
     Call(u32),
     LibCall(u32),
     Return,
@@ -243,7 +250,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
     pub fn run(&mut self) -> Result<i32, IError> {
         loop {
             let op = self.program.ops[self.pc as usize];
-            println!("{:?}", op);
 
             write!(self.io.log(), "op: {:?}\n", op.op)
                 .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
@@ -259,6 +265,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 Directive::ChangePC(new_pc) => {
                     self.callstack.pop().unwrap();
                     self.pc = new_pc;
+                }
+                Directive::Next => {
+                    self.callstack.pop().unwrap();
+                    self.pc += 1;
                 }
                 Directive::Return => {
                     self.callstack.pop().unwrap();
@@ -292,6 +302,72 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 }
                 Directive::Exit(val) => {
                     return Ok(val);
+                }
+            }
+        }
+    }
+
+    pub fn run_until_pc(&mut self, pc: u32) -> Result<LocOrRetCode, IError> {
+        loop {
+            let op = self.program.ops[self.pc as usize];
+            if self.pc == pc {
+                return Ok(LocOrRetCode::Loc(op.loc));
+            }
+
+            write!(self.io.log(), "op: {:?}\n", op.op)
+                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
+            self.callstack
+                .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
+            let directive = self.run_op(self.fp, self.pc, op.op)?;
+            write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
+                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
+            write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
+                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
+
+            match directive {
+                Directive::ChangePC(new_pc) => {
+                    self.callstack.pop().unwrap();
+                    self.pc = new_pc;
+                }
+                Directive::Next => {
+                    self.callstack.pop().unwrap();
+                    self.pc += 1;
+                }
+                Directive::Return => {
+                    self.callstack.pop().unwrap();
+
+                    let frame = match self.callstack.pop() {
+                        None => {
+                            let return_code = i32::from_be(self.get_var(self.ret_addr).unwrap());
+                            return Ok(LocOrRetCode::Code(return_code));
+                        }
+                        Some(frame) => frame,
+                    };
+                    while self.memory.stack_length() >= self.fp {
+                        self.memory.pop_stack_var(self.pc).unwrap();
+                    }
+
+                    self.current_func = frame.name;
+                    self.fp = frame.fp;
+                    self.pc = frame.pc + 1;
+                }
+                Directive::Call(func) => {
+                    self.fp = self.memory.stack_length() + 1;
+
+                    let func_name = match self.program.ops[func as usize].op {
+                        Opcode::Func(name) => name,
+                        op => panic!("found function header {:?} (this is an error in tci)", op),
+                    };
+                    self.current_func = func_name;
+                    self.pc = func + 1;
+                }
+                Directive::LibCall(func_name) => {
+                    self.dispatch_lib_func(func_name, self.pc)?;
+                    self.pc += 1;
+                    self.callstack.pop().unwrap();
+                }
+                Directive::Exit(val) => {
+                    return Ok(LocOrRetCode::Code(val));
                 }
             }
         }
@@ -555,7 +631,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         }
 
-        return Ok(Directive::ChangePC(pc + 1));
+        return Ok(Directive::Next);
     }
 
     pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<i32>, IError> {
