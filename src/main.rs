@@ -11,6 +11,7 @@ mod net_io;
 mod assembler;
 mod ast;
 mod buckets;
+mod commands;
 mod filedb;
 mod interpreter;
 mod lexer;
@@ -29,7 +30,6 @@ use interpreter::Program;
 use net_io::WebServerError;
 use runtime::IError;
 use runtime::{DefaultIO, RuntimeIO};
-use std::sync::Mutex;
 use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
@@ -118,7 +118,7 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     Ok(program)
 }
 
-fn emit_err(errs: &Vec<Error>, files: &FileDb, writer: &mut impl WriteColor) {
+fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
     let config = codespan_reporting::term::Config::default();
     for err in errs {
         codespan_reporting::term::emit(writer, &config, files, &err.diagnostic())
@@ -163,16 +163,6 @@ fn compile_from_program_args() {
     mem::drop(files);
 }
 
-enum GlobalState {
-    Uninit,
-    Args(Vec<String>),
-    Compiled(Program<'static>),
-}
-
-static GLOBALS: LazyStatic<Mutex<GlobalState>> = lazy_static!(globals, Mutex<GlobalState>, {
-    Mutex::new(GlobalState::Uninit)
-});
-
 fn main() -> Result<(), net_io::WebServerError> {
     let server = net_io::WebServer {
         http_handler: respond_to_http_request,
@@ -213,16 +203,16 @@ fn respond_to_http_request<'a>(
 
 fn ws_respond<'a>(
     message_type: WebSocketReceiveMessageType,
+    state: &mut commands::WSRuntime,
     ws_buffer: &[u8],
     out_buffer: &'a mut [u8],
 ) -> Result<net_io::WSResponse<'a>, WebServerError> {
     match message_type {
         WebSocketReceiveMessageType::Text => {
-            let message = match std::str::from_utf8(ws_buffer) {
-                Ok(m) => m,
+            let command = match serde_json::from_slice(ws_buffer) {
+                Ok(c) => c,
                 Err(err) => {
-                    let len = write_b!(out_buffer, "received invalid UTF-8 ({})", err)?;
-
+                    let len = write_b!(out_buffer, "deserialization of command failed ({})", err)?;
                     return Ok(net_io::WSResponse::Response {
                         message_type: WebSocketSendMessageType::Text,
                         message: &out_buffer[..len],
@@ -230,12 +220,14 @@ fn ws_respond<'a>(
                 }
             };
 
-            let message = &mut out_buffer[..ws_buffer.len()];
-            message.copy_from_slice(ws_buffer);
+            let result = state.run_command(command);
+            let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
+            serde_json::to_writer(&mut cursor, &result).unwrap();
+            let len = cursor.position() as usize;
 
             return Ok(net_io::WSResponse::Response {
                 message_type: WebSocketSendMessageType::Text,
-                message,
+                message: &out_buffer[..len],
             });
         }
         WebSocketReceiveMessageType::CloseCompleted => return Ok(net_io::WSResponse::Close),

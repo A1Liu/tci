@@ -60,19 +60,30 @@ pub struct HttpResponse<'a> {
 
 pub type HttpHandler =
     for<'a> fn(HttpHeader, &'a mut [u8]) -> Result<HttpResponse<'a>, WebServerError>;
-pub type WSHandler = for<'a> fn(
+pub type WSHandler<State> = for<'a> fn(
     WebSocketReceiveMessageType,
+    &mut State,
     &[u8],
     &'a mut [u8],
 ) -> Result<WSResponse<'a>, WebServerError>;
 
-#[derive(Clone, Copy)]
-pub struct WebServer {
+pub struct WebServer<State: Default + 'static> {
     pub http_handler: HttpHandler,
-    pub ws_handler: WSHandler,
+    pub ws_handler: WSHandler<State>,
 }
 
-impl WebServer {
+impl<State: Default + 'static> Clone for WebServer<State> {
+    fn clone(&self) -> Self {
+        Self {
+            http_handler: self.http_handler,
+            ws_handler: self.ws_handler,
+        }
+    }
+}
+
+impl<State: Default + 'static> Copy for WebServer<State> {}
+
+impl<State: Default + 'static> WebServer<State> {
     pub fn serve(&self) -> Result<(), WebServerError> {
         let addr = "127.0.0.1:3000";
         let listener = TcpListener::bind(addr)?;
@@ -164,6 +175,7 @@ impl WebServer {
         }
 
         let mut ws_num_bytes = 0;
+        let mut state = State::default();
         loop {
             if num_bytes >= tcp_recv.len() {
                 return Err(WebServerError::PayloadTooLarge(num_bytes));
@@ -192,7 +204,7 @@ impl WebServer {
 
             let ws_buffer = &ws_buf[..ws_num_bytes];
             ws_num_bytes = 0;
-            let response = ws_handler(ws_result.message_type, ws_buffer, scratch_buf)?;
+            let response = ws_handler(ws_result.message_type, &mut state, ws_buffer, scratch_buf)?;
             match response {
                 WSResponse::Response {
                     message_type,
