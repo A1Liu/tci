@@ -212,7 +212,8 @@ fn ws_respond<'a>(
             let command = match serde_json::from_slice(ws_buffer) {
                 Ok(c) => c,
                 Err(err) => {
-                    let len = write_b!(out_buffer, "deserialization of command failed ({})", err)?;
+                    let len = write_b!(out_buffer, "deserialization of command failed ({})", err)
+                        .unwrap();
                     return Ok(net_io::WSResponse::Response {
                         message_type: WebSocketSendMessageType::Text,
                         message: &out_buffer[..len],
@@ -220,7 +221,24 @@ fn ws_respond<'a>(
                 }
             };
 
-            let result = state.run_command(command);
+            let result = match state.run_command(command) {
+                Ok(val) => val,
+                Err(err) => {
+                    let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
+                    serde_json::to_writer(&mut cursor, &err).unwrap();
+                    let len = cursor.position() as usize;
+
+                    return Ok(net_io::WSResponse::Response {
+                        message_type: WebSocketSendMessageType::Text,
+                        message: &out_buffer[..len],
+                    });
+                }
+            };
+
+            if let commands::CommandResult::None = result {
+                return Ok(net_io::WSResponse::None);
+            }
+
             let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
             serde_json::to_writer(&mut cursor, &result).unwrap();
             let len = cursor.position() as usize;

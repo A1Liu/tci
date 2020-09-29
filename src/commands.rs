@@ -3,12 +3,14 @@ use crate::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
+#[serde(tag = "command", content = "data")]
 pub enum Command {
     AddFile(String),
     Compile,
 }
 
 #[derive(Serialize)]
+#[serde(tag = "response", content = "data")]
 pub enum CommandError {
     IO(String),
     Compile(String),
@@ -22,6 +24,7 @@ impl From<std::io::Error> for CommandError {
 }
 
 #[derive(Serialize)]
+#[serde(tag = "response", content = "data")]
 pub enum CommandResult {
     None,
     Confirm(Command),
@@ -58,6 +61,12 @@ impl<'a> WSRuntime<'a> {
             }
 
             return Ok(CommandResult::Confirm(command));
+        }
+
+        if let Self::Compiled(program) = self {
+            match command {
+                _ => return Err(CommandError::InvalidCommand),
+            }
         }
 
         return Ok(CommandResult::Confirm(command));
