@@ -249,132 +249,33 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
     pub fn run(&mut self) -> Result<i32, IError> {
         loop {
-            let op = self.program.ops[self.pc as usize];
-
-            write!(self.io.log(), "op: {:?}\n", op.op)
-                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            self.callstack
-                .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
-            let directive = self.run_op(self.fp, self.pc, op.op)?;
-            write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
-                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
-                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-
-            match directive {
-                Directive::ChangePC(new_pc) => {
-                    self.callstack.pop().unwrap();
-                    self.pc = new_pc;
-                }
-                Directive::Next => {
-                    self.callstack.pop().unwrap();
-                    self.pc += 1;
-                }
-                Directive::Return => {
-                    self.callstack.pop().unwrap();
-
-                    let frame = match self.callstack.pop() {
-                        None => return Ok(i32::from_be(self.get_var(self.ret_addr).unwrap())),
-                        Some(frame) => frame,
-                    };
-                    while self.memory.stack_length() >= self.fp {
-                        self.memory.pop_stack_var(self.pc).unwrap();
-                    }
-
-                    self.current_func = frame.name;
-                    self.fp = frame.fp;
-                    self.pc = frame.pc + 1;
-                }
-                Directive::Call(func) => {
-                    self.fp = self.memory.stack_length() + 1;
-
-                    let func_name = match self.program.ops[func as usize].op {
-                        Opcode::Func(name) => name,
-                        op => panic!("found function header {:?} (this is an error in tci)", op),
-                    };
-                    self.current_func = func_name;
-                    self.pc = func + 1;
-                }
-                Directive::LibCall(func_name) => {
-                    self.dispatch_lib_func(func_name, self.pc)?;
-                    self.pc += 1;
-                    self.callstack.pop().unwrap();
-                }
-                Directive::Exit(val) => {
-                    return Ok(val);
-                }
+            if let Some(exit) = self.run_op(self.fp, self.pc)? {
+                return Ok(exit);
             }
         }
     }
 
     pub fn run_until_pc(&mut self, pc: u32) -> Result<LocOrRetCode, IError> {
+        let callstack_len = self.callstack.len();
         loop {
             let op = self.program.ops[self.pc as usize];
-            if self.pc == pc {
+            if self.pc == pc || callstack_len < self.callstack.len() {
                 return Ok(LocOrRetCode::Loc(op.loc));
             }
 
-            write!(self.io.log(), "op: {:?}\n", op.op)
-                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            self.callstack
-                .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
-            let directive = self.run_op(self.fp, self.pc, op.op)?;
-            write!(self.io.log(), "stack: {:0>3?}\n", self.memory.stack.data)
-                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-            write!(self.io.log(), "heap:  {:0>3?}\n\n", self.memory.heap.data)
-                .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-
-            match directive {
-                Directive::ChangePC(new_pc) => {
-                    self.callstack.pop().unwrap();
-                    self.pc = new_pc;
-                }
-                Directive::Next => {
-                    self.callstack.pop().unwrap();
-                    self.pc += 1;
-                }
-                Directive::Return => {
-                    self.callstack.pop().unwrap();
-
-                    let frame = match self.callstack.pop() {
-                        None => {
-                            let return_code = i32::from_be(self.get_var(self.ret_addr).unwrap());
-                            return Ok(LocOrRetCode::Code(return_code));
-                        }
-                        Some(frame) => frame,
-                    };
-                    while self.memory.stack_length() >= self.fp {
-                        self.memory.pop_stack_var(self.pc).unwrap();
-                    }
-
-                    self.current_func = frame.name;
-                    self.fp = frame.fp;
-                    self.pc = frame.pc + 1;
-                }
-                Directive::Call(func) => {
-                    self.fp = self.memory.stack_length() + 1;
-
-                    let func_name = match self.program.ops[func as usize].op {
-                        Opcode::Func(name) => name,
-                        op => panic!("found function header {:?} (this is an error in tci)", op),
-                    };
-                    self.current_func = func_name;
-                    self.pc = func + 1;
-                }
-                Directive::LibCall(func_name) => {
-                    self.dispatch_lib_func(func_name, self.pc)?;
-                    self.pc += 1;
-                    self.callstack.pop().unwrap();
-                }
-                Directive::Exit(val) => {
-                    return Ok(LocOrRetCode::Code(val));
-                }
+            if let Some(exit) = self.run_op(self.fp, self.pc)? {
+                return Ok(LocOrRetCode::Code(exit));
             }
         }
     }
 
     #[inline]
-    pub fn run_op(&mut self, fp: u16, pc: u32, opcode: Opcode) -> Result<Directive, IError> {
+    pub fn run_op(&mut self, fp: u16, pc: u32) -> Result<Option<i32>, IError> {
+        let op = self.program.ops[self.pc as usize];
+        self.callstack
+            .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
+
+        let opcode = op.op;
         match opcode {
             Opcode::Func(_) => {}
 
@@ -539,66 +440,123 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::Jump(target) => {
-                return Ok(Directive::ChangePC(target));
+                self.pc = target;
+                self.callstack.pop().unwrap();
+                return Ok(None);
             }
 
             Opcode::JumpIfZero8(target) => {
                 let value: u8 = self.pop_stack(pc)?;
                 if value == 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
             Opcode::JumpIfZero16(target) => {
                 let value: u16 = self.pop_stack(pc)?;
                 if value == 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
             Opcode::JumpIfZero32(target) => {
                 let value: u32 = self.pop_stack(pc)?;
                 if value == 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
             Opcode::JumpIfZero64(target) => {
                 let value: u64 = self.pop_stack(pc)?;
                 if value == 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
 
             Opcode::JumpIfNotZero8(target) => {
                 let value: u8 = self.pop_stack(pc)?;
                 if value != 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
             Opcode::JumpIfNotZero16(target) => {
                 let value: u16 = self.pop_stack(pc)?;
                 if value != 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
             Opcode::JumpIfNotZero32(target) => {
                 let value: u32 = self.pop_stack(pc)?;
                 if value != 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
             Opcode::JumpIfNotZero64(target) => {
                 let value: u64 = self.pop_stack(pc)?;
                 if value != 0 {
-                    return Ok(Directive::ChangePC(target));
+                    self.pc = target;
+                    self.callstack.pop().unwrap();
+                    return Ok(None);
                 }
             }
 
-            Opcode::Ret => return Ok(Directive::Return),
+            Opcode::Ret => {
+                self.callstack.pop().unwrap();
+
+                let frame = match self.callstack.pop() {
+                    None => {
+                        let ret = i32::from_be(self.get_var(self.ret_addr).unwrap());
+                        return Ok(Some(ret));
+                    }
+                    Some(frame) => frame,
+                };
+                while self.memory.stack_length() >= self.fp {
+                    self.memory.pop_stack_var(self.pc).unwrap();
+                }
+
+                self.current_func = frame.name;
+                self.fp = frame.fp;
+                self.pc = frame.pc + 1;
+                return Ok(None);
+            }
 
             Opcode::Call(func) => {
-                return Ok(Directive::Call(func));
+                self.fp = self.memory.stack_length() + 1;
+
+                let func_name = match self.program.ops[func as usize].op {
+                    Opcode::Func(name) => name,
+                    op => panic!("found function header {:?} (this is an error in tci)", op),
+                };
+
+                self.current_func = func_name;
+                self.pc = func + 1;
+                return Ok(None);
             }
             Opcode::LibCall(func_name) => {
-                return Ok(Directive::LibCall(func_name));
+                if let Some(lib_func) = self.lib_funcs.get(&func_name) {
+                    lib_func(self, self.pc)?;
+                } else {
+                    return Err(error!(
+                        "InvalidLibraryFunction",
+                        "library function symbol {} is invalid (this is a problem with tci)",
+                        func_name
+                    ));
+                }
+
+                self.pc += 1;
+                self.callstack.pop().unwrap();
+                return Ok(None);
             }
 
             Opcode::Ecall(ECALL_PRINT_STR) => {
@@ -624,25 +582,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
             Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {
                 let code = i32::from_be(self.pop_stack(pc)?);
-                return Ok(Directive::Exit(code));
+                return Ok(Some(code));
             }
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
             }
         }
 
-        return Ok(Directive::Next);
-    }
-
-    pub fn dispatch_lib_func(&mut self, func_name: u32, pc: u32) -> Result<Option<i32>, IError> {
-        if let Some(lib_func) = self.lib_funcs.get(&func_name) {
-            return lib_func(self, pc);
-        }
-
-        return Err(error!(
-            "InvalidLibraryFunction",
-            "library function symbol {} is invalid (this is a problem with tci)", func_name
-        ));
+        self.callstack.pop().unwrap();
+        self.pc += 1;
+        return Ok(None);
     }
 
     pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {
@@ -662,6 +611,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         return Ok(&str_bytes[0..idx]);
     }
+}
+
+pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>, _pc: u32) -> Result<Option<i32>, IError> {
+    let top_ptr = VarPointer::new_stack(sel.stack_length(), 0);
+    let size = u64::from_be(sel.memory.get_var(top_ptr)?);
+    return Ok(None);
 }
 
 pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>, _pc: u32) -> Result<Option<i32>, IError> {
