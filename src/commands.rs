@@ -1,4 +1,6 @@
 use crate::interpreter::Program;
+use crate::interpreter::*;
+use crate::runtime::*;
 use crate::*;
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +9,9 @@ use serde::{Deserialize, Serialize};
 pub enum Command {
     AddFile(String),
     Compile,
+    RunUntilScopedPC(u32),
+    RunCount(u32),
+    RunUntilBreak(u32),
 }
 
 #[derive(Serialize)]
@@ -14,6 +19,7 @@ pub enum Command {
 pub enum CommandError {
     IO(String),
     Compile(String),
+    Runtime(String),
     InvalidCommand,
 }
 
@@ -28,11 +34,14 @@ impl From<std::io::Error> for CommandError {
 pub enum CommandResult {
     None,
     Confirm(Command),
+    Compiled(Program<'static>),
+    CurrentLoc { op: u32, loc: CodeLoc },
+    ReturnCode(i32),
 }
 
 pub enum WSRuntime<'a> {
     Files(FileDb<'a>),
-    Compiled(Program<'static>),
+    Running(Runtime<InMemoryIO>),
 }
 
 impl<'a> Default for WSRuntime<'a> {
@@ -55,7 +64,8 @@ impl<'a> WSRuntime<'a> {
                         return Err(CommandError::Compile(writer.into_string()));
                     }
                 };
-                *self = Self::Compiled(program);
+                *self = Self::Running(Runtime::new(program, InMemoryIO::new()));
+                return Ok(CommandResult::Compiled(program));
             } else {
                 return Err(CommandError::InvalidCommand);
             }
@@ -63,8 +73,29 @@ impl<'a> WSRuntime<'a> {
             return Ok(CommandResult::Confirm(command));
         }
 
-        if let Self::Compiled(program) = self {
+        if let Self::Running(runtime) = self {
             match command {
+                Command::RunCount(count) => {
+                    let loc_or_ret = match runtime.run_op_count(count) {
+                        Ok(prog) => prog,
+                        Err(err) => {
+                            let err = render_err(&err, &runtime.callstack, &runtime.program);
+                            return Err(CommandError::Runtime(err));
+                        }
+                    };
+
+                    match loc_or_ret {
+                        LocOrRetCode::Code(code) => {
+                            return Ok(CommandResult::ReturnCode(code));
+                        }
+                        LocOrRetCode::Loc(loc) => {
+                            return Ok(CommandResult::CurrentLoc {
+                                op: runtime.pc,
+                                loc,
+                            });
+                        }
+                    }
+                }
                 _ => return Err(CommandError::InvalidCommand),
             }
         }

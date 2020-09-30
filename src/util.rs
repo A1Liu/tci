@@ -2,6 +2,7 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::mem::MaybeUninit;
 use core::{fmt, ops, slice};
+use serde::Serialize;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::{io, marker};
 
@@ -160,7 +161,7 @@ impl Into<Vec<Error>> for Error {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,

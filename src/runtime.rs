@@ -1,6 +1,7 @@
 use crate::buckets::*;
 use crate::util::*;
 use core::{fmt, mem, str};
+use serde::Serialize;
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
@@ -37,7 +38,7 @@ impl From<io::Error> for IError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Var {
     pub idx: usize,
     pub len: u32, // len in bytes
@@ -221,7 +222,7 @@ pub struct VarBuffer {
     pub vars: Vec<Var>, // Tracker for variables
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct VarBufferRef<'a> {
     pub data: &'a [u8],
     pub vars: &'a [Var],

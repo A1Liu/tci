@@ -3,12 +3,13 @@ use crate::util::*;
 use codespan_reporting::files::{line_starts, Files};
 use core::include_bytes;
 use core::{mem, ops, str};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::{canonicalize, read_to_string};
 use std::io;
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct File<'a> {
     pub _name: &'a str,
     /// The source code of the file.
@@ -284,7 +285,7 @@ impl<'a> Files<'a> for FileDb<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct FileDbRef<'a> {
     pub files: &'a [File<'a>],
     pub symbols: &'a [&'a str],

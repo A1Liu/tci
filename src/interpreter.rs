@@ -2,6 +2,7 @@ use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
 use core::ops::{Deref, DerefMut};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -66,15 +67,6 @@ pub const ECALL_PRINT_STR: u32 = 0;
 pub const ECALL_EXIT: u32 = 1;
 pub const ECALL_EXIT_WITH_CODE: u32 = 2;
 
-pub enum Directive {
-    ChangePC(u32),
-    Next,
-    Call(u32),
-    LibCall(u32),
-    Return,
-    Exit(i32),
-}
-
 /// - GetLocal gets a value from the stack at a given stack and variable offset
 /// - SetLocal sets a value on the stack at a given stack and variable offset to the value at the top
 ///   of the stack
@@ -86,7 +78,8 @@ pub enum Directive {
 ///   it pushes the byte 1 onto the stack if n < t, and the byte 0 onto the stack if n >= t.
 /// - CompEq compares pops t, the top of the stack, and compares it to n, the next item on the stack.
 ///   it pushes the byte 1 onto the stack if n == t, and the byte 0 onto the stack if n != t.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(tag = "code", content = "data")]
 pub enum Opcode {
     Func(u32), // Function header used for callstack manipulation
 
@@ -159,13 +152,13 @@ pub enum Opcode {
     Ecall(u32),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TaggedOpcode {
     pub op: Opcode,
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Program<'a> {
     pub files: FileDbRef<'a>,
     pub data: VarBufferRef<'a>,
@@ -253,6 +246,19 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 return Ok(exit);
             }
         }
+    }
+
+    pub fn run_op_count(&mut self, mut count: u32) -> Result<LocOrRetCode, IError> {
+        let callstack_len = self.callstack.len();
+        while count > 0 {
+            if let Some(exit) = self.run_op(self.fp, self.pc)? {
+                return Ok(LocOrRetCode::Code(exit));
+            }
+            count -= 1;
+        }
+
+        let op = self.program.ops[self.pc as usize];
+        return Ok(LocOrRetCode::Loc(op.loc));
     }
 
     pub fn run_until_pc(&mut self, pc: u32) -> Result<LocOrRetCode, IError> {
