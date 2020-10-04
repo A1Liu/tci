@@ -248,14 +248,12 @@ impl<'a> FileDb<'a> {
         let text = self.cloc_to_str(cloc);
 
         if let Some(id) = self.translate.get(text) {
-            println!("{} {}", text, *id);
             return *id;
         } else {
             let idx = self.names.len() as u32;
             self.names.push(cloc);
             self.translate.insert(text, idx);
             self._size += mem::size_of::<&str>();
-            println!("{} {}", text, idx);
             return idx;
         }
     }
