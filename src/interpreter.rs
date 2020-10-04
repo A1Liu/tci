@@ -635,7 +635,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
 pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
+    let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
+    let var_pointer = sel.memory.add_heap_var(size as u32, sel.pc);
+    sel.memory.set(ret_ptr, var_pointer, sel.pc)?;
+    return Ok(None);
+}
+
+pub fn free<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
+    let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
     return Ok(None);
 }
 

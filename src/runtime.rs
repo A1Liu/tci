@@ -57,6 +57,14 @@ impl Var {
     pub fn upper(self) -> usize {
         self.idx + self.len as usize
     }
+
+    pub fn is_valid(&self) -> bool {
+        return self.meta & (1u32 << 31) == 0;
+    }
+
+    pub fn invalidate(&mut self) {
+        self.meta = self.meta | (1u32 << 31);
+    }
 }
 
 #[derive(Clone, Copy)]
