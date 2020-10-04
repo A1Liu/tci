@@ -168,6 +168,14 @@ pub struct Program<'a> {
 
 type LibFunc<IO> = for<'a> fn(&'a mut Runtime<IO>, u32) -> Result<Option<i32>, IError>;
 
+#[derive(Serialize)]
+pub struct RuntimeDiagnostic {
+    pub callstack: u32,
+    pub fp: u16,
+    pub pc: u32,
+    pub loc: CodeLoc,
+}
+
 pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory<u32>,
     pub callstack: Vec<CallFrame>,
@@ -230,6 +238,15 @@ impl<IO: RuntimeIO> Runtime<IO> {
         return s;
     }
 
+    pub fn diagnostic(&self) -> RuntimeDiagnostic {
+        RuntimeDiagnostic {
+            callstack: self.callstack.len() as u32, // TODO handle overflow
+            fp: self.fp,
+            pc: self.pc,
+            loc: self.program.ops[self.pc as usize].loc,
+        }
+    }
+
     pub fn fp_offset(fp: u16, var: i16) -> u16 {
         if var < 0 {
             // TODO make sure there's no overflow happening here
@@ -248,31 +265,34 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run_op_count(&mut self, mut count: u32) -> Result<LocOrRetCode, IError> {
+    pub fn run_op_count(&mut self, mut count: u32) -> Result<Option<i32>, IError> {
         let callstack_len = self.callstack.len();
         while count > 0 {
             if let Some(exit) = self.run_op(self.fp, self.pc)? {
-                return Ok(LocOrRetCode::Code(exit));
+                return Ok(Some(exit));
             }
             count -= 1;
         }
 
-        let op = self.program.ops[self.pc as usize];
-        return Ok(LocOrRetCode::Loc(op.loc));
+        return Ok(None);
     }
 
-    pub fn run_until_pc(&mut self, pc: u32) -> Result<LocOrRetCode, IError> {
-        let callstack_len = self.callstack.len();
-        loop {
-            let op = self.program.ops[self.pc as usize];
-            if self.pc == pc || callstack_len < self.callstack.len() {
-                return Ok(LocOrRetCode::Loc(op.loc));
+    pub fn run_count_or_until(
+        &mut self,
+        mut count: u32,
+        pc: u32,
+        stack_size: u16,
+    ) -> Result<Option<i32>, IError> {
+        let stack_size = stack_size as usize;
+        while stack_size <= self.callstack.len() && count > 0 && self.pc != pc {
+            if let Some(exit) = self.run_op(self.fp, self.pc)? {
+                return Ok(Some(exit));
             }
 
-            if let Some(exit) = self.run_op(self.fp, self.pc)? {
-                return Ok(LocOrRetCode::Code(exit));
-            }
+            count -= 1;
         }
+
+        return Ok(None);
     }
 
     #[inline]

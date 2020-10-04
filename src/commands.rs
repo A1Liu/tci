@@ -11,7 +11,11 @@ pub enum Command {
     Compile,
     RunUntilScopedPC(u32),
     RunCount(u32),
-    RunUntilBreak(u32),
+    RunCountOrUntil {
+        count: u32,
+        stack_size: u16,
+        pc: u32,
+    },
 }
 
 #[derive(Serialize)]
@@ -35,8 +39,8 @@ pub enum CommandResult {
     None,
     Confirm(Command),
     Compiled(Program<'static>),
-    CurrentLoc { op: u32, loc: CodeLoc },
-    ReturnCode(i32),
+    Status(RuntimeDiagnostic),
+    StatusRet { status: RuntimeDiagnostic, ret: i32 },
 }
 
 pub enum WSRuntime<'a> {
@@ -76,7 +80,7 @@ impl<'a> WSRuntime<'a> {
         if let Self::Running(runtime) = self {
             match command {
                 Command::RunCount(count) => {
-                    let loc_or_ret = match runtime.run_op_count(count) {
+                    let ret = match runtime.run_op_count(count) {
                         Ok(prog) => prog,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
@@ -84,17 +88,36 @@ impl<'a> WSRuntime<'a> {
                         }
                     };
 
-                    match loc_or_ret {
-                        LocOrRetCode::Code(code) => {
-                            return Ok(CommandResult::ReturnCode(code));
-                        }
-                        LocOrRetCode::Loc(loc) => {
-                            return Ok(CommandResult::CurrentLoc {
-                                op: runtime.pc,
-                                loc,
-                            });
-                        }
+                    if let Some(ret) = ret {
+                        return Ok(CommandResult::StatusRet {
+                            status: runtime.diagnostic(),
+                            ret,
+                        });
                     }
+
+                    return Ok(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::RunCountOrUntil {
+                    count,
+                    pc,
+                    stack_size,
+                } => {
+                    let ret = match runtime.run_count_or_until(count, pc, stack_size) {
+                        Ok(ret) => ret,
+                        Err(err) => {
+                            let err = render_err(&err, &runtime.callstack, &runtime.program);
+                            return Err(CommandError::Runtime(err));
+                        }
+                    };
+
+                    if let Some(ret) = ret {
+                        return Ok(CommandResult::StatusRet {
+                            status: runtime.diagnostic(),
+                            ret,
+                        });
+                    }
+
+                    return Ok(CommandResult::Status(runtime.diagnostic()));
                 }
                 _ => return Err(CommandError::InvalidCommand),
             }
