@@ -120,11 +120,13 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     }
 
     add_syslib_sym!("stdio.h");
+    add_syslib_sym!("stdlib.h");
 
     add_sym!("main");
     add_sym!("va_list");
     add_sym!("printf");
     add_sym!("exit");
+    add_sym!("malloc");
 
     InitSyms {
         names,
@@ -171,12 +173,12 @@ impl<'a> FileDb<'a> {
             _size,
             files,
             file_names: HashMap::new(),
-            translate: INIT_SYMS.translate.clone(),
+            translate: HashMap::new(),
             names: Vec::new(),
         };
 
         for symbol in symbols {
-            new_self.translate_add(symbol, 0);
+            new_self.translate_add(symbol, INIT_SYMS.files.len() as u32);
         }
 
         new_self
@@ -246,12 +248,14 @@ impl<'a> FileDb<'a> {
         let text = self.cloc_to_str(cloc);
 
         if let Some(id) = self.translate.get(text) {
+            println!("{} {}", text, *id);
             return *id;
         } else {
             let idx = self.names.len() as u32;
             self.names.push(cloc);
             self.translate.insert(text, idx);
             self._size += mem::size_of::<&str>();
+            println!("{} {}", text, idx);
             return idx;
         }
     }

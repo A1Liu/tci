@@ -1,7 +1,6 @@
 use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
-use core::ops::{Deref, DerefMut};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
@@ -188,25 +187,13 @@ pub struct Runtime<IO: RuntimeIO> {
     pub io: IO,
 }
 
-impl<IO: RuntimeIO> DerefMut for Runtime<IO> {
-    fn deref_mut(&mut self) -> &mut Memory<u32> {
-        return &mut self.memory;
-    }
-}
-
-impl<IO: RuntimeIO> Deref for Runtime<IO> {
-    type Target = Memory<u32>;
-    fn deref(&self) -> &Memory<u32> {
-        return &self.memory;
-    }
-}
-
 impl<IO: RuntimeIO> Runtime<IO> {
     pub fn new(program: Program<'static>, io: IO) -> Self {
         let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
 
         lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
+        lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
 
         let main_func = match program.ops[program.main_idx as usize].op {
             Opcode::Func(name) => name,
@@ -549,7 +536,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
                 let frame = match self.callstack.pop() {
                     None => {
-                        let ret = i32::from_be(self.get_var(self.ret_addr).unwrap());
+                        let ret = i32::from_be(self.memory.get_var(self.ret_addr).unwrap());
                         return Ok(Some(ret));
                     }
                     Some(frame) => frame,
@@ -646,22 +633,22 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 }
 
-pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>, _pc: u32) -> Result<Option<i32>, IError> {
-    let top_ptr = VarPointer::new_stack(sel.stack_length(), 0);
+pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
     return Ok(None);
 }
 
 pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
-    let top_ptr = VarPointer::new_stack(sel.stack_length(), 0);
+    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     return Ok(Some(exit_code));
 }
 
 pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
-    let top_ptr_offset = sel.stack_length();
+    let top_ptr_offset = sel.memory.stack_length();
     let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
-    let param_len = i32::from_be(sel.get_var(top_ptr)?);
+    let param_len = i32::from_be(sel.memory.get_var(top_ptr)?);
 
     let mut current_offset = top_ptr_offset - (param_len as u16);
     let return_offset = current_offset - 1;
@@ -701,7 +688,7 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
             }
             b's' => {
                 let var_ptr = VarPointer::new_stack(current_offset, 0);
-                let char_ptr = sel.get_var(var_ptr)?;
+                let char_ptr = sel.memory.get_var(var_ptr)?;
                 current_offset += 1;
 
                 write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?)
