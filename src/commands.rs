@@ -10,6 +10,7 @@ pub enum Command {
     AddFile(String),
     Compile,
     RunUntilScopedPC(u32),
+    RunOp,
     RunCount(u32),
     RunCountOrUntil {
         count: u32,
@@ -79,6 +80,24 @@ impl<'a> WSRuntime<'a> {
 
         if let Self::Running(runtime) = self {
             match command {
+                Command::RunOp => {
+                    let ret = match runtime.run_op() {
+                        Ok(ret) => ret,
+                        Err(err) => {
+                            let err = render_err(&err, &runtime.callstack, &runtime.program);
+                            return Err(CommandError::Runtime(err));
+                        }
+                    };
+
+                    if let Some(ret) = ret {
+                        return Ok(CommandResult::StatusRet {
+                            status: runtime.diagnostic(),
+                            ret,
+                        });
+                    }
+
+                    return Ok(CommandResult::Status(runtime.diagnostic()));
+                }
                 Command::RunCount(count) => {
                     let ret = match runtime.run_op_count(count) {
                         Ok(prog) => prog,
