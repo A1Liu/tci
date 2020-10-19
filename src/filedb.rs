@@ -326,7 +326,7 @@ impl<'a> Files<'a> for FileDbRef<'a> {
     type Source = &'a str;
 
     fn name(&self, file_id: u32) -> Option<&'a str> {
-        self.get_symbol(file_id)
+        Some(self.files.get(file_id as usize)?._name)
     }
 
     fn source(&self, file_id: u32) -> Option<&'a str> {
