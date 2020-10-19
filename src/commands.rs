@@ -22,15 +22,15 @@ pub enum Command {
 #[derive(Serialize)]
 #[serde(tag = "response", content = "data")]
 pub enum CommandError {
-    IO(String),
-    Compile(String),
-    Runtime(String),
+    IOError(String),
+    CompileError(String),
+    RuntimeError(String),
     InvalidCommand,
 }
 
 impl From<std::io::Error> for CommandError {
     fn from(err: std::io::Error) -> Self {
-        return Self::IO(format!("{:?}", err));
+        return Self::IOError(format!("{:?}", err));
     }
 }
 
@@ -66,9 +66,10 @@ impl<'a> WSRuntime<'a> {
                     Err(err) => {
                         let mut writer = StringWriter::new();
                         emit_err(&err, files, &mut writer);
-                        return Err(CommandError::Compile(writer.into_string()));
+                        return Err(CommandError::CompileError(writer.into_string()));
                     }
                 };
+
                 *self = Self::Running(Runtime::new(program, InMemoryIO::new()));
                 return Ok(CommandResult::Compiled(program));
             } else {
@@ -85,7 +86,7 @@ impl<'a> WSRuntime<'a> {
                         Ok(ret) => ret,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
-                            return Err(CommandError::Runtime(err));
+                            return Err(CommandError::RuntimeError(err));
                         }
                     };
 
@@ -103,7 +104,7 @@ impl<'a> WSRuntime<'a> {
                         Ok(prog) => prog,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
-                            return Err(CommandError::Runtime(err));
+                            return Err(CommandError::RuntimeError(err));
                         }
                     };
 
@@ -125,7 +126,7 @@ impl<'a> WSRuntime<'a> {
                         Ok(ret) => ret,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
-                            return Err(CommandError::Runtime(err));
+                            return Err(CommandError::RuntimeError(err));
                         }
                     };
 

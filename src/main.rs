@@ -131,7 +131,7 @@ fn run(program: interpreter::Program<'static>, runtime_io: impl RuntimeIO) -> Re
     runtime.run()
 }
 
-fn compile_from_program_args() {
+fn run_from_args(args: Vec<String>) -> ! {
     let args: Vec<String> = std::env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
@@ -156,21 +156,32 @@ fn compile_from_program_args() {
                 )
                 .expect("why did this fail?");
             }
-            return;
+            std::process::exit(1);
         }
     };
 
     mem::drop(files);
+
+    let result = run(program, runtime_io);
+    match result {
+        Ok(code) => std::process::exit(code),
+        Err(error) => std::process::exit(1),
+    }
 }
 
-fn main() -> Result<(), net_io::WebServerError> {
-    let server = net_io::WebServer {
-        http_handler: respond_to_http_request,
-        ws_handler: ws_respond,
-    };
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 1 {
+        let server = net_io::WebServer {
+            http_handler: respond_to_http_request,
+            ws_handler: ws_respond,
+        };
+        server.serve().expect("server errored");
 
-    server.serve()?;
-    Ok(())
+        return;
+    }
+
+    run_from_args(args);
 }
 
 // returns true to keep the connection open
