@@ -3,6 +3,7 @@ The goals of this compiler are:
 
 1. Provide better error messages for new programmers
 2. Output warnings when the user is doing something they shouldn't be.
+3. Make debugging C programs easier
 
 ## Rationale
 Learning C is hard. Students have to navigate pointers, segmentation faults,
