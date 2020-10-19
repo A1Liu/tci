@@ -1,10 +1,22 @@
 # Teaching C Interpreter
 The goals of this compiler are:
+
 1. Provide better error messages for new programmers
 2. Output warnings when the user is doing something they shouldn't be.
 
-## Restrictions and Incompatibilities
+## Rationale
+Learning C is hard. Students have to navigate pointers, segmentation faults,
+and bit manipulation, all while working without garbage collection, usually
+for the first time. This interpreter aims to address this problem by giving
+better error messages and more runtime diagnostic tools.
 
+## Features
+- Fully replayable memory (WIP)
+- Includes
+- Stack traces on segmentation fault
+- Segmentation fault on dereference of pointers to stack locals
+
+## Restrictions and Incompatibilities
 - Implicit types on functions aren't supported
 - Implicit function declarations aren't supported
 - Higher order functions and function pointers aren't supported
@@ -22,5 +34,7 @@ The goals of this compiler are:
 # Credit
 - TCI uses [`codespan-reporting`](https://github.com/brendanzab/codespan) to make
   nice error messages.
+- TCI uses [`embedded-websocket`](https://github.com/ninjasource/embedded-websocket)
+  to do handle websocket connections
 
 

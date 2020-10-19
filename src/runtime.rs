@@ -438,6 +438,10 @@ impl<Tag: Copy> Memory<Tag> {
         }
     }
 
+    pub fn current_tag(&self) -> Tag {
+        return self.history[self.history_index - 1].tag;
+    }
+
     pub fn new_with_binary(binary: VarBufferRef) -> Self {
         let mut historical_data = Vec::new();
         historical_data.extend_from_slice(binary.data);
@@ -1013,9 +1017,9 @@ impl<Tag: Copy> Memory<Tag> {
         return Ok(out);
     }
 
-    pub fn next(&mut self) {
+    pub fn next(&mut self) -> bool {
         if self.history_index == self.history.len() {
-            return;
+            return false;
         }
 
         match self.history[self.history_index].kind {
@@ -1071,11 +1075,12 @@ impl<Tag: Copy> Memory<Tag> {
         }
 
         self.history_index += 1;
+        return true;
     }
 
-    pub fn prev(&mut self) {
+    pub fn prev(&mut self) -> bool {
         if self.history_index == 0 {
-            return;
+            return false;
         }
 
         match self.history[self.history_index - 1].kind {
@@ -1137,6 +1142,7 @@ impl<Tag: Copy> Memory<Tag> {
         }
 
         self.history_index -= 1;
+        return true;
     }
 }
 
