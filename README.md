@@ -16,6 +16,13 @@ better error messages and more runtime diagnostic tools.
 - Stack traces on segmentation fault
 - Segmentation fault on dereference of pointers to stack locals
 
+## Tasks
+- React front end for debugger
+- Support for macros
+- Support for multi-type pointer arithmetic
+- Support for arrays in the binary
+- Support for break and continue
+
 ## Restrictions and Incompatibilities
 - Implicit types on functions aren't supported
 - Implicit function declarations aren't supported
