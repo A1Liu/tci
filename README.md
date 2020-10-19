@@ -19,6 +19,7 @@ better error messages and more runtime diagnostic tools.
 
 ## Tasks
 - React front end for debugger
+- Better support for websocket interface
 - Support for macros
 - Support for multi-type pointer arithmetic
 - Support for arrays in the binary
