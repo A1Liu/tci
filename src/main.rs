@@ -133,7 +133,7 @@ fn run_from_args(args: Vec<String>) -> ! {
 
     let mut files = FileDb::new();
     for arg in args.iter().skip(1) {
-        files.add(&arg).unwrap();
+        files.add_from_fs(&arg).unwrap();
     }
     mem::drop(args);
 

@@ -119,7 +119,7 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
         };
     }
 
-    // Files have the same symbol id as their file id. These lines need to come first.
+    // System files have the same symbol id as their file id. These lines need to come first.
     add_syslib_sym!("stdio.h");
     add_syslib_sym!("stdlib.h");
 
@@ -199,7 +199,28 @@ impl<'a> FileDb<'a> {
 
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again.
-    pub fn add(&mut self, file_name: &str) -> Result<u32, io::Error> {
+    pub fn add(&mut self, file_name: &str, source: &str) -> Result<u32, io::Error> {
+        let file_name_owned = canonicalize(file_name)?;
+        let file_name = file_name_owned.to_str().unwrap();
+        if let Some(id) = self.file_names.get(file_name) {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+
+        let file_id = self.files.len() as u32;
+        let file = File::new(self.buckets_next, file_name, &source);
+        self._size += file.size() + mem::size_of::<File>();
+        self.files.push(file);
+
+        while let Some(b) = self.buckets_next.next() {
+            self.buckets_next = b;
+        }
+
+        Ok(file_id)
+    }
+
+    /// Add a file to the database, returning the handle that can be used to
+    /// refer to it again.
+    pub fn add_from_fs(&mut self, file_name: &str) -> Result<u32, io::Error> {
         let file_name_owned = canonicalize(file_name)?;
         let file_name = file_name_owned.to_str().unwrap();
         if let Some(id) = self.file_names.get(file_name) {
@@ -224,7 +245,7 @@ impl<'a> FileDb<'a> {
         let base_path = parent_if_file(self.files[base_file as usize]._name);
         let path = Path::new(base_path).join(text);
         let path_str = path.to_str().unwrap();
-        return self.add(&path_str);
+        return self.add_from_fs(&path_str);
     }
 
     pub fn symbol_to_str(&self, symbol: u32) -> &'a str {

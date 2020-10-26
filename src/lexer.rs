@@ -412,6 +412,7 @@ pub fn lex_macro<'a, 'b>(
                     begin..*current,
                     file,
                 ));
+
                 if incomplete.contains(&include_id) {
                     return Err(error!(
                         "include cycle detected",

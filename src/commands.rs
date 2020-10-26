@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "command", content = "data")]
 pub enum Command {
-    AddFile(String),
+    AddFile {
+        path: String,
+        data: String,
+    },
     Compile,
     RunUntilScopedPC(u32),
     RunOp,
@@ -65,8 +68,8 @@ impl<'a> WSRuntime<'a> {
         }
 
         if let Self::Files(files) = self {
-            if let Command::AddFile(file) = &command {
-                files.add(file)?;
+            if let Command::AddFile { path, data } = &command {
+                files.add(path, data)?;
             } else if let Command::Compile = &command {
                 let program = match compile(files) {
                     Ok(prog) => prog,
