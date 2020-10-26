@@ -37,7 +37,6 @@ impl From<std::io::Error> for CommandError {
 #[derive(Serialize)]
 #[serde(tag = "response", content = "data")]
 pub enum CommandResult {
-    None,
     Confirm(Command),
     Compiled(Program<'static>),
     Status(RuntimeDiagnostic),
@@ -56,7 +55,15 @@ impl<'a> Default for WSRuntime<'a> {
 }
 
 impl<'a> WSRuntime<'a> {
-    pub fn run_command(&mut self, command: Command) -> Result<CommandResult, CommandError> {
+    pub fn run_command(&mut self, command: Command) -> Result<Vec<CommandResult>, CommandError> {
+        let mut messages = Vec::new();
+        macro_rules! ret {
+            ($expr:expr) => {
+                messages.push($expr);
+                return Ok(messages);
+            };
+        }
+
         if let Self::Files(files) = self {
             if let Command::AddFile(file) = &command {
                 files.add(file)?;
@@ -71,12 +78,12 @@ impl<'a> WSRuntime<'a> {
                 };
 
                 *self = Self::Running(Runtime::new(program, InMemoryIO::new()));
-                return Ok(CommandResult::Compiled(program));
+                ret!(CommandResult::Compiled(program));
             } else {
                 return Err(CommandError::InvalidCommand);
             }
 
-            return Ok(CommandResult::Confirm(command));
+            return Ok(vec![CommandResult::Confirm(command)]);
         }
 
         if let Self::Running(runtime) = self {
@@ -91,13 +98,13 @@ impl<'a> WSRuntime<'a> {
                     };
 
                     if let Some(ret) = ret {
-                        return Ok(CommandResult::StatusRet {
+                        return Ok(vec![CommandResult::StatusRet {
                             status: runtime.diagnostic(),
                             ret,
-                        });
+                        }]);
                     }
 
-                    return Ok(CommandResult::Status(runtime.diagnostic()));
+                    ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::RunCount(count) => {
                     let ret = match runtime.run_op_count(count) {
@@ -109,13 +116,13 @@ impl<'a> WSRuntime<'a> {
                     };
 
                     if let Some(ret) = ret {
-                        return Ok(CommandResult::StatusRet {
+                        return Ok(vec![CommandResult::StatusRet {
                             status: runtime.diagnostic(),
                             ret,
-                        });
+                        }]);
                     }
 
-                    return Ok(CommandResult::Status(runtime.diagnostic()));
+                    ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::RunCountOrUntil {
                     count,
@@ -131,18 +138,18 @@ impl<'a> WSRuntime<'a> {
                     };
 
                     if let Some(ret) = ret {
-                        return Ok(CommandResult::StatusRet {
+                        ret!(CommandResult::StatusRet {
                             status: runtime.diagnostic(),
                             ret,
                         });
                     }
 
-                    return Ok(CommandResult::Status(runtime.diagnostic()));
+                    ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 _ => return Err(CommandError::InvalidCommand),
             }
         }
 
-        return Ok(CommandResult::Confirm(command));
+        ret!(CommandResult::Confirm(command));
     }
 }

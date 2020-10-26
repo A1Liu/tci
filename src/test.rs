@@ -1,7 +1,8 @@
 use crate::filedb::FileDb;
+use crate::interpreter::Runtime;
 use crate::runtime::InMemoryIO;
 use crate::util::StringWriter;
-use crate::{compile, emit_err, run};
+use crate::{compile, emit_err};
 use core::mem;
 use std::fs::read_to_string;
 
@@ -23,7 +24,8 @@ fn test_file_should_succeed(filename: &str) {
     };
     mem::drop(files);
 
-    let code = run(program, &mut io).expect("shouldn't exception");
+    let mut runtime = Runtime::new(program, &mut io);
+    let code = runtime.run().expect("shouldn't exception");
 
     println!("return code: {}", code);
     if code != 0 {

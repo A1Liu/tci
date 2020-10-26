@@ -245,12 +245,12 @@ fn ws_respond<'a>(
                 }
             };
 
-            if let commands::CommandResult::None = result {
+            if result.len() == 0 {
                 return Ok(net_io::WSResponse::None);
             }
 
             let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
-            serde_json::to_writer(&mut cursor, &result).unwrap();
+            serde_json::to_writer(&mut cursor, &result[0]).unwrap();
             let len = cursor.position() as usize;
 
             return Ok(net_io::WSResponse::Response {
