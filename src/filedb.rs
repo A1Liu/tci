@@ -242,10 +242,14 @@ impl<'a> FileDb<'a> {
 
     pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
         let text = self.symbol_to_str(symbol);
-        let base_path = parent_if_file(self.files[base_file as usize]._name);
-        let path = Path::new(base_path).join(text);
-        let path_str = path.to_str().unwrap();
-        return self.add_from_fs(&path_str);
+        if Path::new(text).is_relative() {
+            let base_path = parent_if_file(self.files[base_file as usize]._name);
+            let real_path = Path::new(base_path).join(text);
+            let path_str = real_path.to_str().unwrap();
+            return self.add_from_fs(&path_str);
+        }
+
+        return self.add_from_fs(&text);
     }
 
     pub fn symbol_to_str(&self, symbol: u32) -> &'a str {

@@ -8,7 +8,7 @@ Defined in `src/commands.rs`. Send data using JSON in this interface:
   "command": "AddFile",
   "data": {
     "path": "test/hello_world.c",
-    "data": "...",
+    "data": "..."
   }
 }
 ```
@@ -39,7 +39,7 @@ The responses are defined in `src/commands.rs`, and are in this format:
   "response": "StatusRet",
   "data": {
     "status": { ... },
-    "ret": 0,
+    "ret": 0
   }
 }
 ```
