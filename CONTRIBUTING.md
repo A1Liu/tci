@@ -7,8 +7,8 @@ Defined in `src/commands.rs`. Send data using JSON in this interface:
 {
   "command": "AddFile",
   "data": {
-    path: "test/hello_world.c",
-    data: "...",
+    "path": "test/hello_world.c",
+    "data": "...",
   }
 }
 ```
