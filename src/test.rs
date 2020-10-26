@@ -18,7 +18,7 @@ fn test_file_should_succeed(filename: &str) {
         Ok(program) => program,
         Err(errs) => {
             emit_err(&errs, &files, &mut writer);
-            println!("{}", writer.to_string());
+            println!("{}", writer.into_string());
             panic!();
         }
     };
