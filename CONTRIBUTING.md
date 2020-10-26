@@ -6,7 +6,10 @@ Defined in `src/commands.rs`. Send data using JSON in this interface:
 ```json
 {
   "command": "AddFile",
-  "data": "test/hello_world.c",
+  "data": {
+    path: "test/hello_world.c",
+    data: "...",
+  }
 }
 ```
 
