@@ -131,7 +131,7 @@ fn run_from_args(args: Vec<String>) -> ! {
     let writer = StandardStream::stderr(ColorChoice::Always);
     let runtime_io = DefaultIO::new();
 
-    let mut files = FileDb::new();
+    let mut files = FileDb::new(true);
     for arg in args.iter().skip(1) {
         files.add_from_fs(&arg).unwrap();
     }

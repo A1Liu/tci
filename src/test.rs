@@ -8,7 +8,7 @@ use std::fs::read_to_string;
 
 fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();
-    let mut files = FileDb::new();
+    let mut files = FileDb::new(true);
     let mut writer = StringWriter::new();
     let mut io = DebugIO::new();
 
@@ -63,7 +63,7 @@ fn test_file_should_succeed(filename: &str) {
 
 fn test_file_compile_should_fail(filename: &str) {
     let config = codespan_reporting::term::Config::default();
-    let mut files = FileDb::new();
+    let mut files = FileDb::new(true);
     let mut writer = StringWriter::new();
 
     files.add_from_fs(filename).unwrap();

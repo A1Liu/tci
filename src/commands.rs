@@ -53,7 +53,7 @@ pub enum WSRuntime<'a> {
 
 impl<'a> Default for WSRuntime<'a> {
     fn default() -> Self {
-        Self::Files(FileDb::new())
+        Self::Files(FileDb::new(false))
     }
 }
 

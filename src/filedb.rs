@@ -88,6 +88,7 @@ pub struct FileDb<'a> {
     pub files: Vec<File<'a>>,
     pub translate: HashMap<&'a str, u32>,
     pub names: Vec<CodeLoc>,
+    pub fs_read_access: bool,
 }
 
 pub struct InitSyms {
@@ -146,7 +147,7 @@ impl<'a> Drop for FileDb<'a> {
 
 impl<'a> FileDb<'a> {
     /// Create a new files database.
-    pub fn new() -> Self {
+    pub fn new(fs_read_access: bool) -> Self {
         let mut string = String::new();
         let mut symbols = Vec::new();
         for name in INIT_SYMS.names.iter() {
@@ -176,6 +177,7 @@ impl<'a> FileDb<'a> {
             file_names: HashMap::new(),
             translate: HashMap::new(),
             names: Vec::new(),
+            fs_read_access,
         };
 
         for symbol in symbols {
@@ -225,6 +227,10 @@ impl<'a> FileDb<'a> {
         let file_name = file_name_owned.to_str().unwrap();
         if let Some(id) = self.file_names.get(file_name) {
             return Ok(*id);
+        }
+
+        if !self.fs_read_access {
+            return Err(io::ErrorKind::PermissionDenied.into());
         }
 
         let file_id = self.files.len() as u32;
