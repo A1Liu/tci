@@ -112,7 +112,7 @@ impl<State: Default + 'static> WebServer<State> {
         let http_handler = self.http_handler;
         let ws_handler = self.ws_handler;
 
-        let buckets = BucketList::with_capacity(12288);
+        let buckets = BucketList::with_capacity(24576);
 
         // In lieu of defer
         struct BucketDealloc<'a>(BucketListRef<'a>);
@@ -122,9 +122,9 @@ impl<State: Default + 'static> WebServer<State> {
             }
         }
         let dealloc_buckets = BucketDealloc(buckets);
-        let tcp_recv = buckets.uninit(4096).unwrap();
-        let ws_buf = buckets.uninit(4096).unwrap();
-        let scratch_buf = buckets.uninit(4096).unwrap();
+        let tcp_recv = buckets.uninit(8192).unwrap();
+        let ws_buf = buckets.uninit(8192).unwrap();
+        let scratch_buf = buckets.uninit(8192).unwrap();
 
         let mut web_socket = ws::WebSocketServer::new_server();
         let mut num_bytes = 0;
@@ -202,19 +202,21 @@ impl<State: Default + 'static> WebServer<State> {
                 continue;
             }
 
-            let ws_buffer = &ws_buf[..ws_num_bytes];
+            let (ws_in, ws_out) = ws_buf.split_at_mut(ws_num_bytes);
             ws_num_bytes = 0;
-            let response = ws_handler(ws_result.message_type, &mut state, ws_buffer, scratch_buf)?;
-            match response {
-                WSResponse::Response {
-                    message_type,
-                    message,
-                } => {
-                    let to_send = web_socket.write(message_type, true, message, ws_buf)?;
-                    write_to_stream(&mut stream, &ws_buf[..to_send])?;
+            loop {
+                let response = ws_handler(ws_result.message_type, &mut state, ws_in, scratch_buf)?;
+                match response {
+                    WSResponse::Response {
+                        message_type,
+                        message,
+                    } => {
+                        let to_send = web_socket.write(message_type, true, message, ws_out)?;
+                        write_to_stream(&mut stream, &ws_out[..to_send])?;
+                    }
+                    WSResponse::None => break,
+                    WSResponse::Close => return Ok(()),
                 }
-                WSResponse::None => {}
-                WSResponse::Close => return Ok(()),
             }
         }
     }

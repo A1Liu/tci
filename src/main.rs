@@ -211,72 +211,87 @@ fn respond_to_http_request<'a>(
     }
 }
 
+pub struct WSRuntime<'a> {
+    pub state: commands::WSState<'a>,
+    pub results: Vec<commands::CommandResult>,
+    pub results_idx: usize,
+}
+
+impl<'a> Default for WSRuntime<'a> {
+    fn default() -> Self {
+        Self {
+            state: commands::WSState::default(),
+            results: Vec::new(),
+            results_idx: 0,
+        }
+    }
+}
+
 fn ws_respond<'a>(
     message_type: WebSocketReceiveMessageType,
-    state: &mut commands::WSRuntime,
+    state: &mut WSRuntime,
     ws_buffer: &[u8],
     out_buffer: &'a mut [u8],
 ) -> Result<net_io::WSResponse<'a>, WebServerError> {
-    match message_type {
-        WebSocketReceiveMessageType::Text => {
-            let command = match serde_json::from_slice(ws_buffer) {
-                Ok(c) => c,
-                Err(err) => {
-                    let len = write_b!(out_buffer, "deserialization of command failed ({})", err)
-                        .unwrap();
-                    return Ok(net_io::WSResponse::Response {
-                        message_type: WebSocketSendMessageType::Text,
-                        message: &out_buffer[..len],
-                    });
+    if state.results.len() == 0 {
+        match message_type {
+            WebSocketReceiveMessageType::Text => {
+                let command = match serde_json::from_slice(ws_buffer) {
+                    Ok(c) => c,
+                    Err(err) => {
+                        let len =
+                            write_b!(out_buffer, "deserialization of command failed ({})", err)
+                                .unwrap();
+                        return Ok(net_io::WSResponse::Response {
+                            message_type: WebSocketSendMessageType::Text,
+                            message: &out_buffer[..len],
+                        });
+                    }
+                };
+
+                let results = state.state.run_command(command);
+                if results.len() == 0 {
+                    return Ok(net_io::WSResponse::None);
                 }
-            };
 
-            let result = match state.run_command(command) {
-                Ok(val) => val,
-                Err(err) => {
-                    let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
-                    serde_json::to_writer(&mut cursor, &err).unwrap();
-                    let len = cursor.position() as usize;
-
-                    return Ok(net_io::WSResponse::Response {
-                        message_type: WebSocketSendMessageType::Text,
-                        message: &out_buffer[..len],
-                    });
-                }
-            };
-
-            if result.len() == 0 {
-                return Ok(net_io::WSResponse::None);
+                state.results = results;
+                state.results_idx = 0;
             }
+            WebSocketReceiveMessageType::CloseCompleted => return Ok(net_io::WSResponse::Close),
+            WebSocketReceiveMessageType::CloseMustReply => {
+                let message = &mut out_buffer[..ws_buffer.len()];
+                message.copy_from_slice(ws_buffer);
 
-            let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
-            serde_json::to_writer(&mut cursor, &result[0]).unwrap();
-            let len = cursor.position() as usize;
+                return Ok(net_io::WSResponse::Response {
+                    message_type: WebSocketSendMessageType::CloseReply,
+                    message,
+                });
+            }
+            WebSocketReceiveMessageType::Ping => {
+                let message = &mut out_buffer[..ws_buffer.len()];
+                message.copy_from_slice(ws_buffer);
 
-            return Ok(net_io::WSResponse::Response {
-                message_type: WebSocketSendMessageType::Text,
-                message: &out_buffer[..len],
-            });
+                return Ok(net_io::WSResponse::Response {
+                    message_type: WebSocketSendMessageType::Pong,
+                    message,
+                });
+            }
+            _ => return Ok(net_io::WSResponse::None),
         }
-        WebSocketReceiveMessageType::CloseCompleted => return Ok(net_io::WSResponse::Close),
-        WebSocketReceiveMessageType::CloseMustReply => {
-            let message = &mut out_buffer[..ws_buffer.len()];
-            message.copy_from_slice(ws_buffer);
-
-            return Ok(net_io::WSResponse::Response {
-                message_type: WebSocketSendMessageType::CloseReply,
-                message,
-            });
-        }
-        WebSocketReceiveMessageType::Ping => {
-            let message = &mut out_buffer[..ws_buffer.len()];
-            message.copy_from_slice(ws_buffer);
-
-            return Ok(net_io::WSResponse::Response {
-                message_type: WebSocketSendMessageType::Pong,
-                message,
-            });
-        }
-        _ => return Ok(net_io::WSResponse::None),
     }
+
+    if state.results_idx == state.results.len() {
+        state.results = Vec::new();
+        return Ok(net_io::WSResponse::None);
+    }
+
+    let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
+    serde_json::to_writer(&mut cursor, &state.results[state.results_idx]).unwrap();
+    let len = cursor.position() as usize;
+    state.results_idx += 1;
+
+    return Ok(net_io::WSResponse::Response {
+        message_type: WebSocketSendMessageType::Text,
+        message: &out_buffer[..len],
+    });
 }

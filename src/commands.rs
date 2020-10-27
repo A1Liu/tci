@@ -24,69 +24,63 @@ pub enum Command {
 
 #[derive(Serialize)]
 #[serde(tag = "response", content = "data")]
-pub enum CommandError {
-    IOError(String),
-    CompileError(String),
-    RuntimeError(String),
-    InvalidCommand,
-}
-
-impl From<std::io::Error> for CommandError {
-    fn from(err: std::io::Error) -> Self {
-        return Self::IOError(format!("{:?}", err));
-    }
-}
-
-#[derive(Serialize)]
-#[serde(tag = "response", content = "data")]
 pub enum CommandResult {
     Confirm(Command),
     Compiled(Program<'static>),
+    InvalidCommand,
+    IOError(String),
+    CompileError(String),
+    RuntimeError(String),
     Status(RuntimeDiagnostic),
     StatusRet { status: RuntimeDiagnostic, ret: i32 },
 }
 
-pub enum WSRuntime<'a> {
+pub enum WSState<'a> {
     Files(FileDb<'a>),
     Running(Runtime<InMemoryIO>),
 }
 
-impl<'a> Default for WSRuntime<'a> {
+impl<'a> Default for WSState<'a> {
     fn default() -> Self {
         Self::Files(FileDb::new(false))
     }
 }
 
-impl<'a> WSRuntime<'a> {
-    pub fn run_command(&mut self, command: Command) -> Result<Vec<CommandResult>, CommandError> {
+impl<'a> WSState<'a> {
+    pub fn run_command(&mut self, command: Command) -> Vec<CommandResult> {
         let mut messages = Vec::new();
         macro_rules! ret {
-            ($expr:expr) => {
+            ($expr:expr) => {{
                 messages.push($expr);
-                return Ok(messages);
-            };
+                return messages;
+            }};
         }
 
         if let Self::Files(files) = self {
             if let Command::AddFile { path, data } = &command {
-                files.add(path, data)?;
+                match files.add(path, data) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        ret!(CommandResult::IOError(format!("{}", err)));
+                    }
+                }
             } else if let Command::Compile = &command {
                 let program = match compile(files) {
                     Ok(prog) => prog,
                     Err(err) => {
                         let mut writer = StringWriter::new();
                         emit_err(&err, files, &mut writer);
-                        return Err(CommandError::CompileError(writer.into_string()));
+                        ret!(CommandResult::CompileError(writer.into_string()));
                     }
                 };
 
                 *self = Self::Running(Runtime::new(program, InMemoryIO::new()));
                 ret!(CommandResult::Compiled(program));
             } else {
-                return Err(CommandError::InvalidCommand);
+                ret!(CommandResult::InvalidCommand);
             }
 
-            return Ok(vec![CommandResult::Confirm(command)]);
+            ret!(CommandResult::Confirm(command));
         }
 
         if let Self::Running(runtime) = self {
@@ -96,15 +90,15 @@ impl<'a> WSRuntime<'a> {
                         Ok(ret) => ret,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
-                            return Err(CommandError::RuntimeError(err));
+                            ret!(CommandResult::RuntimeError(err));
                         }
                     };
 
                     if let Some(ret) = ret {
-                        return Ok(vec![CommandResult::StatusRet {
+                        return vec![CommandResult::StatusRet {
                             status: runtime.diagnostic(),
                             ret,
-                        }]);
+                        }];
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
@@ -114,15 +108,15 @@ impl<'a> WSRuntime<'a> {
                         Ok(prog) => prog,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
-                            return Err(CommandError::RuntimeError(err));
+                            ret!(CommandResult::RuntimeError(err));
                         }
                     };
 
                     if let Some(ret) = ret {
-                        return Ok(vec![CommandResult::StatusRet {
+                        ret!(CommandResult::StatusRet {
                             status: runtime.diagnostic(),
                             ret,
-                        }]);
+                        });
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
@@ -136,7 +130,7 @@ impl<'a> WSRuntime<'a> {
                         Ok(ret) => ret,
                         Err(err) => {
                             let err = render_err(&err, &runtime.callstack, &runtime.program);
-                            return Err(CommandError::RuntimeError(err));
+                            ret!(CommandResult::RuntimeError(err));
                         }
                     };
 
@@ -149,7 +143,7 @@ impl<'a> WSRuntime<'a> {
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
-                _ => return Err(CommandError::InvalidCommand),
+                _ => ret!(CommandResult::InvalidCommand),
             }
         }
 
