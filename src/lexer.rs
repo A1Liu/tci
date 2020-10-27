@@ -365,12 +365,12 @@ pub fn lex_macro<'a, 'b>(
 
                 if peek_eq(data, current, b'\n') {
                     break;
-                } else if peek_eqs(data, current, &CRLF) {
+                } else if peek_eq_series(data, current, &CRLF) {
                     break;
-                } else if peek_eqs(data, current, &[b'\\', b'\n']) {
+                } else if peek_eq_series(data, current, &[b'\\', b'\n']) {
                     *current += 2;
                     continue;
-                } else if peek_eqs(data, current, &[b'\\', b'\r', b'\n']) {
+                } else if peek_eq_series(data, current, &[b'\\', b'\r', b'\n']) {
                     *current += 3;
                     continue;
                 }
