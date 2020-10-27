@@ -29,6 +29,8 @@ use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
 use runtime::DefaultIO;
+use rust_embed::RustEmbed;
+use std::borrow::Cow;
 use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
@@ -175,7 +177,8 @@ fn main() {
             http_handler: respond_to_http_request,
             ws_handler: ws_respond,
         };
-        server.serve().expect("server errored");
+        let addr = "0.0.0.0:3000";
+        server.serve(addr).expect("server errored");
 
         return;
     }
@@ -183,32 +186,49 @@ fn main() {
     run_from_args(args);
 }
 
-// returns true to keep the connection open
+#[derive(RustEmbed)]
+#[folder = "frontend/build/"]
+struct Asset;
+
 fn respond_to_http_request<'a>(
     http_header: HttpHeader,
     buffer2: &'a mut [u8],
 ) -> Result<net_io::HttpResponse<'a>, WebServerError> {
     const ROOT_HTML: &str = "<!doctype html><html></html>";
-    match http_header.path {
-        "/" => {
+    let mut path_len = http_header.path.len();
+    buffer2[..path_len].copy_from_slice(http_header.path.as_bytes());
+    if buffer2[path_len - 1] == b'/' {
+        buffer2[path_len..path_len + 10].copy_from_slice("index.html".as_bytes());
+        path_len += 10;
+    }
+
+    let path = unsafe { core::str::from_utf8_unchecked(&buffer2[..path_len]) };
+    println!("received request for path {}", path);
+    let text = Asset::get(&path[1..]);
+
+    if let Some(text) = text {
+        if let Cow::Borrowed(borrowed) = text {
             return Ok(net_io::HttpResponse {
                 status: 200,
-                body: ROOT_HTML.as_bytes(),
+                body: borrowed,
             });
-        }
-        "/favicon.ico" => {
+        } else {
+            if text.len() > buffer2.len() {
+                return Err(WebServerError::ResponseTooLarge(text.len()));
+            }
+
+            buffer2[..text.len()].copy_from_slice(&text);
             return Ok(net_io::HttpResponse {
-                status: 404,
-                body: "".as_bytes(),
-            });
-        }
-        _ => {
-            return Ok(net_io::HttpResponse {
-                status: 404,
-                body: ROOT_HTML.as_bytes(),
+                status: 200,
+                body: &buffer2[..text.len()],
             });
         }
     }
+
+    return Ok(net_io::HttpResponse {
+        status: 404,
+        body: ROOT_HTML.as_bytes(),
+    });
 }
 
 pub struct WSRuntime<'a> {
