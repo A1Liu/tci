@@ -1532,6 +1532,67 @@ impl RuntimeIO for InMemoryIO {
     }
 }
 
+pub struct DebugSW(pub StringWriter);
+
+impl Write for DebugSW {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // let len = stdout().write(buf)?;
+        // return self.0.write(&buf[0..len]);
+        return self.0.write(buf);
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub struct DebugIO {
+    pub out: DebugSW,
+    pub log: DebugSW,
+    pub err: DebugSW,
+}
+
+impl DebugIO {
+    pub fn new() -> Self {
+        Self {
+            out: DebugSW(StringWriter::new()),
+            log: DebugSW(StringWriter::new()),
+            err: DebugSW(StringWriter::new()),
+        }
+    }
+}
+
+impl RuntimeIO for &mut DebugIO {
+    type Out = DebugSW;
+    type Log = DebugSW;
+    type Err = DebugSW;
+
+    fn out(&mut self) -> &mut Self::Out {
+        return &mut self.out;
+    }
+    fn err(&mut self) -> &mut Self::Log {
+        return &mut self.err;
+    }
+    fn log(&mut self) -> &mut Self::Err {
+        return &mut self.log;
+    }
+}
+
+impl RuntimeIO for DebugIO {
+    type Out = DebugSW;
+    type Log = DebugSW;
+    type Err = DebugSW;
+
+    fn out(&mut self) -> &mut Self::Out {
+        return &mut self.out;
+    }
+    fn err(&mut self) -> &mut Self::Log {
+        return &mut self.err;
+    }
+    fn log(&mut self) -> &mut Self::Err {
+        return &mut self.log;
+    }
+}
 pub struct DefaultIO {
     pub out: Stdout,
     pub log: StringWriter,

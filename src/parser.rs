@@ -110,7 +110,7 @@ impl<'b> Parser<'b> {
                 let (right, left) = buckets.add((right, left));
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
-                    kind: ExprKind::BinOp(BinOp::Assign, left, right),
+                    kind: ExprKind::Assign(left, right),
                 });
             }
             _ => {
@@ -193,7 +193,8 @@ impl<'b> Parser<'b> {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
                 TokenKind::Lt => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
+
                     let right = self.parse_shift(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
@@ -201,6 +202,19 @@ impl<'b> Parser<'b> {
 
                     expr = Expr {
                         kind: ExprKind::BinOp(BinOp::Lt, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::EqEq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Eq, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
@@ -852,7 +866,8 @@ impl<'b> Parser<'b> {
 
         let body = buckets.add_array(body);
         ret_stmt!(GlobalStmt {
-            loc: l_from(decl_type.loc, end_loc), // TODO change end_loc to tok.loc and add header_loc to func
+            // TODO change end_loc to tok.loc and add header_loc field to func
+            loc: l_from(decl_type.loc, end_loc),
             kind: GlobalStmtKind::Func {
                 return_type: decl_type,
                 pointer_count: decl.pointer_count,
@@ -1002,12 +1017,14 @@ impl<'b> Parser<'b> {
                     }
                 }
             }
+
             TokenKind::Semicolon => {
                 return Ok(Stmt {
                     kind: StmtKind::Nop,
                     loc: pop(tokens, current).unwrap().loc,
                 });
             }
+
             TokenKind::If => {
                 let start_loc = pop(tokens, current).unwrap().loc;
 
@@ -1043,6 +1060,7 @@ impl<'b> Parser<'b> {
                     },
                 });
             }
+
             TokenKind::LBrace => {
                 let block = self.parse_block(buckets, tokens, current)?;
                 if block.stmts.len() == 0 {
@@ -1057,6 +1075,7 @@ impl<'b> Parser<'b> {
                     });
                 }
             }
+
             TokenKind::Return => {
                 pop(tokens, current).unwrap();
 
@@ -1076,6 +1095,7 @@ impl<'b> Parser<'b> {
                     kind: StmtKind::RetVal(expr),
                 });
             }
+
             TokenKind::Int | TokenKind::Char | TokenKind::Void => {
                 let decl_type = parse_simple_type_prefix(tokens, current)?;
                 let start_loc = decl_type.loc;
@@ -1092,6 +1112,7 @@ impl<'b> Parser<'b> {
                     },
                 });
             }
+
             TokenKind::Struct => {
                 let start_loc = pop(tokens, current).unwrap().loc;
                 let (ident, loc) = expect_any_ident(tokens, current)?;
@@ -1115,12 +1136,33 @@ impl<'b> Parser<'b> {
                     },
                 });
             }
+
             TokenKind::Include(_) | TokenKind::IncludeSys(_) => {
                 return Err(error!(
                     "include directives aren't allowed inside functions",
                     tok.loc, "found here"
                 ));
             }
+
+            TokenKind::Break => {
+                pop(tokens, current).unwrap();
+                eat_semicolon(tokens, current)?;
+
+                return Ok(Stmt {
+                    kind: StmtKind::Break,
+                    loc: tok.loc,
+                });
+            }
+            TokenKind::Continue => {
+                pop(tokens, current).unwrap();
+                eat_semicolon(tokens, current)?;
+
+                return Ok(Stmt {
+                    kind: StmtKind::Continue,
+                    loc: tok.loc,
+                });
+            }
+
             _ => {
                 let expr = self.parse_expr(buckets, tokens, current)?;
                 eat_semicolon(tokens, current)?;

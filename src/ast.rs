@@ -9,7 +9,6 @@ pub struct ASTProgram<'a> {
 pub enum BinOp {
     Add,
     Sub,
-    Assign,
     Lt,
     Gt,
     Leq,
@@ -25,6 +24,7 @@ pub enum ExprKind<'a> {
     StringLiteral(&'a str),
     Ident(u32),
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
+    Assign(&'a Expr<'a>, &'a Expr<'a>),
     Call {
         function: &'a Expr<'a>,
         params: &'a [Expr<'a>],
@@ -189,6 +189,8 @@ pub enum StmtKind<'a> {
         condition: Expr<'a>,
         body: Block<'a>,
     },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
@@ -310,13 +312,13 @@ pub struct TCFunc<'a> {
     pub defn: Option<TCFuncDefn<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TCAssignKind<'a> {
     LocalIdent { var_offset: i16 },
     Ptr(&'a TCExpr<'a>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TCAssignTarget<'a> {
     pub kind: TCAssignKind<'a>,
     pub defn_loc: Option<CodeLoc>,
@@ -325,7 +327,7 @@ pub struct TCAssignTarget<'a> {
     pub offset: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TCStmtKind<'a> {
     RetVal(TCExpr<'a>),
     Ret,
@@ -344,7 +346,7 @@ pub enum TCStmtKind<'a> {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TCStmt<'a> {
     pub kind: TCStmtKind<'a>,
     pub loc: CodeLoc,
@@ -356,7 +358,7 @@ pub struct TCBlock<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TCExprKind<'a> {
     Uninit,
     IntLiteral(i32),
@@ -373,6 +375,7 @@ pub enum TCExprKind<'a> {
     SubI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     LtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    EqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),
@@ -404,7 +407,7 @@ pub enum TCExprKind<'a> {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TCExpr<'a> {
     pub kind: TCExprKind<'a>,
     pub expr_type: TCType,

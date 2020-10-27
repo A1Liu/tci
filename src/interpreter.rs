@@ -285,10 +285,13 @@ impl<IO: RuntimeIO> Runtime<IO> {
     #[inline]
     pub fn run_op(&mut self) -> Result<Option<i32>, IError> {
         let op = self.program.ops[self.pc as usize];
+        write!(self.io.log(), "op: {:?}\n", op.op)
+            .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
         self.callstack
             .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
 
         let opcode = op.op;
+
         match opcode {
             Opcode::Func(_) => {}
 

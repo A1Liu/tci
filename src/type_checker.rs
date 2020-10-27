@@ -86,6 +86,19 @@ fn lt_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> T
     };
 }
 
+fn eq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::Char,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        loc: l_from(l.loc, r.loc),
+        kind: TCExprKind::EqI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
 // Implicit Transforms
 
 pub fn assign_char_int<'b>(buckets: BucketListRef<'b>, e: TCExpr<'b>) -> TCExpr<'b> {
@@ -113,6 +126,7 @@ pub static BIN_OP_OL: LazyStatic<BinOpOverloads> = lazy_static!(bin_op_ol, BinOp
     m.insert((BinOp::Add, Char, I32), add_char_int);
     m.insert((BinOp::Sub, I32, I32), sub_int_int);
     m.insert((BinOp::Lt, I32, I32), lt_int_int);
+    m.insert((BinOp::Eq, I32, I32), eq_int_int);
     m
 });
 
@@ -123,6 +137,7 @@ pub static BINL_OL: LazyStatic<BinOpValids> = lazy_static!(binl_ol, BinOpValids,
     m.insert((BinOp::Add, Char));
     m.insert((BinOp::Sub, I32));
     m.insert((BinOp::Lt, I32));
+    m.insert((BinOp::Eq, I32));
     m
 });
 
@@ -133,6 +148,7 @@ pub static BINR_OL: LazyStatic<BinOpValids> = lazy_static!(binr_ol, BinOpValids,
     m.insert((BinOp::Add, Char));
     m.insert((BinOp::Sub, I32));
     m.insert((BinOp::Lt, I32));
+    m.insert((BinOp::Eq, I32));
     m
 });
 
@@ -903,7 +919,14 @@ pub fn check_file<'a>(
             local_env.add_var(param.ident, tc_value).unwrap();
         }
 
-        let gstmts = check_stmts(buckets, &mut env, &mut local_env, ftype.decl_idx, func.body)?;
+        let gstmts = check_stmts(
+            buckets,
+            &mut env,
+            &mut local_env,
+            ftype.decl_idx,
+            func.body,
+            None,
+        )?;
 
         tc_func.defn = Some(TCFuncDefn {
             defn_idx: func.defn_idx,
@@ -926,6 +949,7 @@ fn check_stmts<'b>(
     local_env: &mut LocalTypeEnv,
     decl_idx: u32,
     stmts: &[Stmt],
+    cblock: Option<TCStmt<'b>>,
 ) -> Result<Vec<TCStmt<'b>>, Error> {
     let mut tstmts = Vec::new();
     for stmt in stmts {
@@ -1017,11 +1041,13 @@ fn check_stmts<'b>(
                 }
 
                 let mut if_env = local_env.child();
-                let tc_if_body = check_stmts(buckets, env, &mut if_env, decl_idx, if_body.stmts)?;
+                let tc_if_body =
+                    check_stmts(buckets, env, &mut if_env, decl_idx, if_body.stmts, cblock)?;
 
                 let mut else_env = local_env.child();
+                let e_env = &mut else_env;
                 let tc_else_body =
-                    check_stmts(buckets, env, &mut else_env, decl_idx, else_body.stmts)?;
+                    check_stmts(buckets, env, e_env, decl_idx, else_body.stmts, cblock)?;
 
                 let tc_if_body = buckets.add_array(tc_if_body);
                 let tc_else_body = buckets.add_array(tc_else_body);
@@ -1061,14 +1087,16 @@ fn check_stmts<'b>(
                 }
 
                 let post = check_expr(buckets, env, local_env, decl_idx, post_expr)?;
-
-                let mut for_env = local_env.child();
-                let mut loop_stmts = check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts)?;
-
-                loop_stmts.push(TCStmt {
+                let post = TCStmt {
                     loc: post.loc,
                     kind: TCStmtKind::Expr(post),
-                });
+                };
+
+                let mut for_env = local_env.child();
+                let mut loop_stmts =
+                    check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts, Some(post))?;
+
+                loop_stmts.push(post);
 
                 loop_stmts.push(TCStmt {
                     loc: condition.loc,
@@ -1138,13 +1166,15 @@ fn check_stmts<'b>(
                 }
 
                 let post = check_expr(buckets, env, &for_env, decl_idx, post_expr)?;
-
-                let mut loop_stmts = check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts)?;
-
-                loop_stmts.push(TCStmt {
+                let post = TCStmt {
                     loc: post.loc,
                     kind: TCStmtKind::Expr(post),
-                });
+                };
+
+                let mut loop_stmts =
+                    check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts, Some(post))?;
+
+                loop_stmts.push(post);
 
                 loop_stmts.push(TCStmt {
                     loc: condition.loc,
@@ -1191,7 +1221,7 @@ fn check_stmts<'b>(
 
                 let mut while_env = local_env.child();
                 let mut loop_stmts =
-                    check_stmts(buckets, env, &mut while_env, decl_idx, body.stmts)?;
+                    check_stmts(buckets, env, &mut while_env, decl_idx, body.stmts, None)?;
 
                 loop_stmts.push(TCStmt {
                     loc: condition.loc,
@@ -1224,7 +1254,8 @@ fn check_stmts<'b>(
 
             StmtKind::Block(block) => {
                 let mut block_env = local_env.child();
-                let block_stmts = check_stmts(buckets, env, &mut block_env, decl_idx, block.stmts)?;
+                let block_stmts =
+                    check_stmts(buckets, env, &mut block_env, decl_idx, block.stmts, cblock)?;
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Block(TCBlock {
                         loc: stmt.loc,
@@ -1233,6 +1264,23 @@ fn check_stmts<'b>(
                     loc: stmt.loc,
                 });
             } // x => panic!("{:?} is unimplemented", x),
+
+            StmtKind::Continue => {
+                if let Some(cblock) = cblock {
+                    tstmts.push(cblock);
+                }
+
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Continue,
+                    loc: stmt.loc,
+                });
+            }
+            StmtKind::Break => {
+                tstmts.push(TCStmt {
+                    kind: TCStmtKind::Break,
+                    loc: stmt.loc,
+                });
+            }
         }
     }
 
@@ -1307,7 +1355,7 @@ fn check_expr<'b>(
             });
         }
 
-        ExprKind::BinOp(BinOp::Assign, target, value) => {
+        ExprKind::Assign(target, value) => {
             let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
             let value = check_expr(buckets, env, local_env, decl_idx, value)?;
 

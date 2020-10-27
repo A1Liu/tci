@@ -109,6 +109,7 @@ impl<'a> Assembler<'a> {
         param_count: u32,
         block: &[TCStmt],
         block_loc: CodeLoc,
+        // TODO use labels instead of weird CB system
         cb_idx: u32, // docs for this later in the match statement: stands for continue-break
         mut ld_count: u32, // loop declaration count
     ) -> Vec<TaggedOpcode> {
@@ -173,8 +174,9 @@ impl<'a> Assembler<'a> {
                     let cond_bytes = cond.expr_type.size();
                     ops.append(&mut self.translate_expr(cond));
 
+                    // cb! + 1 because of conditional jump instruction
                     let mut if_ops =
-                        self.translate_block(param_count, if_.stmts, if_.loc, cb!() + 1, ld_count); // +1 to cb here because of jump instruction
+                        self.translate_block(param_count, if_.stmts, if_.loc, cb!() + 1, ld_count);
                     let ifbr_len = if_ops.len() as u32 + 2;
 
                     tagged.op = match cond_bytes {
@@ -188,8 +190,14 @@ impl<'a> Assembler<'a> {
                     ops.append(&mut if_ops);
                     mem::drop(if_ops);
 
-                    let mut else_ops =
-                        self.translate_block(param_count, else_.stmts, else_.loc, cb!(), ld_count);
+                    // cb! + 1 because of jump instruction
+                    let mut else_ops = self.translate_block(
+                        param_count,
+                        else_.stmts,
+                        else_.loc,
+                        cb!() + 1,
+                        ld_count,
+                    );
                     let elsebr_len = else_ops.len() as u32 + 1;
 
                     tagged.op = Opcode::Jump(elsebr_len);
@@ -223,7 +231,7 @@ impl<'a> Assembler<'a> {
                         ops.push(tagged);
                     }
 
-                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 2));
+                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 1));
                     ops.push(tagged);
                 }
                 TCStmtKind::Continue => {
@@ -232,7 +240,7 @@ impl<'a> Assembler<'a> {
                         ops.push(tagged);
                     }
 
-                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 1));
+                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!()));
                     ops.push(tagged);
                 }
             }
@@ -322,6 +330,12 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::CompI32;
+                ops.push(tagged);
+            }
+            TCExprKind::EqI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::CompEqI32;
                 ops.push(tagged);
             }
 

@@ -1,6 +1,6 @@
 use crate::filedb::FileDb;
 use crate::interpreter::Runtime;
-use crate::runtime::InMemoryIO;
+use crate::runtime::DebugIO;
 use crate::util::StringWriter;
 use crate::{compile, emit_err};
 use core::mem;
@@ -10,9 +10,9 @@ fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut files = FileDb::new();
     let mut writer = StringWriter::new();
-    let mut io = InMemoryIO::new();
+    let mut io = DebugIO::new();
 
-    files.add(filename).unwrap();
+    files.add_from_fs(filename).unwrap();
 
     let program = match compile(&mut files) {
         Ok(program) => program,
@@ -25,19 +25,38 @@ fn test_file_should_succeed(filename: &str) {
     mem::drop(files);
 
     let mut runtime = Runtime::new(program, &mut io);
-    let code = runtime.run().expect("shouldn't exception");
+    let code = match runtime.run() {
+        Ok(code) => code,
+        Err(err) => {
+            for (idx, op) in program.ops.iter().enumerate() {
+                println!("op {}: {:?}", idx, op);
+            }
+
+            println!("{:?}\n", err);
+            panic!();
+        }
+    };
 
     println!("return code: {}", code);
     if code != 0 {
-        println!("logs:\n{}", io.log.to_string());
-        println!("stdout:\n{}", io.out.to_string());
-        println!("stderr:\n{}", io.err.to_string());
+        for (idx, op) in program.ops.iter().enumerate() {
+            println!("op {}: {:?}", idx, op);
+        }
+
         panic!();
     }
 
-    let output = io.out.to_string();
+    let output = io.out.0.to_string();
     match read_to_string(String::from(filename) + ".out") {
-        Ok(expected) => assert_eq!(output, expected.replace("\r\n", "\n")),
+        Ok(expected) => {
+            if output != expected.replace("\r\n", "\n") {
+                for (idx, op) in program.ops.iter().enumerate() {
+                    println!("op {}: {:?}", idx, op);
+                }
+
+                panic!();
+            }
+        }
         Err(_) => {}
     }
 }
@@ -47,7 +66,7 @@ fn test_file_compile_should_fail(filename: &str) {
     let mut files = FileDb::new();
     let mut writer = StringWriter::new();
 
-    files.add(filename).unwrap();
+    files.add_from_fs(filename).unwrap();
 
     match compile(&mut files) {
         Err(errs) => {
