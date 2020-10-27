@@ -177,7 +177,7 @@ fn main() {
             http_handler: respond_to_http_request,
             ws_handler: ws_respond,
         };
-        let addr = "127.0.0.1:3000";
+        let addr = "0.0.0.0:3000";
         server.serve(addr).expect("server errored");
 
         return;
