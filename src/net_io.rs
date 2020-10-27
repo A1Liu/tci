@@ -84,8 +84,7 @@ impl<State: Default + 'static> Clone for WebServer<State> {
 impl<State: Default + 'static> Copy for WebServer<State> {}
 
 impl<State: Default + 'static> WebServer<State> {
-    pub fn serve(&self) -> Result<(), WebServerError> {
-        let addr = "127.0.0.1:3000";
+    pub fn serve(&self, addr: &str) -> Result<(), WebServerError> {
         let listener = TcpListener::bind(addr)?;
         println!("listening on: {}", addr);
 
