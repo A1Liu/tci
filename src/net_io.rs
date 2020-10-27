@@ -16,6 +16,23 @@ macro_rules! write_b {
     }};
 }
 
+#[cfg(debug)]
+const TCP_BUCKET_SIZE: usize = 1048576;
+#[cfg(not(debug))]
+const TCP_BUCKET_SIZE: usize = 1048576;
+
+#[cfg(debug)]
+const WS_BUCKET_SIZE: usize = 1048576;
+#[cfg(not(debug))]
+const WS_BUCKET_SIZE: usize = 1048576;
+
+#[cfg(debug)]
+const SCRATCH_BUCKET_SIZE: usize = 1048576;
+#[cfg(not(debug))]
+const SCRATCH_BUCKET_SIZE: usize = 1048576;
+
+const TOTAL_BUCKET_SIZE: usize = TCP_BUCKET_SIZE + WS_BUCKET_SIZE + SCRATCH_BUCKET_SIZE;
+
 #[derive(Debug)]
 pub enum WebServerError {
     Io(std::io::Error),
@@ -106,12 +123,10 @@ impl<State: Default + 'static> WebServer<State> {
     }
 
     pub fn handle(&self, mut stream: TcpStream) -> Result<(), WebServerError> {
-        println!("received connection");
-
         let http_handler = self.http_handler;
         let ws_handler = self.ws_handler;
 
-        let buckets = BucketList::with_capacity(24576);
+        let buckets = BucketList::with_capacity(TOTAL_BUCKET_SIZE);
 
         // In lieu of defer
         struct BucketDealloc<'a>(BucketListRef<'a>);
@@ -121,9 +136,9 @@ impl<State: Default + 'static> WebServer<State> {
             }
         }
         let dealloc_buckets = BucketDealloc(buckets);
-        let tcp_recv = buckets.uninit(8192).unwrap();
-        let ws_buf = buckets.uninit(8192).unwrap();
-        let scratch_buf = buckets.uninit(8192).unwrap();
+        let tcp_recv = buckets.uninit(TCP_BUCKET_SIZE).unwrap();
+        let ws_buf = buckets.uninit(WS_BUCKET_SIZE).unwrap();
+        let scratch_buf = buckets.uninit(SCRATCH_BUCKET_SIZE).unwrap();
 
         let mut web_socket = ws::WebSocketServer::new_server();
         let mut num_bytes = 0;
