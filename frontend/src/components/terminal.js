@@ -1,5 +1,5 @@
 import React from "react";
 
-export default function terminal() {
+export default function Terminal() {
   return <div />;
 }

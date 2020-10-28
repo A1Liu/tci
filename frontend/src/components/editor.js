@@ -1,5 +1,5 @@
 import React from "react";
 
-export default function editor() {
+export default function Editor() {
   return <div />;
 }

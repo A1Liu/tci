@@ -1,5 +1,5 @@
 import React from "react";
 
-export default function fileUpload() {
+export default function FileUpload() {
   return <div />;
 }
