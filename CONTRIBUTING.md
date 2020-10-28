@@ -19,7 +19,10 @@ The available commands are in `src/commands.rs`:
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "command", content = "data")]
 pub enum Command {
-    AddFile(String),
+    AddFile {
+      path: String,
+      data: String,
+    },
     Compile,
     RunUntilScopedPC(u32),
     RunOp,
