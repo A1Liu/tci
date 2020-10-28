@@ -41,7 +41,7 @@ The responses are defined in `src/commands.rs`, and are in this format:
 {
   "response": "StatusRet",
   "data": {
-    "status": { ... },
+    "status": {},
     "ret": 0
   }
 }
