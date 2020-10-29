@@ -434,6 +434,7 @@ pub struct Memory {
     pub heap: VarBuffer,
     pub binary: VarBuffer,
 
+    pub callstack: Vec<CallFrame>,
     pub fp: u16,
     pub pc: u32,
 
@@ -450,6 +451,7 @@ impl Memory {
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
 
+            callstack: Vec::new(),
             fp: 0,
             pc,
 
@@ -474,6 +476,7 @@ impl Memory {
             heap: VarBuffer::new(),
             binary: VarBuffer::load_from_ref(binary),
 
+            callstack: Vec::new(),
             fp: 0,
             pc,
 
@@ -482,6 +485,14 @@ impl Memory {
             history_binary_end,
             history_index: 0,
         }
+    }
+
+    pub fn push_callstack(&mut self, callframe: CallFrame) {
+        self.callstack.push(callframe);
+    }
+
+    pub fn pop_callstack(&mut self) -> Option<CallFrame> {
+        return self.callstack.pop();
     }
 
     pub fn fp_offset(&self, var: i16) -> u16 {

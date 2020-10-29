@@ -163,7 +163,6 @@ pub struct RuntimeDiagnostic {
 
 pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory,
-    pub callstack: Vec<CallFrame>,
     pub lib_funcs: HashMap<u32, LibFunc<IO>>,
     pub program: Program<'static>,
     pub current_func: u32,
@@ -194,7 +193,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         let mut s = Self {
             memory,
-            callstack: Vec::new(),
             current_func: main_func,
             ret_addr,
             program,
@@ -210,7 +208,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
     pub fn diagnostic(&self) -> RuntimeDiagnostic {
         RuntimeDiagnostic {
-            callstack: self.callstack.len() as u32, // TODO handle overflow
+            callstack: self.memory.callstack.len() as u32, // TODO handle overflow
             fp: self.memory.fp,
             pc: self.memory.pc,
             loc: self.program.ops[self.memory.pc as usize].loc,
@@ -226,7 +224,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 
     pub fn run_op_count(&mut self, mut count: u32) -> Result<Option<i32>, IError> {
-        let callstack_len = self.callstack.len();
+        let callstack_len = self.memory.callstack.len();
         while count > 0 {
             if let Some(exit) = self.run_op()? {
                 return Ok(Some(exit));
@@ -244,7 +242,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         stack_size: u16,
     ) -> Result<Option<i32>, IError> {
         let stack_size = stack_size as usize;
-        while stack_size <= self.callstack.len() && count > 0 && self.memory.pc != pc {
+        while stack_size <= self.memory.callstack.len() && count > 0 && self.memory.pc != pc {
             if let Some(exit) = self.run_op()? {
                 return Ok(Some(exit));
             }
@@ -490,7 +488,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::Ret => {
-                let frame = match self.callstack.pop() {
+                let frame = match self.memory.pop_callstack() {
+                    // TODO use more robust solution than this
                     None => {
                         let ret = i32::from_be(self.memory.get_var(self.ret_addr).unwrap());
                         return Ok(Some(ret));
@@ -508,7 +507,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::Call(func) => {
-                self.callstack.push(CallFrame::new(
+                self.memory.push_callstack(CallFrame::new(
                     self.current_func,
                     op.loc,
                     self.memory.fp,
@@ -527,14 +526,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
             Opcode::LibCall(func_name) => {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
-                    self.callstack.push(CallFrame::new(
+                    self.memory.push_callstack(CallFrame::new(
                         self.current_func,
                         op.loc,
                         self.memory.fp,
                         self.memory.pc,
                     ));
                     lib_func(self)?;
-                    self.callstack.pop().unwrap();
+                    self.memory.pop_callstack().unwrap();
                 } else {
                     return Err(error!(
                         "InvalidLibraryFunction",
