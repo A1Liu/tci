@@ -74,7 +74,7 @@ impl<'a> WSState<'a> {
                     }
                 };
 
-                *self = Self::Running(Runtime::new(program, InMemoryIO::new()));
+                *self = Self::Running(Runtime::new(program, InMemoryIO::new(), StringArray::new()));
                 ret!(CommandResult::Compiled(program));
             } else {
                 ret!(CommandResult::InvalidCommand);

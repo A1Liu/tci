@@ -157,6 +157,7 @@ pub struct RuntimeDiagnostic {
 
 pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory,
+    pub args: StringArray,
     pub lib_funcs: HashMap<u32, LibFunc<IO>>,
     pub program: Program<'static>,
     pub ret_addr: VarPointer,
@@ -164,7 +165,7 @@ pub struct Runtime<IO: RuntimeIO> {
 }
 
 impl<IO: RuntimeIO> Runtime<IO> {
-    pub fn new(program: Program<'static>, io: IO) -> Self {
+    pub fn new(program: Program<'static>, io: IO, args: StringArray) -> Self {
         let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
 
         lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
@@ -185,6 +186,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         let _argv = memory.add_stack_var(8);
 
         let mut s = Self {
+            args,
             memory,
             ret_addr,
             program,
