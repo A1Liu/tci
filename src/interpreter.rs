@@ -18,20 +18,6 @@ macro_rules! err {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct CallFrame {
-    pub name: u32,
-    pub loc: CodeLoc,
-    pub fp: u16,
-    pub pc: u32,
-}
-
-impl CallFrame {
-    pub fn new(name: u32, loc: CodeLoc, fp: u16, pc: u32) -> Self {
-        Self { name, loc, fp, pc }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 pub enum LocOrRetCode {
     Loc(CodeLoc),
     Code(i32),
@@ -287,11 +273,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
         let op = self.program.ops[self.pc as usize];
         write!(self.io.log(), "op: {:?}\n", op.op)
             .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-        self.callstack
-            .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
 
         let opcode = op.op;
-
         match opcode {
             Opcode::Func(_) => {}
 
@@ -464,7 +447,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::Jump(target) => {
                 self.pc = target;
-                self.callstack.pop().unwrap();
                 return Ok(None);
             }
 
@@ -472,7 +454,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u8 = self.memory.pop_stack(self.pc)?;
                 if value == 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -480,7 +461,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u16 = self.memory.pop_stack(self.pc)?;
                 if value == 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -488,7 +468,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u32 = self.memory.pop_stack(self.pc)?;
                 if value == 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -496,7 +475,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u64 = self.memory.pop_stack(self.pc)?;
                 if value == 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -505,7 +483,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u8 = self.memory.pop_stack(self.pc)?;
                 if value != 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -513,7 +490,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u16 = self.memory.pop_stack(self.pc)?;
                 if value != 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -521,7 +497,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u32 = self.memory.pop_stack(self.pc)?;
                 if value != 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
@@ -529,14 +504,11 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let value: u64 = self.memory.pop_stack(self.pc)?;
                 if value != 0 {
                     self.pc = target;
-                    self.callstack.pop().unwrap();
                     return Ok(None);
                 }
             }
 
             Opcode::Ret => {
-                self.callstack.pop().unwrap();
-
                 let frame = match self.callstack.pop() {
                     None => {
                         let ret = i32::from_be(self.memory.get_var(self.ret_addr).unwrap());
@@ -555,6 +527,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::Call(func) => {
+                self.callstack
+                    .push(CallFrame::new(self.current_func, op.loc, self.fp, self.pc));
                 self.fp = self.memory.stack_length() + 1;
 
                 let func_name = match self.program.ops[func as usize].op {
@@ -568,7 +542,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
             Opcode::LibCall(func_name) => {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
+                    self.callstack.push(CallFrame::new(
+                        self.current_func,
+                        op.loc,
+                        self.fp,
+                        self.pc,
+                    ));
                     lib_func(self)?;
+                    self.callstack.pop().unwrap();
                 } else {
                     return Err(error!(
                         "InvalidLibraryFunction",
@@ -578,7 +559,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 }
 
                 self.pc += 1;
-                self.callstack.pop().unwrap();
                 return Ok(None);
             }
 
@@ -612,7 +592,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
         }
 
-        self.callstack.pop().unwrap();
         self.pc += 1;
         return Ok(None);
     }

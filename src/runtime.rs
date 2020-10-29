@@ -38,6 +38,20 @@ impl From<io::Error> for IError {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CallFrame {
+    pub name: u32,
+    pub loc: CodeLoc,
+    pub fp: u16,
+    pub pc: u32,
+}
+
+impl CallFrame {
+    pub fn new(name: u32, loc: CodeLoc, fp: u16, pc: u32) -> Self {
+        Self { name, loc, fp, pc }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Var {
     pub idx: usize,
