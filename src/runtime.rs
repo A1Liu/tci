@@ -434,6 +434,7 @@ pub struct Memory {
     pub heap: VarBuffer,
     pub binary: VarBuffer,
 
+    pub fp: u16,
     pub pc: u32,
 
     pub historical_data: Vec<u8>,
@@ -449,6 +450,7 @@ impl Memory {
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
 
+            fp: 0,
             pc,
 
             historical_data: Vec::new(),
@@ -472,6 +474,7 @@ impl Memory {
             heap: VarBuffer::new(),
             binary: VarBuffer::load_from_ref(binary),
 
+            fp: 0,
             pc,
 
             historical_data,
@@ -479,6 +482,20 @@ impl Memory {
             history_binary_end,
             history_index: 0,
         }
+    }
+
+    pub fn fp_offset(&self, var: i16) -> u16 {
+        if var < 0 {
+            // TODO make sure there's no overflow happening here
+            let var = (var * -1) as u16;
+            self.fp - var
+        } else {
+            self.fp + var as u16
+        }
+    }
+
+    pub fn set_fp(&mut self, fp: u16) {
+        self.fp = fp;
     }
 
     pub fn jump(&mut self, pc: u32) {

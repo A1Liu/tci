@@ -168,7 +168,6 @@ pub struct Runtime<IO: RuntimeIO> {
     pub program: Program<'static>,
     pub current_func: u32,
     pub ret_addr: VarPointer,
-    pub fp: u16,
     pub io: IO,
 }
 
@@ -193,8 +192,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
         let _argc = memory.add_stack_var(4);
         let _argv = memory.add_stack_var(8);
 
-        let s = Self {
-            fp: memory.stack_length() + 1,
+        let mut s = Self {
             memory,
             callstack: Vec::new(),
             current_func: main_func,
@@ -203,6 +201,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             lib_funcs,
             io,
         };
+        s.memory.set_fp(s.memory.stack_length() + 1);
 
         // TODO initialize _argc and _argv
 
@@ -212,19 +211,9 @@ impl<IO: RuntimeIO> Runtime<IO> {
     pub fn diagnostic(&self) -> RuntimeDiagnostic {
         RuntimeDiagnostic {
             callstack: self.callstack.len() as u32, // TODO handle overflow
-            fp: self.fp,
+            fp: self.memory.fp,
             pc: self.memory.pc,
             loc: self.program.ops[self.memory.pc as usize].loc,
-        }
-    }
-
-    pub fn fp_offset(fp: u16, var: i16) -> u16 {
-        if var < 0 {
-            // TODO make sure there's no overflow happening here
-            let var = (var * -1) as u16;
-            fp - var
-        } else {
-            fp + var as u16
         }
     }
 
@@ -298,7 +287,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.memory.push_stack(ptr);
             }
             Opcode::MakeTempLocalStackPtr { var, offset } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(self.fp, var), offset);
+                let ptr = VarPointer::new_stack(self.memory.fp_offset(var), offset);
                 self.memory.push_stack(ptr);
             }
 
@@ -369,11 +358,11 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::GetLocal { var, offset, bytes } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(self.fp, var), offset);
+                let ptr = VarPointer::new_stack(self.memory.fp_offset(var), offset);
                 self.memory.push_stack_bytes_from(ptr, bytes)?;
             }
             Opcode::SetLocal { var, offset, bytes } => {
-                let ptr = VarPointer::new_stack(Self::fp_offset(self.fp, var), offset);
+                let ptr = VarPointer::new_stack(self.memory.fp_offset(var), offset);
                 self.memory.pop_stack_bytes_into(ptr, bytes)?;
             }
 
@@ -508,12 +497,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     }
                     Some(frame) => frame,
                 };
-                while self.memory.stack_length() >= self.fp {
+                while self.memory.stack_length() >= self.memory.fp {
                     self.memory.pop_stack_var().unwrap();
                 }
 
                 self.current_func = frame.name;
-                self.fp = frame.fp;
+                self.memory.set_fp(frame.fp);
                 self.memory.jump(frame.pc + 1);
                 return Ok(None);
             }
@@ -522,10 +511,10 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.callstack.push(CallFrame::new(
                     self.current_func,
                     op.loc,
-                    self.fp,
+                    self.memory.fp,
                     self.memory.pc,
                 ));
-                self.fp = self.memory.stack_length() + 1;
+                self.memory.set_fp(self.memory.stack_length() + 1);
 
                 let func_name = match self.program.ops[func as usize].op {
                     Opcode::Func(name) => name,
@@ -541,7 +530,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     self.callstack.push(CallFrame::new(
                         self.current_func,
                         op.loc,
-                        self.fp,
+                        self.memory.fp,
                         self.memory.pc,
                     ));
                     lib_func(self)?;
@@ -641,6 +630,7 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
 
     // OPTIMIZE This does an unnecessary linear scan
     let format_str = sel.cstring_bytes(sel.memory.get_var(format_ptr)?)?;
+    let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
 
     let mut out = StringWriter::new();
     let mut idx = 0;
@@ -650,7 +640,7 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
             idx2 += 1;
         }
 
-        write_utf8_lossy(&mut out, &format_str[idx..idx2]).expect("this shouldn't fail");
+        write_utf8_lossy(&mut out, &format_str[idx..idx2]).map_err(map_err)?;
 
         if idx2 == format_str.len() {
             break;
@@ -668,22 +658,21 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
 
         match format_str[idx2] {
             b'%' => {
-                write_utf8_lossy(&mut out, &[b'%']).expect("this shouldn't fail");
+                write_utf8_lossy(&mut out, &[b'%']).map_err(map_err)?;
             }
             b's' => {
                 let var_ptr = VarPointer::new_stack(current_offset, 0);
                 let char_ptr = sel.memory.get_var(var_ptr)?;
                 current_offset += 1;
 
-                write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?)
-                    .expect("this shouldn't fail");
+                write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?).map_err(map_err)?;
             }
             b'd' => {
                 let var_ptr = VarPointer::new_stack(current_offset, 0);
                 let value = i32::from_be(sel.memory.get_var(var_ptr)?);
                 current_offset += 1;
 
-                write!(&mut out, "{}", value).expect("this shouldn't fail");
+                write!(&mut out, "{}", value).map_err(map_err)?;
             }
             byte => {
                 return Err(error!(
@@ -699,7 +688,6 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
 
     let out = out.into_string();
     let len = out.len() as i32;
-    let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
     write!(sel.io.out(), "{}", &out).map_err(map_err)?;
 
     // Return value for function
