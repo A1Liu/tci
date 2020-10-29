@@ -17,12 +17,6 @@ macro_rules! err {
     };
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum LocOrRetCode {
-    Loc(CodeLoc),
-    Code(i32),
-}
-
 pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Program) -> String {
     use codespan_reporting::diagnostic::*;
     use codespan_reporting::term::*;
@@ -165,7 +159,6 @@ pub struct Runtime<IO: RuntimeIO> {
     pub memory: Memory,
     pub lib_funcs: HashMap<u32, LibFunc<IO>>,
     pub program: Program<'static>,
-    pub current_func: u32,
     pub ret_addr: VarPointer,
     pub io: IO,
 }
@@ -183,7 +176,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             op => panic!("found function header {:?} (this is an error in tci)", op),
         };
 
-        let mut memory = Memory::new_with_binary(program.main_idx, program.data);
+        let mut memory = Memory::new_with_binary(program.main_idx, main_func, program.data);
         let ret_addr = memory.add_stack_var(4);
         #[rustfmt::skip]
         memory.set(ret_addr, 0u32).expect("failed write of ret_addr of main");
@@ -193,7 +186,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
         let mut s = Self {
             memory,
-            current_func: main_func,
             ret_addr,
             program,
             lib_funcs,
@@ -488,31 +480,18 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::Ret => {
-                let frame = match self.memory.pop_callstack() {
+                let frame = match self.memory.ret() {
                     // TODO use more robust solution than this
                     None => {
                         let ret = i32::from_be(self.memory.get_var(self.ret_addr).unwrap());
                         return Ok(Some(ret));
                     }
-                    Some(frame) => frame,
+                    Some(frame) => return Ok(None),
                 };
-                while self.memory.stack_length() >= self.memory.fp {
-                    self.memory.pop_stack_var().unwrap();
-                }
-
-                self.current_func = frame.name;
-                self.memory.set_fp(frame.fp);
-                self.memory.jump(frame.pc + 1);
-                return Ok(None);
             }
 
             Opcode::Call(func) => {
-                self.memory.push_callstack(CallFrame::new(
-                    self.current_func,
-                    op.loc,
-                    self.memory.fp,
-                    self.memory.pc,
-                ));
+                self.memory.push_callstack(op.loc);
                 self.memory.set_fp(self.memory.stack_length() + 1);
 
                 let func_name = match self.program.ops[func as usize].op {
@@ -520,18 +499,13 @@ impl<IO: RuntimeIO> Runtime<IO> {
                     op => panic!("found function header {:?} (this is an error in tci)", op),
                 };
 
-                self.current_func = func_name;
+                self.memory.set_current_func(func_name);
                 self.memory.jump(func + 1);
                 return Ok(None);
             }
             Opcode::LibCall(func_name) => {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
-                    self.memory.push_callstack(CallFrame::new(
-                        self.current_func,
-                        op.loc,
-                        self.memory.fp,
-                        self.memory.pc,
-                    ));
+                    self.memory.push_callstack(op.loc);
                     lib_func(self)?;
                     self.memory.pop_callstack().unwrap();
                 } else {

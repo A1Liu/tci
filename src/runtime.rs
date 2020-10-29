@@ -435,6 +435,7 @@ pub struct Memory {
     pub binary: VarBuffer,
 
     pub callstack: Vec<CallFrame>,
+    pub current_func: u32,
     pub fp: u16,
     pub pc: u32,
 
@@ -445,13 +446,14 @@ pub struct Memory {
 }
 
 impl Memory {
-    pub fn new(pc: u32) -> Self {
+    pub fn new(pc: u32, current_func: u32) -> Self {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
 
             callstack: Vec::new(),
+            current_func,
             fp: 0,
             pc,
 
@@ -466,7 +468,7 @@ impl Memory {
         return self.history[self.history_index - 1].tag;
     }
 
-    pub fn new_with_binary(pc: u32, binary: VarBufferRef) -> Self {
+    pub fn new_with_binary(pc: u32, current_func: u32, binary: VarBufferRef) -> Self {
         let mut historical_data = Vec::new();
         historical_data.extend_from_slice(binary.data);
         let history_binary_end = historical_data.len();
@@ -477,6 +479,7 @@ impl Memory {
             binary: VarBuffer::load_from_ref(binary),
 
             callstack: Vec::new(),
+            current_func,
             fp: 0,
             pc,
 
@@ -487,8 +490,22 @@ impl Memory {
         }
     }
 
-    pub fn push_callstack(&mut self, callframe: CallFrame) {
-        self.callstack.push(callframe);
+    pub fn ret(&mut self) -> Option<CallFrame> {
+        let frame = self.callstack.pop()?;
+
+        while self.stack_length() >= self.fp {
+            self.pop_stack_var().unwrap();
+        }
+
+        self.current_func = frame.name;
+        self.fp = frame.fp;
+        self.pc = frame.pc + 1;
+        return Some(frame);
+    }
+
+    pub fn push_callstack(&mut self, loc: CodeLoc) {
+        self.callstack
+            .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
     }
 
     pub fn pop_callstack(&mut self) -> Option<CallFrame> {
@@ -503,6 +520,10 @@ impl Memory {
         } else {
             self.fp + var as u16
         }
+    }
+
+    pub fn set_current_func(&mut self, current_func: u32) {
+        self.current_func = current_func;
     }
 
     pub fn set_fp(&mut self, fp: u16) {
@@ -1374,7 +1395,7 @@ impl Memory {
 
 #[test]
 fn test_memory_walker() {
-    let mut memory = Memory::new(0);
+    let mut memory = Memory::new(0, 0);
     memory.add_stack_var(12);
     memory.push_stack(12u64.to_be());
     memory.push_stack(4u32.to_be());
@@ -1419,7 +1440,7 @@ fn test_memory_walker() {
 
 #[test]
 fn test_walker() {
-    let mut memory = Memory::new(0);
+    let mut memory = Memory::new(0, 0);
     memory.add_stack_var(12);
     memory.push_stack(12u64.to_be());
     memory.push_stack(4u32.to_be());
