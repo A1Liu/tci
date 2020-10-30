@@ -646,6 +646,10 @@ impl StringArray {
         }
     }
 
+    pub fn len(&self) -> usize {
+        return self.indices.len();
+    }
+
     pub fn push(&mut self, string: &str) {
         let begin = self.bytes.len();
         self.bytes.extend_from_slice(string.as_bytes());

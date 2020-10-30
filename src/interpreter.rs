@@ -42,9 +42,12 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
     return out.to_string();
 }
 
-pub const ECALL_PRINT_STR: u32 = 0;
-pub const ECALL_EXIT: u32 = 1;
-pub const ECALL_EXIT_WITH_CODE: u32 = 2;
+/// Get the number of arguments in the program.
+pub const ECALL_ARGC : u32 = 0;
+
+/// Get zero-indexed command line argument. Takes in a single int as a parameter,
+/// and pushes a pointer to the string on the heap as the result.
+pub const ECALL_ARGV : u32 = 1;
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
 /// - SetLocal sets a value on the stack at a given stack and variable offset to the value at the top
@@ -519,30 +522,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 }
             }
 
-            Opcode::Ecall(ECALL_PRINT_STR) => {
-                let ptr: VarPointer = self.memory.pop_stack()?;
-                let str_bytes = self.memory.get_var_slice(ptr)?;
-
-                let mut idx = str_bytes.len();
-                for (idx_, byte) in str_bytes.iter().enumerate() {
-                    if *byte == 0 {
-                        idx = idx_;
-                        break;
-                    }
-                }
-
-                if idx == str_bytes.len() {
-                    return err!("MissingNullTerminator", "string missing null terminator");
-                }
-
-                let str_value = unsafe { core::str::from_utf8_unchecked(&str_bytes[0..idx]) };
-
-                write!(self.io.out(), "{}", str_value)
-                    .map_err(|err| error!("WriteFailed", "failed to write to stdout ({})", err))?;
+            Opcode::Ecall(ECALL_ARGC) => {
+                self.memory.push_stack((self.args.len() as u32).to_be());
             }
-            Opcode::Ecall(ECALL_EXIT_WITH_CODE) => {
-                let code = i32::from_be(self.memory.pop_stack()?);
-                return Ok(Some(code));
+            Opcode::Ecall(ECALL_ARGV) => {
+                let arg_idx : u32 = self.memory.pop_stack()?;
+                let arg_idx = arg_idx as usize;
+                if arg_idx >= self.args.len() {
+                    return Err(error!("InvalidArgumentIndex", "Argument index {} is invalid (this is a problem with tci)", arg_idx));
+                }
+
             }
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);

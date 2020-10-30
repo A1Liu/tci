@@ -31,6 +31,7 @@ use net_io::WebServerError;
 use runtime::DefaultIO;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
+use core::ops::Deref;
 use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
@@ -207,27 +208,43 @@ fn respond_to_http_request<'a>(
     let text = Asset::get(&path[1..]);
 
     if let Some(text) = text {
+        let (body_buf,ct_buf);
         if let Cow::Borrowed(borrowed) = text {
-            return Ok(net_io::HttpResponse {
-                status: 200,
-                body: borrowed,
-            });
+            body_buf = borrowed;
+            ct_buf = buffer2;
         } else {
             if text.len() > buffer2.len() {
                 return Err(WebServerError::ResponseTooLarge(text.len()));
             }
 
-            buffer2[..text.len()].copy_from_slice(&text);
-            return Ok(net_io::HttpResponse {
-                status: 200,
-                body: &buffer2[..text.len()],
-            });
+            let tup = buffer2.split_at_mut(text.len());
+            tup.0.copy_from_slice(&text);
+            body_buf = tup.0;
+            ct_buf = tup.1;
         }
+
+        let info = infer::Infer::new();
+        let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
+        let content_type = content_type_opt.as_ref().map(|mime| mime.deref()).unwrap_or(net_io::CT_TEXT_HTML);
+        if content_type.len() >= ct_buf.len() {
+            return Err(WebServerError::ResponseTooLarge(text.len() + content_type.len()));
+        }
+
+        let ct_buf = &mut ct_buf[..content_type.len()];
+        ct_buf.copy_from_slice(content_type.as_bytes());
+        let content_type = unsafe { core::str::from_utf8_unchecked(ct_buf) };
+
+        return Ok(net_io::HttpResponse {
+            status: 200,
+            body: body_buf,
+            content_type,
+        });
     }
 
     return Ok(net_io::HttpResponse {
         status: 404,
         body: ROOT_HTML.as_bytes(),
+        content_type: net_io::CT_TEXT_HTML,
     });
 }
 

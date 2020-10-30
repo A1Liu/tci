@@ -22,14 +22,14 @@ const TCP_BUCKET_SIZE: usize = 1048576;
 const TCP_BUCKET_SIZE: usize = 1048576;
 
 #[cfg(debug)]
-const WS_BUCKET_SIZE: usize = 1048576;
+const WS_BUCKET_SIZE: usize = 1048576 * 4;
 #[cfg(not(debug))]
-const WS_BUCKET_SIZE: usize = 1048576;
+const WS_BUCKET_SIZE: usize = 1048576 * 4;
 
 #[cfg(debug)]
-const SCRATCH_BUCKET_SIZE: usize = 1048576;
+const SCRATCH_BUCKET_SIZE: usize = 1048576 * 4;
 #[cfg(not(debug))]
-const SCRATCH_BUCKET_SIZE: usize = 1048576;
+const SCRATCH_BUCKET_SIZE: usize = 1048576 * 4;
 
 const TOTAL_BUCKET_SIZE: usize = TCP_BUCKET_SIZE + WS_BUCKET_SIZE + SCRATCH_BUCKET_SIZE;
 
@@ -72,8 +72,12 @@ pub enum WSResponse<'a> {
 
 pub struct HttpResponse<'a> {
     pub status: u16,
+    pub content_type: &'a str,
     pub body: &'a [u8],
 }
+
+pub const CT_TEXT_HTML : &'static str = "text; html; charset=UTF-8";
+pub const CT_PNG : &'static str = "image/png";
 
 pub type HttpHandler =
     for<'a> fn(HttpHeader, &'a mut [u8]) -> Result<HttpResponse<'a>, WebServerError>;
@@ -258,7 +262,9 @@ pub fn serialize_http_response<'a>(
     num_bytes += itoa::write(&mut bytes[num_bytes..], resp.status)?;
     write_to_bytes!(" Ok\r\nContent-Length: ");
     num_bytes += itoa::write(&mut bytes[num_bytes..], resp.body.len())?;
-    write_to_bytes!("\r\nContent-Type: text;html; charset=UTF-8\r\nConnection: close\r\n\r\n");
+    write_to_bytes!("\r\nContent-Type: ");
+    write_to_bytes!(resp.content_type);
+    write_to_bytes!("\r\nConnection: close\r\n\r\n");
 
     if resp.body.len() + num_bytes > bytes.len() {
         return Err(WebServerError::ResponseTooLarge(num_bytes));
