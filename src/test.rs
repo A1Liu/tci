@@ -1,7 +1,7 @@
 use crate::filedb::FileDb;
 use crate::interpreter::Runtime;
 use crate::runtime::DebugIO;
-use crate::util::StringWriter;
+use crate::util::*;
 use crate::{compile, emit_err};
 use core::mem;
 use std::fs::read_to_string;
@@ -24,7 +24,7 @@ fn test_file_should_succeed(filename: &str) {
     };
     mem::drop(files);
 
-    let mut runtime = Runtime::new(program, &mut io);
+    let mut runtime = Runtime::new(program, &mut io, StringArray::new());
     let code = match runtime.run() {
         Ok(code) => code,
         Err(err) => {

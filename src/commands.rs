@@ -74,7 +74,7 @@ impl<'a> WSState<'a> {
                     }
                 };
 
-                *self = Self::Running(Runtime::new(program, InMemoryIO::new()));
+                *self = Self::Running(Runtime::new(program, InMemoryIO::new(), StringArray::new()));
                 ret!(CommandResult::Compiled(program));
             } else {
                 ret!(CommandResult::InvalidCommand);
@@ -89,7 +89,7 @@ impl<'a> WSState<'a> {
                     let ret = match runtime.run_op() {
                         Ok(ret) => ret,
                         Err(err) => {
-                            let err = render_err(&err, &runtime.callstack, &runtime.program);
+                            let err = render_err(&err, &runtime.memory.callstack, &runtime.program);
                             ret!(CommandResult::RuntimeError(err));
                         }
                     };
@@ -107,7 +107,7 @@ impl<'a> WSState<'a> {
                     let ret = match runtime.run_op_count(count) {
                         Ok(prog) => prog,
                         Err(err) => {
-                            let err = render_err(&err, &runtime.callstack, &runtime.program);
+                            let err = render_err(&err, &runtime.memory.callstack, &runtime.program);
                             ret!(CommandResult::RuntimeError(err));
                         }
                     };
@@ -129,7 +129,7 @@ impl<'a> WSState<'a> {
                     let ret = match runtime.run_count_or_until(count, pc, stack_size) {
                         Ok(ret) => ret,
                         Err(err) => {
-                            let err = render_err(&err, &runtime.callstack, &runtime.program);
+                            let err = render_err(&err, &runtime.memory.callstack, &runtime.program);
                             ret!(CommandResult::RuntimeError(err));
                         }
                     };

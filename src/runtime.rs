@@ -38,6 +38,20 @@ impl From<io::Error> for IError {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CallFrame {
+    pub name: u32,
+    pub loc: CodeLoc,
+    pub fp: u16,
+    pub pc: u32,
+}
+
+impl CallFrame {
+    pub fn new(name: u32, loc: CodeLoc, fp: u16, pc: u32) -> Self {
+        Self { name, loc, fp, pc }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Var {
     pub idx: usize,
@@ -374,12 +388,12 @@ pub enum MAKind {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct MemoryAction<Tag: Copy> {
+pub struct MemoryAction {
     pub kind: MAKind,
-    pub tag: Tag,
+    pub tag: u32,
 }
 
-impl<Tag: Copy> MemoryAction<Tag> {
+impl MemoryAction {
     pub fn data_start(&self) -> usize {
         match self.kind {
             MAKind::SetValue {
@@ -415,22 +429,34 @@ impl<Tag: Copy> MemoryAction<Tag> {
     }
 }
 
-pub struct Memory<Tag: Copy> {
+pub struct Memory {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
     pub binary: VarBuffer,
+
+    pub callstack: Vec<CallFrame>,
+    pub current_func: u32,
+    pub fp: u16,
+    pub pc: u32,
+
     pub historical_data: Vec<u8>,
-    pub history: Vec<MemoryAction<Tag>>,
+    pub history: Vec<MemoryAction>,
     pub history_binary_end: usize,
     pub history_index: usize,
 }
 
-impl<Tag: Copy> Memory<Tag> {
-    pub fn new() -> Self {
+impl Memory {
+    pub fn new(pc: u32, current_func: u32) -> Self {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
+
+            callstack: Vec::new(),
+            current_func,
+            fp: 0,
+            pc,
+
             historical_data: Vec::new(),
             history: Vec::new(),
             history_binary_end: 0,
@@ -438,11 +464,11 @@ impl<Tag: Copy> Memory<Tag> {
         }
     }
 
-    pub fn current_tag(&self) -> Tag {
+    pub fn current_tag(&self) -> u32 {
         return self.history[self.history_index - 1].tag;
     }
 
-    pub fn new_with_binary(binary: VarBufferRef) -> Self {
+    pub fn new_with_binary(pc: u32, current_func: u32, binary: VarBufferRef) -> Self {
         let mut historical_data = Vec::new();
         historical_data.extend_from_slice(binary.data);
         let history_binary_end = historical_data.len();
@@ -451,6 +477,12 @@ impl<Tag: Copy> Memory<Tag> {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::load_from_ref(binary),
+
+            callstack: Vec::new(),
+            current_func,
+            fp: 0,
+            pc,
+
             historical_data,
             history: Vec::new(),
             history_binary_end,
@@ -458,7 +490,55 @@ impl<Tag: Copy> Memory<Tag> {
         }
     }
 
-    pub fn push_history(&mut self, kind: MAKind, tag: Tag) {
+    pub fn ret(&mut self) -> Option<CallFrame> {
+        let frame = self.callstack.pop()?;
+
+        while self.stack_length() >= self.fp {
+            self.pop_stack_var().unwrap();
+        }
+
+        self.current_func = frame.name;
+        self.fp = frame.fp;
+        self.pc = frame.pc + 1;
+        return Some(frame);
+    }
+
+    pub fn push_callstack(&mut self, loc: CodeLoc) {
+        self.callstack
+            .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+    }
+
+    pub fn pop_callstack(&mut self) -> Option<CallFrame> {
+        return self.callstack.pop();
+    }
+
+    pub fn fp_offset(&self, var: i16) -> u16 {
+        if var < 0 {
+            // TODO make sure there's no overflow happening here
+            let var = (var * -1) as u16;
+            self.fp - var
+        } else {
+            self.fp + var as u16
+        }
+    }
+
+    pub fn set_current_func(&mut self, current_func: u32) {
+        self.current_func = current_func;
+    }
+
+    pub fn set_fp(&mut self, fp: u16) {
+        self.fp = fp;
+    }
+
+    pub fn jump(&mut self, pc: u32) {
+        self.pc = pc;
+    }
+
+    pub fn increment_pc(&mut self) {
+        self.pc += 1;
+    }
+
+    pub fn push_history(&mut self, kind: MAKind) {
         if self.history.len() != self.history_index {
             let last_history_entry = self.history[self.history_index];
 
@@ -468,7 +548,7 @@ impl<Tag: Copy> Memory<Tag> {
                 .resize(last_history_entry.data_start(), 0);
         }
 
-        self.history.push(MemoryAction { kind, tag });
+        self.history.push(MemoryAction { kind, tag: self.pc });
         self.history_index += 1;
     }
 
@@ -541,7 +621,7 @@ impl<Tag: Copy> Memory<Tag> {
     }
 
     #[inline]
-    pub fn set<T: Copy>(&mut self, ptr: VarPointer, value: T, tag: Tag) -> Result<(), IError> {
+    pub fn set<T: Copy>(&mut self, ptr: VarPointer, value: T) -> Result<(), IError> {
         let value_start = self.historical_data.len();
         self.historical_data
             .extend_from_slice(any_as_u8_slice(&value));
@@ -559,37 +639,34 @@ impl<Tag: Copy> Memory<Tag> {
         self.historical_data
             .extend_from_slice(any_as_u8_slice(&previous_value));
         let overwrite_end = self.historical_data.len();
-        self.push_history(
-            MAKind::SetValue {
-                ptr,
-                value_start,
-                value_end_overwrite_start,
-                overwrite_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::SetValue {
+            ptr,
+            value_start,
+            value_end_overwrite_start,
+            overwrite_end,
+        });
 
         return Ok(());
     }
 
     #[inline]
-    pub fn add_stack_var(&mut self, len: u32, tag: Tag) -> VarPointer {
+    pub fn add_stack_var(&mut self, len: u32) -> VarPointer {
         // TODO check for overflow
         let ptr = VarPointer::new_stack(self.stack.add_var(len) as u16, 0);
         let book_keeping = self.historical_data.len();
-        self.push_history(MAKind::AllocStackVar { len, book_keeping }, tag);
+        self.push_history(MAKind::AllocStackVar { len, book_keeping });
         return ptr;
     }
 
     #[inline]
-    pub fn add_heap_var(&mut self, len: u32, tag: Tag) -> VarPointer {
+    pub fn add_heap_var(&mut self, len: u32) -> VarPointer {
         let ptr = VarPointer::new_heap(self.heap.add_var(len), 0);
         let book_keeping = self.historical_data.len();
-        self.push_history(MAKind::AllocHeapVar { len, book_keeping }, tag);
+        self.push_history(MAKind::AllocHeapVar { len, book_keeping });
         return ptr;
     }
 
-    pub fn write_bytes(&mut self, ptr: VarPointer, bytes: &[u8], tag: Tag) -> Result<(), IError> {
+    pub fn write_bytes(&mut self, ptr: VarPointer, bytes: &[u8]) -> Result<(), IError> {
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(bytes);
 
@@ -608,15 +685,12 @@ impl<Tag: Copy> Memory<Tag> {
         self.historical_data.extend_from_slice(to_bytes);
         let overwrite_end = self.historical_data.len();
         to_bytes.copy_from_slice(bytes);
-        self.push_history(
-            MAKind::SetValue {
-                ptr,
-                value_start,
-                value_end_overwrite_start,
-                overwrite_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::SetValue {
+            ptr,
+            value_start,
+            value_end_overwrite_start,
+            overwrite_end,
+        });
 
         return Ok(());
     }
@@ -626,7 +700,7 @@ impl<Tag: Copy> Memory<Tag> {
         return self.stack.vars.len() as u16; // TODO check for overflow
     }
 
-    pub fn pop_stack_var(&mut self, tag: Tag) -> Result<Var, IError> {
+    pub fn pop_stack_var(&mut self) -> Result<Var, IError> {
         let var = self.stack.vars.pop();
         let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
         let var = var.ok_or_else(map_err)?;
@@ -638,19 +712,16 @@ impl<Tag: Copy> Memory<Tag> {
         let stack_end = self.historical_data.len();
 
         self.stack.data.resize(var.idx, 0);
-        self.push_history(
-            MAKind::PopStackVar {
-                var_start,
-                var_end_stack_start,
-                stack_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PopStackVar {
+            var_start,
+            var_end_stack_start,
+            stack_end,
+        });
 
         return Ok(var);
     }
 
-    pub fn pop_stack_var_onto_stack(&mut self, tag: Tag) -> Result<(), IError> {
+    pub fn pop_stack_var_onto_stack(&mut self) -> Result<(), IError> {
         let var = self.stack.vars.pop();
         let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
         let var = var.ok_or_else(map_err)?;
@@ -662,64 +733,47 @@ impl<Tag: Copy> Memory<Tag> {
         let stack_end = self.historical_data.len();
 
         self.stack.data.resize(var.idx + var.len as usize, 0);
-        self.push_history(
-            MAKind::PopStackVar {
-                var_start,
-                var_end_stack_start,
-                stack_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PopStackVar {
+            var_start,
+            var_end_stack_start,
+            stack_end,
+        });
 
-        self.push_history(
-            MAKind::PushStack {
-                value_start: var_start,
-                value_end: var_end_stack_start,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PushStack {
+            value_start: var_start,
+            value_end: var_end_stack_start,
+        });
 
         return Ok(());
     }
 
     #[inline]
-    pub fn push_stack<T: Copy>(&mut self, value: T, tag: Tag) {
+    pub fn push_stack<T: Copy>(&mut self, value: T) {
         let from_bytes = any_as_u8_slice(&value);
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
         self.stack.data.extend_from_slice(from_bytes);
-        self.push_history(
-            MAKind::PushStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PushStack {
+            value_start,
+            value_end,
+        });
     }
 
-    pub fn push_stack_bytes(&mut self, from_bytes: &[u8], tag: Tag) {
+    pub fn push_stack_bytes(&mut self, from_bytes: &[u8]) {
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
         self.stack.data.extend_from_slice(from_bytes);
-        self.push_history(
-            MAKind::PushStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PushStack {
+            value_start,
+            value_end,
+        });
     }
 
-    pub fn pop_stack_bytes_into(
-        &mut self,
-        ptr: VarPointer,
-        len: u32,
-        tag: Tag,
-    ) -> Result<(), IError> {
+    pub fn pop_stack_bytes_into(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
         if self.stack.data.len() < len as usize {
             return err!(
                 "StackTooShort",
@@ -767,36 +821,25 @@ impl<Tag: Copy> Memory<Tag> {
         self.historical_data.extend_from_slice(to_bytes);
         let overwrite_end = self.historical_data.len();
         to_bytes.copy_from_slice(from_bytes);
-        self.push_history(
-            MAKind::SetValue {
-                ptr,
-                value_start,
-                value_end_overwrite_start: value_end,
-                overwrite_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::SetValue {
+            ptr,
+            value_start,
+            value_end_overwrite_start: value_end,
+            overwrite_end,
+        });
 
         self.stack
             .data
             .resize(self.stack.data.len() - len as usize, 0);
-        self.push_history(
-            MAKind::PopStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PopStack {
+            value_start,
+            value_end,
+        });
 
         return Ok(());
     }
 
-    pub fn push_stack_bytes_from(
-        &mut self,
-        ptr: VarPointer,
-        len: u32,
-        tag: Tag,
-    ) -> Result<(), IError> {
+    pub fn push_stack_bytes_from(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
         let break_idx = if let Some(var) = self.stack.vars.last() {
             var.upper()
         } else {
@@ -827,18 +870,15 @@ impl<Tag: Copy> Memory<Tag> {
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
         to_bytes.copy_from_slice(from_bytes);
-        self.push_history(
-            MAKind::PushStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PushStack {
+            value_start,
+            value_end,
+        });
 
         return Ok(());
     }
 
-    pub fn pop_bytes(&mut self, len: u32, tag: Tag) -> Result<(), IError> {
+    pub fn pop_bytes(&mut self, len: u32) -> Result<(), IError> {
         if self.stack.data.len() < len as usize {
             return err!(
                 "StackTooShort",
@@ -866,18 +906,15 @@ impl<Tag: Copy> Memory<Tag> {
         let value_end = self.historical_data.len();
 
         self.stack.data.resize(lower, 0);
-        self.push_history(
-            MAKind::PopStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PopStack {
+            value_start,
+            value_end,
+        });
 
         return Ok(());
     }
 
-    pub fn pop_keep_bytes(&mut self, keep: u32, pop: u32, tag: Tag) -> Result<(), IError> {
+    pub fn pop_keep_bytes(&mut self, keep: u32, pop: u32) -> Result<(), IError> {
         let len = keep + pop;
         if self.stack.data.len() < len as usize {
             return err!(
@@ -913,25 +950,19 @@ impl<Tag: Copy> Memory<Tag> {
         }
         self.stack.data.resize(pop_start + keep as usize, 0);
 
-        self.push_history(
-            MAKind::PopStack {
-                value_start: pop_value_start,
-                value_end: pop_value_end,
-            },
-            tag,
-        );
-        self.push_history(
-            MAKind::PushStack {
-                value_start: pop_value_end,
-                value_end: push_value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PopStack {
+            value_start: pop_value_start,
+            value_end: pop_value_end,
+        });
+        self.push_history(MAKind::PushStack {
+            value_start: pop_value_end,
+            value_end: push_value_end,
+        });
 
         return Ok(());
     }
 
-    pub fn dup_top_stack_bytes(&mut self, bytes: u32, tag: Tag) -> Result<(), IError> {
+    pub fn dup_top_stack_bytes(&mut self, bytes: u32) -> Result<(), IError> {
         if self.stack.data.len() < bytes as usize {
             return err!(
                 "StackTooShort",
@@ -964,18 +995,15 @@ impl<Tag: Copy> Memory<Tag> {
         let from_bytes = &from_bytes[dup_start..];
         to_bytes.copy_from_slice(from_bytes);
 
-        self.push_history(
-            MAKind::PushStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PushStack {
+            value_start,
+            value_end,
+        });
 
         return Ok(());
     }
 
-    pub fn pop_stack<T: Copy>(&mut self, tag: Tag) -> Result<T, IError> {
+    pub fn pop_stack<T: Copy>(&mut self) -> Result<T, IError> {
         let len = mem::size_of::<T>();
         if self.stack.data.len() < len {
             return err!(
@@ -1006,13 +1034,10 @@ impl<Tag: Copy> Memory<Tag> {
         let mut out = unsafe { mem::MaybeUninit::uninit().assume_init() };
         unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
         self.stack.data.resize(lower, 0);
-        self.push_history(
-            MAKind::PopStack {
-                value_start,
-                value_end,
-            },
-            tag,
-        );
+        self.push_history(MAKind::PopStack {
+            value_start,
+            value_end,
+        });
 
         return Ok(out);
     }
@@ -1203,14 +1228,14 @@ impl MockMemory {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotWalker<'a, Tag: Copy> {
+pub struct MemorySnapshotWalker<'a> {
     memory: MockMemory,
     historical_data: &'a [u8],
-    history: &'a [MemoryAction<Tag>],
+    history: &'a [MemoryAction],
     index: usize,
 }
 
-impl<'a, Tag: Copy> MemorySnapshotWalker<'a, Tag> {
+impl<'a> MemorySnapshotWalker<'a> {
     pub fn next(&mut self) -> Option<MemorySnapshot> {
         if self.index > self.history.len() {
             return None;
@@ -1332,8 +1357,8 @@ impl<'a, Tag: Copy> MemorySnapshotWalker<'a, Tag> {
     }
 }
 
-impl<Tag: Copy> Memory<Tag> {
-    pub fn forwards_walker(&self) -> MemorySnapshotWalker<Tag> {
+impl Memory {
+    pub fn forwards_walker(&self) -> MemorySnapshotWalker {
         let memory = MockMemory::new_from(
             VarBuffer::new(),
             VarBuffer::new(),
@@ -1354,7 +1379,7 @@ impl<Tag: Copy> Memory<Tag> {
         }
     }
 
-    pub fn backwards_walker(&self) -> MemorySnapshotWalker<Tag> {
+    pub fn backwards_walker(&self) -> MemorySnapshotWalker {
         MemorySnapshotWalker {
             memory: MockMemory::new_from(
                 self.stack.clone(),
@@ -1370,12 +1395,12 @@ impl<Tag: Copy> Memory<Tag> {
 
 #[test]
 fn test_memory_walker() {
-    let mut memory = Memory::new();
-    memory.add_stack_var(12, 0);
-    memory.push_stack(12u64.to_be(), 0);
-    memory.push_stack(4u32.to_be(), 0);
+    let mut memory = Memory::new(0, 0);
+    memory.add_stack_var(12);
+    memory.push_stack(12u64.to_be());
+    memory.push_stack(4u32.to_be());
     memory
-        .pop_stack_bytes_into(VarPointer::new_stack(1, 0), 12, 0)
+        .pop_stack_bytes_into(VarPointer::new_stack(1, 0), 12)
         .expect("should not fail");
 
     println!("history: {:?}", memory.history);
@@ -1415,12 +1440,12 @@ fn test_memory_walker() {
 
 #[test]
 fn test_walker() {
-    let mut memory = Memory::new();
-    memory.add_stack_var(12, 0);
-    memory.push_stack(12u64.to_be(), 0);
-    memory.push_stack(4u32.to_be(), 0);
+    let mut memory = Memory::new(0, 0);
+    memory.add_stack_var(12);
+    memory.push_stack(12u64.to_be());
+    memory.push_stack(4u32.to_be());
     memory
-        .pop_stack_bytes_into(VarPointer::new_stack(1, 0), 12, 0)
+        .pop_stack_bytes_into(VarPointer::new_stack(1, 0), 12)
         .expect("should not fail");
 
     println!("history: {:?}", memory.history);

@@ -1,7 +1,7 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::mem::MaybeUninit;
-use core::{fmt, ops, slice};
+use core::{fmt, ops, slice, str};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::{io, marker};
@@ -630,5 +630,34 @@ where
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use ops::Deref;
         write!(fmt, "{:?}", self.deref())
+    }
+}
+
+pub struct StringArray {
+    bytes: Vec<u8>,
+    indices: Vec<ops::Range<usize>>,
+}
+
+impl StringArray {
+    pub fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            indices: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, string: &str) {
+        let begin = self.bytes.len();
+        self.bytes.extend_from_slice(string.as_bytes());
+        let end = self.bytes.len();
+        self.indices.push(begin..end);
+    }
+}
+
+impl ops::Index<usize> for StringArray {
+    type Output = str;
+
+    fn index(&self, idx: usize) -> &str {
+        unsafe { str::from_utf8_unchecked(&self.bytes[self.indices[idx].clone()]) }
     }
 }
