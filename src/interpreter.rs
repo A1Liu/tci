@@ -42,12 +42,15 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
     return out.to_string();
 }
 
+/// Exit the program with an error code
+pub const ECALL_EXIT: u32 = 0;
+
 /// Get the number of arguments in the program.
-pub const ECALL_ARGC : u32 = 0;
+pub const ECALL_ARGC: u32 = 1;
 
 /// Get zero-indexed command line argument. Takes in a single int as a parameter,
 /// and pushes a pointer to the string on the heap as the result.
-pub const ECALL_ARGV : u32 = 1;
+pub const ECALL_ARGV: u32 = 2;
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
 /// - SetLocal sets a value on the stack at a given stack and variable offset to the value at the top
@@ -66,9 +69,9 @@ pub enum Opcode {
     Func(u32), // Function header used for callstack manipulation
 
     StackAlloc(u32), // Allocates space on the stack
-    StackDealloc,    // Pops a variable off of the stack
-    StackAddToTemp,  // Pops a variable off the stack, adding it to the temporary storage below
-    Alloc(u32), // Allocates space on the heap, then pushes a pointer to that space onto the stack
+    StackAllocDyn,
+    StackDealloc,   // Pops a variable off of the stack
+    StackAddToTemp, // Pops a variable off the stack, adding it to the temporary storage below
 
     MakeTempInt32(i32),
     MakeTempInt64(i64),
@@ -145,7 +148,6 @@ pub struct Program<'a> {
     pub files: FileDbRef<'a>,
     pub data: VarBufferRef<'a>,
     pub ops: &'a [TaggedOpcode],
-    pub main_idx: u32,
 }
 
 type LibFunc<IO> = for<'a> fn(&'a mut Runtime<IO>) -> Result<Option<i32>, IError>;
@@ -163,7 +165,6 @@ pub struct Runtime<IO: RuntimeIO> {
     pub args: StringArray,
     pub lib_funcs: HashMap<u32, LibFunc<IO>>,
     pub program: Program<'static>,
-    pub ret_addr: VarPointer,
     pub io: IO,
 }
 
@@ -175,31 +176,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
         lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
 
-        let main_func = match program.ops[program.main_idx as usize].op {
-            Opcode::Func(name) => name,
-            op => panic!("found function header {:?} (this is an error in tci)", op),
-        };
-
-        let mut memory = Memory::new_with_binary(program.main_idx, main_func, program.data);
-        let ret_addr = memory.add_stack_var(4);
-        #[rustfmt::skip]
-        memory.set(ret_addr, 0u32).expect("failed write of ret_addr of main");
-
-        let _argc = memory.add_stack_var(4);
-        let _argv = memory.add_stack_var(8);
-
-        let mut s = Self {
+        let memory = Memory::new_with_binary(program.data);
+        let s = Self {
             args,
             memory,
-            ret_addr,
             program,
             lib_funcs,
             io,
         };
-        s.memory.set_fp(s.memory.stack_length() + 1);
-
-        // TODO initialize _argc and _argv
-
         return s;
     }
 
@@ -263,9 +247,9 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::StackAlloc(space) => {
                 self.memory.add_stack_var(space);
             }
-            Opcode::Alloc(space) => {
-                let ptr = self.memory.add_heap_var(space);
-                self.memory.push_stack(ptr);
+            Opcode::StackAllocDyn => {
+                let space = u32::from_be(self.memory.pop_stack()?);
+                self.memory.add_stack_var(space);
             }
             Opcode::StackDealloc => {
                 self.memory.pop_stack_var()?;
@@ -485,27 +469,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
             }
 
             Opcode::Ret => {
-                let frame = match self.memory.ret() {
-                    // TODO use more robust solution than this
-                    None => {
-                        let ret = i32::from_be(self.memory.get_var(self.ret_addr).unwrap());
-                        return Ok(Some(ret));
-                    }
-                    Some(frame) => return Ok(None),
-                };
+                self.memory.ret();
+                return Ok(None);
             }
 
             Opcode::Call(func) => {
-                self.memory.push_callstack(op.loc);
-                self.memory.set_fp(self.memory.stack_length() + 1);
-
                 let func_name = match self.program.ops[func as usize].op {
                     Opcode::Func(name) => name,
                     op => panic!("found function header {:?} (this is an error in tci)", op),
                 };
-
-                self.memory.set_current_func(func_name);
-                self.memory.jump(func + 1);
+                self.memory.call(func + 1, func_name, op.loc);
                 return Ok(None);
             }
             Opcode::LibCall(func_name) => {
@@ -522,16 +495,28 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 }
             }
 
+            Opcode::Ecall(ECALL_EXIT) => {
+                return Ok(Some(i32::from_be(self.memory.pop_stack()?)));
+            }
             Opcode::Ecall(ECALL_ARGC) => {
                 self.memory.push_stack((self.args.len() as u32).to_be());
             }
             Opcode::Ecall(ECALL_ARGV) => {
-                let arg_idx : u32 = self.memory.pop_stack()?;
+                let arg_idx: u32 = self.memory.pop_stack()?;
                 let arg_idx = arg_idx as usize;
                 if arg_idx >= self.args.len() {
-                    return Err(error!("InvalidArgumentIndex", "Argument index {} is invalid (this is a problem with tci)", arg_idx));
+                    return Err(error!(
+                        "InvalidArgumentIndex",
+                        "Argument index {} is invalid (this is a problem with tci)", arg_idx
+                    ));
                 }
 
+                let arg = &self.args[arg_idx].as_bytes();
+                let var_pointer = self.memory.add_heap_var(arg.len() as u32 + 1);
+                let str_bytes = self.memory.get_var_slice_mut(var_pointer).unwrap();
+                str_bytes[..arg.len()].copy_from_slice(arg);
+                str_bytes[arg.len()] = 0;
+                self.memory.push_stack(var_pointer);
             }
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
@@ -565,7 +550,7 @@ pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
-    let var_pointer = sel.memory.add_heap_var(size as u32);
+    let var_pointer = sel.memory.add_heap_var(size as u32); // TODO overflow
     sel.memory.set(ret_ptr, var_pointer)?;
     return Ok(None);
 }

@@ -1,10 +1,73 @@
 use crate::filedb::FileDb;
 use crate::interpreter::Runtime;
-use crate::runtime::DebugIO;
+use crate::runtime::RuntimeIO;
 use crate::util::*;
 use crate::{compile, emit_err};
 use core::mem;
 use std::fs::read_to_string;
+use std::io;
+
+pub struct DebugSW(pub StringWriter);
+
+impl io::Write for DebugSW {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // let len = io::stdout().write(buf)?;
+        // return self.0.write(&buf[..len]);
+        return self.0.write(buf);
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        return io::stdout().flush();
+    }
+}
+
+pub struct DebugIO {
+    pub out: DebugSW,
+    pub log: DebugSW,
+    pub err: DebugSW,
+}
+
+impl DebugIO {
+    pub fn new() -> Self {
+        Self {
+            out: DebugSW(StringWriter::new()),
+            log: DebugSW(StringWriter::new()),
+            err: DebugSW(StringWriter::new()),
+        }
+    }
+}
+
+impl RuntimeIO for &mut DebugIO {
+    type Out = DebugSW;
+    type Log = DebugSW;
+    type Err = DebugSW;
+
+    fn out(&mut self) -> &mut Self::Out {
+        return &mut self.out;
+    }
+    fn err(&mut self) -> &mut Self::Log {
+        return &mut self.err;
+    }
+    fn log(&mut self) -> &mut Self::Err {
+        return &mut self.log;
+    }
+}
+
+impl RuntimeIO for DebugIO {
+    type Out = DebugSW;
+    type Log = DebugSW;
+    type Err = DebugSW;
+
+    fn out(&mut self) -> &mut Self::Out {
+        return &mut self.out;
+    }
+    fn err(&mut self) -> &mut Self::Log {
+        return &mut self.err;
+    }
+    fn log(&mut self) -> &mut Self::Err {
+        return &mut self.log;
+    }
+}
 
 fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();

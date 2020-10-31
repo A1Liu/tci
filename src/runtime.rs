@@ -1,4 +1,5 @@
 use crate::buckets::*;
+use crate::filedb::INIT_SYMS;
 use crate::util::*;
 use core::{fmt, mem, str};
 use serde::Serialize;
@@ -429,6 +430,8 @@ impl MemoryAction {
     }
 }
 
+pub const NO_CURRENT_FUNC: u32 = u32::MAX;
+
 pub struct Memory {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
@@ -446,16 +449,16 @@ pub struct Memory {
 }
 
 impl Memory {
-    pub fn new(pc: u32, current_func: u32) -> Self {
+    pub fn new() -> Self {
         Self {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
 
             callstack: Vec::new(),
-            current_func,
-            fp: 0,
-            pc,
+            current_func: INIT_SYMS.translate["main"],
+            fp: 1,
+            pc: 0,
 
             historical_data: Vec::new(),
             history: Vec::new(),
@@ -468,7 +471,7 @@ impl Memory {
         return self.history[self.history_index - 1].tag;
     }
 
-    pub fn new_with_binary(pc: u32, current_func: u32, binary: VarBufferRef) -> Self {
+    pub fn new_with_binary(binary: VarBufferRef) -> Self {
         let mut historical_data = Vec::new();
         historical_data.extend_from_slice(binary.data);
         let history_binary_end = historical_data.len();
@@ -479,9 +482,9 @@ impl Memory {
             binary: VarBuffer::load_from_ref(binary),
 
             callstack: Vec::new(),
-            current_func,
-            fp: 0,
-            pc,
+            current_func: INIT_SYMS.translate["main"],
+            fp: 1,
+            pc: 0,
 
             historical_data,
             history: Vec::new(),
@@ -490,8 +493,8 @@ impl Memory {
         }
     }
 
-    pub fn ret(&mut self) -> Option<CallFrame> {
-        let frame = self.callstack.pop()?;
+    pub fn ret(&mut self) {
+        let frame = self.callstack.pop().unwrap();
 
         while self.stack_length() >= self.fp {
             self.pop_stack_var().unwrap();
@@ -500,7 +503,14 @@ impl Memory {
         self.current_func = frame.name;
         self.fp = frame.fp;
         self.pc = frame.pc + 1;
-        return Some(frame);
+    }
+
+    pub fn call(&mut self, func: u32, func_name: u32, loc: CodeLoc) {
+        self.callstack
+            .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+        self.current_func = func_name;
+        self.fp = self.stack_length() + 1;
+        self.pc = func;
     }
 
     pub fn push_callstack(&mut self, loc: CodeLoc) {
@@ -576,6 +586,34 @@ impl Memory {
         }
 
         return Ok(&buffer.data[(var.idx + ptr.offset() as usize)..(var.idx + var.len as usize)]);
+    }
+
+    #[inline]
+    pub fn get_var_slice_mut(&mut self, ptr: VarPointer) -> Result<&mut [u8], IError> {
+        let buffer = if ptr.is_stack() {
+            &mut self.stack
+        } else if ptr.is_heap() {
+            &mut self.heap
+        } else {
+            &mut self.binary
+        };
+
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var = match buffer.vars.get(ptr.var_idx() - 1) {
+            Some(x) => *x,
+            None => return Err(invalid_ptr(ptr)),
+        };
+
+        if ptr.offset() >= var.len {
+            return Err(invalid_offset(var, ptr));
+        }
+
+        return Ok(
+            &mut buffer.data[(var.idx + ptr.offset() as usize)..(var.idx + var.len as usize)]
+        );
     }
 
     #[inline]
@@ -1395,7 +1433,7 @@ impl Memory {
 
 #[test]
 fn test_memory_walker() {
-    let mut memory = Memory::new(0, 0);
+    let mut memory = Memory::new();
     memory.add_stack_var(12);
     memory.push_stack(12u64.to_be());
     memory.push_stack(4u32.to_be());
@@ -1440,7 +1478,7 @@ fn test_memory_walker() {
 
 #[test]
 fn test_walker() {
-    let mut memory = Memory::new(0, 0);
+    let mut memory = Memory::new();
     memory.add_stack_var(12);
     memory.push_stack(12u64.to_be());
     memory.push_stack(4u32.to_be());
@@ -1557,67 +1595,6 @@ impl RuntimeIO for InMemoryIO {
     }
 }
 
-pub struct DebugSW(pub StringWriter);
-
-impl Write for DebugSW {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // let len = stdout().write(buf)?;
-        // return self.0.write(&buf[0..len]);
-        return self.0.write(buf);
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-pub struct DebugIO {
-    pub out: DebugSW,
-    pub log: DebugSW,
-    pub err: DebugSW,
-}
-
-impl DebugIO {
-    pub fn new() -> Self {
-        Self {
-            out: DebugSW(StringWriter::new()),
-            log: DebugSW(StringWriter::new()),
-            err: DebugSW(StringWriter::new()),
-        }
-    }
-}
-
-impl RuntimeIO for &mut DebugIO {
-    type Out = DebugSW;
-    type Log = DebugSW;
-    type Err = DebugSW;
-
-    fn out(&mut self) -> &mut Self::Out {
-        return &mut self.out;
-    }
-    fn err(&mut self) -> &mut Self::Log {
-        return &mut self.err;
-    }
-    fn log(&mut self) -> &mut Self::Err {
-        return &mut self.log;
-    }
-}
-
-impl RuntimeIO for DebugIO {
-    type Out = DebugSW;
-    type Log = DebugSW;
-    type Err = DebugSW;
-
-    fn out(&mut self) -> &mut Self::Out {
-        return &mut self.out;
-    }
-    fn err(&mut self) -> &mut Self::Log {
-        return &mut self.err;
-    }
-    fn log(&mut self) -> &mut Self::Err {
-        return &mut self.log;
-    }
-}
 pub struct DefaultIO {
     pub out: Stdout,
     pub log: StringWriter,

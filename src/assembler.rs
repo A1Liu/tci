@@ -10,6 +10,7 @@ use core::mem;
 use core::mem::{align_of, size_of};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug)]
 pub struct ASMFunc<'a> {
     pub func_type: TCFuncType<'a>,
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
@@ -21,6 +22,19 @@ pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet
     m.insert(INIT_SYMS.translate["exit"]);
     m
 });
+
+pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
+    return vec![
+        Opcode::StackAlloc(4),
+        Opcode::Call(main_idx),
+        Opcode::GetLocal {
+            var: 0,
+            offset: 0,
+            bytes: 4,
+        },
+        Opcode::Ecall(ECALL_EXIT),
+    ];
+}
 
 pub struct Assembler<'a> {
     pub opcodes: Vec<TaggedOpcode>,
@@ -499,20 +513,24 @@ impl<'a> Assembler<'a> {
 
     pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
-        let main_func = self
-            .functions
-            .get(&INIT_SYMS.translate["main"])
-            .ok_or_else(no_main)?;
-        let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
+        let main_sym = INIT_SYMS.translate["main"];
+        let main_func = self.functions.get(&main_sym).ok_or_else(no_main)?;
+        let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
+        let mut opcodes: Vec<_> = init_main_no_args(main_sym)
+            .iter()
+            .map(|&op| TaggedOpcode { op, loc: main_loc })
+            .collect();
+        let runtime_length = opcodes.len() as u32; // No overflow here because len is predefined
+        opcodes.append(&mut self.opcodes);
 
-        for (op_idx, op) in self.opcodes.iter_mut().enumerate() {
+        for (op_idx, op) in opcodes.iter_mut().enumerate() {
             let op_idx = op_idx as u32;
             match &mut op.op {
                 Opcode::Call(addr) => {
                     let function = self.functions.get(addr).unwrap();
                     if let Some(func_header) = function.func_header {
                         let (fptr, _loc) = func_header;
-                        *addr = fptr;
+                        *addr = fptr + runtime_length;
                     } else if LIB_FUNCS.contains(addr) {
                         op.op = Opcode::LibCall(*addr);
                     } else {
@@ -556,7 +574,7 @@ impl<'a> Assembler<'a> {
 
         let file_size = align_usize(env.size(), align_of::<TaggedOpcode>());
         let opcode_size = size_of::<TaggedOpcode>();
-        let opcodes_size = self.opcodes.len() * opcode_size;
+        let opcodes_size = opcodes.len() * opcode_size;
         let data_size = align_usize(self.data.data.len(), align_of::<Var>());
         let vars_size = self.data.vars.len() * size_of::<Var>();
 
@@ -566,15 +584,10 @@ impl<'a> Assembler<'a> {
         let mut frame = buckets.alloc_frame(layout);
 
         let files = FileDbRef::new_from_frame(&mut frame, env);
-        let ops = frame.add_array(self.opcodes);
+        let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);
 
-        let program = Program {
-            files,
-            data,
-            ops,
-            main_idx,
-        };
+        let program = Program { files, data, ops };
 
         return Ok(program);
     }
