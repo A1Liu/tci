@@ -179,6 +179,7 @@ impl<'a> fmt::Debug for Program<'a> {
         fmt.debug_struct("Program")
             .field("files", &self.files)
             .field("types", &self.types)
+            .field("symbols", &self.symbols)
             .field("data", &self.data)
             .field("ops", &self.ops)
             .finish()
