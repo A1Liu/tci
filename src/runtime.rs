@@ -2,7 +2,7 @@ use crate::buckets::*;
 use crate::filedb::INIT_SYMS;
 use crate::util::*;
 use core::{fmt, mem, str};
-use serde::ser::{Serialize, SerializeSeq, Serializer};
+use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
@@ -252,6 +252,13 @@ impl VarBuffer {
         let data = frame.add_slice(&self.data);
         let vars = frame.add_slice(&self.vars);
         return VarBufferRef { data, vars };
+    }
+
+    pub fn as_ref(&self) -> VarBufferRef {
+        return VarBufferRef {
+            data: &self.data,
+            vars: &self.vars,
+        };
     }
 
     pub fn new_from(data: Vec<u8>, vars: Vec<Var>) -> Self {
@@ -1383,61 +1390,33 @@ impl Memory {
         self.history_index -= 1;
         return true;
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MemorySnapshot<'a> {
-    pub stack_data: &'a [u8],
-    pub stack_vars: &'a [Var],
-    pub heap_data: &'a [u8],
-    pub heap_vars: &'a [Var],
-    pub binary_data: &'a [u8],
-    pub binary_vars: &'a [Var],
-}
-
-#[derive(Debug, Clone)]
-struct MockMemory {
-    stack: VarBuffer,
-    heap: VarBuffer,
-    binary: VarBuffer,
-}
-
-impl MockMemory {
-    pub fn new() -> Self {
-        Self {
-            stack: VarBuffer::new(),
-            heap: VarBuffer::new(),
-            binary: VarBuffer::new(),
-        }
-    }
-
-    pub fn new_from(stack: VarBuffer, heap: VarBuffer, binary: VarBuffer) -> Self {
-        Self {
-            stack,
-            heap,
-            binary,
-        }
-    }
-
-    pub fn var_buffer(&mut self, ptr: VarPointer) -> &mut VarBuffer {
-        if ptr.is_stack() {
-            &mut self.stack
-        } else if ptr.is_heap() {
-            &mut self.heap
-        } else {
-            &mut self.binary
-        }
-    }
 
     pub fn snapshot(&self) -> MemorySnapshot {
         MemorySnapshot {
-            stack_data: &self.stack.data,
-            stack_vars: &self.stack.vars,
-            heap_data: &self.heap.data,
-            heap_vars: &self.heap.vars,
-            binary_data: &self.binary.data,
-            binary_vars: &self.binary.vars,
+            stack: self.stack.clone(),
+            heap: self.heap.clone(),
+            binary: self.binary.clone(),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MemorySnapshot {
+    pub stack: VarBuffer,
+    pub heap: VarBuffer,
+    pub binary: VarBuffer,
+}
+
+impl Serialize for MemorySnapshot {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("MemorySnapshot", 3)?;
+        state.serialize_field("stack", &self.stack.as_ref())?;
+        state.serialize_field("heap", &self.heap.as_ref())?;
+        state.serialize_field("binary", &self.binary.as_ref())?;
+        state.end()
     }
 }
 

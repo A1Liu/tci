@@ -29,8 +29,8 @@ struct Bump {
 }
 
 pub struct Frame<'a> {
-    data: &'a mut [u8],
-    bump: usize,
+    pub data: &'a mut [u8],
+    pub bump: usize,
 }
 
 #[repr(C)]
