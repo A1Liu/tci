@@ -690,7 +690,6 @@ pub fn check_file<'a>(
                         sa(8, 8)
                     }
                 } else {
-                    // TODO check imported structs
                     return Err(error!(
                         "struct does not not exist",
                         *m_loc, "struct referenced here"
@@ -1022,7 +1021,10 @@ fn check_stmts<'b>(
                     local_env.add_local(*ident, decl_type, *loc)?;
                     let expr = env.assign_convert(buckets, &decl_type, Some(*loc), expr)?;
                     tstmts.push(TCStmt {
-                        kind: TCStmtKind::Decl { init: expr },
+                        kind: TCStmtKind::Decl {
+                            symbol: *ident,
+                            init: expr,
+                        },
                         loc: *loc,
                     });
                 }
@@ -1155,7 +1157,10 @@ fn check_stmts<'b>(
                     let expr = env.assign_convert(buckets, &decl_type, Some(decl.loc), expr)?;
                     for_env.add_local(decl.ident, decl_type, decl.loc)?;
                     block_stmts.push(TCStmt {
-                        kind: TCStmtKind::Decl { init: expr },
+                        kind: TCStmtKind::Decl {
+                            symbol: decl.ident,
+                            init: expr,
+                        },
                         loc: decl.loc,
                     });
                 }

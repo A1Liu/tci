@@ -55,6 +55,9 @@ pub const ECALL_ARGC: u32 = 1;
 /// and pushes a pointer to the string on the heap as the result.
 pub const ECALL_ARGV: u32 = 2;
 
+/// No symbol associated with this stack var
+pub const META_NO_SYMBOL: u32 = u32::MAX;
+
 /// - GetLocal gets a value from the stack at a given stack and variable offset
 /// - SetLocal sets a value on the stack at a given stack and variable offset to the value at the top
 ///   of the stack
@@ -71,9 +74,9 @@ pub const ECALL_ARGV: u32 = 2;
 pub enum Opcode {
     Func(u32), // Function header used for callstack manipulation
 
-    StackAlloc(u32), // Allocates space on the stack
-    StackAllocDyn,
-    StackDealloc,   // Pops a variable off of the stack
+    StackAlloc { bytes: u32, symbol: u32 }, // Allocates space on the stack
+    StackAllocDyn { symbol: u32 },          // Allocates space on the stack based on a u32 pop
+    StackDealloc,                           // Pops a variable off of the stack
     StackAddToTemp, // Pops a variable off the stack, adding it to the temporary storage below
 
     MakeTempInt32(i32),
@@ -147,6 +150,13 @@ pub struct TaggedOpcode {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+pub struct RuntimeVar {
+    pub decl_type: TCType,
+    pub symbol: u32,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct RuntimeStruct<'a> {
     pub members: Option<&'a [TCStructMember]>,
     pub loc: CodeLoc,
@@ -159,6 +169,7 @@ pub struct Program<'a> {
     pub buckets: BucketListRef<'a>,
     pub files: FileDbRef<'a>,
     pub types: HashRef<'a, u32, RuntimeStruct<'a>>,
+    pub symbols: &'a [RuntimeVar],
     pub data: VarBufferRef<'a>,
     pub ops: &'a [TaggedOpcode],
 }
@@ -268,12 +279,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
         match opcode {
             Opcode::Func(_) => {}
 
-            Opcode::StackAlloc(space) => {
-                self.memory.add_stack_var(space);
+            Opcode::StackAlloc { bytes, symbol } => {
+                self.memory.add_stack_var(bytes, symbol);
             }
-            Opcode::StackAllocDyn => {
+            Opcode::StackAllocDyn { symbol } => {
                 let space = u32::from_be(self.memory.pop_stack()?);
-                self.memory.add_stack_var(space);
+                self.memory.add_stack_var(space, symbol);
             }
             Opcode::StackDealloc => {
                 self.memory.pop_stack_var()?;
@@ -297,7 +308,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::Pop { bytes } => self.memory.pop_bytes(bytes)?,
             Opcode::PopKeep { keep, drop } => self.memory.pop_keep_bytes(keep, drop)?,
             Opcode::PushUndef { bytes } => {
-                self.memory.add_stack_var(bytes);
+                self.memory.add_stack_var(bytes, META_NO_SYMBOL);
                 self.memory
                     .pop_stack_var_onto_stack()
                     .expect("should never fail");

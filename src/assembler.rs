@@ -27,7 +27,10 @@ pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet
 
 pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
     return vec![
-        Opcode::StackAlloc(4),
+        Opcode::StackAlloc {
+            bytes: 4,
+            symbol: META_NO_SYMBOL,
+        },
         Opcode::Call(main_sym),
         Opcode::GetLocal {
             var: 0,
@@ -44,6 +47,7 @@ pub struct Assembler<'a> {
     pub data: VarBuffer,
     pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
     pub types: HashMap<u32, RuntimeStruct<'a>>,
+    pub symbols: Vec<RuntimeVar>,
     pub struct_member_count: usize,
 }
 
@@ -55,6 +59,7 @@ impl<'a> Assembler<'a> {
             functions: HashMap::new(),
             func_types: HashMap::new(),
             types: HashMap::new(),
+            symbols: Vec::new(),
             struct_member_count: 0,
         }
     }
@@ -220,11 +225,19 @@ impl<'a> Assembler<'a> {
                     ops.push(tagged);
                 }
 
-                TCStmtKind::Decl { init } => {
+                TCStmtKind::Decl { symbol, init } => {
                     decl_count += 1;
                     ld_count += 1;
                     let bytes = init.expr_type.size();
-                    tagged.op = Opcode::StackAlloc(bytes);
+                    tagged.op = Opcode::StackAlloc {
+                        bytes,
+                        symbol: self.symbols.len() as u32,
+                    };
+                    self.symbols.push(RuntimeVar {
+                        symbol: *symbol,
+                        decl_type: init.expr_type,
+                        loc: stmt.loc,
+                    });
                     ops.push(tagged);
                     ops.append(&mut self.translate_expr(init));
                     tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
@@ -342,7 +355,7 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
             TCExprKind::StringLiteral(val) => {
-                let var = self.data.add_var(val.len() as u32 + 1); // TODO overflow here
+                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL); // TODO overflow here
                 let slice = self.data.get_full_var_range_mut(var);
                 let end = slice.len() - 1;
                 slice[..end].copy_from_slice(val.as_bytes());
@@ -481,12 +494,18 @@ impl<'a> Assembler<'a> {
                 varargs,
             } => {
                 let rtype_size = *self.func_types.get(&func).unwrap();
-                tagged.op = Opcode::StackAlloc(rtype_size);
+                tagged.op = Opcode::StackAlloc {
+                    bytes: rtype_size,
+                    symbol: META_NO_SYMBOL,
+                };
                 ops.push(tagged);
 
                 for param in *params {
                     let bytes = param.expr_type.size();
-                    tagged.op = Opcode::StackAlloc(bytes);
+                    tagged.op = Opcode::StackAlloc {
+                        bytes,
+                        symbol: META_NO_SYMBOL,
+                    };
                     ops.push(tagged);
                     ops.append(&mut self.translate_expr(param));
                     tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
@@ -494,7 +513,10 @@ impl<'a> Assembler<'a> {
                 }
 
                 if *varargs {
-                    tagged.op = Opcode::StackAlloc(4);
+                    tagged.op = Opcode::StackAlloc {
+                        bytes: 4,
+                        symbol: META_NO_SYMBOL,
+                    };
                     ops.push(tagged);
                     tagged.op = Opcode::MakeTempInt32(params.len() as i32); // check overflow here
                     ops.push(tagged);
@@ -631,9 +653,14 @@ impl<'a> Assembler<'a> {
         );
         let type_members_size = align_usize(
             self.struct_member_count * size_of::<TCStructMember>(),
-            align_of::<TaggedOpcode>(),
+            align_of::<RuntimeVar>(),
         );
         let types_size = type_members_size + type_structs_size;
+
+        let symbols_size = align_usize(
+            self.symbols.len() * size_of::<RuntimeVar>(),
+            align_of::<TaggedOpcode>(),
+        );
 
         let opcodes_size = opcodes.len() * size_of::<TaggedOpcode>();
 
@@ -641,7 +668,7 @@ impl<'a> Assembler<'a> {
         let vars_size = self.data.vars.len() * size_of::<Var>();
         let data_size = var_data_size + vars_size;
 
-        let total_size = file_size + types_size + opcodes_size + data_size;
+        let total_size = file_size + types_size + symbols_size + opcodes_size + data_size;
         let buckets = BucketList::with_capacity(0);
         let layout = alloc::Layout::from_size_align(total_size, 8).unwrap();
         let mut frame = buckets.alloc_frame(layout);
@@ -663,6 +690,7 @@ impl<'a> Assembler<'a> {
         let files = FileDbRef::new_from_frame(&mut frame, env);
         let types: Vec<(u32, RuntimeStruct)> = self.types.iter().map(type_mapper!()).collect();
         let types = HashRef::new(&mut frame, type_struct_slots, types.into_iter());
+        let symbols = frame.add_array(self.symbols);
         let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);
 
@@ -670,6 +698,7 @@ impl<'a> Assembler<'a> {
             buckets,
             files,
             types,
+            symbols,
             data,
             ops,
         };

@@ -278,10 +278,11 @@ pub enum TCShallowType {
     VoidPointer,
 }
 
+// TODO TCVarKind with global and local
 #[derive(Debug, Clone)]
 pub struct TCVar {
     pub decl_type: TCType,
-    pub var_offset: i16, // TODO TCVarKind with global and local
+    pub var_offset: i16, // The offset from the frame pointer for this variable
     pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
 }
 
@@ -335,6 +336,7 @@ pub enum TCStmtKind<'a> {
     Ret,
     Expr(TCExpr<'a>),
     Decl {
+        symbol: u32,
         init: TCExpr<'a>,
     },
     Branch {
