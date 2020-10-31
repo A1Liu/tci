@@ -638,6 +638,21 @@ impl Memory {
         self.history_index += 1;
     }
 
+    /// Returns a pointer to a variable matching criteria set by F, only looking
+    /// in the current scope
+    pub fn search_stack<F>(&self, mut f: F) -> Option<VarPointer>
+    where
+        F: FnMut(u32) -> bool,
+    {
+        for idx in self.fp..(self.stack_length() + 1) {
+            if f(self.stack.vars[idx as usize].meta) {
+                return Some(VarPointer::new_stack(idx, 0));
+            }
+        }
+
+        return None;
+    }
+
     #[inline]
     pub fn get_var_slice(&self, ptr: VarPointer) -> Result<&[u8], IError> {
         let buffer = if ptr.is_stack() {
