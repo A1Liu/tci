@@ -1,4 +1,5 @@
 use crate::util::*;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ASTProgram<'a> {
@@ -205,7 +206,7 @@ pub struct Block<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
 pub struct SizeAlign {
     pub size: u32,
     pub align: u32,
@@ -221,7 +222,7 @@ pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     align: 0,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TCStructMember {
     pub decl_type: TCType,
     pub ident: u32,
@@ -244,7 +245,8 @@ pub struct TCStruct<'a> {
     pub decl_loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[serde(tag = "kind", content = "data")]
 pub enum TCTypeKind {
     I32, // int
     U64, // unsigned long
@@ -254,7 +256,7 @@ pub enum TCTypeKind {
     Uninit { size: u32 },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TCType {
     pub kind: TCTypeKind,
     pub pointer_count: u32,

@@ -1,6 +1,9 @@
+use crate::ast::*;
+use crate::buckets::*;
 use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
+use core::fmt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
@@ -144,10 +147,31 @@ pub struct TaggedOpcode {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+pub struct RuntimeStruct<'a> {
+    pub members: Option<&'a [TCStructMember]>,
+    pub loc: CodeLoc,
+    pub sa: SizeAlign,
+}
+
+#[derive(Clone, Copy, Serialize)]
 pub struct Program<'a> {
+    #[serde(skip)]
+    pub buckets: BucketListRef<'a>,
     pub files: FileDbRef<'a>,
+    pub types: HashRef<'a, u32, RuntimeStruct<'a>>,
     pub data: VarBufferRef<'a>,
     pub ops: &'a [TaggedOpcode],
+}
+
+impl<'a> fmt::Debug for Program<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_struct("Program")
+            .field("files", &self.files)
+            .field("types", &self.types)
+            .field("data", &self.data)
+            .field("ops", &self.ops)
+            .finish()
+    }
 }
 
 type LibFunc<IO> = for<'a> fn(&'a mut Runtime<IO>) -> Result<Option<i32>, IError>;

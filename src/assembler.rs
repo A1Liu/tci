@@ -16,13 +16,6 @@ pub struct ASMFunc<'a> {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
-#[derive(Clone, Copy)]
-pub struct ASMStruct<'a> {
-    pub members: Option<&'a [TCStructMember]>,
-    pub loc: CodeLoc,
-    pub sa: SizeAlign,
-}
-
 pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet<u32>, {
     let mut m = HashSet::new();
     m.insert(INIT_SYMS.translate["printf"]);
@@ -50,7 +43,7 @@ pub struct Assembler<'a> {
     pub func_types: HashMap<u32, u32>,
     pub data: VarBuffer,
     pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
-    pub types: HashMap<u32, ASMStruct<'a>>,
+    pub types: HashMap<u32, RuntimeStruct<'a>>,
     pub struct_member_count: usize,
 }
 
@@ -74,7 +67,7 @@ impl<'a> Assembler<'a> {
                     if !self.types.contains_key(struct_id) {
                         self.types.insert(
                             *struct_id,
-                            ASMStruct {
+                            RuntimeStruct {
                                 members: None,
                                 loc: struct_type.decl_loc,
                                 sa: TC_UNKNOWN_SA,
@@ -86,7 +79,7 @@ impl<'a> Assembler<'a> {
                 }
             };
 
-            if let Some(ASMStruct { members, loc, sa }) = self.types.get_mut(struct_id) {
+            if let Some(RuntimeStruct { members, loc, sa }) = self.types.get_mut(struct_id) {
                 if let Some(members) = members {
                     if members != &struct_type.members {
                         return Err(error!(
@@ -106,7 +99,7 @@ impl<'a> Assembler<'a> {
 
             self.types.insert(
                 *struct_id,
-                ASMStruct {
+                RuntimeStruct {
                     members: Some(struct_type.members),
                     loc: struct_type.loc,
                     sa: struct_type.sa,
@@ -629,23 +622,57 @@ impl<'a> Assembler<'a> {
                 _ => {}
             }
         }
+        let file_size = align_usize(env.size(), align_of::<HashRefSlot<u32, RuntimeStruct>>());
 
-        let file_size = align_usize(env.size(), align_of::<TaggedOpcode>());
-        let opcode_size = size_of::<TaggedOpcode>();
-        let opcodes_size = opcodes.len() * opcode_size;
-        let data_size = align_usize(self.data.data.len(), align_of::<Var>());
+        let type_struct_slots = self.types.len() * 2;
+        let type_structs_size = align_usize(
+            type_struct_slots * size_of::<HashRefSlot<u32, RuntimeStruct>>(),
+            align_of::<TCStructMember>(),
+        );
+        let type_members_size = align_usize(
+            self.struct_member_count * size_of::<TCStructMember>(),
+            align_of::<TaggedOpcode>(),
+        );
+        let types_size = type_members_size + type_structs_size;
+
+        let opcodes_size = opcodes.len() * size_of::<TaggedOpcode>();
+
+        let var_data_size = align_usize(self.data.data.len(), align_of::<Var>());
         let vars_size = self.data.vars.len() * size_of::<Var>();
+        let data_size = var_data_size + vars_size;
 
-        let total_size = file_size + opcodes_size + data_size + vars_size + 8;
+        let total_size = file_size + types_size + opcodes_size + data_size;
         let buckets = BucketList::with_capacity(0);
         let layout = alloc::Layout::from_size_align(total_size, 8).unwrap();
         let mut frame = buckets.alloc_frame(layout);
 
+        macro_rules! type_mapper {
+            () => {
+                |(id, value)| {
+                    let runtime_struct = RuntimeStruct {
+                        members: value.members.map(|members| &*frame.add_slice(members)),
+                        loc: value.loc,
+                        sa: value.sa,
+                    };
+
+                    (*id, runtime_struct)
+                }
+            };
+        }
+
         let files = FileDbRef::new_from_frame(&mut frame, env);
+        let types: Vec<(u32, RuntimeStruct)> = self.types.iter().map(type_mapper!()).collect();
+        let types = HashRef::new(&mut frame, type_struct_slots, types.into_iter());
         let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);
 
-        let program = Program { files, data, ops };
+        let program = Program {
+            buckets,
+            files,
+            types,
+            data,
+            ops,
+        };
 
         return Ok(program);
     }

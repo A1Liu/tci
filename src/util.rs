@@ -2,10 +2,10 @@ use crate::buckets::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
-use core::mem::{swap, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::{fmt, ops, slice, str};
-use serde::Serialize;
-use std::collections::hash_map::RandomState;
+use serde::ser::{Serialize, SerializeMap, Serializer};
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::{io, marker};
@@ -165,7 +165,7 @@ impl Into<Vec<Error>> for Error {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,
@@ -670,34 +670,80 @@ impl ops::Index<usize> for StringArray {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct DetState;
+
+impl BuildHasher for DetState {
+    type Hasher = DefaultHasher;
+    #[inline]
+    fn build_hasher(&self) -> DefaultHasher {
+        return DefaultHasher::new();
+    }
+}
+
 pub enum HashRefSlot<Key, Value> {
     Some(Key, Value),
     None,
     // TODO add Tomb variant and remove operation?
 }
 
-pub struct HashRef<'a, Key, Value, State = RandomState>
+#[derive(Clone, Copy)]
+pub struct HashRef<'a, Key, Value, State = DetState>
 where
     Key: Eq + Hash,
     State: BuildHasher,
 {
-    pub slots: &'a mut [HashRefSlot<Key, Value>],
+    pub slots: &'a [HashRefSlot<Key, Value>],
     pub size: usize,
     pub state: State,
 }
 
-impl<'a, Key, Value> HashRef<'a, Key, Value, RandomState>
+impl<'a, Key, Value> HashRef<'a, Key, Value, DetState>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Clone,
+    Value: Clone,
 {
-    pub fn new(frame: &mut Frame<'a>, capacity: usize) -> Self {
-        Self {
-            slots: frame
-                .build_array(capacity, |_idx| HashRefSlot::None)
-                .unwrap(),
-            size: 0,
-            state: RandomState::new(),
+    pub fn new<I>(frame: &mut Frame<'a>, capacity: usize, data: I) -> Self
+    where
+        I: Iterator<Item = (Key, Value)>,
+    {
+        let slots = frame
+            .build_array(capacity, |_idx| HashRefSlot::None)
+            .unwrap();
+        let mut size = 0;
+        let state = DetState;
+
+        for (key, value) in data {
+            let mut hasher = state.build_hasher();
+            key.hash(&mut hasher);
+            let mut slot_idx = hasher.finish() as usize % slots.len();
+
+            loop {
+                match &mut slots[slot_idx] {
+                    HashRefSlot::Some(slot_key, slot_value) => {
+                        if slot_key == &key {
+                            *slot_key = key;
+                            *slot_value = value;
+                            break;
+                        }
+                    }
+                    slot @ HashRefSlot::None => {
+                        *slot = HashRefSlot::Some(key, value);
+                        size += 1;
+                        break;
+                    }
+                }
+
+                slot_idx += 1;
+                slot_idx = slot_idx % slots.len();
+            }
+
+            if size == capacity {
+                panic!("why are you inserting more keys than this HashRef can hold?");
+            }
         }
+
+        Self { slots, size, state }
     }
 }
 
@@ -714,36 +760,6 @@ where
     #[inline]
     pub fn capacity(&self) -> usize {
         return self.slots.len();
-    }
-
-    pub fn insert(&mut self, mut key: Key, mut value: Value) -> Option<(Key, Value)> {
-        if self.size == self.slots.len() {
-            panic!("why are you inserting more keys than this HashRef can hold?");
-        }
-
-        let mut hasher = self.state.build_hasher();
-        key.hash(&mut hasher);
-        let mut slot_idx = hasher.finish() as usize % self.slots.len();
-
-        loop {
-            match &mut self.slots[slot_idx] {
-                HashRefSlot::Some(slot_key, slot_value) => {
-                    if &key == slot_key {
-                        swap(slot_key, &mut key);
-                        swap(slot_value, &mut value);
-                        return Some((key, value));
-                    }
-                }
-                slot @ HashRefSlot::None => {
-                    *slot = HashRefSlot::Some(key, value);
-                    self.size += 1;
-                    return None;
-                }
-            }
-
-            slot_idx += 1;
-            slot_idx = slot_idx % self.slots.len();
-        }
     }
 
     pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&Value>
@@ -781,5 +797,66 @@ where
                 HashRefSlot::None => return None,
             }
         }
+    }
+
+    pub fn iter(&self) -> HashRefIter<'a, Key, Value> {
+        HashRefIter {
+            slots: self.slots,
+            slot_idx: 0,
+        }
+    }
+}
+
+pub struct HashRefIter<'a, Key, Value> {
+    pub slots: &'a [HashRefSlot<Key, Value>],
+    pub slot_idx: usize,
+}
+
+impl<'a, Key, Value> Iterator for HashRefIter<'a, Key, Value>
+where
+    Key: Eq + Hash,
+{
+    type Item = (&'a Key, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.slot_idx == self.slots.len() {
+                return None;
+            } else if let HashRefSlot::Some(key, value) = &self.slots[self.slot_idx] {
+                self.slot_idx += 1;
+                return Some((key, value));
+            }
+
+            self.slot_idx += 1;
+        }
+    }
+}
+
+impl<'a, Key, Value, State> fmt::Debug for HashRef<'a, Key, Value, State>
+where
+    Key: Eq + Hash + fmt::Debug,
+    Value: fmt::Debug,
+    State: BuildHasher,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<'a, Key, Value, State> Serialize for HashRef<'a, Key, Value, State>
+where
+    Key: Eq + Hash + Serialize,
+    Value: Serialize,
+    State: BuildHasher,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.len()))?;
+        for (key, value) in self.iter() {
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
     }
 }
