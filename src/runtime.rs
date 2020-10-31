@@ -2,7 +2,7 @@ use crate::buckets::*;
 use crate::filedb::INIT_SYMS;
 use crate::util::*;
 use core::{fmt, mem, str};
-use serde::Serialize;
+use serde::ser::{Serialize, SerializeSeq, Serializer};
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
@@ -53,7 +53,7 @@ impl CallFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Var {
     pub idx: usize,
     pub len: u32, // len in bytes
@@ -214,10 +214,7 @@ pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
     } else if ptr.is_heap() {
         return error!(
             "InvalidPointer",
-            "the heap pointer {} is invalid; the nearest object is in the range {}..{}",
-            ptr,
-            start,
-            end
+            "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
         );
     } else {
         return error!(
@@ -234,12 +231,6 @@ pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
 pub struct VarBuffer {
     pub data: Vec<u8>,  // Allocator for variables
     pub vars: Vec<Var>, // Tracker for variables
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct VarBufferRef<'a> {
-    pub data: &'a [u8],
-    pub vars: &'a [Var],
 }
 
 impl VarBuffer {
@@ -345,6 +336,65 @@ impl VarBuffer {
         unsafe { any_as_u8_slice_mut(&mut previous_value).copy_from_slice(to_bytes) };
         to_bytes.copy_from_slice(any_as_u8_slice(&t));
         return Ok(previous_value);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct VarBufferRef<'a> {
+    pub data: &'a [u8],
+    pub vars: &'a [Var],
+}
+
+pub struct VarBufferRefIter<'a> {
+    pub data: &'a [u8],
+    pub vars: &'a [Var],
+    pub var_idx: u32,
+}
+
+impl<'a> Iterator for VarBufferRefIter<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.var_idx as usize == self.vars.len() {
+            return None;
+        } else {
+            let var = self.vars[self.var_idx as usize];
+            let buf = &self.data[var.idx..(var.idx + var.len as usize)];
+            self.var_idx += 1;
+            return Some(buf);
+        }
+    }
+}
+
+impl<'a> fmt::Debug for VarBufferRef<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_list()
+            .entries(VarBufferRefIter {
+                data: self.data,
+                vars: self.vars,
+                var_idx: 0,
+            })
+            .finish()
+    }
+}
+
+impl<'a> Serialize for VarBufferRef<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.vars.len() + 1))?;
+        seq.serialize_element::<[u8]>(&[])?;
+        let iter = VarBufferRefIter {
+            data: self.data,
+            vars: self.vars,
+            var_idx: 0,
+        };
+
+        for buf in iter {
+            seq.serialize_element(buf)?;
+        }
+        seq.end()
     }
 }
 
