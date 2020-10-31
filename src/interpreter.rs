@@ -521,7 +521,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
                     self.memory.push_callstack(op.loc);
                     lib_func(self)?;
-                    self.memory.pop_callstack().unwrap();
+                    self.memory.pop_callstack();
                 } else {
                     return Err(error!(
                         "InvalidLibraryFunction",
