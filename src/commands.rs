@@ -20,6 +20,7 @@ pub enum Command {
         stack_size: u16,
         pc: u32,
     },
+    Snapshot,
     Back(u32),
     Forwards(u32),
 }
@@ -31,6 +32,7 @@ pub enum CommandResult {
     Compiled(Program<'static>),
     InvalidCommand,
     IOError(String),
+    Snapshot(MemorySnapshot),
     CompileError(String),
     RuntimeError(String),
     Status(RuntimeDiagnostic),
@@ -144,6 +146,9 @@ impl<'a> WSState<'a> {
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::Snapshot => {
+                    ret!(CommandResult::Snapshot(runtime.memory.snapshot()));
                 }
                 Command::Forwards(count) => {
                     for _ in 0..count {

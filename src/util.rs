@@ -3,12 +3,12 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
 use core::mem::MaybeUninit;
-use core::{fmt, ops, slice, str};
+use core::{fmt, marker, ops, slice, str};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::io;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::{io, marker};
 
 macro_rules! error {
     ($arg1:expr) => {
