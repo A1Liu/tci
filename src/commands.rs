@@ -20,6 +20,8 @@ pub enum Command {
         stack_size: u16,
         pc: u32,
     },
+    Back(u32),
+    Forwards(u32),
 }
 
 #[derive(Serialize)]
@@ -139,6 +141,30 @@ impl<'a> WSState<'a> {
                             status: runtime.diagnostic(),
                             ret,
                         });
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::Forwards(count) => {
+                    for _ in 0..count {
+                        let tag = runtime.memory.current_tag();
+                        while runtime.memory.current_tag() == tag && runtime.memory.next() {}
+
+                        if runtime.memory.current_tag() == tag {
+                            break;
+                        }
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::Back(count) => {
+                    for _ in 0..count {
+                        let tag = runtime.memory.current_tag();
+                        while runtime.memory.current_tag() == tag && runtime.memory.prev() {}
+
+                        if runtime.memory.current_tag() == tag {
+                            break;
+                        }
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
