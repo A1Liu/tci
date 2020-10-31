@@ -1,7 +1,7 @@
 
 int printf(char *format, ...);
 
-int main(int argc, char **argv) {
+int main() {
   int target = 0, *hello = &target, *goodbye = &target;
 
   printf("%d\n", *goodbye);

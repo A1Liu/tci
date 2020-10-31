@@ -10,6 +10,7 @@ use core::mem;
 use core::mem::{align_of, size_of};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug)]
 pub struct ASMFunc<'a> {
     pub func_type: TCFuncType<'a>,
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
@@ -19,14 +20,35 @@ pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet
     let mut m = HashSet::new();
     m.insert(INIT_SYMS.translate["printf"]);
     m.insert(INIT_SYMS.translate["exit"]);
+    m.insert(INIT_SYMS.translate["malloc"]);
+    m.insert(INIT_SYMS.translate["free"]);
     m
 });
+
+pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
+    return vec![
+        Opcode::StackAlloc {
+            bytes: 4,
+            symbol: META_NO_SYMBOL,
+        },
+        Opcode::Call(main_sym),
+        Opcode::GetLocal {
+            var: 0,
+            offset: 0,
+            bytes: 4,
+        },
+        Opcode::Ecall(ECALL_EXIT),
+    ];
+}
 
 pub struct Assembler<'a> {
     pub opcodes: Vec<TaggedOpcode>,
     pub func_types: HashMap<u32, u32>,
     pub data: VarBuffer,
     pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
+    pub types: HashMap<u32, RuntimeStruct<'a>>,
+    pub symbols: Vec<RuntimeVar>,
+    pub struct_member_count: usize,
 }
 
 impl<'a> Assembler<'a> {
@@ -36,19 +58,68 @@ impl<'a> Assembler<'a> {
             data: VarBuffer::new(),
             functions: HashMap::new(),
             func_types: HashMap::new(),
+            types: HashMap::new(),
+            symbols: Vec::new(),
+            struct_member_count: 0,
         }
     }
 
-    pub fn add_file(&mut self, types: TypedFuncs<'a>) -> Result<(), Error> {
-        // TODO Add types here
+    pub fn add_file(&mut self, typed_ast: TypedFuncs<'a>) -> Result<(), Error> {
+        for (struct_id, struct_type) in typed_ast.types.structs.iter() {
+            let struct_type = match &struct_type.defn {
+                Some(struct_type) => struct_type,
+                None => {
+                    if !self.types.contains_key(struct_id) {
+                        self.types.insert(
+                            *struct_id,
+                            RuntimeStruct {
+                                members: None,
+                                loc: struct_type.decl_loc,
+                                sa: TC_UNKNOWN_SA,
+                            },
+                        );
+                    }
+
+                    continue;
+                }
+            };
+
+            if let Some(RuntimeStruct { members, loc, sa }) = self.types.get_mut(struct_id) {
+                if let Some(members) = members {
+                    if members != &struct_type.members {
+                        return Err(error!(
+                            "multiple, conflicting definitions of same type",
+                            *loc, "first one found here", struct_type.loc, "second one found here"
+                        ));
+                    }
+                } else {
+                    *members = Some(struct_type.members);
+                    *loc = struct_type.loc;
+                    *sa = struct_type.sa;
+                    self.struct_member_count += struct_type.members.len();
+                }
+
+                continue;
+            }
+
+            self.types.insert(
+                *struct_id,
+                RuntimeStruct {
+                    members: Some(struct_type.members),
+                    loc: struct_type.loc,
+                    sa: struct_type.sa,
+                },
+            );
+            self.struct_member_count += struct_type.members.len();
+        }
 
         // Add function return sizes
-        for (ident, TCFunc { func_type, .. }) in types.functions.iter() {
+        for (ident, TCFunc { func_type, .. }) in typed_ast.functions.iter() {
             self.func_types.insert(*ident, func_type.return_type.size());
         }
 
         // Add functions
-        for (ident, func) in types.functions.into_iter() {
+        for (ident, func) in typed_ast.functions.into_iter() {
             self.add_function(ident, func)?;
         }
 
@@ -109,7 +180,6 @@ impl<'a> Assembler<'a> {
         param_count: u32,
         block: &[TCStmt],
         block_loc: CodeLoc,
-        // TODO use labels instead of weird CB system
         cb_idx: u32, // docs for this later in the match statement: stands for continue-break
         mut ld_count: u32, // loop declaration count
     ) -> Vec<TaggedOpcode> {
@@ -155,11 +225,19 @@ impl<'a> Assembler<'a> {
                     ops.push(tagged);
                 }
 
-                TCStmtKind::Decl { init } => {
+                TCStmtKind::Decl { symbol, init } => {
                     decl_count += 1;
                     ld_count += 1;
                     let bytes = init.expr_type.size();
-                    tagged.op = Opcode::StackAlloc(bytes);
+                    tagged.op = Opcode::StackAlloc {
+                        bytes,
+                        symbol: self.symbols.len() as u32,
+                    };
+                    self.symbols.push(RuntimeVar {
+                        symbol: *symbol,
+                        decl_type: init.expr_type,
+                        loc: stmt.loc,
+                    });
                     ops.push(tagged);
                     ops.append(&mut self.translate_expr(init));
                     tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
@@ -277,7 +355,7 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
             TCExprKind::StringLiteral(val) => {
-                let var = self.data.add_var(val.len() as u32 + 1); // TODO overflow here
+                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL); // TODO overflow here
                 let slice = self.data.get_full_var_range_mut(var);
                 let end = slice.len() - 1;
                 slice[..end].copy_from_slice(val.as_bytes());
@@ -416,12 +494,18 @@ impl<'a> Assembler<'a> {
                 varargs,
             } => {
                 let rtype_size = *self.func_types.get(&func).unwrap();
-                tagged.op = Opcode::StackAlloc(rtype_size);
+                tagged.op = Opcode::StackAlloc {
+                    bytes: rtype_size,
+                    symbol: META_NO_SYMBOL,
+                };
                 ops.push(tagged);
 
                 for param in *params {
                     let bytes = param.expr_type.size();
-                    tagged.op = Opcode::StackAlloc(bytes);
+                    tagged.op = Opcode::StackAlloc {
+                        bytes,
+                        symbol: META_NO_SYMBOL,
+                    };
                     ops.push(tagged);
                     ops.append(&mut self.translate_expr(param));
                     tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
@@ -429,7 +513,10 @@ impl<'a> Assembler<'a> {
                 }
 
                 if *varargs {
-                    tagged.op = Opcode::StackAlloc(4);
+                    tagged.op = Opcode::StackAlloc {
+                        bytes: 4,
+                        symbol: META_NO_SYMBOL,
+                    };
                     ops.push(tagged);
                     tagged.op = Opcode::MakeTempInt32(params.len() as i32); // check overflow here
                     ops.push(tagged);
@@ -499,20 +586,24 @@ impl<'a> Assembler<'a> {
 
     pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
-        let main_func = self
-            .functions
-            .get(&INIT_SYMS.translate["main"])
-            .ok_or_else(no_main)?;
-        let (main_idx, _main_loc) = main_func.func_header.ok_or_else(no_main)?;
+        let main_sym = INIT_SYMS.translate["main"];
+        let main_func = self.functions.get(&main_sym).ok_or_else(no_main)?;
+        let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
+        let mut opcodes: Vec<TaggedOpcode> = init_main_no_args(main_sym)
+            .iter()
+            .map(|&op| TaggedOpcode { op, loc: main_loc })
+            .collect();
+        let runtime_length = opcodes.len() as u32; // No overflow here because len is predefined
+        opcodes.append(&mut self.opcodes);
 
-        for (op_idx, op) in self.opcodes.iter_mut().enumerate() {
+        for (op_idx, op) in opcodes.iter_mut().enumerate() {
             let op_idx = op_idx as u32;
             match &mut op.op {
                 Opcode::Call(addr) => {
                     let function = self.functions.get(addr).unwrap();
                     if let Some(func_header) = function.func_header {
                         let (fptr, _loc) = func_header;
-                        *addr = fptr;
+                        *addr = fptr + runtime_length;
                     } else if LIB_FUNCS.contains(addr) {
                         op.op = Opcode::LibCall(*addr);
                     } else {
@@ -553,27 +644,63 @@ impl<'a> Assembler<'a> {
                 _ => {}
             }
         }
+        let file_size = align_usize(env.size(), align_of::<HashRefSlot<u32, RuntimeStruct>>());
 
-        let file_size = align_usize(env.size(), align_of::<TaggedOpcode>());
-        let opcode_size = size_of::<TaggedOpcode>();
-        let opcodes_size = self.opcodes.len() * opcode_size;
-        let data_size = align_usize(self.data.data.len(), align_of::<Var>());
+        let type_struct_slots = self.types.len() * 2;
+        let type_structs_size = align_usize(
+            type_struct_slots * size_of::<HashRefSlot<u32, RuntimeStruct>>(),
+            align_of::<TCStructMember>(),
+        );
+        let type_members_size = align_usize(
+            self.struct_member_count * size_of::<TCStructMember>(),
+            align_of::<RuntimeVar>(),
+        );
+        let types_size = type_members_size + type_structs_size;
+
+        let symbols_size = align_usize(
+            self.symbols.len() * size_of::<RuntimeVar>(),
+            align_of::<TaggedOpcode>(),
+        );
+
+        let opcodes_size = opcodes.len() * size_of::<TaggedOpcode>();
+
+        let var_data_size = align_usize(self.data.data.len(), align_of::<Var>());
         let vars_size = self.data.vars.len() * size_of::<Var>();
+        let data_size = var_data_size + vars_size;
 
-        let total_size = file_size + opcodes_size + data_size + vars_size + 8;
+        let total_size = file_size + types_size + symbols_size + opcodes_size + data_size;
         let buckets = BucketList::with_capacity(0);
         let layout = alloc::Layout::from_size_align(total_size, 8).unwrap();
         let mut frame = buckets.alloc_frame(layout);
 
+        macro_rules! type_mapper {
+            () => {
+                |(id, value)| {
+                    let runtime_struct = RuntimeStruct {
+                        members: value.members.map(|members| &*frame.add_slice(members)),
+                        loc: value.loc,
+                        sa: value.sa,
+                    };
+
+                    (*id, runtime_struct)
+                }
+            };
+        }
+
         let files = FileDbRef::new_from_frame(&mut frame, env);
-        let ops = frame.add_array(self.opcodes);
+        let types: Vec<(u32, RuntimeStruct)> = self.types.iter().map(type_mapper!()).collect();
+        let types = HashRef::new(&mut frame, type_struct_slots, types.into_iter());
+        let symbols = frame.add_array(self.symbols);
+        let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);
 
         let program = Program {
+            buckets,
             files,
+            types,
+            symbols,
             data,
             ops,
-            main_idx,
         };
 
         return Ok(program);

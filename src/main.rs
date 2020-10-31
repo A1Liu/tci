@@ -24,6 +24,7 @@ mod test;
 
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
+use core::ops::Deref;
 use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType};
 use filedb::FileDb;
 use interpreter::Program;
@@ -31,7 +32,6 @@ use net_io::WebServerError;
 use runtime::DefaultIO;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
-use core::ops::Deref;
 use util::*;
 
 fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
@@ -208,7 +208,7 @@ fn respond_to_http_request<'a>(
     let text = Asset::get(&path[1..]);
 
     if let Some(text) = text {
-        let (body_buf,ct_buf);
+        let (body_buf, ct_buf);
         if let Cow::Borrowed(borrowed) = text {
             body_buf = borrowed;
             ct_buf = buffer2;
@@ -225,9 +225,14 @@ fn respond_to_http_request<'a>(
 
         let info = infer::Infer::new();
         let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
-        let content_type = content_type_opt.as_ref().map(|mime| mime.deref()).unwrap_or(net_io::CT_TEXT_HTML);
+        let content_type = content_type_opt
+            .as_ref()
+            .map(|mime| mime.deref())
+            .unwrap_or(net_io::CT_TEXT_HTML);
         if content_type.len() >= ct_buf.len() {
-            return Err(WebServerError::ResponseTooLarge(text.len() + content_type.len()));
+            return Err(WebServerError::ResponseTooLarge(
+                text.len() + content_type.len(),
+            ));
         }
 
         let ct_buf = &mut ct_buf[..content_type.len()];

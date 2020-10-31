@@ -8,7 +8,7 @@ void print_a(int a) {
   }
 }
 
-int main(int argc, char **argv) {
+int main() {
   for (int a = 0; a < 10; a = a + 1) {
     int b = a;
     if (b == 5) {

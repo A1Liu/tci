@@ -6,7 +6,7 @@ void hello(...) { return goodbye(); }
 
 int return_code(int hi);
 
-int main(int i, char **argv) {
+int main() {
   hello();
   printf("%s, %s!\n", "Hello", "world");
 
@@ -14,4 +14,3 @@ int main(int i, char **argv) {
 }
 
 int return_code(int hello) { return hello + 12; }
-

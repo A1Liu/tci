@@ -129,6 +129,7 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     add_sym!("printf");
     add_sym!("exit");
     add_sym!("malloc");
+    add_sym!("free");
 
     InitSyms {
         names,
