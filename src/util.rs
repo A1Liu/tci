@@ -1,8 +1,12 @@
+use crate::buckets::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
-use core::mem::MaybeUninit;
+use core::borrow::Borrow;
+use core::mem::{swap, MaybeUninit};
 use core::{fmt, ops, slice, str};
 use serde::Serialize;
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::{io, marker};
 
@@ -663,5 +667,119 @@ impl ops::Index<usize> for StringArray {
 
     fn index(&self, idx: usize) -> &str {
         unsafe { str::from_utf8_unchecked(&self.bytes[self.indices[idx].clone()]) }
+    }
+}
+
+pub enum HashRefSlot<Key, Value> {
+    Some(Key, Value),
+    None,
+    // TODO add Tomb variant and remove operation?
+}
+
+pub struct HashRef<'a, Key, Value, State = RandomState>
+where
+    Key: Eq + Hash,
+    State: BuildHasher,
+{
+    pub slots: &'a mut [HashRefSlot<Key, Value>],
+    pub size: usize,
+    pub state: State,
+}
+
+impl<'a, Key, Value> HashRef<'a, Key, Value, RandomState>
+where
+    Key: Eq + Hash,
+{
+    pub fn new(frame: &mut Frame<'a>, capacity: usize) -> Self {
+        Self {
+            slots: frame
+                .build_array(capacity, |_idx| HashRefSlot::None)
+                .unwrap(),
+            size: 0,
+            state: RandomState::new(),
+        }
+    }
+}
+
+impl<'a, Key, Value, State> HashRef<'a, Key, Value, State>
+where
+    Key: Eq + Hash,
+    State: BuildHasher,
+{
+    #[inline]
+    pub fn len(&self) -> usize {
+        return self.size;
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        return self.slots.len();
+    }
+
+    pub fn insert(&mut self, mut key: Key, mut value: Value) -> Option<(Key, Value)> {
+        if self.size == self.slots.len() {
+            panic!("why are you inserting more keys than this HashRef can hold?");
+        }
+
+        let mut hasher = self.state.build_hasher();
+        key.hash(&mut hasher);
+        let mut slot_idx = hasher.finish() as usize % self.slots.len();
+
+        loop {
+            match &mut self.slots[slot_idx] {
+                HashRefSlot::Some(slot_key, slot_value) => {
+                    if &key == slot_key {
+                        swap(slot_key, &mut key);
+                        swap(slot_value, &mut value);
+                        return Some((key, value));
+                    }
+                }
+                slot @ HashRefSlot::None => {
+                    *slot = HashRefSlot::Some(key, value);
+                    self.size += 1;
+                    return None;
+                }
+            }
+
+            slot_idx += 1;
+            slot_idx = slot_idx % self.slots.len();
+        }
+    }
+
+    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&Value>
+    where
+        Key: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let mut hasher = self.state.build_hasher();
+        key.hash(&mut hasher);
+        let mut slot_idx = hasher.finish() as usize % self.slots.len();
+        let original_slot_idx = slot_idx;
+        match &self.slots[slot_idx] {
+            HashRefSlot::Some(slot_key, slot_value) => {
+                if slot_key.borrow() == key {
+                    return Some(slot_value);
+                }
+            }
+            HashRefSlot::None => return None,
+        }
+
+        loop {
+            slot_idx += 1;
+            slot_idx = slot_idx % self.slots.len();
+
+            if slot_idx == original_slot_idx {
+                return None;
+            }
+
+            match &self.slots[slot_idx] {
+                HashRefSlot::Some(slot_key, slot_value) => {
+                    if slot_key.borrow() == key {
+                        return Some(slot_value);
+                    }
+                }
+                HashRefSlot::None => return None,
+            }
+        }
     }
 }

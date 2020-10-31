@@ -217,6 +217,22 @@ impl<'a> BucketList<'a> {
         }
     }
 
+    pub fn build_array<T, F>(&self, len: usize, mut f: F) -> Result<&'a mut [T], LayoutErr>
+    where
+        F: FnMut(usize) -> T,
+    {
+        unsafe {
+            let layout = Layout::from_size_align(mem::size_of::<T>() * len, mem::align_of::<T>())?;
+            let block = self.data.alloc(layout) as *mut T;
+            let mut location = block;
+            for idx in 0..len {
+                ptr::write(location, f(idx));
+                location = location.add(1);
+            }
+            return Ok(slice::from_raw_parts_mut(block, len));
+        }
+    }
+
     pub fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T] {
         unsafe {
             let len = vec.len();
@@ -291,6 +307,22 @@ impl<'a> Frame<'a> {
         let layout = Layout::from_size_align(len, 1)?;
         unsafe {
             let block = self.alloc(layout) as *mut u8;
+            return Ok(slice::from_raw_parts_mut(block, len));
+        }
+    }
+
+    pub fn build_array<T, F>(&mut self, len: usize, mut f: F) -> Result<&'a mut [T], LayoutErr>
+    where
+        F: FnMut(usize) -> T,
+    {
+        unsafe {
+            let layout = Layout::from_size_align(mem::size_of::<T>() * len, mem::align_of::<T>())?;
+            let block = self.alloc(layout) as *mut T;
+            let mut location = block;
+            for idx in 0..len {
+                ptr::write(location, f(idx));
+                location = location.add(1);
+            }
             return Ok(slice::from_raw_parts_mut(block, len));
         }
     }

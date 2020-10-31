@@ -277,7 +277,7 @@ impl LocalTypeEnv {
 }
 
 pub struct TypeEnv<'a> {
-    structs: HashMap<u32, TCStruct<'a>>,
+    pub structs: HashMap<u32, TCStruct<'a>>,
 }
 
 impl<'a> TypeEnv<'a> {
@@ -503,7 +503,7 @@ impl<'b> TypeEnvInterim<'b> {
 }
 
 pub struct TypedFuncs<'a> {
-    pub structs: TypeEnv<'a>,
+    pub types: TypeEnv<'a>,
     pub functions: HashMap<u32, TCFunc<'a>>,
 }
 
@@ -938,7 +938,7 @@ pub fn check_file<'a>(
     }
 
     return Ok(TypedFuncs {
-        structs: env.types,
+        types: env.types,
         functions,
     });
 }

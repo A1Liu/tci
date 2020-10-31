@@ -16,17 +16,26 @@ pub struct ASMFunc<'a> {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
+#[derive(Clone, Copy)]
+pub struct ASMStruct<'a> {
+    pub members: Option<&'a [TCStructMember]>,
+    pub loc: CodeLoc,
+    pub sa: SizeAlign,
+}
+
 pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet<u32>, {
     let mut m = HashSet::new();
     m.insert(INIT_SYMS.translate["printf"]);
     m.insert(INIT_SYMS.translate["exit"]);
+    m.insert(INIT_SYMS.translate["malloc"]);
+    m.insert(INIT_SYMS.translate["free"]);
     m
 });
 
-pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
+pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
     return vec![
         Opcode::StackAlloc(4),
-        Opcode::Call(main_idx),
+        Opcode::Call(main_sym),
         Opcode::GetLocal {
             var: 0,
             offset: 0,
@@ -41,6 +50,8 @@ pub struct Assembler<'a> {
     pub func_types: HashMap<u32, u32>,
     pub data: VarBuffer,
     pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
+    pub types: HashMap<u32, ASMStruct<'a>>,
+    pub struct_member_count: usize,
 }
 
 impl<'a> Assembler<'a> {
@@ -50,19 +61,67 @@ impl<'a> Assembler<'a> {
             data: VarBuffer::new(),
             functions: HashMap::new(),
             func_types: HashMap::new(),
+            types: HashMap::new(),
+            struct_member_count: 0,
         }
     }
 
-    pub fn add_file(&mut self, types: TypedFuncs<'a>) -> Result<(), Error> {
-        // TODO Add types here
+    pub fn add_file(&mut self, typed_ast: TypedFuncs<'a>) -> Result<(), Error> {
+        for (struct_id, struct_type) in typed_ast.types.structs.iter() {
+            let struct_type = match &struct_type.defn {
+                Some(struct_type) => struct_type,
+                None => {
+                    if !self.types.contains_key(struct_id) {
+                        self.types.insert(
+                            *struct_id,
+                            ASMStruct {
+                                members: None,
+                                loc: struct_type.decl_loc,
+                                sa: TC_UNKNOWN_SA,
+                            },
+                        );
+                    }
+
+                    continue;
+                }
+            };
+
+            if let Some(ASMStruct { members, loc, sa }) = self.types.get_mut(struct_id) {
+                if let Some(members) = members {
+                    if members != &struct_type.members {
+                        return Err(error!(
+                            "multiple, conflicting definitions of same type",
+                            *loc, "first one found here", struct_type.loc, "second one found here"
+                        ));
+                    }
+                } else {
+                    *members = Some(struct_type.members);
+                    *loc = struct_type.loc;
+                    *sa = struct_type.sa;
+                    self.struct_member_count += struct_type.members.len();
+                }
+
+                continue;
+            }
+
+            self.types.insert(
+                *struct_id,
+                ASMStruct {
+                    members: Some(struct_type.members),
+                    loc: struct_type.loc,
+                    sa: struct_type.sa,
+                },
+            );
+            self.struct_member_count += struct_type.members.len();
+        }
 
         // Add function return sizes
-        for (ident, TCFunc { func_type, .. }) in types.functions.iter() {
+        for (ident, TCFunc { func_type, .. }) in typed_ast.functions.iter() {
             self.func_types.insert(*ident, func_type.return_type.size());
         }
 
         // Add functions
-        for (ident, func) in types.functions.into_iter() {
+        for (ident, func) in typed_ast.functions.into_iter() {
             self.add_function(ident, func)?;
         }
 
@@ -123,7 +182,6 @@ impl<'a> Assembler<'a> {
         param_count: u32,
         block: &[TCStmt],
         block_loc: CodeLoc,
-        // TODO use labels instead of weird CB system
         cb_idx: u32, // docs for this later in the match statement: stands for continue-break
         mut ld_count: u32, // loop declaration count
     ) -> Vec<TaggedOpcode> {
@@ -516,7 +574,7 @@ impl<'a> Assembler<'a> {
         let main_sym = INIT_SYMS.translate["main"];
         let main_func = self.functions.get(&main_sym).ok_or_else(no_main)?;
         let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
-        let mut opcodes: Vec<_> = init_main_no_args(main_sym)
+        let mut opcodes: Vec<TaggedOpcode> = init_main_no_args(main_sym)
             .iter()
             .map(|&op| TaggedOpcode { op, loc: main_loc })
             .collect();
