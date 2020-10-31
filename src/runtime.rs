@@ -114,9 +114,9 @@ impl fmt::Debug for VarPointer {
     }
 }
 impl VarPointer {
-    pub const HEAP_BIT: u16 = 1u16 << 15;
+    pub const BINARY_BIT: u16 = 1u16 << 15;
     pub const STACK_BIT: u16 = 1u16 << 14;
-    pub const RESERVED_BITS: u16 = Self::HEAP_BIT | Self::STACK_BIT;
+    pub const RESERVED_BITS: u16 = Self::BINARY_BIT | Self::STACK_BIT;
 
     pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
         Self {
@@ -132,12 +132,9 @@ impl VarPointer {
             panic!("idx is too large");
         }
 
-        let tid = Self::HEAP_BIT | tid;
-        let idx = idx as u16;
-
         Self {
             _tid: tid.to_be(),
-            _idx: idx.to_be(),
+            _idx: (idx as u16).to_be(),
             _offset: offset.to_be(),
         }
     }
@@ -147,6 +144,8 @@ impl VarPointer {
         if tid & Self::RESERVED_BITS != 0 {
             panic!("idx is too large");
         }
+
+        let tid = tid | Self::BINARY_BIT;
 
         Self {
             _tid: tid.to_be(),
@@ -159,11 +158,11 @@ impl VarPointer {
         return (u16::from_be(self._tid) & Self::STACK_BIT) != 0;
     }
 
-    pub fn is_heap(&self) -> bool {
-        return (u16::from_be(self._tid) & Self::HEAP_BIT) != 0;
+    pub fn is_binary(&self) -> bool {
+        return (u16::from_be(self._tid) & Self::BINARY_BIT) != 0;
     }
 
-    pub fn is_binary(&self) -> bool {
+    pub fn is_heap(&self) -> bool {
         return (u16::from_be(self._tid) & Self::RESERVED_BITS) == 0;
     }
 
