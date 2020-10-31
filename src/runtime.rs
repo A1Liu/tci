@@ -348,6 +348,8 @@ impl VarBuffer {
     }
 }
 
+// bk stands for book keeping; every MAKind stores the last index its responsible
+// for in historical_data for fast search during historical data resizes
 #[derive(Debug, Clone, Copy)]
 pub enum MAKind {
     SetValue {
@@ -373,11 +375,34 @@ pub enum MAKind {
     AllocStackVar {
         meta: u32,
         len: u32,
-        book_keeping: usize,
+        bk: usize,
     },
     AllocHeapVar {
         len: u32,
-        book_keeping: usize,
+        bk: usize,
+    },
+    CallstackPush {
+        loc: CodeLoc,
+        bk: usize,
+    },
+    CallstackPop {
+        frame: CallFrame,
+        bk: usize,
+    },
+    SetFp {
+        prev: u16,
+        val: u16,
+        bk: usize,
+    },
+    SetFunc {
+        prev: u32,
+        val: u32,
+        bk: usize,
+    },
+    Jump {
+        prev: u32,
+        val: u32,
+        bk: usize,
     },
 }
 
@@ -418,12 +443,13 @@ impl MemoryAction {
             } => {
                 return var_start;
             }
-            MAKind::AllocStackVar {
-                meta,
-                len,
-                book_keeping,
-            } => return book_keeping,
-            MAKind::AllocHeapVar { len, book_keeping } => return book_keeping,
+            MAKind::AllocStackVar { meta, len, bk } => return bk,
+            MAKind::AllocHeapVar { len, bk } => return bk,
+            MAKind::CallstackPush { loc, bk } => return bk,
+            MAKind::CallstackPop { frame, bk } => return bk,
+            MAKind::SetFp { prev, val, bk } => return bk,
+            MAKind::SetFunc { prev, val, bk } => return bk,
+            MAKind::Jump { prev, val, bk } => return bk,
         }
     }
 }
@@ -490,32 +516,80 @@ impl Memory {
     }
 
     pub fn ret(&mut self) {
+        let bk = self.historical_data.len();
+
         let frame = self.callstack.pop().unwrap();
+        self.push_history(MAKind::CallstackPop { frame, bk });
 
         while self.stack_length() >= self.fp {
             self.pop_stack_var().unwrap();
         }
 
         self.current_func = frame.name;
+        self.push_history(MAKind::SetFunc {
+            prev: self.current_func,
+            val: frame.name,
+            bk,
+        });
+
         self.fp = frame.fp;
+        self.push_history(MAKind::SetFp {
+            prev: self.fp,
+            val: frame.fp,
+            bk,
+        });
+
+        self.push_history(MAKind::Jump {
+            prev: self.pc,
+            val: frame.pc + 1,
+            bk,
+        });
         self.pc = frame.pc + 1;
     }
 
     pub fn call(&mut self, func: u32, func_name: u32, loc: CodeLoc) {
+        let bk = self.historical_data.len();
+
         self.callstack
             .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+        self.push_history(MAKind::CallstackPush { loc, bk });
+
         self.current_func = func_name;
+        self.push_history(MAKind::SetFunc {
+            prev: self.current_func,
+            val: func_name,
+            bk,
+        });
+
         self.fp = self.stack_length() + 1;
+        self.push_history(MAKind::SetFp {
+            prev: self.fp,
+            val: self.stack_length() + 1,
+            bk,
+        });
+
+        self.push_history(MAKind::Jump {
+            prev: self.pc,
+            val: func,
+            bk,
+        });
         self.pc = func;
     }
 
     pub fn push_callstack(&mut self, loc: CodeLoc) {
+        let bk = self.historical_data.len();
+
         self.callstack
             .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+        self.push_history(MAKind::CallstackPush { loc, bk });
     }
 
-    pub fn pop_callstack(&mut self) -> Option<CallFrame> {
-        return self.callstack.pop();
+    pub fn pop_callstack(&mut self) -> CallFrame {
+        let bk = self.historical_data.len();
+
+        let frame = self.callstack.pop().unwrap();
+        self.push_history(MAKind::CallstackPop { frame, bk });
+        return frame;
     }
 
     pub fn fp_offset(&self, var: i16) -> u16 {
@@ -528,15 +602,25 @@ impl Memory {
         }
     }
 
-    pub fn set_current_func(&mut self, current_func: u32) {
-        self.current_func = current_func;
-    }
-
     pub fn jump(&mut self, pc: u32) {
+        let bk = self.historical_data.len();
+
+        self.push_history(MAKind::Jump {
+            prev: self.pc,
+            val: pc,
+            bk,
+        });
         self.pc = pc;
     }
 
     pub fn increment_pc(&mut self) {
+        let bk = self.historical_data.len();
+
+        self.push_history(MAKind::Jump {
+            prev: self.pc,
+            val: self.pc + 1,
+            bk,
+        });
         self.pc += 1;
     }
 
@@ -683,20 +767,16 @@ impl Memory {
     pub fn add_stack_var(&mut self, len: u32, meta: u32) -> VarPointer {
         // TODO check for overflow
         let ptr = VarPointer::new_stack(self.stack.add_var(len, meta) as u16, 0);
-        let book_keeping = self.historical_data.len();
-        self.push_history(MAKind::AllocStackVar {
-            meta,
-            len,
-            book_keeping,
-        });
+        let bk = self.historical_data.len();
+        self.push_history(MAKind::AllocStackVar { meta, len, bk });
         return ptr;
     }
 
     #[inline]
     pub fn add_heap_var(&mut self, len: u32) -> VarPointer {
         let ptr = VarPointer::new_heap(self.heap.add_var(len, 0), 0);
-        let book_keeping = self.historical_data.len();
-        self.push_history(MAKind::AllocHeapVar { len, book_keeping });
+        let bk = self.historical_data.len();
+        self.push_history(MAKind::AllocHeapVar { len, bk });
         return ptr;
     }
 
@@ -1128,15 +1208,27 @@ impl Memory {
                 let var = self.stack.vars.pop().unwrap();
                 self.stack.data.resize(var.idx, 0);
             }
-            MAKind::AllocHeapVar { len, book_keeping } => {
+            MAKind::AllocHeapVar { len, bk } => {
                 self.heap.add_var(len, 0);
             }
-            MAKind::AllocStackVar {
-                meta,
-                len,
-                book_keeping,
-            } => {
+            MAKind::AllocStackVar { meta, len, bk } => {
                 self.stack.add_var(len, meta);
+            }
+            MAKind::CallstackPush { loc, bk } => {
+                self.callstack
+                    .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+            }
+            MAKind::CallstackPop { frame, bk } => {
+                self.callstack.pop().unwrap();
+            }
+            MAKind::SetFp { prev, val, bk } => {
+                self.fp = val;
+            }
+            MAKind::SetFunc { prev, val, bk } => {
+                self.current_func = val;
+            }
+            MAKind::Jump { prev, val, bk } => {
+                self.pc = val;
             }
         }
 
@@ -1198,17 +1290,28 @@ impl Memory {
                 let vars = &mut self.stack.vars;
                 vars.push(Var { idx, len, meta });
             }
-            MAKind::AllocHeapVar { len, book_keeping } => {
+            MAKind::AllocHeapVar { len, bk } => {
                 let var = self.heap.vars.pop().unwrap();
                 self.heap.data.resize(var.idx, 0);
             }
-            MAKind::AllocStackVar {
-                meta,
-                len,
-                book_keeping,
-            } => {
+            MAKind::AllocStackVar { meta, len, bk } => {
                 let var = self.stack.vars.pop().unwrap();
                 self.stack.data.resize(var.idx, 0);
+            }
+            MAKind::CallstackPush { loc, bk } => {
+                self.callstack.pop().unwrap();
+            }
+            MAKind::CallstackPop { frame, bk } => {
+                self.callstack.push(frame);
+            }
+            MAKind::SetFp { prev, val, bk } => {
+                self.fp = prev;
+            }
+            MAKind::SetFunc { prev, val, bk } => {
+                self.current_func = prev;
+            }
+            MAKind::Jump { prev, val, bk } => {
+                self.pc = prev;
             }
         }
 
