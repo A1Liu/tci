@@ -277,6 +277,10 @@ fn ws_respond<'a>(
     ws_buffer: &[u8],
     out_buffer: &'a mut [u8],
 ) -> Result<net_io::WSResponse<'a>, WebServerError> {
+    if state.results_idx > state.results.len() {
+        return Ok(net_io::WSResponse::None);
+    }
+
     if state.results.len() == 0 {
         match message_type {
             WebSocketReceiveMessageType::Text => {
@@ -286,6 +290,7 @@ fn ws_respond<'a>(
                         let len =
                             write_b!(out_buffer, "deserialization of command failed ({})", err)
                                 .unwrap();
+                        state.results_idx = 1;
                         return Ok(net_io::WSResponse::Response {
                             message_type: WebSocketSendMessageType::Text,
                             message: &out_buffer[..len],
@@ -306,6 +311,7 @@ fn ws_respond<'a>(
                 let message = &mut out_buffer[..ws_buffer.len()];
                 message.copy_from_slice(ws_buffer);
 
+                state.results_idx = 1;
                 return Ok(net_io::WSResponse::Response {
                     message_type: WebSocketSendMessageType::CloseReply,
                     message,
@@ -315,6 +321,7 @@ fn ws_respond<'a>(
                 let message = &mut out_buffer[..ws_buffer.len()];
                 message.copy_from_slice(ws_buffer);
 
+                state.results_idx = 1;
                 return Ok(net_io::WSResponse::Response {
                     message_type: WebSocketSendMessageType::Pong,
                     message,
@@ -326,6 +333,7 @@ fn ws_respond<'a>(
 
     if state.results_idx == state.results.len() {
         state.results = Vec::new();
+        state.results_idx = 0;
         return Ok(net_io::WSResponse::None);
     }
 
