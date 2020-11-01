@@ -20,8 +20,8 @@ The available commands are in `src/commands.rs`:
 #[serde(tag = "command", content = "data")]
 pub enum Command {
     AddFile {
-      path: String,
-      data: String,
+        path: String,
+        data: String,
     },
     Compile,
     RunUntilScopedPC(u32),
@@ -32,7 +32,11 @@ pub enum Command {
         stack_size: u16,
         pc: u32,
     },
+    Snapshot,
+    Back(u32),
+    Forwards(u32),
 }
+
 ```
 
 The responses are defined in `src/commands.rs`, and are in this format:
@@ -41,7 +45,16 @@ The responses are defined in `src/commands.rs`, and are in this format:
 {
   "response": "StatusRet",
   "data": {
-    "status": {},
+    "status": {
+      "callstack": 12,
+      "fp": 9,
+      "pc": 65,
+      "loc": {
+        "start": 12,
+        "end": 15,
+        "file": 3
+      }
+    },
     "ret": 0
   }
 }
@@ -52,21 +65,18 @@ The available responses are in `src/commands.rs`:
 ```rust
 #[derive(Serialize)]
 #[serde(tag = "response", content = "data")]
-pub enum CommandError {
-    IOError(String),
-    CompileError(String),
-    RuntimeError(String),
-    InvalidCommand,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "response", content = "data")]
 pub enum CommandResult {
     Confirm(Command),
     Compiled(Program<'static>),
+    InvalidCommand,
+    IOError(String),
+    Snapshot(MemorySnapshot),
+    CompileError(String),
+    RuntimeError(String),
     Status(RuntimeDiagnostic),
     StatusRet { status: RuntimeDiagnostic, ret: i32 },
 }
+
 ```
 
 
