@@ -76,8 +76,8 @@ pub struct HttpResponse<'a> {
     pub body: &'a [u8],
 }
 
-pub const CT_TEXT_HTML : &'static str = "text; html; charset=UTF-8";
-pub const CT_PNG : &'static str = "image/png";
+pub const CT_TEXT_HTML: &'static str = "text; html; charset=UTF-8";
+pub const CT_PNG: &'static str = "image/png";
 
 pub type HttpHandler =
     for<'a> fn(HttpHeader, &'a mut [u8]) -> Result<HttpResponse<'a>, WebServerError>;
@@ -164,10 +164,7 @@ impl<State: Default + 'static> WebServer<State> {
             // assume that the client has sent us an http request. Since we may not read the
             // header all in one go we need to check for HttpHeaderIncomplete and continue reading
             let http_header = match ws::read_http_header(&mut headers, &tcp_recv[..num_bytes]) {
-                Ok(header) => {
-                    num_bytes = 0;
-                    header
-                }
+                Ok(header) => header,
                 Err(ws::Error::HttpHeaderIncomplete) => continue,
                 Err(e) => return Err(WebServerError::WebSocket(e)),
             };
