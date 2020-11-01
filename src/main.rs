@@ -113,8 +113,6 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
         Err(err) => return Err(err.into()),
     };
 
-    println!("{:#?}", program);
-
     while let Some(b) = unsafe { buckets_begin.dealloc() } {
         buckets_begin = b;
     }
