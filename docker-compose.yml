@@ -39,7 +39,7 @@ services:
       - "traefik.http.routers.api.rule=Host(`tci.a1liu.com`)"
       - "traefik.http.routers.api.entrypoints=websecure"
       - "traefik.http.services.api.loadbalancer.server.port=3000"
-      - "traefik.http.routers.api.tls.certresolver=mytlschallenge"
+        # - "traefik.http.routers.api.tls.certresolver=mytlschallenge"
   watchtower:
     image: v2tec/watchtower
     container_name: watchtower
