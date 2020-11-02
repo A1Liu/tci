@@ -51,9 +51,8 @@ services:
       - "traefik.http.services.tci-http.loadbalancer.server.port=3000"
   watchtower:
     image: v2tec/watchtower
-    container_name: watchtower
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: tci --interval 30
+    command: tci --interval 30 --cleanup
     restart: unless-stopped
 
