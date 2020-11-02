@@ -6,7 +6,7 @@ function App() {
   const [socket, setSocket] = useState(undefined);
   const [message, setMessage] = useState("");
   useEffect(() => {
-    const sock = new WebSocket("ws://tci.a1liu.com");
+    const sock = new WebSocket("wss://tci.a1liu.com");
 
     sock.onmessage = (evt) => {
       setMessage(evt.data);
