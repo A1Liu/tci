@@ -44,6 +44,20 @@ pub enum WSState<'a> {
     Running(Runtime<InMemoryIO>),
 }
 
+impl<'a> Drop for WSState<'a> {
+    fn drop(&mut self) {
+        match self {
+            WSState::Files(db) => {}
+            WSState::Running(runtime) => {
+                let mut buckets = runtime.program.buckets;
+                while let Some(b) = unsafe { buckets.dealloc() } {
+                    buckets = b;
+                }
+            }
+        }
+    }
+}
+
 impl<'a> Default for WSState<'a> {
     fn default() -> Self {
         Self::Files(FileDb::new(false))

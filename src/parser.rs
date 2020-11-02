@@ -243,7 +243,7 @@ impl<'b> Parser<'b> {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
                 TokenKind::Plus => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
                     let right = self.parse_multiply(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
@@ -255,7 +255,7 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::Dash => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
                     let right = self.parse_multiply(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
@@ -289,7 +289,7 @@ impl<'b> Parser<'b> {
         let tok = peek(tokens, current)?;
         match tok.kind {
             TokenKind::Amp => {
-                pop(tokens, current).expect("shouldn't fail");
+                pop(tokens, current).unwrap();
                 let target = self.parse_prefix(buckets, tokens, current)?;
                 let target = buckets.add(target);
                 return Ok(Expr {
@@ -298,7 +298,7 @@ impl<'b> Parser<'b> {
                 });
             }
             TokenKind::Star => {
-                pop(tokens, current).expect("shouldn't fail");
+                pop(tokens, current).unwrap();
                 let target = self.parse_prefix(buckets, tokens, current)?;
                 let target = buckets.add(target);
                 return Ok(Expr {
@@ -381,7 +381,7 @@ impl<'b> Parser<'b> {
                         let mut comma_tok = peek(tokens, current)?;
 
                         while comma_tok.kind == TokenKind::Comma {
-                            pop(tokens, current).expect("shouldn't fail");
+                            pop(tokens, current).unwrap();
                             params.push(self.parse_expr(buckets, tokens, current)?);
                             comma_tok = peek(tokens, current)?;
                         }
@@ -397,7 +397,7 @@ impl<'b> Parser<'b> {
                         }
                     }
 
-                    let end_loc = pop(tokens, current).expect("shouldn't fail").loc;
+                    let end_loc = pop(tokens, current).unwrap().loc;
                     let params = buckets.add_array(params);
                     operand = Expr {
                         loc: l_from(start_loc, end_loc),
@@ -410,7 +410,7 @@ impl<'b> Parser<'b> {
                 TokenKind::PlusPlus => {
                     operand = Expr {
                         kind: ExprKind::PostIncr(buckets.add(operand)),
-                        loc: l_from(start_loc, pop(tokens, current).expect("shouldn't fail").loc),
+                        loc: l_from(start_loc, pop(tokens, current).unwrap().loc),
                     };
                 }
                 TokenKind::DashDash => {
@@ -445,7 +445,7 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::Dot => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
 
                     let (member, loc) = expect_any_ident(tokens, current)?;
 
