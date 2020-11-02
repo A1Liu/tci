@@ -32,28 +32,28 @@ services:
 #      - "traefik.http.routers.redirs.rule=hostregexp(`{host:.+}`)"
 #      - "traefik.http.routers.redirs.entrypoints=web"
 #      - "traefik.http.routers.redirs.middlewares=redirect-to-https"
-  api:
+  tci:
     image: a1liu/tci:latest
     labels:
       - "traefik.enable=true"
 
         # HTTPS
-      - "traefik.http.routers.api-https.rule=Host(`tci.a1liu.com`)"
-      - "traefik.http.routers.api-https.service=api-https"
-      - "traefik.http.routers.api-https.entrypoints=websecure"
-      - "traefik.http.services.api-https.loadbalancer.server.port=3000"
-      - "traefik.http.routers.api-https.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.tci-https.rule=Host(`tci.a1liu.com`)"
+      - "traefik.http.routers.tci-https.service=tci-https"
+      - "traefik.http.routers.tci-https.entrypoints=websecure"
+      - "traefik.http.services.tci-https.loadbalancer.server.port=3000"
+      - "traefik.http.routers.tci-https.tls.certresolver=mytlschallenge"
 
         #HTTP
-      - "traefik.http.routers.api-http.rule=Host(`tci.a1liu.com`)"
-      - "traefik.http.routers.api-http.service=api-http"
-      - "traefik.http.routers.api-http.entrypoints=web"
-      - "traefik.http.services.api-http.loadbalancer.server.port=3000"
+      - "traefik.http.routers.tci-http.rule=Host(`tci.a1liu.com`)"
+      - "traefik.http.routers.tci-http.service=tci-http"
+      - "traefik.http.routers.tci-http.entrypoints=web"
+      - "traefik.http.services.tci-http.loadbalancer.server.port=3000"
   watchtower:
     image: v2tec/watchtower
     container_name: watchtower
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: watchtower api --interval 30
+    command: tci --interval 30
     restart: unless-stopped
 
