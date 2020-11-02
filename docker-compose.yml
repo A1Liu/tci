@@ -12,13 +12,13 @@ services:
       - "--providers.docker=true"
       # You need to actively say traefik.enable=true
       - "--providers.docker.exposedbydefault=false"
-#      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
       - "--certificatesresolvers.mytlschallenge.acme.email=al5932@nyu.edu"
       - "--certificatesresolvers.mytlschallenge.acme.storage=letsencrypt/acme.json"
     ports:
-#      - "80:80"
+      - "80:80"
       - "443:443"
       # The Web UI (enabled by --api.insecure=true)
       - "8080:8080"
@@ -36,10 +36,19 @@ services:
     image: a1liu/tci:latest
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`tci.a1liu.com`)"
-      - "traefik.http.routers.api.entrypoints=websecure"
-      - "traefik.http.services.api.loadbalancer.server.port=3000"
-        # - "traefik.http.routers.api.tls.certresolver=mytlschallenge"
+
+        # HTTPS
+      - "traefik.http.routers.api-https.rule=Host(`tci.a1liu.com`)"
+      - "traefik.http.routers.api-https.service=api-https"
+      - "traefik.http.routers.api-https.entrypoints=websecure"
+      - "traefik.http.services.api-https.loadbalancer.server.port=3000"
+      - "traefik.http.routers.api-https.tls.certresolver=mytlschallenge"
+
+        #HTTP
+      - "traefik.http.routers.api-http.rule=Host(`tci.a1liu.com`)"
+      - "traefik.http.routers.api-http.service=api-http"
+      - "traefik.http.routers.api-http.entrypoints=web"
+      - "traefik.http.services.api-http.loadbalancer.server.port=3000"
   watchtower:
     image: v2tec/watchtower
     container_name: watchtower
@@ -47,3 +56,4 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: watchtower api --interval 30
     restart: unless-stopped
+
