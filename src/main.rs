@@ -194,7 +194,6 @@ fn respond_to_http_request<'a>(
     http_header: HttpHeader,
     buffer: &'a mut [u8],
 ) -> Result<net_io::HttpResponse<'a>, WebServerError> {
-    const ROOT_HTML: &str = "<!doctype html><html></html>";
     let mut path_len = http_header.path.len();
     buffer[..path_len].copy_from_slice(http_header.path.as_bytes());
     if buffer[path_len - 1] == b'/' {
@@ -207,55 +206,59 @@ fn respond_to_http_request<'a>(
     println!("received request for path {}", path);
     let text = Asset::get(&path[1..]);
 
-    if let Some(text) = text {
-        let (body_buf, ct_buf);
-        if let Cow::Borrowed(borrowed) = text {
-            body_buf = borrowed;
-            ct_buf = buffer;
-        } else {
-            if text.len() > buffer.len() {
-                return Err(WebServerError::ResponseTooLarge(text.len()));
-            }
+    let text = match text {
+        None => {
+            const ROOT_HTML: &str = "<!doctype html><html><body><p>404 not found</p></body></html>";
+            return Ok(net_io::HttpResponse {
+                status: 404,
+                body: ROOT_HTML.as_bytes(),
+                content_type: net_io::CT_TEXT_HTML,
+            });
+        }
+        Some(text) => text,
+    };
 
-            let tup = buffer.split_at_mut(text.len());
-            tup.0.copy_from_slice(&text);
-            body_buf = tup.0;
-            ct_buf = tup.1;
+    let (body_buf, ct_buf);
+    if let Cow::Borrowed(borrowed) = text {
+        body_buf = borrowed;
+        ct_buf = buffer;
+    } else {
+        if text.len() > buffer.len() {
+            return Err(WebServerError::ResponseTooLarge(text.len()));
         }
 
-        let content_type = match path {
-            x if x.ends_with(".js") => "text/javascript",
-            x if x.ends_with(".css") => "text/css",
-            _ => {
-                let info = infer::Infer::new();
-                let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
-                let content_type = content_type_opt
-                    .as_ref()
-                    .map(|mime| mime.deref())
-                    .unwrap_or(net_io::CT_TEXT_HTML);
-                if content_type.len() >= ct_buf.len() {
-                    return Err(WebServerError::ResponseTooLarge(
-                        text.len() + content_type.len(),
-                    ));
-                }
-
-                let ct_buf = &mut ct_buf[..content_type.len()];
-                ct_buf.copy_from_slice(content_type.as_bytes());
-                unsafe { core::str::from_utf8_unchecked(ct_buf) }
-            }
-        };
-
-        return Ok(net_io::HttpResponse {
-            status: 200,
-            body: body_buf,
-            content_type,
-        });
+        let tup = buffer.split_at_mut(text.len());
+        tup.0.copy_from_slice(&text);
+        body_buf = tup.0;
+        ct_buf = tup.1;
     }
 
+    let content_type = match path {
+        x if x.ends_with(".js") => "text/javascript",
+        x if x.ends_with(".css") => "text/css",
+        _ => {
+            let info = infer::Infer::new();
+            let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
+            let content_type = content_type_opt
+                .as_ref()
+                .map(|mime| mime.deref())
+                .unwrap_or(net_io::CT_TEXT_HTML);
+            if content_type.len() >= ct_buf.len() {
+                return Err(WebServerError::ResponseTooLarge(
+                    text.len() + content_type.len(),
+                ));
+            }
+
+            let ct_buf = &mut ct_buf[..content_type.len()];
+            ct_buf.copy_from_slice(content_type.as_bytes());
+            unsafe { core::str::from_utf8_unchecked(ct_buf) }
+        }
+    };
+
     return Ok(net_io::HttpResponse {
-        status: 404,
-        body: ROOT_HTML.as_bytes(),
-        content_type: net_io::CT_TEXT_HTML,
+        status: 200,
+        body: body_buf,
+        content_type,
     });
 }
 
