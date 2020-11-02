@@ -119,6 +119,7 @@ pub enum Opcode {
 
     CompI32,
     CompEqI32,
+    CompNeqI32,
 
     MulI64,
     DivI64,
@@ -422,6 +423,12 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 == word2) as u8);
+            }
+
+            Opcode::CompNeqI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 != word2) as u8);
             }
 
             Opcode::AddU64 => {

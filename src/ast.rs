@@ -380,6 +380,7 @@ pub enum TCExprKind<'a> {
 
     LtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     EqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    NeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),
