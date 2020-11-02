@@ -179,7 +179,40 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_comparison(buckets, tokens, current)
+        let mut expr = self.parse_comparison(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::EqEq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Eq, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Neq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Neq, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
+        
     }
 
     pub fn parse_comparison<'a>(
@@ -202,19 +235,6 @@ impl<'b> Parser<'b> {
 
                     expr = Expr {
                         kind: ExprKind::BinOp(BinOp::Lt, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::EqEq => {
-                    pop(tokens, current).unwrap();
-
-                    let right = self.parse_shift(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Eq, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
