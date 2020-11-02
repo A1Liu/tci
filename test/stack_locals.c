@@ -5,4 +5,6 @@ int *value() {
   return &a;
 }
 
-int main() { printf("%d\n", *value()); }
+int get_value() { return *value(); }
+
+int main() { printf("%d\n", get_value()); }

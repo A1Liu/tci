@@ -35,7 +35,7 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
     };
 
     write!(out, "{}: {}\n", error.short_name, error.message).expect("cannot fail");
-    for frame in stack_trace {
+    for frame in stack_trace.iter().skip(1) {
         let diagnostic = Diagnostic::new(Severity::Void)
             .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
         codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic)
@@ -270,8 +270,19 @@ impl<IO: RuntimeIO> Runtime<IO> {
         return Ok(None);
     }
 
-    #[inline]
     pub fn run_op(&mut self) -> Result<Option<i32>, IError> {
+        match self.run_op_internal() {
+            Ok(opt) => return Ok(opt),
+            Err(err) => {
+                self.memory
+                    .push_callstack(self.program.ops[self.memory.pc as usize].loc);
+                return Err(err);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn run_op_internal(&mut self) -> Result<Option<i32>, IError> {
         let op = self.program.ops[self.memory.pc as usize];
         write!(self.io.log(), "op: {:?}\n", op.op)
             .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
