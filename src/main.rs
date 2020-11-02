@@ -123,8 +123,7 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
     let config = codespan_reporting::term::Config::default();
     for err in errs {
-        codespan_reporting::term::emit(writer, &config, files, &err.diagnostic())
-            .expect("why did this fail?");
+        codespan_reporting::term::emit(writer, &config, files, &err.diagnostic()).unwrap();
     }
 }
 
@@ -151,7 +150,7 @@ fn run_from_args(args: Vec<String>) -> ! {
                     &files,
                     &err.diagnostic(),
                 )
-                .expect("why did this fail?");
+                .unwrap();
             }
             std::process::exit(1);
         }
@@ -179,7 +178,7 @@ fn main() {
             ws_handler: ws_respond,
         };
         let addr = "0.0.0.0:3000";
-        server.serve(addr).expect("server errored");
+        server.serve(addr).unwrap();
 
         return;
     }

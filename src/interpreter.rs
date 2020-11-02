@@ -34,12 +34,12 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
         end_context_lines: 1,
     };
 
-    write!(out, "{}: {}\n", error.short_name, error.message).expect("cannot fail");
+    write!(out, "{}: {}\n", error.short_name, error.message).unwrap();
+
     for frame in stack_trace.iter().skip(1) {
         let diagnostic = Diagnostic::new(Severity::Void)
             .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
-        codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic)
-            .expect("why did this fail?");
+        codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic).unwrap();
     }
 
     return out.to_string();
@@ -55,7 +55,7 @@ pub const ECALL_ARGC: u32 = 1;
 /// and pushes a pointer to the string on the heap as the result.
 pub const ECALL_ARGV: u32 = 2;
 
-/// No symbol associated with this stack var
+/// No symbol associated with this stack/binary var
 pub const META_NO_SYMBOL: u32 = u32::MAX;
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
@@ -321,9 +321,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::PopKeep { keep, drop } => self.memory.pop_keep_bytes(keep, drop)?,
             Opcode::PushUndef { bytes } => {
                 self.memory.add_stack_var(bytes, META_NO_SYMBOL);
-                self.memory
-                    .pop_stack_var_onto_stack()
-                    .expect("should never fail");
+                self.memory.pop_stack_var_onto_stack().unwrap();
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
