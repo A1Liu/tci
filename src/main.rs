@@ -193,17 +193,18 @@ struct Asset;
 
 fn respond_to_http_request<'a>(
     http_header: HttpHeader,
-    buffer2: &'a mut [u8],
+    buffer: &'a mut [u8],
 ) -> Result<net_io::HttpResponse<'a>, WebServerError> {
     const ROOT_HTML: &str = "<!doctype html><html></html>";
     let mut path_len = http_header.path.len();
-    buffer2[..path_len].copy_from_slice(http_header.path.as_bytes());
-    if buffer2[path_len - 1] == b'/' {
-        buffer2[path_len..path_len + 10].copy_from_slice("index.html".as_bytes());
+    buffer[..path_len].copy_from_slice(http_header.path.as_bytes());
+    if buffer[path_len - 1] == b'/' {
+        buffer[path_len..(path_len + 10)].copy_from_slice("index.html".as_bytes());
         path_len += 10;
     }
 
-    let path = unsafe { core::str::from_utf8_unchecked(&buffer2[..path_len]) };
+    let (path_buf, buffer) = buffer.split_at_mut(path_len);
+    let path = unsafe { core::str::from_utf8_unchecked(path_buf) };
     println!("received request for path {}", path);
     let text = Asset::get(&path[1..]);
 
@@ -211,33 +212,39 @@ fn respond_to_http_request<'a>(
         let (body_buf, ct_buf);
         if let Cow::Borrowed(borrowed) = text {
             body_buf = borrowed;
-            ct_buf = buffer2;
+            ct_buf = buffer;
         } else {
-            if text.len() > buffer2.len() {
+            if text.len() > buffer.len() {
                 return Err(WebServerError::ResponseTooLarge(text.len()));
             }
 
-            let tup = buffer2.split_at_mut(text.len());
+            let tup = buffer.split_at_mut(text.len());
             tup.0.copy_from_slice(&text);
             body_buf = tup.0;
             ct_buf = tup.1;
         }
 
-        let info = infer::Infer::new();
-        let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
-        let content_type = content_type_opt
-            .as_ref()
-            .map(|mime| mime.deref())
-            .unwrap_or(net_io::CT_TEXT_HTML);
-        if content_type.len() >= ct_buf.len() {
-            return Err(WebServerError::ResponseTooLarge(
-                text.len() + content_type.len(),
-            ));
-        }
+        let content_type = match path {
+            x if x.ends_with(".js") => "text/javascript",
+            x if x.ends_with(".css") => "text/css",
+            _ => {
+                let info = infer::Infer::new();
+                let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
+                let content_type = content_type_opt
+                    .as_ref()
+                    .map(|mime| mime.deref())
+                    .unwrap_or(net_io::CT_TEXT_HTML);
+                if content_type.len() >= ct_buf.len() {
+                    return Err(WebServerError::ResponseTooLarge(
+                        text.len() + content_type.len(),
+                    ));
+                }
 
-        let ct_buf = &mut ct_buf[..content_type.len()];
-        ct_buf.copy_from_slice(content_type.as_bytes());
-        let content_type = unsafe { core::str::from_utf8_unchecked(ct_buf) };
+                let ct_buf = &mut ct_buf[..content_type.len()];
+                ct_buf.copy_from_slice(content_type.as_bytes());
+                unsafe { core::str::from_utf8_unchecked(ct_buf) }
+            }
+        };
 
         return Ok(net_io::HttpResponse {
             status: 200,
