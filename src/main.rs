@@ -38,7 +38,6 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();
-    let mut asts = parser::AstDb::new();
     let mut errors: Vec<Error> = Vec::new();
 
     let files_list = env.vec();
@@ -62,12 +61,13 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     }
     buckets = buckets.force_next();
 
+    let mut parser = parser::Parser::new();
     let iter = files_list.into_iter().filter_map(|(file, _)| {
         while let Some(n) = buckets.next() {
             buckets = n;
         }
 
-        match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
+        match parser.parse_tokens(buckets, &tokens, file) {
             Ok(x) => return Some(x),
             Err(err) => {
                 errors.push(err);
@@ -234,6 +234,7 @@ fn respond_to_http_request<'a>(
     }
 
     let content_type = match path {
+        x if x.ends_with(".html") => "text/html",
         x if x.ends_with(".js") => "text/javascript",
         x if x.ends_with(".css") => "text/css",
         _ => {

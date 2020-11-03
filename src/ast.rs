@@ -102,19 +102,6 @@ pub struct Decl<'a> {
     pub expr: Expr<'a>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Macro<'a> {
-    pub ident: u32,
-    pub expr: Expr<'a>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct FuncMacro<'a> {
-    pub ident: u32,
-    pub params: &'a [(u32, CodeLoc)],
-    pub expr: Expr<'a>,
-}
-
 #[derive(Debug, Clone)]
 pub enum GlobalStmtKind<'a> {
     Func {
@@ -135,6 +122,16 @@ pub enum GlobalStmtKind<'a> {
         decl_type: ASTType,
         decls: &'a [Decl<'a>],
     },
+    FuncMacro {
+        ident: u32,
+        params: &'a [(u32, CodeLoc)],
+        expr: Expr<'a>,
+    },
+    Macro {
+        ident: u32,
+        expr: Expr<'a>,
+    },
+    MacroMarker(u32),
 }
 
 #[derive(Debug, Clone)]

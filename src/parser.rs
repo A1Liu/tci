@@ -6,31 +6,9 @@ use core::slice;
 use std::collections::HashMap;
 
 pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
-pub type FuncMacroDb<'a> = HashMap<u32, FuncMacro<'a>>;
-pub type MacroDb<'a> = HashMap<u32, Macro<'a>>;
-
-pub fn parse_tokens<'a, 'b>(
-    buckets: BucketListRef<'b>,
-    token_db: &TokenDb<'a>,
-    ast_db: &mut AstDb<'b>,
-    file: u32,
-) -> Result<ASTProgram<'b>, Error> {
-    if let Some(stmts) = ast_db.get(&file) {
-        return Ok(ASTProgram { stmts });
-    }
-
-    let mut parser = Parser::new();
-    let mut parse_result = Vec::new();
-    parser.parse_tokens_rec(buckets, token_db, ast_db, file, &mut parse_result)?;
-    let stmts = buckets.add_array(parse_result);
-    let prev = ast_db.insert(file, stmts);
-    debug_assert!(prev.is_none());
-    return Ok(ASTProgram { stmts });
-}
 
 pub struct Parser<'b> {
-    pub macros: HashMap<u32, Macro<'b>>,
-    pub func_macros: HashMap<u32, FuncMacro<'b>>,
+    pub db: AstDb<'b>,
 }
 
 pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
@@ -54,17 +32,32 @@ pub fn pop<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>
 
 impl<'b> Parser<'b> {
     pub fn new() -> Self {
-        Self {
-            macros: HashMap::new(),
-            func_macros: HashMap::new(),
+        Self { db: HashMap::new() }
+    }
+
+    pub fn parse_tokens<'a>(
+        &mut self,
+        buckets: BucketListRef<'b>,
+        token_db: &TokenDb<'a>,
+        file: u32,
+    ) -> Result<ASTProgram<'b>, Error> {
+        if let Some(stmts) = self.db.get(&file) {
+            return Ok(ASTProgram { stmts });
         }
+
+        let mut parser = Parser::new();
+        let mut parse_result = Vec::new();
+        parser.parse_tokens_rec(buckets, token_db, file, &mut parse_result)?;
+        let stmts = buckets.add_array(parse_result);
+        let prev = self.db.insert(file, stmts);
+        debug_assert!(prev.is_none());
+        return Ok(ASTProgram { stmts });
     }
 
     pub fn parse_tokens_rec<'a>(
         &mut self,
         mut buckets: BucketListRef<'b>,
         tdb: &TokenDb<'a>,
-        adb: &mut AstDb<'b>,
         file: u32,
         parse_result: &mut Vec<GlobalStmt<'b>>,
     ) -> Result<(), Error> {
@@ -76,7 +69,7 @@ impl<'b> Parser<'b> {
                 break;
             }
 
-            self.parse_global_decls(buckets, tdb, adb, tokens, &mut current, parse_result)?;
+            self.parse_global_decls(buckets, tdb, tokens, &mut current, parse_result)?;
 
             while let Some(next) = buckets.next() {
                 buckets = next;
@@ -636,7 +629,6 @@ impl<'b> Parser<'b> {
         &mut self,
         buckets: BucketListRef<'b>,
         token_db: &TokenDb<'a>,
-        ast_db: &mut AstDb<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
         decls: &mut Vec<GlobalStmt<'b>>,
@@ -651,15 +643,15 @@ impl<'b> Parser<'b> {
         let decl_type = match peek(tokens, current)?.kind {
             TokenKind::IncludeSys(include_id) => {
                 pop(tokens, current).unwrap();
-                if let Some(include_stmts) = ast_db.get(&include_id) {
+                if let Some(include_stmts) = self.db.get(&include_id) {
                     decls.extend_from_slice(include_stmts);
                     return Ok(());
                 }
 
                 let mut include_stmts = Vec::new();
-                self.parse_tokens_rec(buckets, token_db, ast_db, include_id, &mut include_stmts)?;
+                self.parse_tokens_rec(buckets, token_db, include_id, &mut include_stmts)?;
                 let stmts = buckets.add_array(include_stmts);
-                let prev = ast_db.insert(include_id, stmts);
+                let prev = self.db.insert(include_id, stmts);
                 debug_assert!(prev.is_none());
                 decls.extend_from_slice(stmts);
 
@@ -667,15 +659,15 @@ impl<'b> Parser<'b> {
             }
             TokenKind::Include(include_id) => {
                 pop(tokens, current).unwrap();
-                if let Some(include_stmts) = ast_db.get(&include_id) {
+                if let Some(include_stmts) = self.db.get(&include_id) {
                     decls.extend_from_slice(include_stmts);
                     return Ok(());
                 }
 
                 let mut include_stmts = Vec::new();
-                self.parse_tokens_rec(buckets, token_db, ast_db, include_id, &mut include_stmts)?;
+                self.parse_tokens_rec(buckets, token_db, include_id, &mut include_stmts)?;
                 let stmts = buckets.add_array(include_stmts);
-                let prev = ast_db.insert(include_id, stmts);
+                let prev = self.db.insert(include_id, stmts);
                 debug_assert!(prev.is_none());
                 decls.extend_from_slice(stmts);
 
@@ -698,17 +690,28 @@ impl<'b> Parser<'b> {
 
                     let expr = self.parse_expr(buckets, tokens, current)?;
                     let params = buckets.add_array(params);
-                    self.func_macros.insert(
-                        ident,
-                        FuncMacro {
+                    decls.push(GlobalStmt {
+                        loc: l_from(tok.loc, expr.loc),
+                        kind: GlobalStmtKind::FuncMacro {
                             ident,
                             params,
                             expr,
                         },
-                    );
+                    });
                 } else {
-                    let expr = self.parse_expr(buckets, tokens, current)?;
-                    self.macros.insert(ident, Macro { ident, expr });
+                    if peek(tokens, current)?.kind != TokenKind::MacroDefEnd {
+                        let expr = self.parse_expr(buckets, tokens, current)?;
+
+                        decls.push(GlobalStmt {
+                            loc: l_from(tok.loc, expr.loc),
+                            kind: GlobalStmtKind::Macro { ident, expr },
+                        });
+                    } else {
+                        decls.push(GlobalStmt {
+                            loc: tok.loc,
+                            kind: GlobalStmtKind::MacroMarker(ident),
+                        });
+                    }
                 }
 
                 let end_tok = pop(tokens, current)?;
@@ -718,6 +721,7 @@ impl<'b> Parser<'b> {
                         end_tok.loc, "expected this to be a newline"
                     ));
                 }
+
                 return Ok(());
             }
             TokenKind::Struct => {

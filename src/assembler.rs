@@ -233,11 +233,13 @@ impl<'a> Assembler<'a> {
                         bytes,
                         symbol: self.symbols.len() as u32,
                     };
+
                     self.symbols.push(RuntimeVar {
                         symbol: *symbol,
                         decl_type: init.expr_type,
                         loc: stmt.loc,
                     });
+
                     ops.push(tagged);
                     ops.append(&mut self.translate_expr(init));
                     tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
