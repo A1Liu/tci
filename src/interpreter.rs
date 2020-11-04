@@ -395,12 +395,14 @@ impl Runtime {
 
             Opcode::Get { offset, bytes } => {
                 let ptr: VarPointer = self.memory.pop_stack()?;
-                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
+                // TODO check for overflow
+                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.push_stack_bytes_from(ptr, bytes)?;
             }
             Opcode::Set { offset, bytes } => {
                 let ptr: VarPointer = self.memory.pop_stack()?;
-                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
+                // TODO check for overflow
+                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.pop_stack_bytes_into(ptr, bytes)?;
             }
 
@@ -625,11 +627,30 @@ pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
     current_offset += 1;
 
+    let mut out = StringWriter::new();
+
+    let result = printf_internal(sel, format_ptr, current_offset, &mut out);
+    let out = out.into_string();
+    let len = out.len() as i32; // TODO overflow
+    write!(sel.memory.stdout(), "{}", out)?;
+    result?;
+
+    let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
+    sel.memory.set(return_ptr, len.to_be())?;
+
+    return Ok(None);
+}
+
+pub fn printf_internal(
+    sel: &mut Runtime,
+    format_ptr: VarPointer,
+    mut current_offset: u16,
+    mut out: &mut StringWriter,
+) -> Result<(), IError> {
     // OPTIMIZE This does an unnecessary linear scan
     let format_str = sel.cstring_bytes(sel.memory.get_var(format_ptr)?)?;
     let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
 
-    let mut out = StringWriter::new();
     let mut idx = 0;
     while idx < format_str.len() {
         let mut idx2 = idx;
@@ -683,13 +704,5 @@ pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
         idx = idx2 + 1;
     }
 
-    let out = out.into_string();
-    let len = out.len() as i32;
-    write!(sel.memory.stdout(), "{}", &out).map_err(map_err)?;
-
-    // Return value for function
-    let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
-    sel.memory.set(return_ptr, len.to_be())?;
-
-    return Ok(None);
+    return Ok(());
 }
