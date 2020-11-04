@@ -186,7 +186,7 @@ impl<'a> fmt::Debug for Program<'a> {
     }
 }
 
-type LibFunc<IO> = for<'a> fn(&'a mut Runtime<IO>) -> Result<Option<i32>, IError>;
+type LibFunc = for<'a> fn(&'a mut Runtime) -> Result<Option<i32>, IError>;
 
 #[derive(Serialize)]
 pub struct RuntimeDiagnostic {
@@ -196,17 +196,16 @@ pub struct RuntimeDiagnostic {
     pub loc: CodeLoc,
 }
 
-pub struct Runtime<IO: RuntimeIO> {
+pub struct Runtime {
     pub memory: Memory,
     pub args: StringArray,
-    pub lib_funcs: HashMap<u32, LibFunc<IO>>,
+    pub lib_funcs: HashMap<u32, LibFunc>,
     pub program: Program<'static>,
-    pub io: IO,
 }
 
-impl<IO: RuntimeIO> Runtime<IO> {
-    pub fn new(program: Program<'static>, io: IO, args: StringArray) -> Self {
-        let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
+impl Runtime {
+    pub fn new(program: Program<'static>, args: StringArray) -> Self {
+        let mut lib_funcs: HashMap<u32, LibFunc> = HashMap::new();
 
         lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
@@ -218,7 +217,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             memory,
             program,
             lib_funcs,
-            io,
         };
         return s;
     }
@@ -232,9 +230,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run(&mut self) -> Result<i32, IError> {
+    pub fn run(&mut self, mut io: impl Write) -> Result<i32, IError> {
         loop {
-            if let Some(exit) = self.run_op()? {
+            let ret = self.run_op();
+            for event in self.memory.events() {
+                write!(io, "{}", event.to_string())?;
+            }
+
+            if let Some(exit) = ret? {
                 return Ok(exit);
             }
         }
@@ -284,8 +287,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
     #[inline]
     pub fn run_op_internal(&mut self) -> Result<Option<i32>, IError> {
         let op = self.program.ops[self.memory.pc as usize];
-        write!(self.io.log(), "op: {:?}\n", op.op)
-            .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
+        // write!(self.io.log(), "op: {:?}\n", op.op)
+        // .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
 
         let opcode = op.op;
         match opcode {
@@ -591,7 +594,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 }
 
-pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
@@ -600,19 +603,19 @@ pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
     return Ok(None);
 }
 
-pub fn free<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn free(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
     return Ok(None);
 }
 
-pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn exit(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     return Ok(Some(exit_code));
 }
 
-pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr_offset = sel.memory.stack_length();
     let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
     let param_len = i32::from_be(sel.memory.get_var(top_ptr)?);
@@ -682,7 +685,7 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
 
     let out = out.into_string();
     let len = out.len() as i32;
-    write!(sel.io.out(), "{}", &out).map_err(map_err)?;
+    write!(sel.memory.stdout(), "{}", &out).map_err(map_err)?;
 
     // Return value for function
     let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow

@@ -29,7 +29,6 @@ use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendM
 use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
-use runtime::DefaultIO;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 use util::*;
@@ -131,7 +130,6 @@ fn run_from_args(args: Vec<String>) -> ! {
     let args: Vec<String> = std::env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
-    let runtime_io = DefaultIO::new();
 
     let mut files = FileDb::new(true);
     for arg in args.iter().skip(1) {
@@ -158,8 +156,8 @@ fn run_from_args(args: Vec<String>) -> ! {
 
     mem::drop(files);
 
-    let mut runtime = interpreter::Runtime::new(program, runtime_io, StringArray::new());
-    match runtime.run() {
+    let mut runtime = interpreter::Runtime::new(program, StringArray::new());
+    match runtime.run(std::io::stdout()) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
             let print = interpreter::render_err(&err, &runtime.memory.callstack, &program);

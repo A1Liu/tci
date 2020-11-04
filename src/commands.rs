@@ -32,6 +32,9 @@ pub enum CommandResult {
     Compiled(Program<'static>),
     InvalidCommand,
     IOError(String),
+    Stdout(String),
+    Stderr(String),
+    Unwind(u32),
     Snapshot(MemorySnapshot),
     CompileError(String),
     RuntimeError(String),
@@ -39,9 +42,19 @@ pub enum CommandResult {
     StatusRet { status: RuntimeDiagnostic, ret: i32 },
 }
 
+impl From<WriteEvent> for CommandResult {
+    fn from(event: WriteEvent) -> CommandResult {
+        match event {
+            WriteEvent::StderrWrite(value) => return CommandResult::Stderr(value),
+            WriteEvent::StdoutWrite(value) => return CommandResult::Stdout(value),
+            WriteEvent::Unwind(len) => return CommandResult::Unwind(len),
+        }
+    }
+}
+
 pub enum WSState<'a> {
     Files(FileDb<'a>),
-    Running(Runtime<InMemoryIO>),
+    Running(Runtime),
 }
 
 impl<'a> Drop for WSState<'a> {
@@ -92,7 +105,7 @@ impl<'a> WSState<'a> {
                     }
                 };
 
-                *self = Self::Running(Runtime::new(program, InMemoryIO::new(), StringArray::new()));
+                *self = Self::Running(Runtime::new(program, StringArray::new()));
                 ret!(CommandResult::Compiled(program));
             } else {
                 ret!(CommandResult::InvalidCommand);
@@ -112,11 +125,15 @@ impl<'a> WSState<'a> {
                         }
                     };
 
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
+
                     if let Some(ret) = ret {
-                        return vec![CommandResult::StatusRet {
+                        ret!(CommandResult::StatusRet {
                             status: runtime.diagnostic(),
                             ret,
-                        }];
+                        });
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
@@ -129,6 +146,10 @@ impl<'a> WSState<'a> {
                             ret!(CommandResult::RuntimeError(err));
                         }
                     };
+
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
 
                     if let Some(ret) = ret {
                         ret!(CommandResult::StatusRet {
@@ -152,6 +173,10 @@ impl<'a> WSState<'a> {
                         }
                     };
 
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
+
                     if let Some(ret) = ret {
                         ret!(CommandResult::StatusRet {
                             status: runtime.diagnostic(),
@@ -174,6 +199,10 @@ impl<'a> WSState<'a> {
                         }
                     }
 
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
+
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::Back(count) => {
@@ -184,6 +213,10 @@ impl<'a> WSState<'a> {
                         if runtime.memory.current_tag() == tag {
                             break;
                         }
+                    }
+
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
