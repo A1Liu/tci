@@ -114,37 +114,27 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
     };
 }
 
-#[test]
-fn test_hello_world() {
-    test_file_should_succeed("test/hello_world.c");
+macro_rules! gen_test_should_succeed {
+    ( $( $ident:ident ),* ) => {
+        $(
+            #[test]
+            fn $ident() {
+                test_file_should_succeed(concat!("test/", stringify!($ident), ".c"));
+            }
+        )*
+    };
 }
 
-#[test]
-fn test_assign() {
-    test_file_should_succeed("test/assign.c");
+macro_rules! gen_test_runtime_should_fail {
+    ( $( ($ident:ident, $expr:expr ) ),* ) => {
+        $(
+            #[test]
+            fn $ident() {
+                test_file_runtime_should_fail(concat!("test/", stringify!($ident), ".c"), $expr);
+            }
+        )*
+    };
 }
 
-#[test]
-fn test_structs() {
-    test_file_should_succeed("test/structs.c");
-}
-
-#[test]
-fn test_includes() {
-    test_file_should_succeed("test/includes.c");
-}
-
-#[test]
-fn test_control_flow() {
-    test_file_should_succeed("test/control_flow.c");
-}
-
-#[test]
-fn test_macros() {
-    test_file_should_succeed("test/macros.c");
-}
-
-#[test]
-fn test_stack_locals() {
-    test_file_runtime_should_fail("test/stack_locals.c", "InvalidPointer");
-}
+gen_test_should_succeed!(hello_world, assign, structs, includes, control_flow);
+gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

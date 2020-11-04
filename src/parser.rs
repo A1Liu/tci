@@ -9,6 +9,7 @@ pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
 
 pub struct Parser<'b> {
     pub db: AstDb<'b>,
+    pub macros: HashMap<u32, Macro<'b>>,
 }
 
 pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
@@ -32,7 +33,10 @@ pub fn pop<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>
 
 impl<'b> Parser<'b> {
     pub fn new() -> Self {
-        Self { db: HashMap::new() }
+        Self {
+            db: HashMap::new(),
+            macros: HashMap::new(),
+        }
     }
 
     pub fn parse_tokens<'a>(
@@ -670,57 +674,6 @@ impl<'b> Parser<'b> {
                 let prev = self.db.insert(include_id, stmts);
                 debug_assert!(prev.is_none());
                 decls.extend_from_slice(stmts);
-
-                return Ok(());
-            }
-            TokenKind::MacroDef(ident) => {
-                let tok = pop(tokens, current).unwrap();
-
-                if peek(tokens, current)?.kind == TokenKind::LParen {
-                    let lparen = pop(tokens, current).unwrap();
-                    let mut params = Vec::new();
-                    if peek(tokens, current)?.kind != TokenKind::RParen {
-                        params.push(expect_ident(tokens, current)?);
-                        while peek(tokens, current)?.kind == TokenKind::Comma {
-                            params.push(expect_ident(tokens, current)?);
-                        }
-                    }
-
-                    expect_rparen(tokens, current, lparen.loc)?;
-
-                    let expr = self.parse_expr(buckets, tokens, current)?;
-                    let params = buckets.add_array(params);
-                    decls.push(GlobalStmt {
-                        loc: l_from(tok.loc, expr.loc),
-                        kind: GlobalStmtKind::FuncMacro {
-                            ident,
-                            params,
-                            expr,
-                        },
-                    });
-                } else {
-                    if peek(tokens, current)?.kind != TokenKind::MacroDefEnd {
-                        let expr = self.parse_expr(buckets, tokens, current)?;
-
-                        decls.push(GlobalStmt {
-                            loc: l_from(tok.loc, expr.loc),
-                            kind: GlobalStmtKind::Macro { ident, expr },
-                        });
-                    } else {
-                        decls.push(GlobalStmt {
-                            loc: tok.loc,
-                            kind: GlobalStmtKind::MacroMarker(ident),
-                        });
-                    }
-                }
-
-                let end_tok = pop(tokens, current)?;
-                if end_tok.kind != TokenKind::MacroDefEnd {
-                    return Err(error!(
-                        "expected macro definition to end here",
-                        end_tok.loc, "expected this to be a newline"
-                    ));
-                }
 
                 return Ok(());
             }
