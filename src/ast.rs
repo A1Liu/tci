@@ -24,7 +24,6 @@ pub enum ExprKind<'a> {
     CharLiteral(u8),
     StringLiteral(&'a str),
     Ident(u32),
-    Macro(Macro<'a>),
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
     Assign(&'a Expr<'a>, &'a Expr<'a>),
     Call {
@@ -123,26 +122,6 @@ pub enum GlobalStmtKind<'a> {
         decl_type: ASTType,
         decls: &'a [Decl<'a>],
     },
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum MacroKind<'a> {
-    Func {
-        ident: u32,
-        params: &'a [(u32, CodeLoc)],
-        expr: &'a Expr<'a>,
-    },
-    Normal {
-        ident: u32,
-        expr: &'a Expr<'a>,
-    },
-    Marker(u32),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Macro<'a> {
-    kind: MacroKind<'a>,
-    loc: CodeLoc,
 }
 
 #[derive(Debug, Clone)]

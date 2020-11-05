@@ -17,7 +17,6 @@ pub enum TokenKind<'a> {
     Include(u32),
     IncludeSys(u32),
     MacroDef(u32),
-    MacroDefEnd,
 
     Void,
     Char,
@@ -103,6 +102,22 @@ pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
     );
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MacroKind<'a> {
+    Func {
+        params: &'a [(u32, CodeLoc)],
+        toks: &'a [Token<'a>],
+    },
+    Value(&'a [Token<'a>]),
+    Marker,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Macro<'a> {
+    kind: MacroKind<'a>,
+    loc: CodeLoc,
+}
+
 pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
 
 const WHITESPACE: [u8; 2] = [b' ', b'\t'];
@@ -129,6 +144,7 @@ pub struct Lexer<'a> {
     file: u32,
     current: usize,
     output: Vec<Token<'a>>,
+    macros: HashMap<u32, Macro<'a>>,
 }
 
 impl<'b> Lexer<'b> {
@@ -137,6 +153,7 @@ impl<'b> Lexer<'b> {
             file,
             current: 0,
             output: Vec::new(),
+            macros: HashMap::new(),
         }
     }
 
@@ -192,7 +209,54 @@ impl<'b> Lexer<'b> {
             return Ok(true);
         }
 
-        self.lex_token(buckets, symbols, data)?;
+        let tok = self.lex_token(buckets, symbols, data)?;
+        let id = match tok.kind {
+            TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
+            _ => {
+                self.output.push(tok);
+                return Ok(false);
+            }
+        };
+
+        let macro_def = match self.macros.get(&id) {
+            Some(def) => def,
+            None => {
+                self.output.push(tok);
+                return Ok(false);
+            }
+        };
+
+        let (params, toks) = match macro_def.kind {
+            MacroKind::Marker => {
+                return Err(error!(
+                    "used marker macro in code",
+                    macro_def.loc, "macro defined here", tok.loc, "used here"
+                ))
+            }
+            MacroKind::Value(toks) => {
+                self.output.extend_from_slice(toks);
+                return Ok(false);
+            }
+            MacroKind::Func { params, toks } => (params, toks),
+        };
+
+        // TODO function macros
+        // loop {
+        //     loop {
+        //         while self.peek_eqs(data, &WHITESPACE) {
+        //             self.current += 1;
+        //         }
+
+        //         if self.peek_eq(data, b'\n') {
+        //             self.current += 1;
+        //         } else if self.peek_eq_series(data, &CRLF) {
+        //             self.current += 2;
+        //         } else {
+        //             break;
+        //         }
+        //     }
+        // }
+
         return Ok(false);
     }
 
@@ -223,11 +287,11 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                 }
 
-                let begin = self.current;
-                if begin == data.len() {
+                let ident_begin = self.current;
+                if ident_begin == data.len() {
                     return Err(error!(
                         "unexpected end of file",
-                        l(begin as u32, begin as u32, self.file),
+                        l(ident_begin as u32, begin as u32, self.file),
                         "EOF found here"
                     ));
                 }
@@ -237,50 +301,143 @@ impl<'b> Lexer<'b> {
                 }
 
                 // Don't add the empty string
-                if self.current - begin == 0 {
+                if self.current - ident_begin == 0 {
                     return Err(error!(
                         "expected an identifer for macro declaration",
-                        l(begin as u32, begin as u32 + 1, self.file),
+                        l(ident_begin as u32, ident_begin as u32 + 1, self.file),
                         "This should be an identifier"
                     ));
                 }
 
-                let id = symbols.translate_add(begin..self.current, self.file);
+                let id = symbols.translate_add(ident_begin..self.current, self.file);
+
+                macro_rules! consume_whitespace_macro {
+                    () => {
+                        while self.peek_eqs(data, &WHITESPACE) {
+                            self.current += 1;
+                        }
+
+                        if self.current == data.len() {
+                            break;
+                        }
+
+                        if self.peek_eq(data, b'\n') {
+                            break;
+                        } else if self.peek_eq_series(data, &CRLF) {
+                            break;
+                        } else if self.peek_eq_series(data, &[b'\\', b'\n']) {
+                            self.current += 2;
+                            continue;
+                        } else if self.peek_eq_series(data, &[b'\\', b'\r', b'\n']) {
+                            self.current += 3;
+                            continue;
+                        }
+                    };
+                }
+
+                if !self.peek_eq(data, b'(') {
+                    let mut macro_def = Vec::new();
+                    loop {
+                        consume_whitespace_macro!();
+                        let tok = self.lex_token(buckets, symbols, data)?;
+                        macro_def.push(tok);
+                    }
+
+                    self.macros.insert(
+                        id,
+                        Macro {
+                            kind: MacroKind::Value(buckets.add_array(macro_def)),
+                            loc: l(begin as u32, self.current as u32, self.file),
+                        },
+                    );
+                    self.output.push(Token::new(
+                        TokenKind::MacroDef(id),
+                        begin..self.current,
+                        self.file,
+                    ));
+
+                    return Ok(());
+                }
+
+                self.current += 1;
+                let mut params = Vec::new();
+
+                while self.peek_eqs(data, &WHITESPACE) || self.peek_eqs(data, &[b'\r', b'\n']) {
+                    self.current += 1;
+                }
+
+                let tok = self.lex_token(buckets, symbols, data)?;
+                match tok.kind {
+                    TokenKind::Ident(id) => params.push((id, tok.loc)),
+                    TokenKind::TypeIdent(id) => params.push((id, tok.loc)),
+                    TokenKind::RParen => {}
+                    _ => {
+                        return Err(error!(
+                            "expected a macro function parameter",
+                            tok.loc, "this should be an identifier"
+                        ))
+                    }
+                }
+
+                loop {
+                    while self.peek_eqs(data, &WHITESPACE) || self.peek_eqs(data, &[b'\r', b'\n']) {
+                        self.current += 1;
+                    }
+
+                    let tok = self.lex_token(buckets, symbols, data)?;
+                    match tok.kind {
+                        TokenKind::Comma => {}
+                        TokenKind::RParen => break,
+                        _ => {
+                            return Err(error!(
+                                "expected a ')' to end macro parameters or a comma",
+                                tok.loc, "this should be ')' or ','"
+                            ))
+                        }
+                    }
+
+                    while self.peek_eqs(data, &WHITESPACE) || self.peek_eqs(data, &[b'\r', b'\n']) {
+                        self.current += 1;
+                    }
+
+                    let tok = self.lex_token(buckets, symbols, data)?;
+                    let id = match tok.kind {
+                        TokenKind::Ident(id) => id,
+                        TokenKind::TypeIdent(id) => id,
+                        _ => {
+                            return Err(error!(
+                                "expected an identifier",
+                                tok.loc, "this should be an identifier"
+                            ))
+                        }
+                    };
+
+                    params.push((id, tok.loc));
+                }
+
+                let mut macro_def = Vec::new();
+                loop {
+                    consume_whitespace_macro!();
+                    let tok = self.lex_token(buckets, symbols, data)?;
+                    macro_def.push(tok);
+                }
+
+                self.macros.insert(
+                    id,
+                    Macro {
+                        kind: MacroKind::Func {
+                            params: buckets.add_array(params),
+                            toks: buckets.add_array(macro_def),
+                        },
+                        loc: l(begin as u32, self.current as u32, self.file),
+                    },
+                );
                 self.output.push(Token::new(
                     TokenKind::MacroDef(id),
                     begin..self.current,
                     self.file,
                 ));
 
-                loop {
-                    while self.peek_eqs(data, &WHITESPACE) {
-                        self.current += 1;
-                    }
-
-                    if self.current == data.len() {
-                        break;
-                    }
-
-                    if self.peek_eq(data, b'\n') {
-                        break;
-                    } else if self.peek_eq_series(data, &CRLF) {
-                        break;
-                    } else if self.peek_eq_series(data, &[b'\\', b'\n']) {
-                        self.current += 2;
-                        continue;
-                    } else if self.peek_eq_series(data, &[b'\\', b'\r', b'\n']) {
-                        self.current += 3;
-                        continue;
-                    }
-
-                    self.lex_token(buckets, symbols, data)?;
-                }
-
-                self.output.push(Token::new(
-                    TokenKind::MacroDefEnd,
-                    self.current..self.current,
-                    self.file,
-                ));
                 return Ok(());
             }
             "include" => {
@@ -378,15 +535,13 @@ impl<'b> Lexer<'b> {
         buckets: BucketListRef<'b>,
         symbols: &mut FileDb<'a>,
         data: &'a [u8],
-    ) -> Result<(), Error> {
+    ) -> Result<Token<'b>, Error> {
         let begin = self.current;
         self.current += 1;
 
         macro_rules! ret_tok {
             ($arg1:expr) => {{
-                self.output
-                    .push(Token::new($arg1, begin..self.current, self.file));
-                return Ok(());
+                return Ok(Token::new($arg1, begin..self.current, self.file));
             }};
         }
 
@@ -628,6 +783,15 @@ impl<'b> Lexer<'b> {
         let cur = self.current;
         self.current += 1;
         return Ok(data[cur]);
+    }
+
+    #[inline]
+    pub fn peek_expect(&self, data: &[u8]) -> Result<u8, Error> {
+        if self.current == data.len() {
+            return Err(error!("unexpected end of file"));
+        }
+
+        return Ok(data[self.current]);
     }
 
     #[inline]

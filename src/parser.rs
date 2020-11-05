@@ -677,6 +677,10 @@ impl<'b> Parser<'b> {
 
                 return Ok(());
             }
+            TokenKind::MacroDef(def) => {
+                pop(tokens, current).unwrap();
+                return Ok(());
+            }
             TokenKind::Struct => {
                 let start_loc = pop(tokens, current).unwrap().loc;
                 let (ident, ident_loc) = expect_any_ident(tokens, current)?;
