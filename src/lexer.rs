@@ -189,19 +189,24 @@ impl<'b> Lexer<'b> {
         symbols: &mut FileDb<'a>,
         data: &'a [u8],
     ) -> Result<bool, Error> {
+        macro_rules! skip_whitespace {
+            () => {
+                while self.peek_eqs(data, &WHITESPACE) {
+                    self.current += 1;
+                }
+
+                if self.peek_eq(data, b'\n') {
+                    self.current += 1;
+                } else if self.peek_eq_series(data, &CRLF) {
+                    self.current += 2;
+                } else {
+                    break;
+                }
+            };
+        }
+
         loop {
-            while self.peek_eqs(data, &WHITESPACE) {
-                self.current += 1;
-            }
-
-            if self.peek_eq(data, b'\n') {
-                self.current += 1;
-            } else if self.peek_eq_series(data, &CRLF) {
-                self.current += 2;
-            } else {
-                break;
-            }
-
+            skip_whitespace!();
             self.lex_macro(buckets, incomplete, token_db, symbols, data)?;
         }
 
@@ -219,7 +224,7 @@ impl<'b> Lexer<'b> {
         };
 
         let macro_def = match self.macros.get(&id) {
-            Some(def) => def,
+            Some(def) => *def,
             None => {
                 self.output.push(tok);
                 return Ok(false);
@@ -240,22 +245,67 @@ impl<'b> Lexer<'b> {
             MacroKind::Func { params, toks } => (params, toks),
         };
 
-        // TODO function macros
-        // loop {
-        //     loop {
-        //         while self.peek_eqs(data, &WHITESPACE) {
-        //             self.current += 1;
-        //         }
+        loop {
+            skip_whitespace!();
+        }
 
-        //         if self.peek_eq(data, b'\n') {
-        //             self.current += 1;
-        //         } else if self.peek_eq_series(data, &CRLF) {
-        //             self.current += 2;
-        //         } else {
-        //             break;
-        //         }
-        //     }
-        // }
+        let rparen_tok = self.lex_token(buckets, symbols, data)?;
+        match rparen_tok.kind {
+            TokenKind::LParen => {}
+            _ => {
+                return Err(error!(
+                    "expected a left paren '(' because of function macro invokation",
+                    tok.loc, "macro used here", macro_def.loc, "macro defined here"
+                ));
+            }
+        }
+
+        // TODO function macros
+        let mut actual_params = Vec::new();
+        let mut paren_count = 0;
+        let mut current_tok = self.lex_token(buckets, symbols, data)?;
+        if current_tok.kind != TokenKind::RParen {
+            loop {
+                let mut current_param = Vec::new();
+                current_tok = self.lex_token(buckets, symbols, data)?;
+                while paren_count != 0
+                    || (current_tok.kind != TokenKind::RParen
+                        && current_tok.kind != TokenKind::Comma)
+                {
+                    current_param.push(current_tok);
+                    match current_tok.kind {
+                        TokenKind::LParen => paren_count += 1,
+                        TokenKind::RParen => paren_count -= 1,
+                        _ => {}
+                    }
+
+                    current_tok = self.lex_token(buckets, symbols, data)?;
+                }
+
+                actual_params.push(current_param);
+                if current_tok.kind == TokenKind::RParen {
+                    break;
+                }
+            }
+        }
+
+        if params.len() != actual_params.len() {
+            return Err(error!(
+                "provided wrong number of arguments to macro",
+                macro_def.loc,
+                format!("macro defined here (takes in {} arguments)", params.len()),
+                l_from(tok.loc, current_tok.loc),
+                format!(
+                    "macro used here (passed in {} arguments)",
+                    actual_params.len()
+                )
+            ));
+        }
+
+        let mut params_hash = HashMap::new();
+        for (idx, param) in actual_params.into_iter().enumerate() {
+            params_hash.insert(params[idx].0, param);
+        }
 
         return Ok(false);
     }
@@ -370,7 +420,9 @@ impl<'b> Lexer<'b> {
                 match tok.kind {
                     TokenKind::Ident(id) => params.push((id, tok.loc)),
                     TokenKind::TypeIdent(id) => params.push((id, tok.loc)),
-                    TokenKind::RParen => {}
+                    TokenKind::RParen => {
+                        self.current += 1;
+                    }
                     _ => {
                         return Err(error!(
                             "expected a macro function parameter",
