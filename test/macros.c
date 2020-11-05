@@ -1,4 +1,4 @@
 #include <stdio.h>
-#define HELLO 0
+#define HELLO(a) 0
 
-int main() { printf("%d\n", HELLO); }
+int main() { printf("%d\n", HELLO(12)); }

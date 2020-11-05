@@ -266,8 +266,11 @@ impl<'b> Lexer<'b> {
         let mut current_tok = self.lex_token(buckets, symbols, data)?;
         if current_tok.kind != TokenKind::RParen {
             loop {
+                loop {
+                    skip_whitespace!();
+                }
+
                 let mut current_param = Vec::new();
-                current_tok = self.lex_token(buckets, symbols, data)?;
                 while paren_count != 0
                     || (current_tok.kind != TokenKind::RParen
                         && current_tok.kind != TokenKind::Comma)
@@ -279,6 +282,9 @@ impl<'b> Lexer<'b> {
                         _ => {}
                     }
 
+                    loop {
+                        skip_whitespace!();
+                    }
                     current_tok = self.lex_token(buckets, symbols, data)?;
                 }
 
@@ -304,7 +310,25 @@ impl<'b> Lexer<'b> {
 
         let mut params_hash = HashMap::new();
         for (idx, param) in actual_params.into_iter().enumerate() {
+            println!("{} {:?}", idx, param);
             params_hash.insert(params[idx].0, param);
+        }
+
+        println!("{:?}", toks);
+        for tok in toks {
+            let id = match tok.kind {
+                TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
+                _ => {
+                    self.output.push(*tok);
+                    continue;
+                }
+            };
+
+            if let Some(replacement) = params_hash.get(&id) {
+                self.output.extend_from_slice(replacement);
+            } else {
+                self.output.push(*tok);
+            }
         }
 
         return Ok(false);
@@ -416,55 +440,48 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                 }
 
-                let tok = self.lex_token(buckets, symbols, data)?;
-                match tok.kind {
-                    TokenKind::Ident(id) => params.push((id, tok.loc)),
-                    TokenKind::TypeIdent(id) => params.push((id, tok.loc)),
-                    TokenKind::RParen => {
-                        self.current += 1;
-                    }
-                    _ => {
-                        return Err(error!(
-                            "expected a macro function parameter",
-                            tok.loc, "this should be an identifier"
-                        ))
-                    }
-                }
-
-                loop {
-                    while self.peek_eqs(data, &WHITESPACE) || self.peek_eqs(data, &[b'\r', b'\n']) {
-                        self.current += 1;
+                let mut tok = self.lex_token(buckets, symbols, data)?;
+                if tok.kind != TokenKind::RParen {
+                    macro_rules! skip_whitespace {
+                        () => {
+                            while self.peek_eqs(data, &WHITESPACE)
+                                || self.peek_eqs(data, &[b'\r', b'\n'])
+                            {
+                                self.current += 1;
+                            }
+                        };
                     }
 
-                    let tok = self.lex_token(buckets, symbols, data)?;
-                    match tok.kind {
-                        TokenKind::Comma => {}
-                        TokenKind::RParen => break,
-                        _ => {
-                            return Err(error!(
-                                "expected a ')' to end macro parameters or a comma",
-                                tok.loc, "this should be ')' or ','"
-                            ))
+                    loop {
+                        skip_whitespace!();
+                        let id = match tok.kind {
+                            TokenKind::Ident(id) => id,
+                            TokenKind::TypeIdent(id) => id,
+                            _ => {
+                                return Err(error!(
+                                    "expected a function macro parameter",
+                                    tok.loc, "this should be an identifier"
+                                ))
+                            }
+                        };
+
+                        params.push((id, tok.loc));
+
+                        skip_whitespace!();
+                        tok = self.lex_token(buckets, symbols, data)?;
+                        match tok.kind {
+                            TokenKind::Comma => {}
+                            TokenKind::RParen => break,
+                            _ => {
+                                return Err(error!(
+                                    "expected a ')' to end macro parameters or a comma",
+                                    tok.loc, "this should be ')' or ','"
+                                ))
+                            }
                         }
+
+                        tok = self.lex_token(buckets, symbols, data)?;
                     }
-
-                    while self.peek_eqs(data, &WHITESPACE) || self.peek_eqs(data, &[b'\r', b'\n']) {
-                        self.current += 1;
-                    }
-
-                    let tok = self.lex_token(buckets, symbols, data)?;
-                    let id = match tok.kind {
-                        TokenKind::Ident(id) => id,
-                        TokenKind::TypeIdent(id) => id,
-                        _ => {
-                            return Err(error!(
-                                "expected an identifier",
-                                tok.loc, "this should be an identifier"
-                            ))
-                        }
-                    };
-
-                    params.push((id, tok.loc));
                 }
 
                 let mut macro_def = Vec::new();
