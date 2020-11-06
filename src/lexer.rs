@@ -17,6 +17,8 @@ pub enum TokenKind<'a> {
     Include(u32),
     IncludeSys(u32),
     MacroDef(u32),
+    FuncMacroDef(u32),
+    MacroDefEnd,
 
     Void,
     Char,
@@ -102,22 +104,6 @@ pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
     );
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum MacroKind<'a> {
-    Func {
-        params: &'a [(u32, CodeLoc)],
-        toks: &'a [Token<'a>],
-    },
-    Value(&'a [Token<'a>]),
-    Marker,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Macro<'a> {
-    kind: MacroKind<'a>,
-    loc: CodeLoc,
-}
-
 pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
 
 const WHITESPACE: [u8; 2] = [b' ', b'\t'];
@@ -144,7 +130,6 @@ pub struct Lexer<'a> {
     file: u32,
     current: usize,
     output: Vec<Token<'a>>,
-    macros: HashMap<u32, Macro<'a>>,
 }
 
 impl<'b> Lexer<'b> {
@@ -153,7 +138,6 @@ impl<'b> Lexer<'b> {
             file,
             current: 0,
             output: Vec::new(),
-            macros: HashMap::new(),
         }
     }
 
@@ -215,122 +199,7 @@ impl<'b> Lexer<'b> {
         }
 
         let tok = self.lex_token(buckets, symbols, data)?;
-        let id = match tok.kind {
-            TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
-            _ => {
-                self.output.push(tok);
-                return Ok(false);
-            }
-        };
-
-        let macro_def = match self.macros.get(&id) {
-            Some(def) => *def,
-            None => {
-                self.output.push(tok);
-                return Ok(false);
-            }
-        };
-
-        let (params, toks) = match macro_def.kind {
-            MacroKind::Marker => {
-                return Err(error!(
-                    "used marker macro in code",
-                    macro_def.loc, "macro defined here", tok.loc, "used here"
-                ))
-            }
-            MacroKind::Value(toks) => {
-                self.output.extend_from_slice(toks);
-                return Ok(false);
-            }
-            MacroKind::Func { params, toks } => (params, toks),
-        };
-
-        loop {
-            skip_whitespace!();
-        }
-
-        let rparen_tok = self.lex_token(buckets, symbols, data)?;
-        match rparen_tok.kind {
-            TokenKind::LParen => {}
-            _ => {
-                return Err(error!(
-                    "expected a left paren '(' because of function macro invokation",
-                    tok.loc, "macro used here", macro_def.loc, "macro defined here"
-                ));
-            }
-        }
-
-        // TODO function macros
-        let mut actual_params = Vec::new();
-        let mut paren_count = 0;
-        let mut current_tok = self.lex_token(buckets, symbols, data)?;
-        if current_tok.kind != TokenKind::RParen {
-            loop {
-                loop {
-                    skip_whitespace!();
-                }
-
-                let mut current_param = Vec::new();
-                while paren_count != 0
-                    || (current_tok.kind != TokenKind::RParen
-                        && current_tok.kind != TokenKind::Comma)
-                {
-                    current_param.push(current_tok);
-                    match current_tok.kind {
-                        TokenKind::LParen => paren_count += 1,
-                        TokenKind::RParen => paren_count -= 1,
-                        _ => {}
-                    }
-
-                    loop {
-                        skip_whitespace!();
-                    }
-                    current_tok = self.lex_token(buckets, symbols, data)?;
-                }
-
-                actual_params.push(current_param);
-                if current_tok.kind == TokenKind::RParen {
-                    break;
-                }
-            }
-        }
-
-        if params.len() != actual_params.len() {
-            return Err(error!(
-                "provided wrong number of arguments to macro",
-                macro_def.loc,
-                format!("macro defined here (takes in {} arguments)", params.len()),
-                l_from(tok.loc, current_tok.loc),
-                format!(
-                    "macro used here (passed in {} arguments)",
-                    actual_params.len()
-                )
-            ));
-        }
-
-        let mut params_hash = HashMap::new();
-        for (idx, param) in actual_params.into_iter().enumerate() {
-            println!("{} {:?}", idx, param);
-            params_hash.insert(params[idx].0, param);
-        }
-
-        println!("{:?}", toks);
-        for tok in toks {
-            let id = match tok.kind {
-                TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
-                _ => {
-                    self.output.push(*tok);
-                    continue;
-                }
-            };
-
-            if let Some(replacement) = params_hash.get(&id) {
-                self.output.extend_from_slice(replacement);
-            } else {
-                self.output.push(*tok);
-            }
-        }
-
+        self.output.push(tok);
         return Ok(false);
     }
 
@@ -410,100 +279,42 @@ impl<'b> Lexer<'b> {
                 }
 
                 if !self.peek_eq(data, b'(') {
-                    let mut macro_def = Vec::new();
-                    loop {
-                        consume_whitespace_macro!();
-                        let tok = self.lex_token(buckets, symbols, data)?;
-                        macro_def.push(tok);
-                    }
-
-                    self.macros.insert(
-                        id,
-                        Macro {
-                            kind: MacroKind::Value(buckets.add_array(macro_def)),
-                            loc: l(begin as u32, self.current as u32, self.file),
-                        },
-                    );
                     self.output.push(Token::new(
                         TokenKind::MacroDef(id),
                         begin..self.current,
                         self.file,
                     ));
 
+                    loop {
+                        consume_whitespace_macro!();
+                        let tok = self.lex_token(buckets, symbols, data)?;
+                        self.output.push(tok);
+                    }
+
+                    self.output.push(Token::new(
+                        TokenKind::MacroDefEnd,
+                        self.current..self.current,
+                        self.file,
+                    ));
+
                     return Ok(());
                 }
 
-                self.current += 1;
-                let mut params = Vec::new();
+                self.output.push(Token::new(
+                    TokenKind::FuncMacroDef(id),
+                    begin..self.current,
+                    self.file,
+                ));
 
-                while self.peek_eqs(data, &WHITESPACE) || self.peek_eqs(data, &[b'\r', b'\n']) {
-                    self.current += 1;
-                }
-
-                let mut tok = self.lex_token(buckets, symbols, data)?;
-                if tok.kind != TokenKind::RParen {
-                    macro_rules! skip_whitespace {
-                        () => {
-                            while self.peek_eqs(data, &WHITESPACE)
-                                || self.peek_eqs(data, &[b'\r', b'\n'])
-                            {
-                                self.current += 1;
-                            }
-                        };
-                    }
-
-                    loop {
-                        skip_whitespace!();
-                        let id = match tok.kind {
-                            TokenKind::Ident(id) => id,
-                            TokenKind::TypeIdent(id) => id,
-                            _ => {
-                                return Err(error!(
-                                    "expected a function macro parameter",
-                                    tok.loc, "this should be an identifier"
-                                ))
-                            }
-                        };
-
-                        params.push((id, tok.loc));
-
-                        skip_whitespace!();
-                        tok = self.lex_token(buckets, symbols, data)?;
-                        match tok.kind {
-                            TokenKind::Comma => {}
-                            TokenKind::RParen => break,
-                            _ => {
-                                return Err(error!(
-                                    "expected a ')' to end macro parameters or a comma",
-                                    tok.loc, "this should be ')' or ','"
-                                ))
-                            }
-                        }
-
-                        tok = self.lex_token(buckets, symbols, data)?;
-                    }
-                }
-
-                let mut macro_def = Vec::new();
                 loop {
                     consume_whitespace_macro!();
                     let tok = self.lex_token(buckets, symbols, data)?;
-                    macro_def.push(tok);
+                    self.output.push(tok);
                 }
 
-                self.macros.insert(
-                    id,
-                    Macro {
-                        kind: MacroKind::Func {
-                            params: buckets.add_array(params),
-                            toks: buckets.add_array(macro_def),
-                        },
-                        loc: l(begin as u32, self.current as u32, self.file),
-                    },
-                );
                 self.output.push(Token::new(
-                    TokenKind::MacroDef(id),
-                    begin..self.current,
+                    TokenKind::MacroDefEnd,
+                    self.current..self.current,
                     self.file,
                 ));
 

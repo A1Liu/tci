@@ -16,6 +16,7 @@ mod filedb;
 mod interpreter;
 mod lexer;
 mod parser;
+mod preprocessor;
 mod runtime;
 mod type_checker;
 
@@ -59,6 +60,26 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
         buckets = n;
     }
     buckets = buckets.force_next();
+
+    for (file, tokens) in tokens.iter_mut() {
+        let toks = match preprocessor::preprocess_file(tokens) {
+            Ok(toks) => toks,
+            Err(err) => {
+                errors.push(err);
+                continue;
+            }
+        };
+
+        *tokens = buckets.add_array(toks);
+
+        if let Some(n) = buckets.next() {
+            buckets = n;
+        }
+    }
+
+    if errors.len() != 0 {
+        return Err(errors);
+    }
 
     let mut parser = parser::Parser::new();
     let iter = files_list.into_iter().filter_map(|(file, _)| {

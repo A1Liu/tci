@@ -9,7 +9,6 @@ pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
 
 pub struct Parser<'b> {
     pub db: AstDb<'b>,
-    pub macros: HashMap<u32, Macro<'b>>,
 }
 
 pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
@@ -33,10 +32,7 @@ pub fn pop<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>
 
 impl<'b> Parser<'b> {
     pub fn new() -> Self {
-        Self {
-            db: HashMap::new(),
-            macros: HashMap::new(),
-        }
+        Self { db: HashMap::new() }
     }
 
     pub fn parse_tokens<'a>(
@@ -675,10 +671,6 @@ impl<'b> Parser<'b> {
                 debug_assert!(prev.is_none());
                 decls.extend_from_slice(stmts);
 
-                return Ok(());
-            }
-            TokenKind::MacroDef(def) => {
-                pop(tokens, current).unwrap();
                 return Ok(());
             }
             TokenKind::Struct => {
