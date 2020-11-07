@@ -1,8 +1,11 @@
 use crate::lexer::*;
 use crate::util::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-pub fn preprocess_file<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Token<'a>>, Error> {
+pub fn preprocess_file<'a>(
+    token_db: TokenDb<'a>,
+    tokens: &[Token<'a>],
+) -> Result<Vec<Token<'a>>, Error> {
     let mut toks = tokens.iter();
     let mut macros: HashMap<u32, Macro<'a>> = HashMap::new();
     let mut output = Vec::new();
@@ -67,7 +70,10 @@ pub fn preprocess_file<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Token<'a>>, Er
                 ))
             }
             MacroKind::Value(toks) => {
-                output.extend_from_slice(toks);
+                let mut expanded = HashSet::new();
+                expanded.insert(id);
+                let mut expanded_toks = preprocess_file_rec(&mut expanded, &macros, toks)?;
+                output.append(&mut expanded_toks);
                 continue;
             }
             MacroKind::Func { params, toks } => (params, toks),
@@ -133,8 +139,132 @@ pub fn preprocess_file<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Token<'a>>, Er
             params_hash.insert(macro_params[idx].0, param);
         }
 
-        let mut expanded = expand_macro(macro_toks, params_hash);
-        output.append(&mut expanded);
+        let mut expanded = HashSet::new();
+        expanded.insert(id);
+        let expanded_toks = expand_macro(macro_toks, params_hash);
+        let mut expanded_toks = preprocess_file_rec(&mut expanded, &macros, &expanded_toks)?;
+        output.append(&mut expanded_toks);
+    }
+
+    return Ok(output);
+}
+
+pub fn preprocess_file_rec<'a>(
+    expanded: &mut HashSet<u32>,
+    macros: &HashMap<u32, Macro<'a>>,
+    tokens: &[Token<'a>],
+) -> Result<Vec<Token<'a>>, Error> {
+    let mut toks = tokens.iter();
+    let mut output = Vec::new();
+
+    let expect = || error!("expected token");
+
+    while let Some(tok) = toks.next() {
+        let id = match tok.kind {
+            TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
+            _ => {
+                output.push(*tok);
+                continue;
+            }
+        };
+
+        let macro_def = match macros.get(&id) {
+            Some(def) => {
+                if expanded.contains(&id) {
+                    output.push(*tok); // TODO output warning here
+                    continue;
+                }
+
+                def
+            }
+            None => {
+                output.push(*tok);
+                continue;
+            }
+        };
+
+        let (macro_params, macro_toks) = match &macro_def.kind {
+            MacroKind::Marker => {
+                return Err(error!(
+                    "used marker macro in code",
+                    macro_def.loc, "macro defined here", tok.loc, "used here"
+                ))
+            }
+            MacroKind::Value(toks) => {
+                expanded.insert(id);
+                let mut expanded_toks = preprocess_file_rec(expanded, macros, toks)?;
+                expanded.remove(&id);
+                output.append(&mut expanded_toks);
+                continue;
+            }
+            MacroKind::Func { params, toks } => (params, toks),
+        };
+
+        let rparen_tok = toks.next().ok_or_else(expect)?;
+        match rparen_tok.kind {
+            TokenKind::LParen => {}
+            _ => {
+                return Err(error!(
+                    "expected a left paren '(' because of function macro invokation",
+                    tok.loc, "macro used here", macro_def.loc, "macro defined here"
+                ));
+            }
+        }
+
+        let mut actual_params = Vec::new();
+        let mut paren_count = 0;
+        let mut current_tok = toks.next().ok_or_else(expect)?;
+
+        if current_tok.kind != TokenKind::RParen {
+            loop {
+                let mut current_param = Vec::new();
+                while paren_count != 0
+                    || (current_tok.kind != TokenKind::RParen
+                        && current_tok.kind != TokenKind::Comma)
+                {
+                    current_param.push(*current_tok);
+                    match current_tok.kind {
+                        TokenKind::LParen => paren_count += 1,
+                        TokenKind::RParen => paren_count -= 1,
+                        _ => {}
+                    }
+
+                    current_tok = toks.next().ok_or_else(expect)?;
+                }
+
+                actual_params.push(current_param);
+                if current_tok.kind == TokenKind::RParen {
+                    break;
+                }
+            }
+        }
+
+        if macro_params.len() != actual_params.len() {
+            return Err(error!(
+                "provided wrong number of arguments to macro",
+                macro_def.loc,
+                format!(
+                    "macro defined here (takes in {} arguments)",
+                    macro_params.len()
+                ),
+                l_from(tok.loc, current_tok.loc),
+                format!(
+                    "macro used here (passed in {} arguments)",
+                    actual_params.len()
+                )
+            ));
+        }
+
+        let mut params_hash = HashMap::new();
+        for (idx, param) in actual_params.into_iter().enumerate() {
+            params_hash.insert(macro_params[idx].0, param);
+        }
+
+        expanded.insert(id);
+        let expanded_toks = expand_macro(macro_toks, params_hash);
+        let mut expanded_toks = preprocess_file_rec(expanded, macros, &expanded_toks)?;
+        expanded.remove(&id);
+        output.append(&mut expanded_toks);
     }
 
     return Ok(output);

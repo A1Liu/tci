@@ -70,6 +70,7 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
             }
         };
 
+        // println!("{:?}", toks);
         *tokens = buckets.add_array(toks);
 
         if let Some(n) = buckets.next() {
