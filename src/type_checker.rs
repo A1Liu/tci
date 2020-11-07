@@ -1363,6 +1363,40 @@ fn check_expr<'b>(
             });
         }
 
+        ExprKind::SizeofType {
+            sizeof_type,
+            pointer_count,
+        } => {
+            let tc_sizeof_type = env.check_type(decl_idx, &sizeof_type, pointer_count)?;
+            if tc_sizeof_type == VOID {
+                return Err(error!(
+                    "sizeof called on void type (this doesn't make sense because void doesn't have a size)",
+                    expr.loc, "called here"
+                ));
+            }
+
+            return Ok(TCExpr {
+                kind: TCExprKind::IntLiteral(tc_sizeof_type.size() as i32), // TODO change this to unsigned long
+                expr_type: TCType {
+                    kind: TCTypeKind::I32,
+                    pointer_count: 0,
+                },
+                loc: expr.loc,
+            });
+        }
+        ExprKind::SizeofExpr(sizeof_expr) => {
+            let tc_expr = check_expr(buckets, env, local_env, decl_idx, sizeof_expr)?;
+
+            return Ok(TCExpr {
+                kind: TCExprKind::IntLiteral(tc_expr.expr_type.size() as i32), // TODO change this to unsigned long
+                expr_type: TCType {
+                    kind: TCTypeKind::I32,
+                    pointer_count: 0,
+                },
+                loc: expr.loc,
+            });
+        }
+
         ExprKind::List(exprs) => {
             let mut tc_exprs = Vec::new();
             for expr in exprs {

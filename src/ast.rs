@@ -23,6 +23,11 @@ pub enum ExprKind<'a> {
     IntLiteral(i32),
     CharLiteral(u8),
     StringLiteral(&'a str),
+    SizeofType {
+        sizeof_type: ASTType,
+        pointer_count: u32,
+    },
+    SizeofExpr(&'a Expr<'a>),
     Ident(u32),
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
     Assign(&'a Expr<'a>, &'a Expr<'a>),
