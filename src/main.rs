@@ -61,22 +61,22 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     }
     buckets = buckets.force_next();
 
-    for (file, tokens) in tokens.iter_mut() {
-        let toks = match preprocessor::preprocess_file(tokens) {
-            Ok(toks) => toks,
+    tokens = tokens
+        .keys()
+        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
+            Ok(toks) => Some((file, toks)),
             Err(err) => {
                 errors.push(err);
-                continue;
+                None
             }
-        };
-
-        // println!("{:?}", toks);
-        *tokens = buckets.add_array(toks);
-
-        if let Some(n) = buckets.next() {
-            buckets = n;
-        }
-    }
+        })
+        .map(|(file, toks)| {
+            if let Some(n) = buckets.next() {
+                buckets = n;
+            }
+            (file, &*buckets.add_array(toks))
+        })
+        .collect();
 
     if errors.len() != 0 {
         return Err(errors);

@@ -2,12 +2,22 @@ use crate::lexer::*;
 use crate::util::*;
 use std::collections::{HashMap, HashSet};
 
-pub fn preprocess_file<'a>(
-    token_db: TokenDb<'a>,
+pub fn preprocess_file<'a>(token_db: &TokenDb<'a>, file: u32) -> Result<Vec<Token<'a>>, Error> {
+    let mut macros = HashMap::new();
+    let mut included = HashSet::new();
+    included.insert(file);
+    let tokens = token_db[&file];
+
+    return preprocess_file_rec(token_db, &mut included, &mut macros, tokens);
+}
+
+pub fn preprocess_file_rec<'a>(
+    token_db: &TokenDb<'a>,
+    included: &mut HashSet<u32>,
+    macros: &mut HashMap<u32, Macro<'a>>,
     tokens: &[Token<'a>],
 ) -> Result<Vec<Token<'a>>, Error> {
     let mut toks = tokens.iter();
-    let mut macros: HashMap<u32, Macro<'a>> = HashMap::new();
     let mut output = Vec::new();
 
     let expect = || error!("expected token");
@@ -15,6 +25,20 @@ pub fn preprocess_file<'a>(
     while let Some(mut tok) = toks.next() {
         let id = match tok.kind {
             TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
+            TokenKind::Include(id) | TokenKind::IncludeSys(id) => {
+                let include_text = token_db[&id];
+
+                if !included.insert(id) {
+                    return Err(error!("detected insert cycle"));
+                }
+
+                let mut include_processed =
+                    preprocess_file_rec(token_db, included, macros, include_text)?;
+                included.remove(&id);
+                output.append(&mut include_processed);
+
+                continue;
+            }
             TokenKind::MacroDef(id) => {
                 let macro_begin = tok.loc;
                 let mut macro_toks = Vec::new();
@@ -72,7 +96,7 @@ pub fn preprocess_file<'a>(
             MacroKind::Value(toks) => {
                 let mut expanded = HashSet::new();
                 expanded.insert(id);
-                let mut expanded_toks = preprocess_file_rec(&mut expanded, &macros, toks)?;
+                let mut expanded_toks = preprocess_slice(&mut expanded, macros, toks)?;
                 output.append(&mut expanded_toks);
                 continue;
             }
@@ -142,14 +166,14 @@ pub fn preprocess_file<'a>(
         let mut expanded = HashSet::new();
         expanded.insert(id);
         let expanded_toks = expand_macro(macro_toks, params_hash);
-        let mut expanded_toks = preprocess_file_rec(&mut expanded, &macros, &expanded_toks)?;
+        let mut expanded_toks = preprocess_slice(&mut expanded, macros, &expanded_toks)?;
         output.append(&mut expanded_toks);
     }
 
     return Ok(output);
 }
 
-pub fn preprocess_file_rec<'a>(
+pub fn preprocess_slice<'a>(
     expanded: &mut HashSet<u32>,
     macros: &HashMap<u32, Macro<'a>>,
     tokens: &[Token<'a>],
@@ -192,7 +216,7 @@ pub fn preprocess_file_rec<'a>(
             }
             MacroKind::Value(toks) => {
                 expanded.insert(id);
-                let mut expanded_toks = preprocess_file_rec(expanded, macros, toks)?;
+                let mut expanded_toks = preprocess_slice(expanded, macros, toks)?;
                 expanded.remove(&id);
                 output.append(&mut expanded_toks);
                 continue;
@@ -262,7 +286,7 @@ pub fn preprocess_file_rec<'a>(
 
         expanded.insert(id);
         let expanded_toks = expand_macro(macro_toks, params_hash);
-        let mut expanded_toks = preprocess_file_rec(expanded, macros, &expanded_toks)?;
+        let mut expanded_toks = preprocess_slice(expanded, macros, &expanded_toks)?;
         expanded.remove(&id);
         output.append(&mut expanded_toks);
     }

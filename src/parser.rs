@@ -641,38 +641,6 @@ impl<'b> Parser<'b> {
         }
 
         let decl_type = match peek(tokens, current)?.kind {
-            TokenKind::IncludeSys(include_id) => {
-                pop(tokens, current).unwrap();
-                if let Some(include_stmts) = self.db.get(&include_id) {
-                    decls.extend_from_slice(include_stmts);
-                    return Ok(());
-                }
-
-                let mut include_stmts = Vec::new();
-                self.parse_tokens_rec(buckets, token_db, include_id, &mut include_stmts)?;
-                let stmts = buckets.add_array(include_stmts);
-                let prev = self.db.insert(include_id, stmts);
-                debug_assert!(prev.is_none());
-                decls.extend_from_slice(stmts);
-
-                return Ok(());
-            }
-            TokenKind::Include(include_id) => {
-                pop(tokens, current).unwrap();
-                if let Some(include_stmts) = self.db.get(&include_id) {
-                    decls.extend_from_slice(include_stmts);
-                    return Ok(());
-                }
-
-                let mut include_stmts = Vec::new();
-                self.parse_tokens_rec(buckets, token_db, include_id, &mut include_stmts)?;
-                let stmts = buckets.add_array(include_stmts);
-                let prev = self.db.insert(include_id, stmts);
-                debug_assert!(prev.is_none());
-                decls.extend_from_slice(stmts);
-
-                return Ok(());
-            }
             TokenKind::Struct => {
                 let start_loc = pop(tokens, current).unwrap().loc;
                 let (ident, ident_loc) = expect_any_ident(tokens, current)?;
