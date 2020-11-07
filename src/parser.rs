@@ -300,7 +300,37 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_prefix(buckets, tokens, current)
+        let mut expr = self.parse_prefix(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Slash => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_prefix(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Div, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Star => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_prefix(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Mul, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_prefix<'a>(
@@ -353,6 +383,15 @@ impl<'b> Parser<'b> {
                 });
             }
 
+            TokenKind::Bang => {
+                pop(tokens, current).unwrap();
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::Not(target),
+                });
+            }
             TokenKind::Amp => {
                 pop(tokens, current).unwrap();
                 let target = self.parse_prefix(buckets, tokens, current)?;

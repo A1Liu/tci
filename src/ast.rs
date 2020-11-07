@@ -10,6 +10,8 @@ pub struct ASTProgram<'a> {
 pub enum BinOp {
     Add,
     Sub,
+    Mul,
+    Div,
     Lt,
     Gt,
     Leq,
@@ -30,6 +32,7 @@ pub enum ExprKind<'a> {
     SizeofExpr(&'a Expr<'a>),
     Ident(u32),
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
+    Not(&'a Expr<'a>),
     Assign(&'a Expr<'a>, &'a Expr<'a>),
     Call {
         function: &'a Expr<'a>,

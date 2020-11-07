@@ -39,7 +39,7 @@ pub enum TokenKind<'a> {
     Dot,
     DotDotDot,
     Arrow,
-    Not,
+    Bang,
     Tilde,
     Star,
     Slash,
@@ -606,7 +606,7 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                     ret_tok!(TokenKind::Neq);
                 } else {
-                    ret_tok!(TokenKind::Not);
+                    ret_tok!(TokenKind::Bang);
                 }
             }
             b'=' => {
