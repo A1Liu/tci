@@ -16,6 +16,7 @@ mod filedb;
 mod interpreter;
 mod lexer;
 mod parser;
+mod preprocessor;
 mod runtime;
 mod type_checker;
 
@@ -29,7 +30,6 @@ use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendM
 use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
-use runtime::DefaultIO;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 use util::*;
@@ -38,7 +38,6 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();
-    let mut asts = parser::AstDb::new();
     let mut errors: Vec<Error> = Vec::new();
 
     let files_list = env.vec();
@@ -62,12 +61,34 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     }
     buckets = buckets.force_next();
 
+    tokens = tokens
+        .keys()
+        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
+            Ok(toks) => Some((file, toks)),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        })
+        .map(|(file, toks)| {
+            if let Some(n) = buckets.next() {
+                buckets = n;
+            }
+            (file, &*buckets.add_array(toks))
+        })
+        .collect();
+
+    if errors.len() != 0 {
+        return Err(errors);
+    }
+
+    let mut parser = parser::Parser::new();
     let iter = files_list.into_iter().filter_map(|(file, _)| {
         while let Some(n) = buckets.next() {
             buckets = n;
         }
 
-        match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
+        match parser.parse_tokens(buckets, &tokens, file) {
             Ok(x) => return Some(x),
             Err(err) => {
                 errors.push(err);
@@ -131,7 +152,6 @@ fn run_from_args(args: Vec<String>) -> ! {
     let args: Vec<String> = std::env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
-    let runtime_io = DefaultIO::new();
 
     let mut files = FileDb::new(true);
     for arg in args.iter().skip(1) {
@@ -158,8 +178,8 @@ fn run_from_args(args: Vec<String>) -> ! {
 
     mem::drop(files);
 
-    let mut runtime = interpreter::Runtime::new(program, runtime_io, StringArray::new());
-    match runtime.run() {
+    let mut runtime = interpreter::Runtime::new(program, StringArray::new());
+    match runtime.run(std::io::stdout()) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
             let print = interpreter::render_err(&err, &runtime.memory.callstack, &program);
@@ -234,6 +254,7 @@ fn respond_to_http_request<'a>(
     }
 
     let content_type = match path {
+        x if x.ends_with(".html") => "text/html",
         x if x.ends_with(".js") => "text/javascript",
         x if x.ends_with(".css") => "text/css",
         _ => {

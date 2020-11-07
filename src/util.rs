@@ -278,6 +278,29 @@ pub fn fold_binary<I, Iter: Iterator<Item = I>>(
     }
 }
 
+pub struct Cursor<IO: io::Write> {
+    pub io: IO,
+    pub len: usize,
+}
+
+impl<IO: io::Write> Cursor<IO> {
+    pub fn new(io: IO) -> Self {
+        Self { io, len: 0 }
+    }
+}
+
+impl<IO: io::Write> io::Write for Cursor<IO> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
+        let len = self.io.write(buf)?;
+        self.len += len;
+        return Ok(len);
+    }
+
+    fn flush(&mut self) -> Result<(), io::Error> {
+        return self.io.flush();
+    }
+}
+
 pub struct StringWriter {
     buf: Vec<u8>,
 }

@@ -1,79 +1,14 @@
 use crate::filedb::FileDb;
-use crate::interpreter::Runtime;
-use crate::runtime::RuntimeIO;
+use crate::interpreter::{render_err, Runtime};
 use crate::util::*;
 use crate::{compile, emit_err};
 use core::mem;
 use std::fs::read_to_string;
-use std::io;
-
-pub struct DebugSW(pub StringWriter);
-
-impl io::Write for DebugSW {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // let len = io::stdout().write(buf)?;
-        // return self.0.write(&buf[..len]);
-        return self.0.write(buf);
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        return io::stdout().flush();
-    }
-}
-
-pub struct DebugIO {
-    pub out: DebugSW,
-    pub log: DebugSW,
-    pub err: DebugSW,
-}
-
-impl DebugIO {
-    pub fn new() -> Self {
-        Self {
-            out: DebugSW(StringWriter::new()),
-            log: DebugSW(StringWriter::new()),
-            err: DebugSW(StringWriter::new()),
-        }
-    }
-}
-
-impl RuntimeIO for &mut DebugIO {
-    type Out = DebugSW;
-    type Log = DebugSW;
-    type Err = DebugSW;
-
-    fn out(&mut self) -> &mut Self::Out {
-        return &mut self.out;
-    }
-    fn err(&mut self) -> &mut Self::Log {
-        return &mut self.err;
-    }
-    fn log(&mut self) -> &mut Self::Err {
-        return &mut self.log;
-    }
-}
-
-impl RuntimeIO for DebugIO {
-    type Out = DebugSW;
-    type Log = DebugSW;
-    type Err = DebugSW;
-
-    fn out(&mut self) -> &mut Self::Out {
-        return &mut self.out;
-    }
-    fn err(&mut self) -> &mut Self::Log {
-        return &mut self.err;
-    }
-    fn log(&mut self) -> &mut Self::Err {
-        return &mut self.log;
-    }
-}
 
 fn test_file_should_succeed(filename: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut files = FileDb::new(true);
     let mut writer = StringWriter::new();
-    let mut io = DebugIO::new();
 
     files.add_from_fs(filename).unwrap();
 
@@ -87,16 +22,17 @@ fn test_file_should_succeed(filename: &str) {
     };
     mem::drop(files);
 
-    let mut runtime = Runtime::new(program, &mut io, StringArray::new());
-    let code = match runtime.run() {
-        Ok(code) => code,
+    let mut runtime = Runtime::new(program, StringArray::new());
+
+    let code = match runtime.run(&mut writer) {
+        Ok(c) => c,
         Err(err) => {
+            let print = render_err(&err, &runtime.memory.callstack, &program);
             for (idx, op) in program.ops.iter().enumerate() {
                 println!("op {}: {:?}", idx, op);
             }
 
-            println!("{:?}\n", err);
-            panic!();
+            panic!("{}", print);
         }
     };
 
@@ -109,14 +45,15 @@ fn test_file_should_succeed(filename: &str) {
         panic!();
     }
 
-    let output = io.out.0.to_string();
+    let output = writer.into_string();
     match read_to_string(String::from(filename) + ".out") {
         Ok(expected) => {
             if output != expected.replace("\r\n", "\n") {
-                for (idx, op) in program.ops.iter().enumerate() {
-                    println!("op {}: {:?}", idx, op);
-                }
+                // for (idx, op) in program.ops.iter().enumerate() {
+                //     println!("op {}: {:?}", idx, op);
+                // }
 
+                println!("left: {:?}\nright: {:?}", output, expected);
                 panic!();
             }
         }
@@ -140,11 +77,10 @@ fn test_file_compile_should_fail(filename: &str) {
     }
 }
 
-fn test_file_runtime_should_fail(filename: &str) {
+fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut files = FileDb::new(true);
     let mut writer = StringWriter::new();
-    let mut io = DebugIO::new();
 
     files.add_from_fs(filename).unwrap();
 
@@ -158,8 +94,8 @@ fn test_file_runtime_should_fail(filename: &str) {
     };
     mem::drop(files);
 
-    let mut runtime = Runtime::new(program, &mut io, StringArray::new());
-    let code = match runtime.run() {
+    let mut runtime = Runtime::new(program, StringArray::new());
+    let code = match runtime.run(&mut writer) {
         Ok(code) => {
             for (idx, op) in program.ops.iter().enumerate() {
                 println!("op {}: {:?}", idx, op);
@@ -173,42 +109,32 @@ fn test_file_runtime_should_fail(filename: &str) {
             }
 
             println!("{:?}\n", err);
-            assert_eq!(err.short_name, "InvalidPointer");
+            assert_eq!(err.short_name, expected_err);
         }
     };
 }
 
-#[test]
-fn test_hello_world() {
-    test_file_should_succeed("test/hello_world.c");
+macro_rules! gen_test_should_succeed {
+    ( $( $ident:ident ),* ) => {
+        $(
+            #[test]
+            fn $ident() {
+                test_file_should_succeed(concat!("test/", stringify!($ident), ".c"));
+            }
+        )*
+    };
 }
 
-#[test]
-fn test_assign() {
-    test_file_should_succeed("test/assign.c");
+macro_rules! gen_test_runtime_should_fail {
+    ( $( ($ident:ident, $expr:expr ) ),* ) => {
+        $(
+            #[test]
+            fn $ident() {
+                test_file_runtime_should_fail(concat!("test/", stringify!($ident), ".c"), $expr);
+            }
+        )*
+    };
 }
 
-#[test]
-fn test_structs() {
-    test_file_should_succeed("test/structs.c");
-}
-
-#[test]
-fn test_includes() {
-    test_file_should_succeed("test/includes.c");
-}
-
-#[test]
-fn test_control_flow() {
-    test_file_should_succeed("test/control_flow.c");
-}
-
-#[test]
-fn test_macros() {
-    test_file_should_succeed("test/macros.c");
-}
-
-#[test]
-fn test_stack_locals() {
-    test_file_runtime_should_fail("test/stack_locals.c");
-}
+gen_test_should_succeed!(hello_world, assign, structs, includes, control_flow, macros);
+gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
