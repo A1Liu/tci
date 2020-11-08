@@ -40,6 +40,7 @@ pub enum TokenKind<'a> {
     DotDotDot,
     Arrow,
     Bang,
+    Question,
     Tilde,
     Star,
     Slash,
@@ -77,6 +78,7 @@ pub enum TokenKind<'a> {
     RBracket,
 
     Semicolon,
+    Colon,
     Comma,
 }
 
@@ -173,24 +175,33 @@ impl<'b> Lexer<'b> {
         symbols: &mut FileDb<'a>,
         data: &'a [u8],
     ) -> Result<bool, Error> {
-        macro_rules! skip_whitespace {
-            () => {
-                while self.peek_eqs(data, &WHITESPACE) {
-                    self.current += 1;
-                }
-
-                if self.peek_eq(data, b'\n') {
-                    self.current += 1;
-                } else if self.peek_eq_series(data, &CRLF) {
-                    self.current += 2;
-                } else {
-                    break;
-                }
-            };
-        }
-
         loop {
-            skip_whitespace!();
+            while self.peek_eqs(data, &WHITESPACE) {
+                self.current += 1;
+            }
+
+            if self.peek_eq_series(data, &[b'/', b'/']) {
+                self.current += 2;
+                while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                    self.current += 1;
+                }
+            } else if self.peek_eq_series(data, &[b'/', b'*']) {
+                self.current += 2;
+                while self.peek_neq_series(data, &[b'*', b'/']) {
+                    self.current += 1;
+                }
+
+                continue;
+            }
+
+            if self.peek_eq(data, b'\n') {
+                self.current += 1;
+            } else if self.peek_eq_series(data, &CRLF) {
+                self.current += 2;
+            } else {
+                break;
+            }
+
             self.lex_macro(buckets, incomplete, token_db, symbols, data)?;
         }
 
@@ -521,7 +532,9 @@ impl<'b> Lexer<'b> {
             b']' => ret_tok!(TokenKind::RBracket),
             b'~' => ret_tok!(TokenKind::Tilde),
             b';' => ret_tok!(TokenKind::Semicolon),
+            b':' => ret_tok!(TokenKind::Colon),
             b',' => ret_tok!(TokenKind::Comma),
+            b'?' => ret_tok!(TokenKind::Question),
 
             b'.' => {
                 if self.peek_eq(data, b'.') {
@@ -690,6 +703,16 @@ impl<'b> Lexer<'b> {
         }
 
         return data[self.current] == byte;
+    }
+
+    pub fn peek_neq_series(&self, data: &[u8], bytes: &[u8]) -> bool {
+        let byte_len = bytes.len();
+        if self.current + bytes.len() > data.len() {
+            return false;
+        }
+
+        let eq_slice = &data[(self.current)..(self.current + byte_len)];
+        return eq_slice != bytes;
     }
 
     pub fn peek_eq_series(&self, data: &[u8], bytes: &[u8]) -> bool {

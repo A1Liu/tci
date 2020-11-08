@@ -614,19 +614,34 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn parse_simple_decl<'a>(
+    fn parse_decl_receiver<'a>(
         &self,
-        buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<Decl<'b>, Error> {
-        let mut pointer_count: u32 = 0;
+    ) -> Result<DeclReceiver, Error> {
+        let mut pointer_count = 0;
+        let loc = peek(tokens, current)?.loc;
         while peek(tokens, current)?.kind == TokenKind::Star {
             pointer_count += 1;
             pop(tokens, current).unwrap();
         }
 
         let (ident, ident_loc) = expect_ident(tokens, current)?;
+        return Ok(DeclReceiver {
+            loc: l_from(loc, ident_loc),
+            ident,
+            pointer_count,
+        });
+    }
+
+    fn parse_simple_decl<'a>(
+        &self,
+        buckets: BucketListRef<'b>,
+        tokens: &'a [Token<'a>],
+        current: &mut usize,
+    ) -> Result<Decl<'b>, Error> {
+        let recv = self.parse_decl_receiver(tokens, current)?;
+
         let tok = peek(tokens, current)?;
         let expr = if tok.kind == TokenKind::Eq {
             pop(tokens, current).unwrap();
@@ -634,14 +649,13 @@ impl<'b> Parser<'b> {
         } else {
             Expr {
                 kind: ExprKind::Uninit,
-                loc: ident_loc,
+                loc: recv.loc,
             }
         };
 
         return Ok(Decl {
-            pointer_count,
-            ident,
-            loc: l_from(ident_loc, expr.loc),
+            recv,
+            loc: l_from(recv.loc, expr.loc),
             expr,
         });
     }
@@ -653,19 +667,12 @@ impl<'b> Parser<'b> {
     ) -> Result<InnerStructDecl, Error> {
         let decl_type = parse_type_prefix(tokens, current)?;
 
-        let mut pointer_count: u32 = 0;
-        while peek(tokens, current)?.kind == TokenKind::Star {
-            pop(tokens, current).unwrap();
-            pointer_count += 1;
-        }
-
-        let (ident, ident_loc) = expect_ident(tokens, current)?;
+        let recv = self.parse_decl_receiver(tokens, current)?;
 
         return Ok(InnerStructDecl {
-            loc: l_from(decl_type.loc, ident_loc),
-            pointer_count,
+            loc: l_from(decl_type.loc, recv.loc),
             decl_type,
-            ident,
+            recv,
         });
     }
 
@@ -687,8 +694,7 @@ impl<'b> Parser<'b> {
         return Ok(ParamDecl {
             kind: ParamKind::StructLike {
                 decl_type: struct_decl.decl_type,
-                pointer_count: struct_decl.pointer_count,
-                ident: struct_decl.ident,
+                recv: struct_decl.recv,
             },
             loc: struct_decl.loc,
         });
@@ -850,9 +856,9 @@ impl<'b> Parser<'b> {
             ret_stmt!(GlobalStmt {
                 loc: l_from(decl_type.loc, end_loc),
                 kind: GlobalStmtKind::FuncDecl {
-                    pointer_count: decl.pointer_count,
+                    pointer_count: decl.recv.pointer_count,
                     return_type: decl_type,
-                    ident: decl.ident,
+                    ident: decl.recv.ident,
                     params,
                 },
             });
@@ -880,8 +886,8 @@ impl<'b> Parser<'b> {
             loc: l_from(decl_type.loc, end_loc),
             kind: GlobalStmtKind::Func {
                 return_type: decl_type,
-                pointer_count: decl.pointer_count,
-                ident: decl.ident,
+                pointer_count: decl.recv.pointer_count,
+                ident: decl.recv.ident,
                 params,
                 body,
             },

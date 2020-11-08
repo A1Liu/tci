@@ -598,11 +598,11 @@ pub fn check_file<'a>(
             };
             let member_type = TCType {
                 kind,
-                pointer_count: member.pointer_count,
+                pointer_count: member.recv.pointer_count,
             };
 
-            semi_typed_members.push((member.ident, member_type, member.loc));
-            if let Some(original_loc) = names.insert(member.ident, member.loc) {
+            semi_typed_members.push((member.recv.ident, member_type, member.loc));
+            if let Some(original_loc) = names.insert(member.recv.ident, member.loc) {
                 return Err(error!(
                     "name redefined in struct",
                     original_loc, "first use of name here", member.loc, "second use here"
@@ -805,16 +805,12 @@ pub fn check_file<'a>(
                 ));
             }
 
-            let (decl_type, ppointer_count, ident) = match &param.kind {
+            let (decl_type, recv) = match &param.kind {
                 ParamKind::Vararg => {
                     varargs = Some(param.loc);
                     continue;
                 }
-                ParamKind::StructLike {
-                    decl_type,
-                    pointer_count,
-                    ident,
-                } => (decl_type, *pointer_count, *ident),
+                ParamKind::StructLike { decl_type, recv } => (decl_type, *recv),
             };
 
             if let Some(original) = names.insert(ident, param.loc) {
@@ -824,11 +820,11 @@ pub fn check_file<'a>(
                 ));
             }
 
-            let param_type = struct_env.check_type(decl_idx, decl_type, ppointer_count)?;
+            let param_type = struct_env.check_type(decl_idx, decl_type, recv.pointer_count)?;
 
             typed_params.push(TCFuncParam {
                 decl_type: param_type,
-                ident: ident,
+                ident: recv.ident,
                 loc: param.loc,
             });
         }
@@ -1021,24 +1017,18 @@ fn check_stmts<'b>(
             }
 
             StmtKind::Decl { decl_type, decls } => {
-                for Decl {
-                    pointer_count,
-                    ident,
-                    loc,
-                    expr,
-                } in *decls
-                {
-                    let decl_type = env.check_type(decl_idx, decl_type, *pointer_count)?;
+                for Decl { recv, loc, expr } in *decls {
+                    let decl_type = env.check_type(decl_idx, decl_type, recv.pointer_count)?;
                     if decl_type == VOID {
                         return Err(void_variable(*loc));
                     }
 
                     let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
-                    local_env.add_local(*ident, decl_type, *loc)?;
+                    local_env.add_local(recv.ident, decl_type, *loc)?;
                     let expr = env.assign_convert(buckets, &decl_type, Some(*loc), expr)?;
                     tstmts.push(TCStmt {
                         kind: TCStmtKind::Decl {
-                            symbol: *ident,
+                            symbol: recv.ident,
                             init: expr,
                         },
                         loc: *loc,
@@ -1164,17 +1154,17 @@ fn check_stmts<'b>(
 
                 for decl in *at_start {
                     let decl_type =
-                        env.check_type(decl_idx, at_start_decl_type, decl.pointer_count)?;
+                        env.check_type(decl_idx, at_start_decl_type, decl.recv.pointer_count)?;
                     if decl_type == VOID {
                         return Err(void_variable(decl.loc));
                     }
 
                     let expr = check_expr(buckets, env, &mut for_env, decl_idx, &decl.expr)?;
                     let expr = env.assign_convert(buckets, &decl_type, Some(decl.loc), expr)?;
-                    for_env.add_local(decl.ident, decl_type, decl.loc)?;
+                    for_env.add_local(decl.recv.ident, decl_type, decl.loc)?;
                     block_stmts.push(TCStmt {
                         kind: TCStmtKind::Decl {
-                            symbol: decl.ident,
+                            symbol: decl.recv.ident,
                             init: expr,
                         },
                         loc: decl.loc,

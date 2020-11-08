@@ -70,11 +70,17 @@ pub struct Expr<'a> {
     pub loc: CodeLoc,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DeclReceiver {
+    pub pointer_count: u32,
+    pub ident: u32,
+    pub loc: CodeLoc,
+}
+
 #[derive(Debug)]
 pub struct InnerStructDecl {
     pub decl_type: ASTType,
-    pub pointer_count: u32,
-    pub ident: u32,
+    pub recv: DeclReceiver,
     pub loc: CodeLoc,
 }
 
@@ -82,8 +88,7 @@ pub struct InnerStructDecl {
 pub enum ParamKind {
     StructLike {
         decl_type: ASTType,
-        pointer_count: u32,
-        ident: u32,
+        recv: DeclReceiver,
     },
     Vararg,
 }
@@ -102,10 +107,9 @@ pub struct StructDecl<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Decl<'a> {
-    pub pointer_count: u32,
-    pub ident: u32,
+    pub recv: DeclReceiver,
     pub loc: CodeLoc,
     pub expr: Expr<'a>,
 }
