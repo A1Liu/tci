@@ -11,20 +11,20 @@ pub struct Parser<'b> {
     pub db: AstDb<'b>,
 }
 
-pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &usize) -> Option<Token<'a>> {
+pub fn peek_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
     return Some(*tokens.get(*current)?);
 }
 
-pub fn peek2_o<'a>(tokens: &'a [Token<'a>], current: &usize) -> Option<Token<'a>> {
+pub fn peek2_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
     return Some(*tokens.get(*current + 1)?);
 }
 
-pub fn peek<'a>(tokens: &'a [Token<'a>], current: &usize) -> Result<Token<'a>, Error> {
+pub fn peek<'a>(tokens: &[Token<'a>], current: &usize) -> Result<Token<'a>, Error> {
     let map_err = || error!("expected token");
     peek_o(tokens, current).ok_or_else(map_err)
 }
 
-pub fn pop<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
+pub fn pop<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
     let tok = peek(tokens, current)?;
     *current += 1;
     Ok(tok)
@@ -513,11 +513,11 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::LBracket => {
-                    pop(tokens, current).unwrap();
+                    let lbracket = pop(tokens, current).unwrap();
                     let index = self.parse_expr(buckets, tokens, current)?;
-                    expect_rbracket(tokens, current)?;
+                    let rbracket_tok = expect_rbracket(tokens, current, lbracket.loc)?;
                     operand = Expr {
-                        loc: l_from(start_loc, index.loc),
+                        loc: l_from(start_loc, rbracket_tok.loc),
                         kind: ExprKind::Index {
                             ptr: buckets.add(operand),
                             index: buckets.add(index),
@@ -616,9 +616,10 @@ impl<'b> Parser<'b> {
 
     fn parse_decl_receiver<'a>(
         &self,
+        buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<DeclReceiver, Error> {
+    ) -> Result<DeclReceiver<'b>, Error> {
         let mut pointer_count = 0;
         let loc = peek(tokens, current)?.loc;
         while peek(tokens, current)?.kind == TokenKind::Star {
@@ -627,10 +628,34 @@ impl<'b> Parser<'b> {
         }
 
         let (ident, ident_loc) = expect_ident(tokens, current)?;
+
+        let mut end_loc = ident_loc;
+        let mut array_brackets = Vec::new();
+        while peek(tokens, current)?.kind == TokenKind::LBracket {
+            let lbracket_tok = pop(tokens, current).unwrap();
+
+            let rbracket_tok = peek(tokens, current)?;
+            let expr = if rbracket_tok.kind != TokenKind::RBracket {
+                self.parse_expr(buckets, tokens, current)?
+            } else {
+                Expr {
+                    kind: ExprKind::Uninit,
+                    loc: l_from(lbracket_tok.loc, rbracket_tok.loc),
+                }
+            };
+
+            let rbracket_tok = expect_rbracket(tokens, current, lbracket_tok.loc)?;
+            array_brackets.push(expr);
+            end_loc = rbracket_tok.loc;
+        }
+
+        let array_brackets = buckets.add_array(array_brackets);
+
         return Ok(DeclReceiver {
-            loc: l_from(loc, ident_loc),
+            loc: l_from(loc, end_loc),
             ident,
             pointer_count,
+            array_brackets,
         });
     }
 
@@ -640,7 +665,7 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Decl<'b>, Error> {
-        let recv = self.parse_decl_receiver(tokens, current)?;
+        let recv = self.parse_decl_receiver(buckets, tokens, current)?;
 
         let tok = peek(tokens, current)?;
         let expr = if tok.kind == TokenKind::Eq {
@@ -662,12 +687,13 @@ impl<'b> Parser<'b> {
 
     fn parse_inner_struct_decl<'a>(
         &self,
+        buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<InnerStructDecl, Error> {
+    ) -> Result<InnerStructDecl<'b>, Error> {
         let decl_type = parse_type_prefix(tokens, current)?;
 
-        let recv = self.parse_decl_receiver(tokens, current)?;
+        let recv = self.parse_decl_receiver(buckets, tokens, current)?;
 
         return Ok(InnerStructDecl {
             loc: l_from(decl_type.loc, recv.loc),
@@ -678,9 +704,10 @@ impl<'b> Parser<'b> {
 
     fn parse_param_decl<'a>(
         &self,
+        buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<ParamDecl, Error> {
+    ) -> Result<ParamDecl<'b>, Error> {
         let vararg_tok = peek(tokens, current)?;
         if vararg_tok.kind == TokenKind::DotDotDot {
             pop(tokens, current).unwrap();
@@ -690,7 +717,7 @@ impl<'b> Parser<'b> {
             });
         }
 
-        let struct_decl = self.parse_inner_struct_decl(tokens, current)?;
+        let struct_decl = self.parse_inner_struct_decl(buckets, tokens, current)?;
         return Ok(ParamDecl {
             kind: ParamKind::StructLike {
                 decl_type: struct_decl.decl_type,
@@ -747,7 +774,7 @@ impl<'b> Parser<'b> {
 
                     let mut decls = Vec::new();
                     while peek(tokens, current)?.kind != TokenKind::RBrace {
-                        decls.push(self.parse_inner_struct_decl(tokens, current)?);
+                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
                         eat_semicolon(tokens, current)?;
                     }
 
@@ -836,11 +863,11 @@ impl<'b> Parser<'b> {
         let mut params = Vec::new();
         let rparen_tok = peek(tokens, current)?;
         if rparen_tok.kind != TokenKind::RParen {
-            params.push(self.parse_param_decl(tokens, current)?);
+            params.push(self.parse_param_decl(buckets, tokens, current)?);
             let mut comma_tok = peek(tokens, current)?;
             while comma_tok.kind == TokenKind::Comma {
                 pop(tokens, current).unwrap();
-                params.push(self.parse_param_decl(tokens, current)?);
+                params.push(self.parse_param_decl(buckets, tokens, current)?);
                 comma_tok = peek(tokens, current)?;
             }
 
@@ -1243,19 +1270,25 @@ pub fn expect_ident<'a>(
     }
 }
 
-pub fn expect_rbracket<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<(), Error> {
+pub fn expect_rbracket<'a>(
+    tokens: &[Token<'a>],
+    current: &mut usize,
+    lbracket_loc: CodeLoc,
+) -> Result<Token<'a>, Error> {
     let tok = pop(tokens, current)?;
     if tok.kind != TokenKind::RBracket {
         return Err(error!(
             "expected ']' token, got something else instead",
             tok.loc,
-            format!("this was interpreted as {:?} when it should be a ']'", tok)
+            format!("this was interpreted as {:?} when it should be a ']'", tok),
+            lbracket_loc,
+            "expected ']' because of matching '[' here"
         ));
     }
-    return Ok(());
+    return Ok(tok);
 }
 
-pub fn expect_lbrace<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<(), Error> {
+pub fn expect_lbrace<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<(), Error> {
     let tok = pop(tokens, current)?;
     if tok.kind != TokenKind::LBrace {
         return Err(error!(

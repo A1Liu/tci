@@ -71,31 +71,32 @@ pub struct Expr<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DeclReceiver {
+pub struct DeclReceiver<'a> {
     pub pointer_count: u32,
     pub ident: u32,
+    pub array_brackets: &'a [Expr<'a>],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug)]
-pub struct InnerStructDecl {
+pub struct InnerStructDecl<'a> {
     pub decl_type: ASTType,
-    pub recv: DeclReceiver,
+    pub recv: DeclReceiver<'a>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone)]
-pub enum ParamKind {
+pub enum ParamKind<'a> {
     StructLike {
         decl_type: ASTType,
-        recv: DeclReceiver,
+        recv: DeclReceiver<'a>,
     },
     Vararg,
 }
 
 #[derive(Debug, Clone)]
-pub struct ParamDecl {
-    pub kind: ParamKind,
+pub struct ParamDecl<'a> {
+    pub kind: ParamKind<'a>,
     pub loc: CodeLoc,
 }
 
@@ -103,13 +104,13 @@ pub struct ParamDecl {
 pub struct StructDecl<'a> {
     pub ident: u32,
     pub ident_loc: CodeLoc,
-    pub members: Option<&'a [InnerStructDecl]>,
+    pub members: Option<&'a [InnerStructDecl<'a>]>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Decl<'a> {
-    pub recv: DeclReceiver,
+    pub recv: DeclReceiver<'a>,
     pub loc: CodeLoc,
     pub expr: Expr<'a>,
 }
@@ -120,14 +121,14 @@ pub enum GlobalStmtKind<'a> {
         return_type: ASTType,
         pointer_count: u32,
         ident: u32,
-        params: &'a [ParamDecl],
+        params: &'a [ParamDecl<'a>],
         body: &'a [Stmt<'a>],
     },
     FuncDecl {
         return_type: ASTType,
         pointer_count: u32,
         ident: u32,
-        params: &'a [ParamDecl],
+        params: &'a [ParamDecl<'a>],
     },
     StructDecl(StructDecl<'a>),
     Decl {
