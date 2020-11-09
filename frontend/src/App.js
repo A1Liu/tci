@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import "./tailwind.css";
+import "./App.css";
 import FileUpload from "./components/fileUpload";
+import Terminal from "./components/terminal";
 
 function App() {
   const [socket, setSocket] = useState(undefined);
@@ -44,8 +46,11 @@ function App() {
             <div className="w-full md:w-1/2 bg-orange-800 p-4 text-center text-brown-700">
               Editor
             </div>
-            <div className="w-full md:w-1/2 bg-orange-900 p-4 text-center text-black-200">
-              Terminal
+            <div
+              id="terminal-div"
+              className="w-full md:w-1/2 bg-orange-900 p-4 text-center text-black-200"
+            >
+              <Terminal />
             </div>
           </div>
         </div>
