@@ -86,6 +86,19 @@ fn lt_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> T
     };
 }
 
+fn geq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::Char,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        loc: l_from(l.loc, r.loc),
+        kind: TCExprKind::GeqI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
 fn eq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
     let result_type = TCType {
         kind: TCTypeKind::Char,

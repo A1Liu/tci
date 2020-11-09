@@ -9,6 +9,7 @@ services:
     # Enables the web UI and tells Traefik to listen to docker
     command:
       - "--api.insecure=true"
+      - "--api.debug=true"
 
       # You need to actively say traefik.enable=true
       - "--providers.docker=true"

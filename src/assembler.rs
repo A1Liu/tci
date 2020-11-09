@@ -412,6 +412,14 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::CompI32;
                 ops.push(tagged);
             }
+            TCExprKind::GeqI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                ops.push(tagged);
+                tagged.op = Opcode::CompI32;
+                ops.push(tagged);
+            }
             TCExprKind::EqI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));

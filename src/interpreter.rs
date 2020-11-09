@@ -87,8 +87,9 @@ pub enum Opcode {
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
-    PushUndef { bytes: u32 }, // Push undefined bytes onto the stack
-    PushDup { bytes: u32 },   // Push bytes duplicated from the top of the stack
+    PushUndef { bytes: u32 },       // Push undefined bytes onto the stack
+    PushDup { bytes: u32 },         // Push bytes duplicated from the top of the stack
+    Swap { top: u32, bottom: u32 }, // Swap some number of top bytes with some number of bytes below
     PopIntoTopVar { offset: u32, bytes: u32 },
 
     SExtend8To16,
@@ -329,6 +330,11 @@ impl Runtime {
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
+            }
+            Opcode::Swap { top, bottom } => {
+                self.memory.dup_top_stack_bytes(top + bottom)?;
+                self.memory.pop_bytes(top)?;
+                self.memory.pop_keep_bytes(top + bottom, bottom)?;
             }
             Opcode::PopIntoTopVar { offset, bytes } => {
                 let ptr = VarPointer::new_stack(self.memory.stack_length(), offset);
