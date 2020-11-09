@@ -1,4 +1,4 @@
-use crate::filedb::FileDb;
+use crate::filedb::*;
 use crate::interpreter::{render_err, Runtime};
 use crate::util::*;
 use crate::{compile, emit_err};
@@ -136,5 +136,13 @@ macro_rules! gen_test_runtime_should_fail {
     };
 }
 
-gen_test_should_succeed!(hello_world, assign, structs, includes, control_flow, macros);
+gen_test_should_succeed!(
+    hello_world,
+    assign,
+    structs,
+    includes,
+    control_flow,
+    macros,
+    binary_search
+);
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

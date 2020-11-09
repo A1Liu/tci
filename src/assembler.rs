@@ -374,7 +374,7 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
 
-            TCExprKind::List(exprs) => {
+            TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
                     ops.append(&mut self.translate_expr(expr));
                     if idx + 1 < exprs.len() {

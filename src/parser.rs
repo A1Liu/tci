@@ -128,7 +128,45 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_bool_or(buckets, tokens, current)
+        let condition = self.parse_bool_or(buckets, tokens, current)?;
+
+        let question_tok = peek(tokens, current)?;
+        if question_tok.kind != TokenKind::Question {
+            return Ok(condition);
+        }
+
+        pop(tokens, current).unwrap();
+
+        let if_true = self.parse_expr(buckets, tokens, current)?;
+
+        let colon_tok = pop(tokens, current)?;
+        if colon_tok.kind != TokenKind::Colon {
+            return Err(error!(
+                "expected ':' token, got something else instead",
+                colon_tok.loc,
+                format!(
+                    "this was interpreted as {:?} when it should be a ':'",
+                    colon_tok
+                ),
+                question_tok.loc,
+                "expected ':' because of matching '?' here"
+            ));
+        }
+
+        let if_false = self.parse_bool_or(buckets, tokens, current)?;
+
+        let condition = buckets.add(condition);
+        let if_true = buckets.add(if_true);
+        let if_false = buckets.add(if_false);
+
+        return Ok(Expr {
+            loc: l_from(condition.loc, if_false.loc),
+            kind: ExprKind::Ternary {
+                condition,
+                if_true,
+                if_false,
+            },
+        });
     }
 
     pub fn parse_bool_or<'a>(
@@ -215,7 +253,6 @@ impl<'b> Parser<'b> {
                 _ => return Ok(expr),
             }
         }
-        
     }
 
     pub fn parse_comparison<'a>(
@@ -238,6 +275,32 @@ impl<'b> Parser<'b> {
 
                     expr = Expr {
                         kind: ExprKind::BinOp(BinOp::Lt, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Gt => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Gt, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Geq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Geq, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
@@ -383,15 +446,6 @@ impl<'b> Parser<'b> {
                 });
             }
 
-            TokenKind::Bang => {
-                pop(tokens, current).unwrap();
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::Not(target),
-                });
-            }
             TokenKind::Amp => {
                 pop(tokens, current).unwrap();
                 let target = self.parse_prefix(buckets, tokens, current)?;
@@ -408,6 +462,25 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(tok.loc, target.loc),
                     kind: ExprKind::Deref(target),
+                });
+            }
+
+            TokenKind::Bang => {
+                pop(tokens, current).unwrap();
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::UnaryOp(UnaryOp::Not, target),
+                });
+            }
+            TokenKind::Dash => {
+                pop(tokens, current).unwrap();
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::UnaryOp(UnaryOp::Neg, target),
                 });
             }
 
@@ -575,6 +648,28 @@ impl<'b> Parser<'b> {
                     loc: tok.loc,
                 })
             }
+            TokenKind::LBrace => {
+                let start_loc = tok.loc;
+                let mut expr = self.parse_expr(buckets, tokens, current)?;
+                let mut expr_list = Vec::new();
+                while peek(tokens, current)?.kind == TokenKind::Comma {
+                    expr_list.push(expr);
+                    pop(tokens, current).unwrap();
+                    expr = self.parse_expr(buckets, tokens, current)?;
+                }
+
+                let end_loc = expect_rbrace(tokens, current, tok.loc)?;
+
+                if expr_list.len() == 0 {
+                    return Ok(expr);
+                } else {
+                    expr_list.push(expr);
+                    return Ok(Expr {
+                        kind: ExprKind::BraceList(buckets.add_array(expr_list)),
+                        loc: l_from(start_loc, end_loc),
+                    });
+                }
+            }
             TokenKind::LParen => {
                 let start_loc = tok.loc;
                 let mut expr = self.parse_expr(buckets, tokens, current)?;
@@ -592,7 +687,7 @@ impl<'b> Parser<'b> {
                 } else {
                     expr_list.push(expr);
                     return Ok(Expr {
-                        kind: ExprKind::List(buckets.add_array(expr_list)),
+                        kind: ExprKind::ParenList(buckets.add_array(expr_list)),
                         loc: l_from(start_loc, end_loc),
                     });
                 }
@@ -1030,7 +1125,7 @@ impl<'b> Parser<'b> {
 
                 let post_exprs = buckets.add_array(post_exprs);
                 let post_expr = Expr {
-                    kind: ExprKind::List(post_exprs),
+                    kind: ExprKind::ParenList(post_exprs),
                     loc: l(semi2.loc.end, rparen_loc.start, rparen_loc.file),
                 };
 
@@ -1298,6 +1393,24 @@ pub fn expect_lbrace<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<()
         ));
     }
     return Ok(());
+}
+
+pub fn expect_rbrace<'a>(
+    tokens: &'a [Token<'a>],
+    current: &mut usize,
+    matching_tok: CodeLoc,
+) -> Result<CodeLoc, Error> {
+    let tok = pop(tokens, current)?;
+    if tok.kind != TokenKind::RBrace {
+        return Err(error!(
+            "expected '}' token, got something else instead",
+            tok.loc,
+            format!("this was interpreted as {:?} when it should be a '}}'", tok),
+            matching_tok,
+            "matching left brace here".to_string()
+        ));
+    }
+    return Ok(tok.loc);
 }
 
 pub fn expect_rparen<'a>(

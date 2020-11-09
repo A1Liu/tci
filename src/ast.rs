@@ -20,6 +20,12 @@ pub enum BinOp {
     Neq,
 }
 
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum ExprKind<'a> {
     IntLiteral(i32),
@@ -32,6 +38,7 @@ pub enum ExprKind<'a> {
     SizeofExpr(&'a Expr<'a>),
     Ident(u32),
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
+    UnaryOp(UnaryOp, &'a Expr<'a>),
     Not(&'a Expr<'a>),
     Assign(&'a Expr<'a>, &'a Expr<'a>),
     Call {
@@ -56,11 +63,17 @@ pub enum ExprKind<'a> {
         ptr: &'a Expr<'a>,
         index: &'a Expr<'a>,
     },
-    List(&'a [Expr<'a>]),
+    BraceList(&'a [Expr<'a>]),
+    ParenList(&'a [Expr<'a>]),
     PostIncr(&'a Expr<'a>),
     PostDecr(&'a Expr<'a>),
     Ref(&'a Expr<'a>),
     Deref(&'a Expr<'a>),
+    Ternary {
+        condition: &'a Expr<'a>,
+        if_true: &'a Expr<'a>,
+        if_false: &'a Expr<'a>,
+    },
     Uninit,
 }
 
@@ -371,7 +384,7 @@ pub enum TCExprKind<'a> {
         var_offset: i16,
     },
 
-    List(&'a [TCExpr<'a>]),
+    ParenList(&'a [TCExpr<'a>]),
 
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),

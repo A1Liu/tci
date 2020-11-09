@@ -813,7 +813,8 @@ pub fn check_file<'a>(
                 ParamKind::StructLike { decl_type, recv } => (decl_type, *recv),
             };
 
-            if let Some(original) = names.insert(ident, param.loc) {
+            if let Some(original) = names.insert(recv.ident, param.loc) {
+                println!("{}", ident);
                 return Err(error!(
                     "redeclaration of function parameter",
                     original, "original declaration here", param.loc, "second declaration here"
@@ -1387,7 +1388,7 @@ fn check_expr<'b>(
             });
         }
 
-        ExprKind::List(exprs) => {
+        ExprKind::ParenList(exprs) => {
             let mut tc_exprs = Vec::new();
             for expr in exprs {
                 tc_exprs.push(check_expr(buckets, env, local_env, decl_idx, expr)?);
@@ -1395,7 +1396,7 @@ fn check_expr<'b>(
 
             return Ok(TCExpr {
                 expr_type: tc_exprs[tc_exprs.len() - 1].expr_type,
-                kind: TCExprKind::List(buckets.add_array(tc_exprs)),
+                kind: TCExprKind::ParenList(buckets.add_array(tc_exprs)),
                 loc: expr.loc,
             });
         }
