@@ -11,10 +11,11 @@ function caretToggle() {
 
 function logKey(e) {
   const terminalText = document.querySelector("#terminal-text");
-  const character = `${String.fromCharCode(e.keyCode)}`;
+  const character = `${String.fromCharCode(e.keyCode)}`.toLowerCase();
+  console.log("yuh", character);
   const result = terminalText.childNodes[0];
   if (e.keyCode === 13) {
-    result.nodeValue += "\nROOT$ ";
+    result.nodeValue += "\nroot$ ";
   } else if (e.keyCode === 8) {
     // dont delete if no characters inputted
     if (result.nodeValue.length > 7) {
@@ -45,7 +46,7 @@ class Terminal extends Component {
       <div>
         <p id="terminal-title">Terminal</p>
         <p id="terminal-text">
-          ROOT$
+          root$ &nbsp;
           <span className="term-caret">&#x2588;</span>
         </p>
       </div>
