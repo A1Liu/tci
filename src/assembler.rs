@@ -419,6 +419,13 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
 
+            TCExprKind::NeqI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::CompNeqI32;
+                ops.push(tagged);
+            }
+
             TCExprKind::SConv8To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::SExtend8To32;

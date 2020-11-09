@@ -99,6 +99,19 @@ fn eq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> T
     };
 }
 
+fn neq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
+    let result_type = TCType {
+        kind: TCTypeKind::Char,
+        pointer_count: 0,
+    };
+
+    return TCExpr {
+        loc: l_from(l.loc, r.loc),
+        kind: TCExprKind::NeqI32(buckets.add(l), buckets.add(r)),
+        expr_type: result_type,
+    };
+}
+
 // Implicit Transforms
 
 pub fn assign_char_int<'b>(buckets: BucketListRef<'b>, e: TCExpr<'b>) -> TCExpr<'b> {
@@ -127,6 +140,7 @@ pub static BIN_OP_OL: LazyStatic<BinOpOverloads> = lazy_static!(bin_op_ol, BinOp
     m.insert((BinOp::Sub, I32, I32), sub_int_int);
     m.insert((BinOp::Lt, I32, I32), lt_int_int);
     m.insert((BinOp::Eq, I32, I32), eq_int_int);
+    m.insert((BinOp::Neq, I32, I32), neq_int_int);
     m
 });
 
@@ -138,6 +152,7 @@ pub static BINL_OL: LazyStatic<BinOpValids> = lazy_static!(binl_ol, BinOpValids,
     m.insert((BinOp::Sub, I32));
     m.insert((BinOp::Lt, I32));
     m.insert((BinOp::Eq, I32));
+    m.insert((BinOp::Neq, I32));
     m
 });
 
@@ -149,6 +164,7 @@ pub static BINR_OL: LazyStatic<BinOpValids> = lazy_static!(binr_ol, BinOpValids,
     m.insert((BinOp::Sub, I32));
     m.insert((BinOp::Lt, I32));
     m.insert((BinOp::Eq, I32));
+    m.insert((BinOp::Neq, I32));
     m
 });
 
