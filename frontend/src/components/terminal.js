@@ -1,5 +1,7 @@
 import React, { Component } from "react";
 
+let distanceFromNewLine = 6;
+
 function caretToggle() {
   const caret = document.getElementsByClassName("term-caret")[0];
   if (caret.classList.contains("blink")) {
@@ -12,21 +14,22 @@ function caretToggle() {
 function logKey(e) {
   const terminalText = document.querySelector("#terminal-text");
   const character = `${String.fromCharCode(e.keyCode)}`.toLowerCase();
-  console.log("yuh", character);
   const result = terminalText.childNodes[0];
   if (e.keyCode === 13) {
     result.nodeValue += "\nroot$ ";
+    distanceFromNewLine = 6;
   } else if (e.keyCode === 8) {
     // dont delete if no characters inputted
-    if (result.nodeValue.length > 7) {
+    if (distanceFromNewLine > 6) {
       result.nodeValue = result.nodeValue.substring(
         0,
         result.nodeValue.length - 1
       );
+      distanceFromNewLine -= 1;
     }
   } else {
     result.nodeValue += character;
-    console.log(character);
+    distanceFromNewLine += 1;
   }
 }
 
