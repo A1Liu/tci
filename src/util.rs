@@ -8,6 +8,7 @@ use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
+pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 macro_rules! error {

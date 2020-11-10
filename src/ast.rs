@@ -275,6 +275,28 @@ pub struct TCType {
     pub pointer_count: u32,
 }
 
+impl TCType {
+    pub fn display(&self, symbols: &[&str]) -> String {
+        let mut writer = StringWriter::new();
+        #[rustfmt::skip]
+        let result = match self.kind {
+            TCTypeKind::I32 => write!(writer, "I32"),
+            TCTypeKind::U64 => write!(writer, "unsigned long"),
+            TCTypeKind::Char => write!(writer, "char"),
+            TCTypeKind::Void => write!(writer, "void"),
+            TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", symbols[ident as usize]),
+            TCTypeKind::Uninit { .. } => write!(writer, "void"),
+        };
+        result.unwrap();
+
+        for i in 0..self.pointer_count {
+            write!(writer, "*").unwrap();
+        }
+
+        return writer.into_string();
+    }
+}
+
 pub const VOID: TCType = TCType {
     kind: TCTypeKind::Void,
     pointer_count: 0,
@@ -384,6 +406,7 @@ pub enum TCExprKind<'a> {
         var_offset: i16,
     },
 
+    BraceList(&'a [TCExpr<'a>]),
     ParenList(&'a [TCExpr<'a>]),
 
     AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),

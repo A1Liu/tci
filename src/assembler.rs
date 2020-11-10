@@ -564,6 +564,7 @@ impl<'a> Assembler<'a> {
                     ops.push(tagged);
                 }
             }
+            TCExprKind::BraceList(_) => unreachable!(),
         }
 
         return ops;
