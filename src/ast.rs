@@ -230,6 +230,7 @@ pub fn sa(size: u32, align: u32) -> SizeAlign {
 }
 
 pub const TC_UNKNOWN_SIZE: u32 = !0;
+pub const TC_UNKNOWN_ALIGN: u32 = !0;
 pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     size: TC_UNKNOWN_SIZE,
     align: 0,
@@ -267,6 +268,7 @@ pub enum TCTypeKind {
     Void,
     Struct { ident: u32, sa: SizeAlign },
     Uninit { size: u32 },
+    BraceList,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -285,7 +287,8 @@ impl TCType {
             TCTypeKind::Char => write!(writer, "char"),
             TCTypeKind::Void => write!(writer, "void"),
             TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", symbols[ident as usize]),
-            TCTypeKind::Uninit { .. } => write!(writer, "void"),
+            TCTypeKind::Uninit { .. } => return "void".to_string(),
+            TCTypeKind::BraceList => return "brace_list".to_string()
         };
         result.unwrap();
 
@@ -299,6 +302,11 @@ impl TCType {
 
 pub const VOID: TCType = TCType {
     kind: TCTypeKind::Void,
+    pointer_count: 0,
+};
+
+pub const BRACE_LIST: TCType = TCType {
+    kind: TCTypeKind::BraceList,
     pointer_count: 0,
 };
 
@@ -472,6 +480,7 @@ impl TCType {
             TCTypeKind::Void => TCShallowType::Void,
             TCTypeKind::Struct { .. } => TCShallowType::Struct,
             TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
+            TCTypeKind::BraceList => panic!("cannot make shallow of brace list"),
         }
     }
 
@@ -491,6 +500,7 @@ impl TCType {
                 sa.size
             }
             TCTypeKind::Uninit { size } => size,
+            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
         }
     }
 
@@ -510,6 +520,7 @@ impl TCType {
                 sa.align
             }
             TCTypeKind::Uninit { size } => size,
+            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
         }
     }
 }

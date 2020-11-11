@@ -7,189 +7,184 @@ use std::collections::{HashMap, HashSet};
 type BinOpTransform = for<'b> fn(BucketListRef<'b>, TCExpr<'b>, TCExpr<'b>) -> TCExpr<'b>;
 type Transform = for<'b> fn(BucketListRef<'b>, TCExpr<'b>) -> TCExpr<'b>;
 
-// Bin Op Transforms
-
-fn add_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::I32,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn add_int_char<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::I32,
-        pointer_count: 0,
-    };
-
-    let r = TCExpr {
-        loc: l.loc,
-        kind: TCExprKind::SConv8To32(buckets.add(r)),
-        expr_type: result_type,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn add_char_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::I32,
-        pointer_count: 0,
-    };
-
-    let l = TCExpr {
-        loc: l.loc,
-        kind: TCExprKind::SConv8To32(buckets.add(l)),
-        expr_type: result_type,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn sub_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::I32,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::SubI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn lt_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::Char,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::LtI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn geq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::Char,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::GeqI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn eq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::Char,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::EqI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
-fn neq_int_int<'b>(buckets: BucketListRef<'b>, l: TCExpr<'b>, r: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::Char,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: l_from(l.loc, r.loc),
-        kind: TCExprKind::NeqI32(buckets.add(l), buckets.add(r)),
-        expr_type: result_type,
-    };
-}
-
 // Implicit Transforms
-
-pub fn assign_char_int<'b>(buckets: BucketListRef<'b>, e: TCExpr<'b>) -> TCExpr<'b> {
-    let result_type = TCType {
-        kind: TCTypeKind::I32,
-        pointer_count: 0,
-    };
-
-    return TCExpr {
-        loc: e.loc,
-        kind: TCExprKind::SConv8To32(buckets.add(e)),
-        expr_type: result_type,
-    };
-}
 
 pub type BinOpOverloads = HashMap<(BinOp, TCShallowType, TCShallowType), BinOpTransform>;
 pub type BinOpValids = HashSet<(BinOp, TCShallowType)>;
 pub type AssignOL = HashMap<(TCTypeKind, TCTypeKind), Transform>;
 
-pub static BIN_OP_OL: LazyStatic<BinOpOverloads> = lazy_static!(bin_op_ol, BinOpOverloads, {
-    use TCShallowType::*;
-    let mut m: BinOpOverloads = HashMap::new();
-    m.insert((BinOp::Add, I32, I32), add_int_int);
-    m.insert((BinOp::Add, I32, Char), add_int_char);
-    m.insert((BinOp::Add, Char, I32), add_char_int);
-    m.insert((BinOp::Sub, I32, I32), sub_int_int);
-    m.insert((BinOp::Lt, I32, I32), lt_int_int);
-    m.insert((BinOp::Eq, I32, I32), eq_int_int);
-    m.insert((BinOp::Neq, I32, I32), neq_int_int);
-    m
-});
+pub struct Overloads {
+    pub bin_op: BinOpOverloads,
+    pub left_op: BinOpValids,
+    pub right_op: BinOpValids,
+    pub expr_to_type: AssignOL,
+}
 
-pub static BINL_OL: LazyStatic<BinOpValids> = lazy_static!(binl_ol, BinOpValids, {
-    use TCShallowType::*;
-    let mut m = HashSet::new();
-    m.insert((BinOp::Add, I32));
-    m.insert((BinOp::Add, Char));
-    m.insert((BinOp::Sub, I32));
-    m.insert((BinOp::Lt, I32));
-    m.insert((BinOp::Eq, I32));
-    m.insert((BinOp::Neq, I32));
-    m
-});
+pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads, {
+    let mut bin_op: BinOpOverloads = HashMap::new();
+    let mut left_op: BinOpValids = HashSet::new();
+    let mut right_op: BinOpValids = HashSet::new();
+    let mut expr_to_type: AssignOL = HashMap::new();
 
-pub static BINR_OL: LazyStatic<BinOpValids> = lazy_static!(binr_ol, BinOpValids, {
-    use TCShallowType::*;
-    let mut m = HashSet::new();
-    m.insert((BinOp::Add, I32));
-    m.insert((BinOp::Add, Char));
-    m.insert((BinOp::Sub, I32));
-    m.insert((BinOp::Lt, I32));
-    m.insert((BinOp::Eq, I32));
-    m.insert((BinOp::Neq, I32));
-    m
-});
+    macro_rules! add_op_ol {
+        ($op:expr, $left:expr, $right:expr, $func:expr) => {{
+            use BinOp::*;
+            use TCShallowType::*;
 
-pub static ASSIGN_EXPR_TO_TYPE: LazyStatic<AssignOL> = lazy_static!(assign_expr, AssignOL, {
-    let mut m: HashMap<(TCTypeKind, TCTypeKind), Transform> = HashMap::new();
-    m.insert((TCTypeKind::Char, TCTypeKind::I32), assign_char_int);
-    m
+            bin_op.insert(($op, $left, $right), $func);
+            left_op.insert(($op, $left));
+            right_op.insert(($op, $right));
+        }};
+    }
+
+    macro_rules! add_assign_ol {
+        ($left:expr, $right:expr, $func:expr) => {{
+            use TCTypeKind::*;
+
+            expr_to_type.insert(($left, $right), $func);
+        }};
+    }
+
+    add_op_ol!(Add, I32, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Add, I32, Char, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        };
+
+        let r = TCExpr {
+            loc: l.loc,
+            kind: TCExprKind::SConv8To32(buckets.add(r)),
+            expr_type: result_type,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Add, Char, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        };
+
+        let l = TCExpr {
+            loc: l.loc,
+            kind: TCExprKind::SConv8To32(buckets.add(l)),
+            expr_type: result_type,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::AddI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Sub, I32, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::SubI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Geq, I32, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::Char,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::GeqI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Neq, I32, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::Char,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::NeqI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Lt, I32, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::Char,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::LtI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_op_ol!(Eq, I32, I32, |buckets, l, r| {
+        let result_type = TCType {
+            kind: TCTypeKind::Char,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::EqI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        };
+    });
+
+    add_assign_ol!(Char, I32, |buckets, e| {
+        let result_type = TCType {
+            kind: TCTypeKind::I32,
+            pointer_count: 0,
+        };
+
+        return TCExpr {
+            loc: e.loc,
+            kind: TCExprKind::SConv8To32(buckets.add(e)),
+            expr_type: result_type,
+        };
+    });
+
+    Overloads {
+        bin_op,
+        left_op,
+        right_op,
+        expr_to_type,
+    }
 });
 
 fn get_overload(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
     let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
-    match BIN_OP_OL.get(&key) {
+    match OVERLOADS.bin_op.get(&key) {
         Some(bin_op) => return Ok(*bin_op),
         None => return Err(invalid_operands_bin_expr(env, op, l, r)),
     }
@@ -199,7 +194,7 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
     let lkey = (op, l.expr_type.to_shallow());
     let rkey = (op, r.expr_type.to_shallow());
 
-    if BINL_OL.get(&lkey).is_none() {
+    if OVERLOADS.left_op.get(&lkey).is_none() {
         return error!(
             "invalid operands to binary expression (left expression is not valid for this operand)",
             l.loc,
@@ -209,7 +204,7 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
         );
     }
 
-    if BINR_OL.get(&rkey).is_none() {
+    if OVERLOADS.right_op.get(&rkey).is_none() {
         return error!(
             "invalid operands to binary expression (right expression is not valid for this operand)",
             l.loc,
@@ -377,8 +372,9 @@ impl<'a> TypeEnv<'a> {
 
         if assign_to == &expr.expr_type {
             return Ok(expr);
-        } else if let Some(converter) =
-            ASSIGN_EXPR_TO_TYPE.get(&(expr.expr_type.kind, assign_to.kind))
+        } else if let Some(converter) = OVERLOADS
+            .expr_to_type
+            .get(&(expr.expr_type.kind, assign_to.kind))
         {
             return Ok(converter(buckets, expr));
         } else if let Some(assign_loc) = assign_to_loc {
@@ -1039,7 +1035,7 @@ fn check_stmts<'b>(
 
                     let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
                     local_env.add_local(recv.ident, decl_type, *loc)?;
-                    let expr = env.assign_convert(buckets, &decl_type, Some(*loc), expr)?;
+                    let expr = env.assign_convert(buckets, &decl_type, Some(recv.loc), expr)?;
                     tstmts.push(TCStmt {
                         kind: TCStmtKind::Decl {
                             symbol: recv.ident,
@@ -1401,6 +1397,18 @@ fn check_expr<'b>(
             });
         }
 
+        ExprKind::BraceList(exprs) => {
+            let mut tc_exprs = Vec::new();
+            for expr in exprs {
+                tc_exprs.push(check_expr(buckets, env, local_env, decl_idx, expr)?);
+            }
+
+            return Ok(TCExpr {
+                expr_type: BRACE_LIST,
+                kind: TCExprKind::BraceList(buckets.add_array(tc_exprs)),
+                loc: expr.loc,
+            });
+        }
         ExprKind::ParenList(exprs) => {
             let mut tc_exprs = Vec::new();
             for expr in exprs {
