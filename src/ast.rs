@@ -1,3 +1,4 @@
+use crate::filedb::*;
 use crate::util::*;
 use serde::Serialize;
 
@@ -278,15 +279,15 @@ pub struct TCType {
 }
 
 impl TCType {
-    pub fn display(&self, symbols: &[&str]) -> String {
+    pub fn display(&self, files: &FileDb) -> String {
         let mut writer = StringWriter::new();
         #[rustfmt::skip]
         let result = match self.kind {
-            TCTypeKind::I32 => write!(writer, "I32"),
+            TCTypeKind::I32 => write!(writer, "int"),
             TCTypeKind::U64 => write!(writer, "unsigned long"),
             TCTypeKind::Char => write!(writer, "char"),
             TCTypeKind::Void => write!(writer, "void"),
-            TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", symbols[ident as usize]),
+            TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", files.symbol_to_str(ident)),
             TCTypeKind::Uninit { .. } => return "void".to_string(),
             TCTypeKind::BraceList => return "brace_list".to_string()
         };

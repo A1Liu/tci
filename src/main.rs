@@ -109,7 +109,7 @@ fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
             buckets = n;
         }
 
-        let tfuncs = match type_checker::check_file(buckets, ast) {
+        let tfuncs = match type_checker::check_file(buckets, ast, env) {
             Ok(x) => x,
             Err(err) => {
                 errors.push(err);

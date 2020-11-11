@@ -27,21 +27,19 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     let mut expr_to_type: AssignOL = HashMap::new();
 
     macro_rules! add_op_ol {
-        ($op:expr, $left:expr, $right:expr, $func:expr) => {{
-            use BinOp::*;
-            use TCShallowType::*;
-
-            bin_op.insert(($op, $left, $right), $func);
-            left_op.insert(($op, $left));
-            right_op.insert(($op, $right));
+        ($op:ident, $left:ident, $right:ident, $func:expr) => {{
+            bin_op.insert(
+                (BinOp::$op, TCShallowType::$left, TCShallowType::$right),
+                $func,
+            );
+            left_op.insert((BinOp::$op, TCShallowType::$left));
+            right_op.insert((BinOp::$op, TCShallowType::$right));
         }};
     }
 
     macro_rules! add_assign_ol {
-        ($left:expr, $right:expr, $func:expr) => {{
-            use TCTypeKind::*;
-
-            expr_to_type.insert(($left, $right), $func);
+        ($left:ident, $right:ident, $func:expr) => {{
+            expr_to_type.insert((TCTypeKind::$left, TCTypeKind::$right), $func);
         }};
     }
 
@@ -182,7 +180,7 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     }
 });
 
-fn get_overload(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
+fn get_overload(env: CheckEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinOpTransform, Error> {
     let key = (op, l.expr_type.to_shallow(), r.expr_type.to_shallow());
     match OVERLOADS.bin_op.get(&key) {
         Some(bin_op) => return Ok(*bin_op),
@@ -190,7 +188,7 @@ fn get_overload(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Result<BinO
     }
 }
 
-pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Error {
+pub fn invalid_operands_bin_expr(env: CheckEnv, op: BinOp, l: &TCExpr, r: &TCExpr) -> Error {
     let lkey = (op, l.expr_type.to_shallow());
     let rkey = (op, r.expr_type.to_shallow());
 
@@ -198,9 +196,9 @@ pub fn invalid_operands_bin_expr(env: &TypeEnv, op: BinOp, l: &TCExpr, r: &TCExp
         return error!(
             "invalid operands to binary expression (left expression is not valid for this operand)",
             l.loc,
-            format!("this has type {:?}", l.expr_type),
+            format!("this has type {:?}", l.expr_type.display(env.files)),
             r.loc,
-            format!("this has type {:?}", r.expr_type)
+            format!("this has type {:?}", r.expr_type.display(env.files))
         );
     }
 
@@ -355,37 +353,47 @@ impl<'a> TypeEnv<'a> {
     }
 
     // TODO make this work with implicit type conversions
-    pub fn assign_convert<'b>(
+    pub fn implicit_convert<'b>(
         &self,
         buckets: BucketListRef<'b>,
-        assign_to: &TCType,
-        assign_to_loc: Option<CodeLoc>,
+        files: &FileDb,
+        assign_type: &TCType,
+        assign_loc: CodeLoc,
+        assign_loc_is_defn: bool,
         expr: TCExpr<'b>,
     ) -> Result<TCExpr<'b>, Error> {
         if let TCTypeKind::Uninit { .. } = expr.expr_type.kind {
             return Ok(TCExpr {
                 kind: TCExprKind::Uninit,
-                expr_type: *assign_to,
+                expr_type: *assign_type,
                 loc: expr.loc,
             });
         }
 
-        if assign_to == &expr.expr_type {
+        if assign_type == &expr.expr_type {
             return Ok(expr);
         } else if let Some(converter) = OVERLOADS
             .expr_to_type
-            .get(&(expr.expr_type.kind, assign_to.kind))
+            .get(&(expr.expr_type.kind, assign_type.kind))
         {
             return Ok(converter(buckets, expr));
-        } else if let Some(assign_loc) = assign_to_loc {
-            return Err(error!(
-                "value cannot be converted to target type",
-                expr.loc, "value found here", assign_loc, "expected type defined here"
-            ));
         } else {
+            if assign_loc_is_defn {
+                return Err(error!(
+                    "value cannot be converted to target type",
+                    expr.loc,
+                    format!("this has type `{}`", expr.expr_type.display(files)),
+                    assign_loc,
+                    "target type defined here"
+                ));
+            }
+
             return Err(error!(
                 "value cannot be converted to target type",
-                expr.loc, "value found here"
+                expr.loc,
+                format!("this has type `{}`", expr.expr_type.display(files)),
+                assign_loc,
+                format!("this has type `{}`", assign_type.display(files))
             ));
         }
     }
@@ -470,60 +478,91 @@ impl<'a> TypeEnv<'a> {
     }
 }
 
-struct TypeEnvInterim<'b> {
-    pub types: TypeEnv<'b>,
-    pub func_types: HashMap<u32, TCFuncType<'b>>,
+#[derive(Clone, Copy)]
+pub struct CheckEnv<'a, 'b> {
+    pub buckets: BucketListRef<'b>,
+    pub types: &'a TypeEnv<'b>,
+    pub func_types: &'a HashMap<u32, TCFuncType<'b>>,
+    pub files: &'a FileDb,
+    pub decl_idx: u32,
 }
 
-impl<'b> TypeEnvInterim<'b> {
-    #[inline]
-    pub fn check_type(
-        &self,
+impl<'a, 'b> CheckEnv<'a, 'b> {
+    pub fn new(
+        buckets: BucketListRef<'b>,
+        types: &'a TypeEnv<'b>,
+        func_types: &'a HashMap<u32, TCFuncType<'b>>,
+        files: &'a FileDb,
         decl_idx: u32,
-        ast_type: &ASTType,
-        pointer_count: u32,
-    ) -> Result<TCType, Error> {
-        return self.types.check_type(decl_idx, ast_type, pointer_count);
+    ) -> Self {
+        Self {
+            buckets,
+            types,
+            func_types,
+            files,
+            decl_idx,
+        }
     }
 
     #[inline]
-    pub fn deref(&self, tc_type: &TCType, value_loc: CodeLoc) -> Result<TCType, Error> {
-        self.types.deref(tc_type, value_loc)
+    pub fn check_type(&self, ast_type: &ASTType, pointer_count: u32) -> Result<TCType, Error> {
+        self.types
+            .check_type(self.decl_idx, ast_type, pointer_count)
     }
 
     #[inline]
-    pub fn assign_convert<'a>(
+    pub fn param_convert(
         &self,
-        buckets: BucketListRef<'a>,
-        assign_to: &TCType,
-        assign_to_loc: Option<CodeLoc>,
-        expr: TCExpr<'a>,
-    ) -> Result<TCExpr<'a>, Error> {
-        #[rustfmt::skip]
-        return self.types.assign_convert(buckets, assign_to, assign_to_loc, expr);
+        asgn_type: &TCType,
+        asgn_loc: CodeLoc,
+        expr: TCExpr<'b>,
+    ) -> Result<TCExpr<'b>, Error> {
+        self.types
+            .implicit_convert(self.buckets, self.files, asgn_type, asgn_loc, true, expr)
     }
 
     #[inline]
-    pub fn cast_convert<'a>(
+    pub fn return_convert(
         &self,
-        buckets: BucketListRef<'a>,
+        asgn_type: &TCType,
+        asgn_loc: CodeLoc,
+        expr: TCExpr<'b>,
+    ) -> Result<TCExpr<'b>, Error> {
+        self.types
+            .implicit_convert(self.buckets, self.files, asgn_type, asgn_loc, true, expr)
+    }
+
+    #[inline]
+    pub fn assign_convert(
+        &self,
+        asgn_type: &TCType,
+        asgn_loc: CodeLoc,
+        expr: TCExpr<'b>,
+    ) -> Result<TCExpr<'b>, Error> {
+        self.types
+            .implicit_convert(self.buckets, self.files, asgn_type, asgn_loc, false, expr)
+    }
+
+    #[inline]
+    pub fn cast_convert(
+        &self,
         cast_to: &TCType,
         cast_to_loc: CodeLoc,
-        expr: TCExpr<'a>,
-    ) -> Result<TCExpr<'a>, Error> {
-        return self.types.cast_convert(buckets, cast_to, cast_to_loc, expr);
+        expr: TCExpr<'b>,
+    ) -> Result<TCExpr<'b>, Error> {
+        self.types
+            .cast_convert(self.buckets, cast_to, cast_to_loc, expr)
     }
 
     #[inline]
     pub fn check_struct_member(
         &self,
         struct_ident: u32,
-        decl_idx: u32,
         loc: CodeLoc,
         member_ident: u32,
     ) -> Result<&TCStructMember, Error> {
         self.types
-            .check_struct_member(struct_ident, decl_idx, loc, member_ident)
+            .check_struct_member(struct_ident, self.decl_idx, loc, member_ident)
     }
 }
 
@@ -535,6 +574,7 @@ pub struct TypedFuncs<'a> {
 pub fn check_file<'a>(
     buckets: BucketListRef<'a>,
     program: ASTProgram,
+    files: &FileDb,
 ) -> Result<TypedFuncs<'a>, Error> {
     let mut types = TypeEnv::new();
 
@@ -767,10 +807,7 @@ pub fn check_file<'a>(
         )?;
     }
 
-    let mut env = TypeEnvInterim {
-        types,
-        func_types: HashMap::new(),
-    };
+    let mut func_types: HashMap<u32, TCFuncType<'a>> = HashMap::new();
 
     struct UncheckedFunction<'a> {
         defn_idx: u32,
@@ -800,8 +837,7 @@ pub fn check_file<'a>(
 
         let decl_idx = decl_idx as u32;
         let rtype_loc = rtype.loc;
-        let struct_env = &env.types;
-        let return_type = struct_env.check_type(decl_idx, rtype, *rpointer_count)?;
+        let return_type = types.check_type(decl_idx, rtype, *rpointer_count)?;
 
         let mut names = HashMap::new();
         let mut typed_params = Vec::new();
@@ -830,7 +866,7 @@ pub fn check_file<'a>(
                 ));
             }
 
-            let param_type = struct_env.check_type(decl_idx, decl_type, recv.pointer_count)?;
+            let param_type = types.check_type(decl_idx, decl_type, recv.pointer_count)?;
 
             typed_params.push(TCFuncParam {
                 decl_type: param_type,
@@ -848,7 +884,7 @@ pub fn check_file<'a>(
             varargs: varargs.is_some(),
         };
 
-        if let Some(prev_tc_func_type) = env.func_types.get(ident) {
+        if let Some(prev_tc_func_type) = func_types.get(ident) {
             if prev_tc_func_type != &tc_func_type {
                 return Err(func_decl_mismatch(prev_tc_func_type.loc, tc_func_type.loc));
             }
@@ -859,7 +895,7 @@ pub fn check_file<'a>(
                 }
             }
         } else {
-            env.func_types.insert(*ident, tc_func_type);
+            func_types.insert(*ident, tc_func_type);
         }
 
         if let Some(body) = func_body {
@@ -940,35 +976,25 @@ pub fn check_file<'a>(
             local_env.add_var(param.ident, tc_value).unwrap();
         }
 
-        let gstmts = check_stmts(
-            buckets,
-            &mut env,
-            &mut local_env,
-            ftype.decl_idx,
-            func.body,
-            None,
-        )?;
+        let env = CheckEnv::new(buckets, &types, &func_types, files, ftype.decl_idx);
+
+        let gstmts = check_stmts(env, &mut local_env, func.body, None)?;
 
         tc_func.defn = Some(TCFuncDefn {
             defn_idx: func.defn_idx,
             loc: func.loc,
-            stmts: buckets.add_array(gstmts),
+            stmts: env.buckets.add_array(gstmts),
         });
 
         functions.insert(func_name, tc_func);
     }
 
-    return Ok(TypedFuncs {
-        types: env.types,
-        functions,
-    });
+    return Ok(TypedFuncs { types, functions });
 }
 
 fn check_stmts<'b>(
-    buckets: BucketListRef<'b>,
-    env: &TypeEnvInterim<'b>,
+    env: CheckEnv<'_, 'b>,
     local_env: &mut LocalTypeEnv,
-    decl_idx: u32,
     stmts: &[Stmt],
     cblock: Option<TCStmt<'b>>,
 ) -> Result<Vec<TCStmt<'b>>, Error> {
@@ -976,7 +1002,7 @@ fn check_stmts<'b>(
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::RetVal(expr) => {
-                let expr = check_expr(buckets, &env, &local_env, decl_idx, expr)?;
+                let expr = check_expr(env, local_env, expr)?;
                 let rtype = local_env.return_type;
                 if rtype.pointer_count == 0
                     && rtype.kind == TCTypeKind::Void
@@ -988,12 +1014,7 @@ fn check_stmts<'b>(
                     ));
                 }
 
-                let expr = env.assign_convert(
-                    buckets,
-                    &local_env.return_type,
-                    Some(local_env.rtype_loc),
-                    expr,
-                )?;
+                let expr = env.return_convert(&local_env.return_type, local_env.rtype_loc, expr)?;
 
                 tstmts.push(TCStmt {
                     loc: stmt.loc,
@@ -1019,7 +1040,7 @@ fn check_stmts<'b>(
             }
 
             StmtKind::Expr(expr) => {
-                let expr = check_expr(buckets, env, local_env, decl_idx, expr)?;
+                let expr = check_expr(env, local_env, expr)?;
                 tstmts.push(TCStmt {
                     loc: expr.loc,
                     kind: TCStmtKind::Expr(expr),
@@ -1028,14 +1049,14 @@ fn check_stmts<'b>(
 
             StmtKind::Decl { decl_type, decls } => {
                 for Decl { recv, loc, expr } in *decls {
-                    let decl_type = env.check_type(decl_idx, decl_type, recv.pointer_count)?;
+                    let decl_type = env.check_type(decl_type, recv.pointer_count)?;
                     if decl_type == VOID {
                         return Err(void_variable(*loc));
                     }
 
-                    let expr = check_expr(buckets, env, local_env, decl_idx, &expr)?;
+                    let expr = check_expr(env, local_env, &expr)?;
                     local_env.add_local(recv.ident, decl_type, *loc)?;
-                    let expr = env.assign_convert(buckets, &decl_type, Some(recv.loc), expr)?;
+                    let expr = env.assign_convert(&decl_type, recv.loc, expr)?;
                     tstmts.push(TCStmt {
                         kind: TCStmtKind::Decl {
                             symbol: recv.ident,
@@ -1053,22 +1074,19 @@ fn check_stmts<'b>(
                 if_body,
                 else_body,
             } => {
-                let cond = check_expr(buckets, env, local_env, decl_idx, if_cond)?;
+                let cond = check_expr(env, local_env, if_cond)?;
                 if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
                     return Err(truth_value_of_struct(cond.loc));
                 }
 
                 let mut if_env = local_env.child();
-                let tc_if_body =
-                    check_stmts(buckets, env, &mut if_env, decl_idx, if_body.stmts, cblock)?;
+                let tc_if_body = check_stmts(env, &mut if_env, if_body.stmts, cblock)?;
 
                 let mut else_env = local_env.child();
-                let e_env = &mut else_env;
-                let tc_else_body =
-                    check_stmts(buckets, env, e_env, decl_idx, else_body.stmts, cblock)?;
+                let tc_else_body = check_stmts(env, &mut else_env, else_body.stmts, cblock)?;
 
-                let tc_if_body = buckets.add_array(tc_if_body);
-                let tc_else_body = buckets.add_array(tc_else_body);
+                let tc_if_body = env.buckets.add_array(tc_if_body);
+                let tc_else_body = env.buckets.add_array(tc_else_body);
 
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Branch {
@@ -1093,26 +1111,25 @@ fn check_stmts<'b>(
                 body,
             } => {
                 let mut block_stmts = Vec::new();
-                let at_start = check_expr(buckets, env, local_env, decl_idx, at_start)?;
+                let at_start = check_expr(env, local_env, at_start)?;
                 block_stmts.push(TCStmt {
                     loc: at_start.loc,
                     kind: TCStmtKind::Expr(at_start),
                 });
 
-                let cond = check_expr(buckets, env, local_env, decl_idx, condition)?;
+                let cond = check_expr(env, local_env, condition)?;
                 if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
                     return Err(truth_value_of_struct(cond.loc));
                 }
 
-                let post = check_expr(buckets, env, local_env, decl_idx, post_expr)?;
+                let post = check_expr(env, local_env, post_expr)?;
                 let post = TCStmt {
                     loc: post.loc,
                     kind: TCStmtKind::Expr(post),
                 };
 
                 let mut for_env = local_env.child();
-                let mut loop_stmts =
-                    check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts, Some(post))?;
+                let mut loop_stmts = check_stmts(env, &mut for_env, body.stmts, Some(post))?;
 
                 loop_stmts.push(post);
 
@@ -1124,7 +1141,7 @@ fn check_stmts<'b>(
                             loc: condition.loc,
                         },
                         else_body: TCBlock {
-                            stmts: buckets.add_array(vec![TCStmt {
+                            stmts: env.buckets.add_array(vec![TCStmt {
                                 kind: TCStmtKind::Break,
                                 loc: condition.loc,
                             }]),
@@ -1140,14 +1157,14 @@ fn check_stmts<'b>(
                     loc: body.loc,
                     kind: TCStmtKind::Loop(TCBlock {
                         loc: body.loc,
-                        stmts: buckets.add_array(loop_stmts),
+                        stmts: env.buckets.add_array(loop_stmts),
                     }),
                 });
 
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Block(TCBlock {
                         loc: stmt.loc,
-                        stmts: buckets.add_array(block_stmts),
+                        stmts: env.buckets.add_array(block_stmts),
                     }),
                     loc: stmt.loc,
                 });
@@ -1163,14 +1180,13 @@ fn check_stmts<'b>(
                 let mut for_env = local_env.child();
 
                 for decl in *at_start {
-                    let decl_type =
-                        env.check_type(decl_idx, at_start_decl_type, decl.recv.pointer_count)?;
+                    let decl_type = env.check_type(at_start_decl_type, decl.recv.pointer_count)?;
                     if decl_type == VOID {
                         return Err(void_variable(decl.loc));
                     }
 
-                    let expr = check_expr(buckets, env, &mut for_env, decl_idx, &decl.expr)?;
-                    let expr = env.assign_convert(buckets, &decl_type, Some(decl.loc), expr)?;
+                    let expr = check_expr(env, &mut for_env, &decl.expr)?;
+                    let expr = env.assign_convert(&decl_type, decl.loc, expr)?;
                     for_env.add_local(decl.recv.ident, decl_type, decl.loc)?;
                     block_stmts.push(TCStmt {
                         kind: TCStmtKind::Decl {
@@ -1181,19 +1197,18 @@ fn check_stmts<'b>(
                     });
                 }
 
-                let cond = check_expr(buckets, env, &for_env, decl_idx, condition)?;
+                let cond = check_expr(env, &for_env, condition)?;
                 if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
                     return Err(truth_value_of_struct(cond.loc));
                 }
 
-                let post = check_expr(buckets, env, &for_env, decl_idx, post_expr)?;
+                let post = check_expr(env, &for_env, post_expr)?;
                 let post = TCStmt {
                     loc: post.loc,
                     kind: TCStmtKind::Expr(post),
                 };
 
-                let mut loop_stmts =
-                    check_stmts(buckets, env, &mut for_env, decl_idx, body.stmts, Some(post))?;
+                let mut loop_stmts = check_stmts(env, &mut for_env, body.stmts, Some(post))?;
 
                 loop_stmts.push(post);
 
@@ -1205,7 +1220,7 @@ fn check_stmts<'b>(
                             loc: condition.loc,
                         },
                         else_body: TCBlock {
-                            stmts: buckets.add_array(vec![TCStmt {
+                            stmts: env.buckets.add_array(vec![TCStmt {
                                 kind: TCStmtKind::Break,
                                 loc: condition.loc,
                             }]),
@@ -1221,28 +1236,27 @@ fn check_stmts<'b>(
                     loc: body.loc,
                     kind: TCStmtKind::Loop(TCBlock {
                         loc: body.loc,
-                        stmts: buckets.add_array(loop_stmts),
+                        stmts: env.buckets.add_array(loop_stmts),
                     }),
                 });
 
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Block(TCBlock {
                         loc: stmt.loc,
-                        stmts: buckets.add_array(block_stmts),
+                        stmts: env.buckets.add_array(block_stmts),
                     }),
                     loc: stmt.loc,
                 });
             }
 
             StmtKind::While { condition, body } => {
-                let cond = check_expr(buckets, env, local_env, decl_idx, condition)?;
+                let cond = check_expr(env, local_env, condition)?;
                 if let TCTypeKind::Struct { .. } = cond.expr_type.kind {
                     return Err(truth_value_of_struct(cond.loc));
                 }
 
                 let mut while_env = local_env.child();
-                let mut loop_stmts =
-                    check_stmts(buckets, env, &mut while_env, decl_idx, body.stmts, None)?;
+                let mut loop_stmts = check_stmts(env, &mut while_env, body.stmts, None)?;
 
                 loop_stmts.push(TCStmt {
                     loc: condition.loc,
@@ -1252,7 +1266,7 @@ fn check_stmts<'b>(
                             loc: condition.loc,
                         },
                         else_body: TCBlock {
-                            stmts: buckets.add_array(vec![TCStmt {
+                            stmts: env.buckets.add_array(vec![TCStmt {
                                 kind: TCStmtKind::Break,
                                 loc: condition.loc,
                             }]),
@@ -1267,7 +1281,7 @@ fn check_stmts<'b>(
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Loop(TCBlock {
                         loc: body.loc,
-                        stmts: buckets.add_array(loop_stmts),
+                        stmts: env.buckets.add_array(loop_stmts),
                     }),
                     loc: stmt.loc,
                 });
@@ -1275,12 +1289,11 @@ fn check_stmts<'b>(
 
             StmtKind::Block(block) => {
                 let mut block_env = local_env.child();
-                let block_stmts =
-                    check_stmts(buckets, env, &mut block_env, decl_idx, block.stmts, cblock)?;
+                let block_stmts = check_stmts(env, &mut block_env, block.stmts, cblock)?;
                 tstmts.push(TCStmt {
                     kind: TCStmtKind::Block(TCBlock {
                         loc: stmt.loc,
-                        stmts: buckets.add_array(block_stmts),
+                        stmts: env.buckets.add_array(block_stmts),
                     }),
                     loc: stmt.loc,
                 });
@@ -1309,10 +1322,8 @@ fn check_stmts<'b>(
 }
 
 fn check_expr<'b>(
-    buckets: BucketListRef<'b>,
-    env: &TypeEnvInterim<'b>,
+    env: CheckEnv<'_, 'b>,
     local_env: &LocalTypeEnv,
-    decl_idx: u32,
     expr: &Expr,
 ) -> Result<TCExpr<'b>, Error> {
     match expr.kind {
@@ -1338,7 +1349,7 @@ fn check_expr<'b>(
         }
         ExprKind::StringLiteral(val) => {
             return Ok(TCExpr {
-                kind: TCExprKind::StringLiteral(buckets.add_str(val)),
+                kind: TCExprKind::StringLiteral(env.buckets.add_str(val)),
                 expr_type: TCType {
                     kind: TCTypeKind::Char,
                     pointer_count: 1,
@@ -1367,7 +1378,9 @@ fn check_expr<'b>(
             sizeof_type,
             pointer_count,
         } => {
-            let tc_sizeof_type = env.check_type(decl_idx, &sizeof_type, pointer_count)?;
+            let tc_sizeof_type = env
+                .types
+                .check_type(env.decl_idx, &sizeof_type, pointer_count)?;
             if tc_sizeof_type == VOID {
                 return Err(error!(
                     "sizeof called on void type (this doesn't make sense because void doesn't have a size)",
@@ -1385,7 +1398,7 @@ fn check_expr<'b>(
             });
         }
         ExprKind::SizeofExpr(sizeof_expr) => {
-            let tc_expr = check_expr(buckets, env, local_env, decl_idx, sizeof_expr)?;
+            let tc_expr = check_expr(env, local_env, sizeof_expr)?;
 
             return Ok(TCExpr {
                 kind: TCExprKind::IntLiteral(tc_expr.expr_type.size() as i32), // TODO change this to unsigned long
@@ -1400,37 +1413,35 @@ fn check_expr<'b>(
         ExprKind::BraceList(exprs) => {
             let mut tc_exprs = Vec::new();
             for expr in exprs {
-                tc_exprs.push(check_expr(buckets, env, local_env, decl_idx, expr)?);
+                tc_exprs.push(check_expr(env, local_env, expr)?);
             }
 
             return Ok(TCExpr {
                 expr_type: BRACE_LIST,
-                kind: TCExprKind::BraceList(buckets.add_array(tc_exprs)),
+                kind: TCExprKind::BraceList(env.buckets.add_array(tc_exprs)),
                 loc: expr.loc,
             });
         }
         ExprKind::ParenList(exprs) => {
             let mut tc_exprs = Vec::new();
             for expr in exprs {
-                tc_exprs.push(check_expr(buckets, env, local_env, decl_idx, expr)?);
+                tc_exprs.push(check_expr(env, local_env, expr)?);
             }
 
             return Ok(TCExpr {
                 expr_type: tc_exprs[tc_exprs.len() - 1].expr_type,
-                kind: TCExprKind::ParenList(buckets.add_array(tc_exprs)),
+                kind: TCExprKind::ParenList(env.buckets.add_array(tc_exprs)),
                 loc: expr.loc,
             });
         }
 
         ExprKind::Assign(target, value) => {
-            let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
-            let value = check_expr(buckets, env, local_env, decl_idx, value)?;
+            let target = check_assign_target(env, local_env, target)?;
+            let value = check_expr(env, local_env, value)?;
 
-            let value =
-                env.types
-                    .assign_convert(buckets, &target.target_type, target.defn_loc, value)?;
+            let value = env.assign_convert(&target.target_type, target.target_loc, value)?;
 
-            let value = buckets.add(value);
+            let value = env.buckets.add(value);
 
             return Ok(TCExpr {
                 expr_type: target.target_type,
@@ -1440,15 +1451,15 @@ fn check_expr<'b>(
         }
 
         ExprKind::BinOp(op, l, r) => {
-            let l = check_expr(buckets, env, local_env, decl_idx, l)?;
-            let r = check_expr(buckets, env, local_env, decl_idx, r)?;
+            let l = check_expr(env, local_env, l)?;
+            let r = check_expr(env, local_env, r)?;
 
-            let bin_op = get_overload(&env.types, op, &l, &r)?;
-            return Ok(bin_op(buckets, l, r));
+            let bin_op = get_overload(env, op, &l, &r)?;
+            return Ok(bin_op(env.buckets, l, r));
         }
 
         ExprKind::Member { base, member } => {
-            let base = check_expr(buckets, env, local_env, decl_idx, base)?;
+            let base = check_expr(env, local_env, base)?;
 
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
@@ -1456,19 +1467,19 @@ fn check_expr<'b>(
                 return Err(member_of_non_struct(base.loc));
             };
 
-            let member_info = env.check_struct_member(struct_id, decl_idx, base.loc, member)?;
+            let member_info = env.check_struct_member(struct_id, base.loc, member)?;
 
             return Ok(TCExpr {
                 expr_type: member_info.decl_type,
                 loc: expr.loc,
                 kind: TCExprKind::Member {
-                    base: buckets.add(base),
+                    base: env.buckets.add(base),
                     offset: member_info.offset,
                 },
             });
         }
         ExprKind::PtrMember { base, member } => {
-            let base = check_expr(buckets, env, local_env, decl_idx, base)?;
+            let base = check_expr(env, local_env, base)?;
 
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
@@ -1476,35 +1487,35 @@ fn check_expr<'b>(
                 return Err(member_of_non_struct(base.loc));
             };
 
-            let deref_type = env.deref(&base.expr_type, base.loc)?;
+            let deref_type = env.types.deref(&base.expr_type, base.loc)?;
             if deref_type.pointer_count != 0 {
                 return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(struct_id, decl_idx, base.loc, member)?;
+            let member_info = env.check_struct_member(struct_id, base.loc, member)?;
 
             return Ok(TCExpr {
                 expr_type: member_info.decl_type,
                 loc: expr.loc,
                 kind: TCExprKind::PtrMember {
-                    base: buckets.add(base),
+                    base: env.buckets.add(base),
                     offset: member_info.offset,
                 },
             });
         }
 
         ExprKind::Deref(ptr) => {
-            let value = check_expr(buckets, env, local_env, decl_idx, ptr)?;
+            let value = check_expr(env, local_env, ptr)?;
 
-            let expr_type = env.deref(&value.expr_type, value.loc)?;
+            let expr_type = env.types.deref(&value.expr_type, value.loc)?;
             return Ok(TCExpr {
                 expr_type,
                 loc: expr.loc,
-                kind: TCExprKind::Deref(buckets.add(value)),
+                kind: TCExprKind::Deref(env.buckets.add(value)),
             });
         }
         ExprKind::Ref(target) => {
-            let target = check_assign_target(buckets, env, local_env, decl_idx, target)?;
+            let target = check_assign_target(env, local_env, target)?;
             let mut expr_type = target.target_type;
             expr_type.pointer_count += 1;
             return Ok(TCExpr {
@@ -1530,7 +1541,7 @@ fn check_expr<'b>(
                 return Err(error!("function doesn't exist", expr.loc, "called here"));
             };
 
-            if func_type.decl_idx > decl_idx {
+            if func_type.decl_idx > env.decl_idx {
                 return Err(error!(
                     "function hasn't been declared yet (declaration order matters in C)",
                     expr.loc, "function called here", func_type.loc, "function declared here"
@@ -1548,15 +1559,10 @@ fn check_expr<'b>(
 
             let mut tparams = Vec::new();
             for (idx, param) in params.iter().enumerate() {
-                let mut expr = check_expr(buckets, env, local_env, decl_idx, param)?;
+                let mut expr = check_expr(env, local_env, param)?;
                 if idx < func_type.params.len() {
                     let param_type = &func_type.params[idx];
-                    expr = env.assign_convert(
-                        buckets,
-                        &param_type.decl_type,
-                        Some(func_type.loc),
-                        expr,
-                    )?;
+                    expr = env.param_convert(&param_type.decl_type, func_type.loc, expr)?;
                 }
 
                 tparams.push(expr);
@@ -1565,7 +1571,7 @@ fn check_expr<'b>(
             return Ok(TCExpr {
                 kind: TCExprKind::Call {
                     func: func_id,
-                    params: buckets.add_array(tparams),
+                    params: env.buckets.add_array(tparams),
                     varargs: func_type.varargs,
                 },
                 expr_type: func_type.return_type,
@@ -1579,9 +1585,9 @@ fn check_expr<'b>(
             pointer_count,
             expr,
         } => {
-            let cast_to = env.check_type(decl_idx, &cast_to, pointer_count)?;
-            let expr = check_expr(buckets, env, local_env, decl_idx, expr)?;
-            return env.cast_convert(buckets, &cast_to, cast_to_loc, expr);
+            let cast_to = env.check_type(&cast_to, pointer_count)?;
+            let expr = check_expr(env, local_env, expr)?;
+            return env.cast_convert(&cast_to, cast_to_loc, expr);
         }
 
         x => panic!("{:?} is unimplemented", x),
@@ -1589,10 +1595,8 @@ fn check_expr<'b>(
 }
 
 fn check_assign_target<'b>(
-    buckets: BucketListRef<'b>,
-    env: &TypeEnvInterim<'b>,
+    env: CheckEnv<'_, 'b>,
     local_env: &LocalTypeEnv,
-    decl_idx: u32,
     expr: &Expr,
 ) -> Result<TCAssignTarget<'b>, Error> {
     match &expr.kind {
@@ -1619,7 +1623,7 @@ fn check_assign_target<'b>(
 
         ExprKind::Member { base, member } => {
             let base_loc = base.loc;
-            let base = check_assign_target(buckets, env, local_env, decl_idx, base)?;
+            let base = check_assign_target(env, local_env, base)?;
 
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.target_type.kind {
                 ident
@@ -1627,8 +1631,7 @@ fn check_assign_target<'b>(
                 return Err(member_of_non_struct(base.target_loc));
             };
 
-            let member_info =
-                env.check_struct_member(struct_id, decl_idx, base.target_loc, *member)?;
+            let member_info = env.check_struct_member(struct_id, base.target_loc, *member)?;
 
             return Ok(TCAssignTarget {
                 kind: base.kind,
@@ -1640,7 +1643,7 @@ fn check_assign_target<'b>(
         }
         ExprKind::PtrMember { base, member } => {
             let base_loc = base.loc;
-            let base = check_expr(buckets, env, local_env, decl_idx, base)?;
+            let base = check_expr(env, local_env, base)?;
 
             let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
                 ident
@@ -1648,15 +1651,15 @@ fn check_assign_target<'b>(
                 return Err(member_of_non_struct(base.loc));
             };
 
-            let deref_type = env.deref(&base.expr_type, base.loc)?;
+            let deref_type = env.types.deref(&base.expr_type, base.loc)?;
             if deref_type.pointer_count != 0 {
                 return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(struct_id, decl_idx, base.loc, *member)?;
+            let member_info = env.check_struct_member(struct_id, base.loc, *member)?;
 
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(buckets.add(base)),
+                kind: TCAssignKind::Ptr(env.buckets.add(base)),
                 defn_loc: Some(member_info.loc),
                 target_loc: expr.loc,
                 target_type: member_info.decl_type,
@@ -1665,11 +1668,11 @@ fn check_assign_target<'b>(
         }
 
         ExprKind::Deref(ptr) => {
-            let ptr = check_expr(buckets, env, local_env, decl_idx, ptr)?;
+            let ptr = check_expr(env, local_env, ptr)?;
 
-            let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
+            let target_type = env.types.deref(&ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(buckets.add(ptr)),
+                kind: TCAssignKind::Ptr(env.buckets.add(ptr)),
                 target_loc: expr.loc,
                 defn_loc: None,
                 target_type,

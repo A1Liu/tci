@@ -247,6 +247,13 @@ impl FileDb {
         Ok(file_id)
     }
 
+    pub fn symbol_to_str(&self, symbol: u32) -> &str {
+        let cloc = self.names[symbol as usize];
+        let range: ops::Range<usize> = cloc.into();
+        let text = self.files[cloc.file as usize]._source;
+        return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
+    }
+
     pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
         let cloc = self.names[symbol as usize];
         let range: ops::Range<usize> = cloc.into();
