@@ -34,7 +34,7 @@ use rust_embed::RustEmbed;
 use std::borrow::Cow;
 use util::*;
 
-fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
+fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();
@@ -42,8 +42,8 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
 
     let files_list = env.vec();
     let files = files_list.iter();
-    files.for_each(|&(id, source)| {
-        let result = lexer::lex_file(buckets, &mut tokens, env, id, source);
+    files.for_each(|&id| {
+        let result = lexer::lex_file(buckets, &mut tokens, env, id);
         match result {
             Err(err) => {
                 errors.push(err);
@@ -83,7 +83,7 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     }
 
     let mut parser = parser::Parser::new();
-    let iter = files_list.into_iter().filter_map(|(file, _)| {
+    let iter = files_list.into_iter().filter_map(|file| {
         while let Some(n) = buckets.next() {
             buckets = n;
         }
@@ -283,13 +283,13 @@ fn respond_to_http_request<'a>(
     });
 }
 
-pub struct WSRuntime<'a> {
-    pub state: commands::WSState<'a>,
+pub struct WSRuntime {
+    pub state: commands::WSState,
     pub results: Vec<commands::CommandResult>,
     pub results_idx: usize,
 }
 
-impl<'a> Default for WSRuntime<'a> {
+impl Default for WSRuntime {
     fn default() -> Self {
         Self {
             state: commands::WSState::default(),

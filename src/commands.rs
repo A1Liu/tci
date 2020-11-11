@@ -52,12 +52,12 @@ impl From<WriteEvent> for CommandResult {
     }
 }
 
-pub enum WSState<'a> {
-    Files(FileDb<'a>),
+pub enum WSState {
+    Files(FileDb),
     Running(Runtime),
 }
 
-impl<'a> Drop for WSState<'a> {
+impl Drop for WSState {
     fn drop(&mut self) {
         match self {
             WSState::Files(db) => {}
@@ -71,13 +71,13 @@ impl<'a> Drop for WSState<'a> {
     }
 }
 
-impl<'a> Default for WSState<'a> {
+impl Default for WSState {
     fn default() -> Self {
         Self::Files(FileDb::new(false))
     }
 }
 
-impl<'a> WSState<'a> {
+impl WSState {
     pub fn run_command(&mut self, command: Command) -> Vec<CommandResult> {
         let mut messages = Vec::new();
         macro_rules! ret {

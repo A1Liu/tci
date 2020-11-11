@@ -111,12 +111,11 @@ pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
 const WHITESPACE: [u8; 2] = [b' ', b'\t'];
 const CRLF: [u8; 2] = [b'\r', b'\n'];
 
-pub fn lex_file<'a, 'b>(
+pub fn lex_file<'b>(
     buckets: BucketListRef<'b>,
     token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb<'a>,
+    symbols: &mut FileDb,
     file: u32,
-    data: &'a str,
 ) -> Result<&'b [Token<'b>], Error> {
     if let Some(toks) = token_db.get(&file) {
         return Ok(toks);
@@ -143,12 +142,12 @@ impl<'b> Lexer<'b> {
         }
     }
 
-    pub fn lex_file<'a>(
+    pub fn lex_file(
         mut self,
         mut buckets: BucketListRef<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb<'a>,
+        symbols: &mut FileDb,
     ) -> Result<&'b [Token<'b>], Error> {
         let bytes = symbols.source(self.file).unwrap().as_bytes();
 
@@ -167,13 +166,13 @@ impl<'b> Lexer<'b> {
         return Ok(buckets.add_array(self.output));
     }
 
-    pub fn lex_macro_or_token<'a>(
+    pub fn lex_macro_or_token(
         &mut self,
         buckets: BucketListRef<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb<'a>,
-        data: &'a [u8],
+        symbols: &mut FileDb,
+        data: &[u8],
     ) -> Result<bool, Error> {
         loop {
             while self.peek_eqs(data, &WHITESPACE) {
@@ -214,13 +213,13 @@ impl<'b> Lexer<'b> {
         return Ok(false);
     }
 
-    pub fn lex_macro<'a>(
+    pub fn lex_macro(
         &mut self,
         buckets: BucketListRef<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb<'a>,
-        data: &'a [u8],
+        symbols: &mut FileDb,
+        data: &[u8],
     ) -> Result<(), Error> {
         if self.peek_eq(data, b'#') {
             self.current += 1;
@@ -421,11 +420,11 @@ impl<'b> Lexer<'b> {
         return Ok(());
     }
 
-    pub fn lex_token<'a>(
+    pub fn lex_token(
         &mut self,
         buckets: BucketListRef<'b>,
-        symbols: &mut FileDb<'a>,
-        data: &'a [u8],
+        symbols: &mut FileDb,
+        data: &[u8],
     ) -> Result<Token<'b>, Error> {
         let begin = self.current;
         self.current += 1;
