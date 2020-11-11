@@ -353,7 +353,11 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
             TCExprKind::IntLiteral(val) => {
-                tagged.op = Opcode::MakeTempInt32(*val);
+                tagged.op = Opcode::MakeTempI32(*val);
+                ops.push(tagged);
+            }
+            TCExprKind::LongLiteral(val) => {
+                tagged.op = Opcode::MakeTempI64(*val);
                 ops.push(tagged);
             }
             TCExprKind::StringLiteral(val) => {
@@ -373,7 +377,23 @@ impl<'a> Assembler<'a> {
                 };
                 ops.push(tagged);
             }
+            TCExprKind::LocalArrayIdent { var_offset } => {
+                tagged.op = Opcode::MakeTempLocalStackPtr {
+                    var: *var_offset,
+                    offset: 0,
+                };
+                ops.push(tagged);
+            }
 
+            TCExprKind::FixedArrayToPtr(array) => {
+                ops.append(&mut self.translate_expr(array));
+            }
+            TCExprKind::Array(exprs) => {
+                for expr in *exprs {
+                    ops.append(&mut self.translate_expr(expr));
+                }
+            }
+            TCExprKind::BraceList(_) => unreachable!(),
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
                     ops.append(&mut self.translate_expr(expr));
@@ -386,7 +406,7 @@ impl<'a> Assembler<'a> {
                 }
             }
 
-            TCExprKind::AddI32(l, r) => {
+            TCExprKind::AddU32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::AddU32;
@@ -399,6 +419,7 @@ impl<'a> Assembler<'a> {
 
                 ops.push(tagged);
             }
+
             TCExprKind::SubI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
@@ -406,10 +427,44 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
 
+            TCExprKind::MulI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::MulI32;
+                ops.push(tagged);
+            }
+            TCExprKind::MulI64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::MulI64;
+                ops.push(tagged);
+            }
+
+            TCExprKind::DivI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::DivI32;
+                ops.push(tagged);
+            }
+
+            TCExprKind::GtI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                ops.push(tagged);
+                tagged.op = Opcode::CompLeqI32;
+                ops.push(tagged);
+            }
             TCExprKind::LtI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompI32;
+                tagged.op = Opcode::CompLtI32;
+                ops.push(tagged);
+            }
+            TCExprKind::LeqI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::CompLeqI32;
                 ops.push(tagged);
             }
             TCExprKind::GeqI32(l, r) => {
@@ -417,7 +472,7 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::Swap { top: 4, bottom: 4 };
                 ops.push(tagged);
-                tagged.op = Opcode::CompI32;
+                tagged.op = Opcode::CompLtI32;
                 ops.push(tagged);
             }
             TCExprKind::EqI32(l, r) => {
@@ -459,6 +514,36 @@ impl<'a> Assembler<'a> {
             TCExprKind::Assign { target, value } => {
                 ops.append(&mut self.translate_expr(value));
                 ops.append(&mut self.translate_assign(target));
+            }
+
+            TCExprKind::Ternary {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                let cond_bytes = condition.expr_type.size();
+                ops.append(&mut self.translate_expr(condition));
+
+                let mut if_ops = self.translate_expr(if_true);
+                let ifbr_len = if_ops.len() as u32 + 2;
+
+                tagged.op = match cond_bytes {
+                    1 => Opcode::JumpIfZero8(ifbr_len),
+                    2 => Opcode::JumpIfZero16(ifbr_len),
+                    4 => Opcode::JumpIfZero32(ifbr_len),
+                    8 => Opcode::JumpIfZero64(ifbr_len),
+                    _ => unreachable!(),
+                };
+                ops.push(tagged);
+                ops.append(&mut if_ops);
+                mem::drop(if_ops);
+
+                let mut else_ops = self.translate_expr(if_false);
+                let elsebr_len = else_ops.len() as u32 + 1;
+
+                tagged.op = Opcode::Jump(elsebr_len);
+                ops.push(tagged);
+                ops.append(&mut else_ops);
             }
 
             TCExprKind::Member { base, offset } => {
@@ -519,9 +604,10 @@ impl<'a> Assembler<'a> {
 
                 for param in *params {
                     let bytes = param.expr_type.size();
+
                     tagged.op = Opcode::StackAlloc {
                         bytes,
-                        symbol: META_NO_SYMBOL,
+                        symbol: META_NO_SYMBOL, // TODO this should be the parameter symbol
                     };
                     ops.push(tagged);
                     ops.append(&mut self.translate_expr(param));
@@ -535,7 +621,7 @@ impl<'a> Assembler<'a> {
                         symbol: META_NO_SYMBOL,
                     };
                     ops.push(tagged);
-                    tagged.op = Opcode::MakeTempInt32(params.len() as i32); // check overflow here
+                    tagged.op = Opcode::MakeTempI32(params.len() as i32); // check overflow here
                     ops.push(tagged);
                     tagged.op = Opcode::PopIntoTopVar {
                         offset: 0,
@@ -564,7 +650,6 @@ impl<'a> Assembler<'a> {
                     ops.push(tagged);
                 }
             }
-            TCExprKind::BraceList(_) => unreachable!(),
         }
 
         return ops;

@@ -589,12 +589,16 @@ impl<'b> Parser<'b> {
                     let lbracket = pop(tokens, current).unwrap();
                     let index = self.parse_expr(buckets, tokens, current)?;
                     let rbracket_tok = expect_rbracket(tokens, current, lbracket.loc)?;
+
+                    let loc = l_from(start_loc, rbracket_tok.loc);
+
                     operand = Expr {
-                        loc: l_from(start_loc, rbracket_tok.loc),
-                        kind: ExprKind::Index {
-                            ptr: buckets.add(operand),
-                            index: buckets.add(index),
-                        },
+                        kind: ExprKind::BinOp(
+                            BinOp::Index,
+                            buckets.add(operand),
+                            buckets.add(index),
+                        ),
+                        loc,
                     };
                 }
                 TokenKind::Arrow => {
@@ -725,32 +729,49 @@ impl<'b> Parser<'b> {
         let (ident, ident_loc) = expect_ident(tokens, current)?;
 
         let mut end_loc = ident_loc;
-        let mut array_brackets = Vec::new();
+        let mut array_dims = Vec::new();
         while peek(tokens, current)?.kind == TokenKind::LBracket {
             let lbracket_tok = pop(tokens, current).unwrap();
-
             let rbracket_tok = peek(tokens, current)?;
-            let expr = if rbracket_tok.kind != TokenKind::RBracket {
-                self.parse_expr(buckets, tokens, current)?
-            } else {
-                Expr {
-                    kind: ExprKind::Uninit,
-                    loc: l_from(lbracket_tok.loc, rbracket_tok.loc),
+
+            if rbracket_tok.kind == TokenKind::RBracket {
+                pop(tokens, current).unwrap();
+                array_dims.push(0);
+                end_loc = rbracket_tok.loc;
+                continue;
+            }
+
+            let expr = self.parse_expr(buckets, tokens, current)?;
+            match   expr.kind{
+                ExprKind::IntLiteral(value) => {
+                    if value <= 0 {
+                        return Err(error!(
+                            "array dimension value must be at least 1",
+                            expr.loc, "invalid array dimension found here"
+                        ));
+                    }
+
+                    array_dims.push(value as u32);
                 }
-            };
+                _ => {
+                    return Err(error!(
+                        "TCI currently doesn't accept anything but integer literals as array dimensions",
+                        expr.loc, "non-conforming expression found here"
+                    ))
+                }
+            }
 
             let rbracket_tok = expect_rbracket(tokens, current, lbracket_tok.loc)?;
-            array_brackets.push(expr);
             end_loc = rbracket_tok.loc;
         }
 
-        let array_brackets = buckets.add_array(array_brackets);
+        let array_dims = buckets.add_array(array_dims);
 
         return Ok(DeclReceiver {
             loc: l_from(loc, end_loc),
             ident,
             pointer_count,
-            array_brackets,
+            array_dims,
         });
     }
 

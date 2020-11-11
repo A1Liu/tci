@@ -166,6 +166,12 @@ impl Into<Vec<Error>> for Error {
     }
 }
 
+pub const NO_FILE: CodeLoc = CodeLoc {
+    start: 0,
+    end: 0,
+    file: !0,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?

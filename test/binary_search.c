@@ -5,6 +5,7 @@
 // location of x in given array arr[l..r] is present,
 // otherwise -1
 int binarySearch(int arr[], int l, int r, int x) {
+
   if (r >= l) {
     int mid = l + (r - l) / 2;
 
@@ -33,7 +34,7 @@ int main() {
   int n = sizeof(arr) / sizeof(arr[0]);
   int x = 10;
   int result = binarySearch(arr, 0, n - 1, x);
-  (result == -1) ? printf("Element is not present in array")
-                 : printf("Element is present at index %d", result);
+  (result == -1) ? printf("Element is not present in array\n")
+                 : printf("Element is present at index %d\n", result);
   return 0;
 }

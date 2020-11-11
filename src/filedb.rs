@@ -80,6 +80,8 @@ impl<'a> File<'a> {
     }
 }
 
+pub const NO_SYMBOL: u32 = !0;
+
 pub struct FileDb {
     buckets: BucketListRef<'static>,
     pub buckets_next: BucketListRef<'static>,
@@ -249,6 +251,10 @@ impl FileDb {
 
     pub fn symbol_to_str(&self, symbol: u32) -> &str {
         let cloc = self.names[symbol as usize];
+        return self.cloc_to_str(cloc);
+    }
+
+    pub fn cloc_to_str(&self, cloc: CodeLoc) -> &str {
         let range: ops::Range<usize> = cloc.into();
         let text = self.files[cloc.file as usize]._source;
         return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };

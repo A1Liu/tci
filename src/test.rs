@@ -21,16 +21,20 @@ fn test_file_should_succeed(filename: &str) {
         }
     };
     mem::drop(files);
+    // for (idx, op) in program.ops.iter().enumerate() {
+    //     println!("op {}: {:?}", idx, op);
+    // }
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
     let code = match runtime.run(&mut writer) {
         Ok(c) => c,
         Err(err) => {
+            println!("{}", writer.into_string());
+            println!("");
+
+            println!("pc: {}", runtime.memory.pc);
             let print = render_err(&err, &runtime.memory.callstack, &program);
-            for (idx, op) in program.ops.iter().enumerate() {
-                println!("op {}: {:?}", idx, op);
-            }
 
             panic!("{}", print);
         }

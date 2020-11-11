@@ -13,6 +13,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Index,
     Lt,
     Gt,
     Leq,
@@ -60,10 +61,6 @@ pub enum ExprKind<'a> {
         base: &'a Expr<'a>,
         member: u32,
     },
-    Index {
-        ptr: &'a Expr<'a>,
-        index: &'a Expr<'a>,
-    },
     BraceList(&'a [Expr<'a>]),
     ParenList(&'a [Expr<'a>]),
     PostIncr(&'a Expr<'a>),
@@ -88,7 +85,7 @@ pub struct Expr<'a> {
 pub struct DeclReceiver<'a> {
     pub pointer_count: u32,
     pub ident: u32,
-    pub array_brackets: &'a [Expr<'a>],
+    pub array_dims: &'a [u32],
     pub loc: CodeLoc,
 }
 
@@ -232,6 +229,7 @@ pub fn sa(size: u32, align: u32) -> SizeAlign {
 
 pub const TC_UNKNOWN_SIZE: u32 = !0;
 pub const TC_UNKNOWN_ALIGN: u32 = !0;
+pub const TC_UNKNOWN_ARRAY_SIZE: u32 = 0;
 pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     size: TC_UNKNOWN_SIZE,
     align: 0,
@@ -265,6 +263,7 @@ pub struct TCStruct<'a> {
 pub enum TCTypeKind {
     I32, // int
     U64, // unsigned long
+    I64, // long
     Char,
     Void,
     Struct { ident: u32, sa: SizeAlign },
@@ -272,19 +271,117 @@ pub enum TCTypeKind {
     BraceList,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[serde(tag = "kind", content = "data")]
+pub enum TCArrayKind {
+    None,
+    Fixed(u32),
+    // Fixed2d { rows: u32, cols: u32 },
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
 pub struct TCType {
     pub kind: TCTypeKind,
     pub pointer_count: u32,
+    pub array_kind: TCArrayKind,
 }
 
 impl TCType {
+    pub fn new(kind: TCTypeKind, pointer_count: u32) -> Self {
+        Self {
+            kind,
+            pointer_count,
+            array_kind: TCArrayKind::None,
+        }
+    }
+
+    pub fn new_array(kind: TCTypeKind, pointer_count: u32, array_kind: TCArrayKind) -> Self {
+        Self {
+            kind,
+            pointer_count,
+            array_kind,
+        }
+    }
+
+    pub fn to_shallow(&self) -> TCShallowType {
+        match self.array_kind {
+            TCArrayKind::None => {}
+            TCArrayKind::Fixed(_) => return TCShallowType::Pointer,
+        }
+
+        if self.pointer_count > 0 {
+            if let TCTypeKind::Void = self.kind {
+                return TCShallowType::VoidPointer;
+            }
+            return TCShallowType::Pointer;
+        }
+
+        match self.kind {
+            TCTypeKind::I32 => TCShallowType::I32,
+            TCTypeKind::U64 => TCShallowType::U64,
+            TCTypeKind::I64 => TCShallowType::I64,
+            TCTypeKind::Char => TCShallowType::Char,
+            TCTypeKind::Void => TCShallowType::Void,
+            TCTypeKind::Struct { .. } => TCShallowType::Struct,
+            TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
+            TCTypeKind::BraceList => panic!("cannot make shallow of brace list"),
+        }
+    }
+
+    #[inline]
+    pub fn size(&self) -> u32 {
+        let multiplier = match self.array_kind {
+            TCArrayKind::None => 1,
+            TCArrayKind::Fixed(len) => len,
+        };
+
+        if self.pointer_count > 0 {
+            return 8;
+        }
+
+        let element_size = match self.kind {
+            TCTypeKind::U64 | TCTypeKind::I64 => 8,
+            TCTypeKind::I32 => 4,
+            TCTypeKind::Char => 1,
+            TCTypeKind::Void => 0,
+            TCTypeKind::Struct { sa, .. } => {
+                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+                sa.size
+            }
+            TCTypeKind::Uninit { size } => size,
+            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
+        };
+
+        return element_size * multiplier;
+    }
+
+    #[inline]
+    pub fn align(&self) -> u32 {
+        if self.pointer_count > 0 {
+            return 8;
+        }
+
+        match self.kind {
+            TCTypeKind::U64 | TCTypeKind::I64 => 8,
+            TCTypeKind::I32 => 4,
+            TCTypeKind::Char => 1,
+            TCTypeKind::Void => 0,
+            TCTypeKind::Struct { sa, .. } => {
+                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+                sa.align
+            }
+            TCTypeKind::Uninit { size } => size,
+            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
+        }
+    }
+
     pub fn display(&self, files: &FileDb) -> String {
         let mut writer = StringWriter::new();
         #[rustfmt::skip]
         let result = match self.kind {
             TCTypeKind::I32 => write!(writer, "int"),
             TCTypeKind::U64 => write!(writer, "unsigned long"),
+            TCTypeKind::I64 => write!(writer, "long"),
             TCTypeKind::Char => write!(writer, "char"),
             TCTypeKind::Void => write!(writer, "void"),
             TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", files.symbol_to_str(ident)),
@@ -297,6 +394,11 @@ impl TCType {
             write!(writer, "*").unwrap();
         }
 
+        match self.array_kind {
+            TCArrayKind::Fixed(len) => write!(writer, "[{}]", len).unwrap(),
+            TCArrayKind::None => {}
+        }
+
         return writer.into_string();
     }
 }
@@ -304,17 +406,20 @@ impl TCType {
 pub const VOID: TCType = TCType {
     kind: TCTypeKind::Void,
     pointer_count: 0,
+    array_kind: TCArrayKind::None,
 };
 
 pub const BRACE_LIST: TCType = TCType {
     kind: TCTypeKind::BraceList,
     pointer_count: 0,
+    array_kind: TCArrayKind::None,
 };
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum TCShallowType {
     I32, // int
     U64, // unsigned long
+    I64, // long
     Char,
     Void,
     Struct,
@@ -410,22 +515,36 @@ pub struct TCBlock<'a> {
 pub enum TCExprKind<'a> {
     Uninit,
     IntLiteral(i32),
+    LongLiteral(i64),
     StringLiteral(&'a str),
     LocalIdent {
         var_offset: i16,
     },
+    LocalArrayIdent {
+        var_offset: i16,
+    },
+
+    FixedArrayToPtr(&'a TCExpr<'a>),
+    Array(&'a [TCExpr<'a>]),
 
     BraceList(&'a [TCExpr<'a>]),
     ParenList(&'a [TCExpr<'a>]),
 
-    AddI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    AddU32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SubI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
+    MulI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    DivI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
     LtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    GtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     EqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     NeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    LeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     GeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
@@ -437,6 +556,12 @@ pub enum TCExprKind<'a> {
     Assign {
         target: TCAssignTarget<'a>,
         value: &'a TCExpr<'a>,
+    },
+
+    Ternary {
+        condition: &'a TCExpr<'a>,
+        if_true: &'a TCExpr<'a>,
+        if_false: &'a TCExpr<'a>,
     },
 
     Member {
@@ -463,73 +588,6 @@ pub struct TCExpr<'a> {
     pub kind: TCExprKind<'a>,
     pub expr_type: TCType,
     pub loc: CodeLoc,
-}
-
-impl TCType {
-    pub fn to_shallow(&self) -> TCShallowType {
-        if self.pointer_count > 0 {
-            if let TCTypeKind::Void = self.kind {
-                return TCShallowType::VoidPointer;
-            }
-            return TCShallowType::Pointer;
-        }
-
-        match self.kind {
-            TCTypeKind::I32 => TCShallowType::I32,
-            TCTypeKind::U64 => TCShallowType::U64,
-            TCTypeKind::Char => TCShallowType::Char,
-            TCTypeKind::Void => TCShallowType::Void,
-            TCTypeKind::Struct { .. } => TCShallowType::Struct,
-            TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
-            TCTypeKind::BraceList => panic!("cannot make shallow of brace list"),
-        }
-    }
-
-    #[inline]
-    pub fn size(&self) -> u32 {
-        if self.pointer_count > 0 {
-            return 8;
-        }
-
-        match self.kind {
-            TCTypeKind::U64 => 8,
-            TCTypeKind::I32 => 4,
-            TCTypeKind::Char => 1,
-            TCTypeKind::Void => 0,
-            TCTypeKind::Struct { sa, .. } => {
-                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
-                sa.size
-            }
-            TCTypeKind::Uninit { size } => size,
-            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
-        }
-    }
-
-    #[inline]
-    pub fn align(&self) -> u32 {
-        if self.pointer_count > 0 {
-            return 8;
-        }
-
-        match self.kind {
-            TCTypeKind::U64 => 8,
-            TCTypeKind::I32 => 4,
-            TCTypeKind::Char => 1,
-            TCTypeKind::Void => 0,
-            TCTypeKind::Struct { sa, .. } => {
-                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
-                sa.align
-            }
-            TCTypeKind::Uninit { size } => size,
-            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
-        }
-    }
-}
-
-impl PartialEq for TCType {
-    fn eq(&self, other: &Self) -> bool {
-        return self.kind == other.kind && self.pointer_count == other.pointer_count;
-    }
 }
 
 impl<'a> PartialEq for TCFuncType<'a> {
