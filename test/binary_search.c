@@ -5,7 +5,6 @@
 // location of x in given array arr[l..r] is present,
 // otherwise -1
 int binarySearch(int arr[], int l, int r, int x) {
-
   if (r >= l) {
     int mid = l + (r - l) / 2;
 

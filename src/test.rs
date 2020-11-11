@@ -50,6 +50,7 @@ fn test_file_should_succeed(filename: &str) {
     }
 
     let output = writer.into_string();
+    println!("{}", output);
     match read_to_string(String::from(filename) + ".out") {
         Ok(expected) => {
             if output != expected.replace("\r\n", "\n") {

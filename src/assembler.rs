@@ -452,7 +452,7 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::Swap { top: 4, bottom: 4 };
                 ops.push(tagged);
-                tagged.op = Opcode::CompLeqI32;
+                tagged.op = Opcode::CompLtI32;
                 ops.push(tagged);
             }
             TCExprKind::LtI32(l, r) => {
@@ -472,7 +472,7 @@ impl<'a> Assembler<'a> {
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::Swap { top: 4, bottom: 4 };
                 ops.push(tagged);
-                tagged.op = Opcode::CompLtI32;
+                tagged.op = Opcode::CompLeqI32;
                 ops.push(tagged);
             }
             TCExprKind::EqI32(l, r) => {
