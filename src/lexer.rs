@@ -39,7 +39,8 @@ pub enum TokenKind<'a> {
     Dot,
     DotDotDot,
     Arrow,
-    Not,
+    Bang,
+    Question,
     Tilde,
     Star,
     Slash,
@@ -77,6 +78,7 @@ pub enum TokenKind<'a> {
     RBracket,
 
     Semicolon,
+    Colon,
     Comma,
 }
 
@@ -109,12 +111,11 @@ pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
 const WHITESPACE: [u8; 2] = [b' ', b'\t'];
 const CRLF: [u8; 2] = [b'\r', b'\n'];
 
-pub fn lex_file<'a, 'b>(
+pub fn lex_file<'b>(
     buckets: BucketListRef<'b>,
     token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb<'a>,
+    symbols: &mut FileDb,
     file: u32,
-    data: &'a str,
 ) -> Result<&'b [Token<'b>], Error> {
     if let Some(toks) = token_db.get(&file) {
         return Ok(toks);
@@ -141,12 +142,12 @@ impl<'b> Lexer<'b> {
         }
     }
 
-    pub fn lex_file<'a>(
+    pub fn lex_file(
         mut self,
         mut buckets: BucketListRef<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb<'a>,
+        symbols: &mut FileDb,
     ) -> Result<&'b [Token<'b>], Error> {
         let bytes = symbols.source(self.file).unwrap().as_bytes();
 
@@ -165,32 +166,41 @@ impl<'b> Lexer<'b> {
         return Ok(buckets.add_array(self.output));
     }
 
-    pub fn lex_macro_or_token<'a>(
+    pub fn lex_macro_or_token(
         &mut self,
         buckets: BucketListRef<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb<'a>,
-        data: &'a [u8],
+        symbols: &mut FileDb,
+        data: &[u8],
     ) -> Result<bool, Error> {
-        macro_rules! skip_whitespace {
-            () => {
-                while self.peek_eqs(data, &WHITESPACE) {
-                    self.current += 1;
-                }
-
-                if self.peek_eq(data, b'\n') {
-                    self.current += 1;
-                } else if self.peek_eq_series(data, &CRLF) {
-                    self.current += 2;
-                } else {
-                    break;
-                }
-            };
-        }
-
         loop {
-            skip_whitespace!();
+            while self.peek_eqs(data, &WHITESPACE) {
+                self.current += 1;
+            }
+
+            if self.peek_eq_series(data, &[b'/', b'/']) {
+                self.current += 2;
+                while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                    self.current += 1;
+                }
+            } else if self.peek_eq_series(data, &[b'/', b'*']) {
+                self.current += 2;
+                while self.peek_neq_series(data, &[b'*', b'/']) {
+                    self.current += 1;
+                }
+
+                continue;
+            }
+
+            if self.peek_eq(data, b'\n') {
+                self.current += 1;
+            } else if self.peek_eq_series(data, &CRLF) {
+                self.current += 2;
+            } else {
+                break;
+            }
+
             self.lex_macro(buckets, incomplete, token_db, symbols, data)?;
         }
 
@@ -203,13 +213,13 @@ impl<'b> Lexer<'b> {
         return Ok(false);
     }
 
-    pub fn lex_macro<'a>(
+    pub fn lex_macro(
         &mut self,
         buckets: BucketListRef<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb<'a>,
-        data: &'a [u8],
+        symbols: &mut FileDb,
+        data: &[u8],
     ) -> Result<(), Error> {
         if self.peek_eq(data, b'#') {
             self.current += 1;
@@ -410,11 +420,11 @@ impl<'b> Lexer<'b> {
         return Ok(());
     }
 
-    pub fn lex_token<'a>(
+    pub fn lex_token(
         &mut self,
         buckets: BucketListRef<'b>,
-        symbols: &mut FileDb<'a>,
-        data: &'a [u8],
+        symbols: &mut FileDb,
+        data: &[u8],
     ) -> Result<Token<'b>, Error> {
         let begin = self.current;
         self.current += 1;
@@ -521,7 +531,9 @@ impl<'b> Lexer<'b> {
             b']' => ret_tok!(TokenKind::RBracket),
             b'~' => ret_tok!(TokenKind::Tilde),
             b';' => ret_tok!(TokenKind::Semicolon),
+            b':' => ret_tok!(TokenKind::Colon),
             b',' => ret_tok!(TokenKind::Comma),
+            b'?' => ret_tok!(TokenKind::Question),
 
             b'.' => {
                 if self.peek_eq(data, b'.') {
@@ -606,7 +618,7 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                     ret_tok!(TokenKind::Neq);
                 } else {
-                    ret_tok!(TokenKind::Not);
+                    ret_tok!(TokenKind::Bang);
                 }
             }
             b'=' => {
@@ -690,6 +702,16 @@ impl<'b> Lexer<'b> {
         }
 
         return data[self.current] == byte;
+    }
+
+    pub fn peek_neq_series(&self, data: &[u8], bytes: &[u8]) -> bool {
+        let byte_len = bytes.len();
+        if self.current + bytes.len() > data.len() {
+            return false;
+        }
+
+        let eq_slice = &data[(self.current)..(self.current + byte_len)];
+        return eq_slice != bytes;
     }
 
     pub fn peek_eq_series(&self, data: &[u8], bytes: &[u8]) -> bool {

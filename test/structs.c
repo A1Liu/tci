@@ -16,6 +16,8 @@ int main() {
   file2.ident = ident_of(file);
 
   printf("%d\n", file3->ident);
+  printf("sizeof FileId is %d\n", sizeof(struct FileId));
+  printf("sizeof file3.ident is %d\n", sizeof file3.ident);
   file3->ident = 13;
   printf("%d\n", file2);
 }

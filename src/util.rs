@@ -8,6 +8,7 @@ use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
+pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 macro_rules! error {
@@ -164,6 +165,12 @@ impl Into<Vec<Error>> for Error {
         vec![self]
     }
 }
+
+pub const NO_FILE: CodeLoc = CodeLoc {
+    start: 0,
+    end: 0,
+    file: !0,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CodeLoc {

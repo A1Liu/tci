@@ -1,4 +1,4 @@
-use crate::filedb::FileDb;
+use crate::filedb::*;
 use crate::interpreter::{render_err, Runtime};
 use crate::util::*;
 use crate::{compile, emit_err};
@@ -21,16 +21,20 @@ fn test_file_should_succeed(filename: &str) {
         }
     };
     mem::drop(files);
+    // for (idx, op) in program.ops.iter().enumerate() {
+    //     println!("op {}: {:?}", idx, op);
+    // }
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
     let code = match runtime.run(&mut writer) {
         Ok(c) => c,
         Err(err) => {
+            println!("{}", writer.into_string());
+            println!("");
+
+            println!("pc: {}", runtime.memory.pc);
             let print = render_err(&err, &runtime.memory.callstack, &program);
-            for (idx, op) in program.ops.iter().enumerate() {
-                println!("op {}: {:?}", idx, op);
-            }
 
             panic!("{}", print);
         }
@@ -46,6 +50,7 @@ fn test_file_should_succeed(filename: &str) {
     }
 
     let output = writer.into_string();
+    println!("{}", output);
     match read_to_string(String::from(filename) + ".out") {
         Ok(expected) => {
             if output != expected.replace("\r\n", "\n") {
@@ -136,5 +141,13 @@ macro_rules! gen_test_runtime_should_fail {
     };
 }
 
-gen_test_should_succeed!(hello_world, assign, structs, includes, control_flow, macros);
+gen_test_should_succeed!(
+    hello_world,
+    assign,
+    structs,
+    includes,
+    control_flow,
+    macros,
+    binary_search
+);
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
