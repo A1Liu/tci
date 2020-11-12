@@ -1,22 +1,9 @@
-import { useEffect, useState } from "react";
 import "./tailwind.css";
 import "./App.css";
 import FileUpload from "./components/fileUpload";
 import Terminal from "./components/terminal";
 
 function App() {
-  const [socket, setSocket] = useState(undefined);
-  const [message, setMessage] = useState("");
-  useEffect(() => {
-    const sock = new WebSocket("wss://tci.a1liu.com");
-
-    sock.onmessage = (evt) => {
-      setMessage(evt.data);
-    };
-
-    setSocket(sock);
-  }, []);
-
   return (
     <div>
       <ul className="flex h-10 px-2 py-2">
@@ -27,28 +14,18 @@ function App() {
         </li>
       </ul>
       <div className="flex h-screen md:flex-row flex-wrap">
-        <div className="w-full md:w-1/5 bg-gray-400 p-4 text-center text-gray-700">
+        <div className="w-full md:w-1/5 bg-gray-600 p-4 text-center text-white">
           <FileUpload />
-          <button
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-            type="button"
-            onClick={() => {
-              socket.send(JSON.stringify({ command: "AddFile", data: {} }));
-            }}
-          >
-            Hello
-          </button>
-          <p> {message} </p>
         </div>
         {/* Will replace with Split Component later */}
         <div className="w-full md:w-4/5 bg-gray-500 p-0 text-center text-gray-200">
           <div className="flex h-screen md:flex-row flex-wrap">
-            <div className="w-full md:w-1/2 bg-orange-800 p-4 text-center text-brown-700">
+            <div className="w-full md:w-1/2 bg-gray-800 p-4 text-center border-solid border-2 border-opacity-50 border-gray-600">
               Editor
             </div>
             <div
               id="terminal-div"
-              className="w-full md:w-1/2 bg-orange-900 p-4 text-center text-black-200"
+              className="w-full md:w-1/2 bg-gray-800 p-4 text-center border-solid border-2 border-opacity-25 border-gray-600"
             >
               <Terminal />
             </div>
