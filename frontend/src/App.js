@@ -14,18 +14,18 @@ function App() {
         </li>
       </ul>
       <div className="flex h-screen md:flex-row flex-wrap">
-        <div className="w-full md:w-1/5 bg-gray-400 p-4 text-center text-gray-700">
+        <div className="w-full md:w-1/5 bg-gray-600 p-4 text-center text-white">
           <FileUpload />
         </div>
         {/* Will replace with Split Component later */}
         <div className="w-full md:w-4/5 bg-gray-500 p-0 text-center text-gray-200">
           <div className="flex h-screen md:flex-row flex-wrap">
-            <div className="w-full md:w-1/2 bg-orange-800 p-4 text-center text-brown-700">
+            <div className="w-full md:w-1/2 bg-gray-800 p-4 text-center border-solid border-2 border-opacity-50 border-gray-600">
               Editor
             </div>
             <div
               id="terminal-div"
-              className="w-full md:w-1/2 bg-orange-900 p-4 text-center text-black-200"
+              className="w-full md:w-1/2 bg-gray-800 p-4 text-center border-solid border-2 border-opacity-25 border-gray-600"
             >
               <Terminal />
             </div>
