@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 export default function FileUpload() {
-  const [files, setFiles] = useState("");
   const [socket, setSocket] = useState(undefined);
   const [message, setMessage] = useState("");
   const [showAlert, setShowAlert] = useState(false);
+  const hiddenFileInput = useRef(null);
 
   useEffect(() => {
     const sock = new WebSocket("wss://tci.a1liu.com");
@@ -32,40 +32,44 @@ export default function FileUpload() {
     );
   };
 
-  async function convertFile(event) {
+  const handleOnClick = (event) => {
     event.preventDefault();
-    const convertFileToString = (file) =>
+    hiddenFileInput.current.click();
+  };
+
+  async function handleOnChange(event) {
+    const file = event.target.files[0];
+    const convertFileToString = (uploadedFile) =>
       new Promise((resolve, reject) => {
         const reader = new FileReader();
-        if (file) {
-          reader.readAsText(file);
+        if (uploadedFile) {
+          reader.readAsText(uploadedFile);
         }
         reader.onload = () => {
           resolve(reader.result);
         };
         reader.onerror = (error) => reject(error);
       });
-    const result = await convertFileToString(files);
-    submitFile(`${files.name}`, result);
+    const result = await convertFileToString(file);
+    submitFile(`${file.name}`, result);
   }
 
   return (
     <div className="pt-2 pb-5">
       <input
-        className="pb-5"
+        style={{ display: "none" }}
         type="file"
-        multiple
-        onChange={(event) => {
-          setFiles(event.target.files[0]);
-        }}
+        ref={hiddenFileInput}
+        onChange={handleOnChange}
       />
       <button
-        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 mb-4 rounded "
+        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-6 mb-6 rounded "
         type="button"
-        onClick={convertFile}
+        onClick={handleOnClick}
       >
-        Upload
+        Upload a File
       </button>
+
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
