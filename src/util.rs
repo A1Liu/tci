@@ -8,6 +8,7 @@ use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
+pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 macro_rules! error {
@@ -165,6 +166,12 @@ impl Into<Vec<Error>> for Error {
     }
 }
 
+pub const NO_FILE: CodeLoc = CodeLoc {
+    start: 0,
+    end: 0,
+    file: !0,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
@@ -275,6 +282,29 @@ pub fn fold_binary<I, Iter: Iterator<Item = I>>(
 
         source = target;
         target = Vec::new();
+    }
+}
+
+pub struct Cursor<IO: io::Write> {
+    pub io: IO,
+    pub len: usize,
+}
+
+impl<IO: io::Write> Cursor<IO> {
+    pub fn new(io: IO) -> Self {
+        Self { io, len: 0 }
+    }
+}
+
+impl<IO: io::Write> io::Write for Cursor<IO> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
+        let len = self.io.write(buf)?;
+        self.len += len;
+        return Ok(len);
+    }
+
+    fn flush(&mut self) -> Result<(), io::Error> {
+        return self.io.flush();
     }
 }
 

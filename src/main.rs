@@ -16,6 +16,7 @@ mod filedb;
 mod interpreter;
 mod lexer;
 mod parser;
+mod preprocessor;
 mod runtime;
 mod type_checker;
 
@@ -29,22 +30,20 @@ use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendM
 use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
-use runtime::DefaultIO;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 use util::*;
 
-fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
+fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();
-    let mut asts = parser::AstDb::new();
     let mut errors: Vec<Error> = Vec::new();
 
     let files_list = env.vec();
     let files = files_list.iter();
-    files.for_each(|&(id, source)| {
-        let result = lexer::lex_file(buckets, &mut tokens, env, id, source);
+    files.for_each(|&id| {
+        let result = lexer::lex_file(buckets, &mut tokens, env, id);
         match result {
             Err(err) => {
                 errors.push(err);
@@ -62,12 +61,34 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
     }
     buckets = buckets.force_next();
 
-    let iter = files_list.into_iter().filter_map(|(file, _)| {
+    tokens = tokens
+        .keys()
+        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
+            Ok(toks) => Some((file, toks)),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        })
+        .map(|(file, toks)| {
+            if let Some(n) = buckets.next() {
+                buckets = n;
+            }
+            (file, &*buckets.add_array(toks))
+        })
+        .collect();
+
+    if errors.len() != 0 {
+        return Err(errors);
+    }
+
+    let mut parser = parser::Parser::new();
+    let iter = files_list.into_iter().filter_map(|file| {
         while let Some(n) = buckets.next() {
             buckets = n;
         }
 
-        match parser::parse_tokens(buckets, &tokens, &mut asts, file) {
+        match parser.parse_tokens(buckets, &tokens, file) {
             Ok(x) => return Some(x),
             Err(err) => {
                 errors.push(err);
@@ -88,7 +109,7 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
             buckets = n;
         }
 
-        let tfuncs = match type_checker::check_file(buckets, ast) {
+        let tfuncs = match type_checker::check_file(buckets, ast, env) {
             Ok(x) => x,
             Err(err) => {
                 errors.push(err);
@@ -123,8 +144,7 @@ fn compile<'a>(env: &mut FileDb<'a>) -> Result<Program<'static>, Vec<Error>> {
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
     let config = codespan_reporting::term::Config::default();
     for err in errs {
-        codespan_reporting::term::emit(writer, &config, files, &err.diagnostic())
-            .expect("why did this fail?");
+        codespan_reporting::term::emit(writer, &config, files, &err.diagnostic()).unwrap();
     }
 }
 
@@ -132,7 +152,6 @@ fn run_from_args(args: Vec<String>) -> ! {
     let args: Vec<String> = std::env::args().collect();
 
     let writer = StandardStream::stderr(ColorChoice::Always);
-    let runtime_io = DefaultIO::new();
 
     let mut files = FileDb::new(true);
     for arg in args.iter().skip(1) {
@@ -151,7 +170,7 @@ fn run_from_args(args: Vec<String>) -> ! {
                     &files,
                     &err.diagnostic(),
                 )
-                .expect("why did this fail?");
+                .unwrap();
             }
             std::process::exit(1);
         }
@@ -159,8 +178,8 @@ fn run_from_args(args: Vec<String>) -> ! {
 
     mem::drop(files);
 
-    let mut runtime = interpreter::Runtime::new(program, runtime_io, StringArray::new());
-    match runtime.run() {
+    let mut runtime = interpreter::Runtime::new(program, StringArray::new());
+    match runtime.run(std::io::stdout()) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
             let print = interpreter::render_err(&err, &runtime.memory.callstack, &program);
@@ -179,7 +198,7 @@ fn main() {
             ws_handler: ws_respond,
         };
         let addr = "0.0.0.0:3000";
-        server.serve(addr).expect("server errored");
+        server.serve(addr).unwrap();
 
         return;
     }
@@ -195,7 +214,6 @@ fn respond_to_http_request<'a>(
     http_header: HttpHeader,
     buffer: &'a mut [u8],
 ) -> Result<net_io::HttpResponse<'a>, WebServerError> {
-    const ROOT_HTML: &str = "<!doctype html><html></html>";
     let mut path_len = http_header.path.len();
     buffer[..path_len].copy_from_slice(http_header.path.as_bytes());
     if buffer[path_len - 1] == b'/' {
@@ -208,65 +226,70 @@ fn respond_to_http_request<'a>(
     println!("received request for path {}", path);
     let text = Asset::get(&path[1..]);
 
-    if let Some(text) = text {
-        let (body_buf, ct_buf);
-        if let Cow::Borrowed(borrowed) = text {
-            body_buf = borrowed;
-            ct_buf = buffer;
-        } else {
-            if text.len() > buffer.len() {
-                return Err(WebServerError::ResponseTooLarge(text.len()));
-            }
+    let text = match text {
+        None => {
+            const ROOT_HTML: &str = "<!doctype html><html><body><p>404 not found</p></body></html>";
+            return Ok(net_io::HttpResponse {
+                status: 404,
+                body: ROOT_HTML.as_bytes(),
+                content_type: net_io::CT_TEXT_HTML,
+            });
+        }
+        Some(text) => text,
+    };
 
-            let tup = buffer.split_at_mut(text.len());
-            tup.0.copy_from_slice(&text);
-            body_buf = tup.0;
-            ct_buf = tup.1;
+    let (body_buf, ct_buf);
+    if let Cow::Borrowed(borrowed) = text {
+        body_buf = borrowed;
+        ct_buf = buffer;
+    } else {
+        if text.len() > buffer.len() {
+            return Err(WebServerError::ResponseTooLarge(text.len()));
         }
 
-        let content_type = match path {
-            x if x.ends_with(".js") => "text/javascript",
-            x if x.ends_with(".css") => "text/css",
-            _ => {
-                let info = infer::Infer::new();
-                let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
-                let content_type = content_type_opt
-                    .as_ref()
-                    .map(|mime| mime.deref())
-                    .unwrap_or(net_io::CT_TEXT_HTML);
-                if content_type.len() >= ct_buf.len() {
-                    return Err(WebServerError::ResponseTooLarge(
-                        text.len() + content_type.len(),
-                    ));
-                }
-
-                let ct_buf = &mut ct_buf[..content_type.len()];
-                ct_buf.copy_from_slice(content_type.as_bytes());
-                unsafe { core::str::from_utf8_unchecked(ct_buf) }
-            }
-        };
-
-        return Ok(net_io::HttpResponse {
-            status: 200,
-            body: body_buf,
-            content_type,
-        });
+        let tup = buffer.split_at_mut(text.len());
+        tup.0.copy_from_slice(&text);
+        body_buf = tup.0;
+        ct_buf = tup.1;
     }
 
+    let content_type = match path {
+        x if x.ends_with(".html") => "text/html",
+        x if x.ends_with(".js") => "text/javascript",
+        x if x.ends_with(".css") => "text/css",
+        _ => {
+            let info = infer::Infer::new();
+            let content_type_opt = info.get(body_buf).map(|kind| kind.mime);
+            let content_type = content_type_opt
+                .as_ref()
+                .map(|mime| mime.deref())
+                .unwrap_or(net_io::CT_TEXT_HTML);
+            if content_type.len() >= ct_buf.len() {
+                return Err(WebServerError::ResponseTooLarge(
+                    text.len() + content_type.len(),
+                ));
+            }
+
+            let ct_buf = &mut ct_buf[..content_type.len()];
+            ct_buf.copy_from_slice(content_type.as_bytes());
+            unsafe { core::str::from_utf8_unchecked(ct_buf) }
+        }
+    };
+
     return Ok(net_io::HttpResponse {
-        status: 404,
-        body: ROOT_HTML.as_bytes(),
-        content_type: net_io::CT_TEXT_HTML,
+        status: 200,
+        body: body_buf,
+        content_type,
     });
 }
 
-pub struct WSRuntime<'a> {
-    pub state: commands::WSState<'a>,
+pub struct WSRuntime {
+    pub state: commands::WSState,
     pub results: Vec<commands::CommandResult>,
     pub results_idx: usize,
 }
 
-impl<'a> Default for WSRuntime<'a> {
+impl Default for WSRuntime {
     fn default() -> Self {
         Self {
             state: commands::WSState::default(),

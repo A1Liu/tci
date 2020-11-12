@@ -80,13 +80,15 @@ impl<'a> File<'a> {
     }
 }
 
-pub struct FileDb<'a> {
-    buckets: BucketListRef<'a>,
-    pub buckets_next: BucketListRef<'a>,
+pub const NO_SYMBOL: u32 = !0;
+
+pub struct FileDb {
+    buckets: BucketListRef<'static>,
+    pub buckets_next: BucketListRef<'static>,
     pub _size: usize,
-    pub file_names: HashMap<&'a str, u32>,
-    pub files: Vec<File<'a>>,
-    pub translate: HashMap<&'a str, u32>,
+    pub file_names: HashMap<&'static str, u32>,
+    pub files: Vec<File<'static>>,
+    pub translate: HashMap<&'static str, u32>,
     pub names: Vec<CodeLoc>,
     pub fs_read_access: bool,
 }
@@ -138,7 +140,7 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     }
 });
 
-impl<'a> Drop for FileDb<'a> {
+impl Drop for FileDb {
     fn drop(&mut self) {
         while let Some(b) = unsafe { self.buckets.dealloc() } {
             self.buckets = b;
@@ -146,7 +148,7 @@ impl<'a> Drop for FileDb<'a> {
     }
 }
 
-impl<'a> FileDb<'a> {
+impl FileDb {
     /// Create a new files database.
     pub fn new(fs_read_access: bool) -> Self {
         let mut string = String::new();
@@ -188,20 +190,19 @@ impl<'a> FileDb<'a> {
         new_self
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (u32, &'a str)> {
+    pub fn iter(&self) -> impl Iterator<Item = u32> {
         return self.vec().into_iter();
     }
 
-    pub fn vec(&self) -> Vec<(u32, &'a str)> {
+    pub fn vec(&self) -> Vec<u32> {
         let iter = self.files.iter();
-        #[rustfmt::skip]
-            return iter.enumerate().skip(INIT_SYMS.files.len() + 1)
-                .map(|(id, file)| (id as u32, file._source))
-                .collect();
+        return (0..self.files.len() as u32)
+            .skip(INIT_SYMS.files.len() + 1) // +1 here is for the init syms initial file
+            .collect();
     }
 
     /// Add a file to the database, returning the handle that can be used to
-    /// refer to it again.
+    /// refer to it again. Errors if the file already exists in the database.
     pub fn add(&mut self, file_name: &str, source: &str) -> Result<u32, io::Error> {
         let file_name_owned = canonicalize(file_name)?;
         let file_name = file_name_owned.to_str().unwrap();
@@ -222,7 +223,8 @@ impl<'a> FileDb<'a> {
     }
 
     /// Add a file to the database, returning the handle that can be used to
-    /// refer to it again.
+    /// refer to it again. Returns existing file handle if file already exists in
+    /// the database
     pub fn add_from_fs(&mut self, file_name: &str) -> Result<u32, io::Error> {
         let file_name_owned = canonicalize(file_name)?;
         let file_name = file_name_owned.to_str().unwrap();
@@ -247,8 +249,23 @@ impl<'a> FileDb<'a> {
         Ok(file_id)
     }
 
+    pub fn symbol_to_str(&self, symbol: u32) -> &str {
+        let cloc = self.names[symbol as usize];
+        return self.cloc_to_str(cloc);
+    }
+
+    pub fn cloc_to_str(&self, cloc: CodeLoc) -> &str {
+        let range: ops::Range<usize> = cloc.into();
+        let text = self.files[cloc.file as usize]._source;
+        return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
+    }
+
     pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
-        let text = self.symbol_to_str(symbol);
+        let cloc = self.names[symbol as usize];
+        let range: ops::Range<usize> = cloc.into();
+        let text = self.files[cloc.file as usize]._source;
+        let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
+
         if Path::new(text).is_relative() {
             let base_path = parent_if_file(self.files[base_file as usize]._name);
             let real_path = Path::new(base_path).join(text);
@@ -259,17 +276,6 @@ impl<'a> FileDb<'a> {
         return self.add_from_fs(&text);
     }
 
-    pub fn symbol_to_str(&self, symbol: u32) -> &'a str {
-        let cloc = self.names[symbol as usize];
-        return self.cloc_to_str(cloc);
-    }
-
-    pub fn cloc_to_str(&self, cloc: CodeLoc) -> &'a str {
-        let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize]._source;
-        return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
-    }
-
     #[inline]
     pub fn translate_add(&mut self, range: ops::Range<usize>, file: u32) -> u32 {
         let cloc = l(range.start as u32, range.end as u32, file); // TODO check for overflow
@@ -278,7 +284,9 @@ impl<'a> FileDb<'a> {
 
     #[inline]
     pub fn translate_add_cloc(&mut self, cloc: CodeLoc) -> u32 {
-        let text = self.cloc_to_str(cloc);
+        let range: ops::Range<usize> = cloc.into();
+        let text = self.files[cloc.file as usize]._source;
+        let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
 
         if let Some(id) = self.translate.get(text) {
             return *id;
@@ -296,7 +304,7 @@ impl<'a> FileDb<'a> {
     }
 }
 
-impl<'a> Files<'a> for FileDb<'a> {
+impl<'a> Files<'a> for FileDb {
     type FileId = u32;
     type Name = &'a str;
     type Source = &'a str;

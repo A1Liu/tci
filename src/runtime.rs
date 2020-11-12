@@ -3,6 +3,7 @@ use crate::filedb::INIT_SYMS;
 use crate::util::*;
 use core::{fmt, mem, str};
 use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
+use std::collections::VecDeque;
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
@@ -405,6 +406,27 @@ impl<'a> Serialize for VarBufferRef<'a> {
     }
 }
 
+pub enum WriteEvent {
+    StdoutWrite(String),
+    StderrWrite(String),
+    Unwind(u32),
+}
+
+impl WriteEvent {
+    pub fn to_string(self) -> String {
+        match self {
+            WriteEvent::StdoutWrite(value) => return value,
+            WriteEvent::StderrWrite(value) => return value,
+            WriteEvent::Unwind(len) => return String::new(),
+        }
+    }
+}
+
+pub const EVENT_STDOUT_WRITE: u32 = 1 << 31;
+pub const EVENT_STDERR_WRITE: u32 = 1 << 30;
+pub const EVENT_RESERVED_BITS: u32 = EVENT_STDOUT_WRITE | EVENT_STDERR_WRITE;
+pub const EVENT_SIZE: usize = 1024 * 1024;
+
 // bk stands for book keeping; every MAKind stores the last index its responsible
 // for in historical_data for fast search during historical data resizes
 #[derive(Debug, Clone, Copy)]
@@ -461,6 +483,18 @@ pub enum MAKind {
         val: u32,
         bk: usize,
     },
+    WriteStdout {
+        start: usize,
+        end: usize,
+    },
+    WriteStderr {
+        start: usize,
+        end: usize,
+    },
+    Unwrite {
+        start: usize,
+        block_size: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -507,6 +541,9 @@ impl MemoryAction {
             MAKind::SetFp { prev, val, bk } => return bk,
             MAKind::SetFunc { prev, val, bk } => return bk,
             MAKind::Jump { prev, val, bk } => return bk,
+            MAKind::WriteStderr { start, end } => return start,
+            MAKind::WriteStdout { start, end } => return start,
+            MAKind::Unwrite { start, block_size } => return start,
         }
     }
 }
@@ -515,6 +552,9 @@ pub struct Memory {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
     pub binary: VarBuffer,
+
+    pub io_events: VecDeque<u32>,
+    pub io_buf: VecDeque<u8>,
 
     pub callstack: Vec<CallFrame>,
     pub current_func: u32,
@@ -533,6 +573,9 @@ impl Memory {
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
+
+            io_events: VecDeque::new(),
+            io_buf: VecDeque::new(),
 
             callstack: Vec::new(),
             current_func: INIT_SYMS.translate["main"],
@@ -560,6 +603,9 @@ impl Memory {
             heap: VarBuffer::new(),
             binary: VarBuffer::load_from_ref(binary),
 
+            io_events: VecDeque::new(),
+            io_buf: VecDeque::new(),
+
             callstack: Vec::new(),
             current_func: INIT_SYMS.translate["main"],
             fp: 1,
@@ -570,6 +616,35 @@ impl Memory {
             history_binary_end,
             history_index: 0,
         }
+    }
+
+    pub fn events(&mut self) -> impl Iterator<Item = WriteEvent> {
+        let mut events = Vec::new();
+
+        for event in self.io_events.drain(..) {
+            let event_enum = event & EVENT_RESERVED_BITS;
+            let event_len = event & !EVENT_RESERVED_BITS;
+            if event_enum == 0 {
+                events.push(WriteEvent::Unwind(event_len));
+            }
+
+            let mut buf = Vec::new();
+            for _ in 0..event_len {
+                buf.push(self.io_buf.pop_front().unwrap());
+            }
+
+            let string = unsafe { String::from_utf8_unchecked(buf) };
+
+            if event_enum == EVENT_STDOUT_WRITE {
+                events.push(WriteEvent::StdoutWrite(string));
+            } else if event_enum == EVENT_STDERR_WRITE {
+                events.push(WriteEvent::StderrWrite(string));
+            } else {
+                unreachable!();
+            }
+        }
+
+        return events.into_iter();
     }
 
     pub fn ret(&mut self) {
@@ -1230,6 +1305,14 @@ impl Memory {
         return Ok(out);
     }
 
+    pub fn stdout(&mut self) -> MemoryStdout {
+        MemoryStdout { memory: self }
+    }
+
+    pub fn stderr(&mut self) -> MemoryStderr {
+        MemoryStderr { memory: self }
+    }
+
     pub fn next(&mut self) -> bool {
         if self.history_index == self.history.len() {
             return false;
@@ -1301,6 +1384,19 @@ impl Memory {
             }
             MAKind::Jump { prev, val, bk } => {
                 self.pc = val;
+            }
+            MAKind::WriteStdout { start, end } => {
+                self.io_buf.extend(&self.historical_data[start..end]);
+                let block_size = EVENT_STDOUT_WRITE | ((end - start) as u32);
+                self.io_events.push_back(block_size);
+            }
+            MAKind::WriteStderr { start, end } => {
+                self.io_buf.extend(&self.historical_data[start..end]);
+                let block_size = EVENT_STDERR_WRITE | ((end - start) as u32);
+                self.io_events.push_back(block_size);
+            }
+            MAKind::Unwrite { start, block_size } => {
+                self.io_events.push_back(block_size);
             }
         }
 
@@ -1385,6 +1481,22 @@ impl Memory {
             MAKind::Jump { prev, val, bk } => {
                 self.pc = prev;
             }
+            MAKind::WriteStdout { start, end } => {
+                let block_size = (end - start) as u32;
+                self.io_events.push_back(block_size);
+            }
+            MAKind::WriteStderr { start, end } => {
+                let block_size = (end - start) as u32;
+                self.io_events.push_back(block_size);
+            }
+            MAKind::Unwrite { start, block_size } => {
+                let block_enum = block_size & EVENT_RESERVED_BITS;
+                let block_size = block_size & !EVENT_RESERVED_BITS;
+                let end = start + block_size as usize;
+
+                self.io_buf.extend(&self.historical_data[start..end]);
+                self.io_events.push_back(block_enum | block_size);
+            }
         }
 
         self.history_index -= 1;
@@ -1397,6 +1509,78 @@ impl Memory {
             heap: self.heap.clone(),
             binary: self.binary.clone(),
         }
+    }
+}
+
+pub struct MemoryStdout<'a> {
+    pub memory: &'a mut Memory,
+}
+
+pub struct MemoryStderr<'a> {
+    pub memory: &'a mut Memory,
+}
+impl<'a> io::Write for MemoryStderr<'a> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        use std::cmp::min;
+        let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
+        core::str::from_utf8(buf).map_err(map_err)?;
+        self.memory.io_buf.extend(buf);
+
+        let (mut start, mut end) = (0, min(EVENT_SIZE, buf.len()));
+        while start < buf.len() {
+            let block_size = end - start;
+            self.memory
+                .io_events
+                .push_back(EVENT_STDERR_WRITE | (block_size as u32));
+
+            {
+                let start = self.memory.historical_data.len();
+                self.memory.historical_data.extend(&buf[start..end]);
+                let end = self.memory.historical_data.len();
+                self.memory.push_history(MAKind::WriteStderr { start, end });
+            }
+
+            start = end;
+            end = min(end + EVENT_SIZE, buf.len());
+        }
+
+        return Ok(buf.len());
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> io::Write for MemoryStdout<'a> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        use std::cmp::min;
+        let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
+        core::str::from_utf8(buf).map_err(map_err)?;
+        self.memory.io_buf.extend(buf);
+
+        let (mut start, mut end) = (0, min(EVENT_SIZE, buf.len()));
+        while start < buf.len() {
+            let block_size = end - start;
+            self.memory
+                .io_events
+                .push_back(EVENT_STDOUT_WRITE | (block_size as u32));
+
+            {
+                let hist_start = self.memory.historical_data.len();
+                self.memory.historical_data.extend(&buf[start..end]);
+                let (start, end) = (hist_start, self.memory.historical_data.len());
+                self.memory.push_history(MAKind::WriteStderr { start, end });
+            }
+
+            start = end;
+            end = min(end + EVENT_SIZE, buf.len());
+        }
+
+        return Ok(buf.len());
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 

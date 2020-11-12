@@ -1,2 +1,2 @@
-void *malloc(long value);
+void *malloc(int value);
 void free(void *value);

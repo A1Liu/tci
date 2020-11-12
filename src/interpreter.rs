@@ -34,12 +34,12 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Progra
         end_context_lines: 1,
     };
 
-    write!(out, "{}: {}\n", error.short_name, error.message).expect("cannot fail");
-    for frame in stack_trace {
+    write!(out, "{}: {}\n", error.short_name, error.message).unwrap();
+
+    for frame in stack_trace.iter().skip(1) {
         let diagnostic = Diagnostic::new(Severity::Void)
             .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
-        codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic)
-            .expect("why did this fail?");
+        codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic).unwrap();
     }
 
     return out.to_string();
@@ -55,7 +55,7 @@ pub const ECALL_ARGC: u32 = 1;
 /// and pushes a pointer to the string on the heap as the result.
 pub const ECALL_ARGV: u32 = 2;
 
-/// No symbol associated with this stack var
+/// No symbol associated with this stack/binary var
 pub const META_NO_SYMBOL: u32 = u32::MAX;
 
 /// - GetLocal gets a value from the stack at a given stack and variable offset
@@ -65,8 +65,10 @@ pub const META_NO_SYMBOL: u32 = u32::MAX;
 ///   determined by popping the top of the stack first
 /// - PopKeep pops keep-many bytes off the stack, then pops drop-many bytes off the stack and
 ///   repushes the first set of popped bytes back onto  the stack
-/// - Comp compares pops t, the top of the stack, and compares it to n, the next item on the stack.
+/// - CompLt compares pops t, the top of the stack, and compares it to n, the next item on the stack.
 ///   it pushes the byte 1 onto the stack if n < t, and the byte 0 onto the stack if n >= t.
+/// - CompLeq compares pops t, the top of the stack, and compares it to n, the next item on the stack.
+///   it pushes the byte 1 onto the stack if n <= t, and the byte 0 onto the stack if n > t.
 /// - CompEq compares pops t, the top of the stack, and compares it to n, the next item on the stack.
 ///   it pushes the byte 1 onto the stack if n == t, and the byte 0 onto the stack if n != t.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -79,16 +81,17 @@ pub enum Opcode {
     StackDealloc,                           // Pops a variable off of the stack
     StackAddToTemp, // Pops a variable off the stack, adding it to the temporary storage below
 
-    MakeTempInt32(i32),
-    MakeTempInt64(i64),
+    MakeTempI32(i32),
+    MakeTempI64(i64),
     MakeTempFloat64(f64),
     MakeTempBinaryPtr { var: u32, offset: u32 },
     MakeTempLocalStackPtr { var: i16, offset: u32 },
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
-    PushUndef { bytes: u32 }, // Push undefined bytes onto the stack
-    PushDup { bytes: u32 },   // Push bytes duplicated from the top of the stack
+    PushUndef { bytes: u32 },       // Push undefined bytes onto the stack
+    PushDup { bytes: u32 },         // Push bytes duplicated from the top of the stack
+    Swap { top: u32, bottom: u32 }, // Swap some number of top bytes with some number of bytes below
     PopIntoTopVar { offset: u32, bytes: u32 },
 
     SExtend8To16,
@@ -117,8 +120,14 @@ pub enum Opcode {
     SubI32,
     SubI64,
 
-    CompI32,
+    MulI32,
+
+    DivI32,
+
+    CompLtI32,
+    CompLeqI32,
     CompEqI32,
+    CompNeqI32,
 
     MulI64,
     DivI64,
@@ -186,7 +195,7 @@ impl<'a> fmt::Debug for Program<'a> {
     }
 }
 
-type LibFunc<IO> = for<'a> fn(&'a mut Runtime<IO>) -> Result<Option<i32>, IError>;
+type LibFunc = for<'a> fn(&'a mut Runtime) -> Result<Option<i32>, IError>;
 
 #[derive(Serialize)]
 pub struct RuntimeDiagnostic {
@@ -196,17 +205,16 @@ pub struct RuntimeDiagnostic {
     pub loc: CodeLoc,
 }
 
-pub struct Runtime<IO: RuntimeIO> {
+pub struct Runtime {
     pub memory: Memory,
     pub args: StringArray,
-    pub lib_funcs: HashMap<u32, LibFunc<IO>>,
+    pub lib_funcs: HashMap<u32, LibFunc>,
     pub program: Program<'static>,
-    pub io: IO,
 }
 
-impl<IO: RuntimeIO> Runtime<IO> {
-    pub fn new(program: Program<'static>, io: IO, args: StringArray) -> Self {
-        let mut lib_funcs: HashMap<u32, LibFunc<IO>> = HashMap::new();
+impl Runtime {
+    pub fn new(program: Program<'static>, args: StringArray) -> Self {
+        let mut lib_funcs: HashMap<u32, LibFunc> = HashMap::new();
 
         lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
@@ -218,7 +226,6 @@ impl<IO: RuntimeIO> Runtime<IO> {
             memory,
             program,
             lib_funcs,
-            io,
         };
         return s;
     }
@@ -232,9 +239,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
         }
     }
 
-    pub fn run(&mut self) -> Result<i32, IError> {
+    pub fn run(&mut self, mut io: impl Write) -> Result<i32, IError> {
         loop {
-            if let Some(exit) = self.run_op()? {
+            let ret = self.run_op();
+            for event in self.memory.events() {
+                write!(io, "{}", event.to_string())?;
+            }
+
+            if let Some(exit) = ret? {
                 return Ok(exit);
             }
         }
@@ -270,11 +282,22 @@ impl<IO: RuntimeIO> Runtime<IO> {
         return Ok(None);
     }
 
-    #[inline]
     pub fn run_op(&mut self) -> Result<Option<i32>, IError> {
+        match self.run_op_internal() {
+            Ok(opt) => return Ok(opt),
+            Err(err) => {
+                self.memory
+                    .push_callstack(self.program.ops[self.memory.pc as usize].loc);
+                return Err(err);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn run_op_internal(&mut self) -> Result<Option<i32>, IError> {
         let op = self.program.ops[self.memory.pc as usize];
-        write!(self.io.log(), "op: {:?}\n", op.op)
-            .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
+        // write!(self.io.log(), "op: {:?}\n", op.op)
+        // .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
 
         let opcode = op.op;
         match opcode {
@@ -294,8 +317,8 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.memory.pop_stack_var_onto_stack()?;
             }
 
-            Opcode::MakeTempInt32(value) => self.memory.push_stack(value.to_be()),
-            Opcode::MakeTempInt64(value) => self.memory.push_stack(value.to_be()),
+            Opcode::MakeTempI32(value) => self.memory.push_stack(value.to_be()),
+            Opcode::MakeTempI64(value) => self.memory.push_stack(value.to_be()),
             Opcode::MakeTempFloat64(value) => self.memory.push_stack(value),
             Opcode::MakeTempBinaryPtr { var, offset } => {
                 let ptr = VarPointer::new_binary(var, offset);
@@ -310,12 +333,15 @@ impl<IO: RuntimeIO> Runtime<IO> {
             Opcode::PopKeep { keep, drop } => self.memory.pop_keep_bytes(keep, drop)?,
             Opcode::PushUndef { bytes } => {
                 self.memory.add_stack_var(bytes, META_NO_SYMBOL);
-                self.memory
-                    .pop_stack_var_onto_stack()
-                    .expect("should never fail");
+                self.memory.pop_stack_var_onto_stack().unwrap();
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
+            }
+            Opcode::Swap { top, bottom } => {
+                self.memory.dup_top_stack_bytes(top + bottom)?;
+                self.memory.pop_bytes(top)?;
+                self.memory.pop_keep_bytes(top + bottom, bottom)?;
             }
             Opcode::PopIntoTopVar { offset, bytes } => {
                 let ptr = VarPointer::new_stack(self.memory.stack_length(), offset);
@@ -324,52 +350,52 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::SExtend8To16 => {
                 let val = self.memory.pop_stack::<i8>()?;
-                self.memory.push_stack(val as i16);
+                self.memory.push_stack((val as i16).to_be());
             }
             Opcode::SExtend8To32 => {
                 let val = self.memory.pop_stack::<i8>()?;
-                self.memory.push_stack(val as i32);
+                self.memory.push_stack((val as i32).to_be());
             }
             Opcode::SExtend8To64 => {
                 let val = self.memory.pop_stack::<i8>()?;
-                self.memory.push_stack(val as i64);
+                self.memory.push_stack((val as i64).to_be());
             }
             Opcode::SExtend16To32 => {
-                let val = self.memory.pop_stack::<i16>()?;
-                self.memory.push_stack(val as i32);
+                let val = i16::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((val as i32).to_be());
             }
             Opcode::SExtend16To64 => {
-                let val = self.memory.pop_stack::<i16>()?;
-                self.memory.push_stack(val as i64);
+                let val = i16::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((val as i64).to_be());
             }
             Opcode::SExtend32To64 => {
-                let val = self.memory.pop_stack::<i32>()?;
-                self.memory.push_stack(val as i64);
+                let val = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((val as i64).to_be());
             }
 
             Opcode::ZExtend8To16 => {
                 let val = self.memory.pop_stack::<u8>()?;
-                self.memory.push_stack(val as u16);
+                self.memory.push_stack((val as u16).to_be());
             }
             Opcode::ZExtend8To32 => {
                 let val = self.memory.pop_stack::<u8>()?;
-                self.memory.push_stack(val as u32);
+                self.memory.push_stack((val as u32).to_be());
             }
             Opcode::ZExtend8To64 => {
                 let val = self.memory.pop_stack::<u8>()?;
-                self.memory.push_stack(val as u64);
+                self.memory.push_stack((val as u64).to_be());
             }
             Opcode::ZExtend16To32 => {
-                let val = self.memory.pop_stack::<u16>()?;
-                self.memory.push_stack(val as u32);
+                let val = u16::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((val as u32).to_be());
             }
             Opcode::ZExtend16To64 => {
-                let val = self.memory.pop_stack::<u16>()?;
-                self.memory.push_stack(val as u64);
+                let val = u16::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((val as u64).to_be());
             }
             Opcode::ZExtend32To64 => {
-                let val = self.memory.pop_stack::<u32>()?;
-                self.memory.push_stack(val as u64);
+                let val = u32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((val as u64).to_be());
             }
 
             Opcode::GetLocal { var, offset, bytes } => {
@@ -383,12 +409,14 @@ impl<IO: RuntimeIO> Runtime<IO> {
 
             Opcode::Get { offset, bytes } => {
                 let ptr: VarPointer = self.memory.pop_stack()?;
-                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
+                // TODO check for overflow
+                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.push_stack_bytes_from(ptr, bytes)?;
             }
             Opcode::Set { offset, bytes } => {
                 let ptr: VarPointer = self.memory.pop_stack()?;
-                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32)); // TODO check for overflow
+                // TODO check for overflow
+                let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.pop_stack_bytes_into(ptr, bytes)?;
             }
 
@@ -397,14 +425,28 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 let word1 = u32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_add(word2).to_be());
             }
-
             Opcode::SubI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_sub(word2).to_be());
             }
+            Opcode::MulI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_mul(word2).to_be());
+            }
+            Opcode::DivI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_div(word2).to_be());
+            }
 
-            Opcode::CompI32 => {
+            Opcode::CompLeqI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 <= word2) as u8);
+            }
+            Opcode::CompLtI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 < word2) as u8);
@@ -415,9 +457,16 @@ impl<IO: RuntimeIO> Runtime<IO> {
                 self.memory.push_stack((word1 == word2) as u8);
             }
 
+            Opcode::CompNeqI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 != word2) as u8);
+            }
+
             Opcode::AddU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
+
                 self.memory.push_stack(word1.wrapping_add(word2).to_be());
             }
             Opcode::SubI64 => {
@@ -582,7 +631,7 @@ impl<IO: RuntimeIO> Runtime<IO> {
     }
 }
 
-pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
@@ -591,19 +640,19 @@ pub fn malloc<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
     return Ok(None);
 }
 
-pub fn free<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn free(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
     return Ok(None);
 }
 
-pub fn exit<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn exit(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     return Ok(Some(exit_code));
 }
 
-pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IError> {
+pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr_offset = sel.memory.stack_length();
     let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
     let param_len = i32::from_be(sel.memory.get_var(top_ptr)?);
@@ -613,11 +662,30 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
     let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
     current_offset += 1;
 
+    let mut out = StringWriter::new();
+
+    let result = printf_internal(sel, format_ptr, current_offset, &mut out);
+    let out = out.into_string();
+    let len = out.len() as i32; // TODO overflow
+    write!(sel.memory.stdout(), "{}", out)?;
+    result?;
+
+    let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
+    sel.memory.set(return_ptr, len.to_be())?;
+
+    return Ok(None);
+}
+
+pub fn printf_internal(
+    sel: &mut Runtime,
+    format_ptr: VarPointer,
+    mut current_offset: u16,
+    mut out: &mut StringWriter,
+) -> Result<(), IError> {
     // OPTIMIZE This does an unnecessary linear scan
     let format_str = sel.cstring_bytes(sel.memory.get_var(format_ptr)?)?;
     let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
 
-    let mut out = StringWriter::new();
     let mut idx = 0;
     while idx < format_str.len() {
         let mut idx2 = idx;
@@ -671,13 +739,5 @@ pub fn printf<IO: RuntimeIO>(sel: &mut Runtime<IO>) -> Result<Option<i32>, IErro
         idx = idx2 + 1;
     }
 
-    let out = out.into_string();
-    let len = out.len() as i32;
-    write!(sel.io.out(), "{}", &out).map_err(map_err)?;
-
-    // Return value for function
-    let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
-    sel.memory.set(return_ptr, len.to_be())?;
-
-    return Ok(None);
+    return Ok(());
 }

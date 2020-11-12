@@ -1,4 +1,4 @@
-.App {
+/* .App {
   text-align: center;
 }
 
@@ -35,4 +35,30 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+canvas{
+  width:100%!important;
+  height:100%;
+} */
+#terminal-div{
+  text-align: left;
+}
+#terminal-title{
+  text-align: center;
+}
+
+#terminal-text{
+  white-space: pre-wrap;
+}
+.term-caret {
+  display: inline-block;
+  color: white;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+}
+.blink {
+  color: transparent;
 }

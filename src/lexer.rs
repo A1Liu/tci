@@ -17,6 +17,7 @@ pub enum TokenKind<'a> {
     Include(u32),
     IncludeSys(u32),
     MacroDef(u32),
+    FuncMacroDef(u32),
     MacroDefEnd,
 
     Void,
@@ -38,7 +39,8 @@ pub enum TokenKind<'a> {
     Dot,
     DotDotDot,
     Arrow,
-    Not,
+    Bang,
+    Question,
     Tilde,
     Star,
     Slash,
@@ -76,6 +78,7 @@ pub enum TokenKind<'a> {
     RBracket,
 
     Semicolon,
+    Colon,
     Comma,
 }
 
@@ -95,84 +98,6 @@ impl<'a> Token<'a> {
 }
 
 #[inline]
-pub fn expect(data: &[u8], current: &mut usize) -> Result<u8, Error> {
-    if *current == data.len() {
-        return Err(error!("unexpected end of file"));
-    }
-
-    let cur = *current;
-    *current += 1;
-    return Ok(data[cur]);
-}
-
-#[inline]
-pub fn peek_check(data: &[u8], current: &mut usize, checker: impl Fn(u8) -> bool) -> bool {
-    if *current >= data.len() {
-        return false;
-    }
-
-    return checker(data[*current]);
-}
-
-#[inline]
-pub fn peek_eq(data: &[u8], current: &mut usize, byte: u8) -> bool {
-    if *current >= data.len() {
-        return false;
-    }
-
-    return data[*current] == byte;
-}
-
-pub fn peek_eq_series(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
-    let byte_len = bytes.len();
-    if *current + bytes.len() > data.len() {
-        return false;
-    }
-
-    let eq_slice = &data[(*current)..(*current + byte_len)];
-    return eq_slice == bytes;
-}
-
-#[inline]
-pub fn peek_neq(data: &[u8], current: &mut usize, byte: u8) -> bool {
-    if *current >= data.len() {
-        return false;
-    }
-
-    return data[*current] != byte;
-}
-
-#[inline]
-pub fn peek_neqs(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
-    if *current >= data.len() {
-        return false;
-    }
-
-    for byte in bytes {
-        if data[*current] == *byte {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-#[inline]
-pub fn peek_eqs(data: &[u8], current: &mut usize, bytes: &[u8]) -> bool {
-    if *current >= data.len() {
-        return false;
-    }
-
-    for byte in bytes {
-        if data[*current] == *byte {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-#[inline]
 pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
     return error!(
         "invalid token",
@@ -183,114 +108,713 @@ pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
 
 pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
 
-pub fn lex_file<'a, 'b>(
+const WHITESPACE: [u8; 2] = [b' ', b'\t'];
+const CRLF: [u8; 2] = [b'\r', b'\n'];
+
+pub fn lex_file<'b>(
     buckets: BucketListRef<'b>,
     token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb<'a>,
+    symbols: &mut FileDb,
     file: u32,
-    data: &'a str,
 ) -> Result<&'b [Token<'b>], Error> {
     if let Some(toks) = token_db.get(&file) {
         return Ok(toks);
     }
 
     let mut incomplete = HashSet::new();
-    let tokens = lex_file_rec(buckets, &mut incomplete, token_db, symbols, file, data)?;
+    let tokens = Lexer::new(file).lex_file(buckets, &mut incomplete, token_db, symbols)?;
     token_db.insert(file, tokens);
     return Ok(tokens);
 }
 
-pub fn lex_file_rec<'a, 'b>(
-    mut buckets: BucketListRef<'b>,
-    incomplete: &mut HashSet<u32>,
-    token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb<'a>,
+pub struct Lexer<'a> {
     file: u32,
-    data: &'a str,
-) -> Result<&'b [Token<'b>], Error> {
-    let mut toks = Vec::new();
-    let bytes = data.as_bytes();
-    let mut current = 0;
-
-    lex_macro(
-        buckets,
-        incomplete,
-        token_db,
-        symbols,
-        file,
-        bytes,
-        &mut current,
-        &mut toks,
-    )?;
-
-    let mut done = lex_macro_or_token(
-        buckets,
-        incomplete,
-        token_db,
-        symbols,
-        file,
-        bytes,
-        &mut current,
-        &mut toks,
-    )?;
-
-    while !done {
-        done = lex_macro_or_token(
-            buckets,
-            incomplete,
-            token_db,
-            symbols,
-            file,
-            bytes,
-            &mut current,
-            &mut toks,
-        )?;
-
-        while let Some(next) = buckets.next() {
-            buckets = next;
-        }
-    }
-
-    return Ok(buckets.add_array(toks));
+    current: usize,
+    output: Vec<Token<'a>>,
 }
 
-const WHITESPACE: [u8; 2] = [b' ', b'\t'];
-const CRLF: [u8; 2] = [b'\r', b'\n'];
+impl<'b> Lexer<'b> {
+    pub fn new(file: u32) -> Self {
+        Self {
+            file,
+            current: 0,
+            output: Vec::new(),
+        }
+    }
 
-pub fn lex_macro_or_token<'a, 'b>(
-    buckets: BucketListRef<'b>,
-    incomplete: &mut HashSet<u32>,
-    token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb<'a>,
-    file: u32,
-    data: &'a [u8],
-    current: &mut usize,
-    output: &mut Vec<Token<'b>>,
-) -> Result<bool, Error> {
-    loop {
-        while peek_eqs(data, current, &WHITESPACE) {
-            *current += 1;
+    pub fn lex_file(
+        mut self,
+        mut buckets: BucketListRef<'b>,
+        incomplete: &mut HashSet<u32>,
+        token_db: &mut TokenDb<'b>,
+        symbols: &mut FileDb,
+    ) -> Result<&'b [Token<'b>], Error> {
+        let bytes = symbols.source(self.file).unwrap().as_bytes();
+
+        self.lex_macro(buckets, incomplete, token_db, symbols, bytes)?;
+
+        let mut done = self.lex_macro_or_token(buckets, incomplete, token_db, symbols, bytes)?;
+
+        while !done {
+            done = self.lex_macro_or_token(buckets, incomplete, token_db, symbols, bytes)?;
+
+            while let Some(next) = buckets.next() {
+                buckets = next;
+            }
         }
 
-        if peek_eq(data, current, b'\n') {
-            *current += 1;
-        } else if peek_eq_series(data, current, &CRLF) {
-            *current += 2;
+        return Ok(buckets.add_array(self.output));
+    }
+
+    pub fn lex_macro_or_token(
+        &mut self,
+        buckets: BucketListRef<'b>,
+        incomplete: &mut HashSet<u32>,
+        token_db: &mut TokenDb<'b>,
+        symbols: &mut FileDb,
+        data: &[u8],
+    ) -> Result<bool, Error> {
+        loop {
+            while self.peek_eqs(data, &WHITESPACE) {
+                self.current += 1;
+            }
+
+            if self.peek_eq_series(data, &[b'/', b'/']) {
+                self.current += 2;
+                while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                    self.current += 1;
+                }
+            } else if self.peek_eq_series(data, &[b'/', b'*']) {
+                self.current += 2;
+                while self.peek_neq_series(data, &[b'*', b'/']) {
+                    self.current += 1;
+                }
+
+                continue;
+            }
+
+            if self.peek_eq(data, b'\n') {
+                self.current += 1;
+            } else if self.peek_eq_series(data, &CRLF) {
+                self.current += 2;
+            } else {
+                break;
+            }
+
+            self.lex_macro(buckets, incomplete, token_db, symbols, data)?;
+        }
+
+        if self.current == data.len() {
+            return Ok(true);
+        }
+
+        let tok = self.lex_token(buckets, symbols, data)?;
+        self.output.push(tok);
+        return Ok(false);
+    }
+
+    pub fn lex_macro(
+        &mut self,
+        buckets: BucketListRef<'b>,
+        incomplete: &mut HashSet<u32>,
+        token_db: &mut TokenDb<'b>,
+        symbols: &mut FileDb,
+        data: &[u8],
+    ) -> Result<(), Error> {
+        if self.peek_eq(data, b'#') {
+            self.current += 1;
         } else {
-            break;
+            return Ok(());
         }
 
-        lex_macro(
-            buckets, incomplete, token_db, symbols, file, data, current, output,
-        )?;
+        // macros!
+        let begin = self.current;
+        while self.peek_neqs(data, &WHITESPACE) {
+            self.current += 1;
+        }
+
+        let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
+        match directive {
+            "define" => {
+                while self.peek_eqs(data, &WHITESPACE) {
+                    self.current += 1;
+                }
+
+                let ident_begin = self.current;
+                if ident_begin == data.len() {
+                    return Err(error!(
+                        "unexpected end of file",
+                        l(ident_begin as u32, begin as u32, self.file),
+                        "EOF found here"
+                    ));
+                }
+
+                while self.peek_check(data, is_ident_char) {
+                    self.current += 1;
+                }
+
+                // Don't add the empty string
+                if self.current - ident_begin == 0 {
+                    return Err(error!(
+                        "expected an identifer for macro declaration",
+                        l(ident_begin as u32, ident_begin as u32 + 1, self.file),
+                        "This should be an identifier"
+                    ));
+                }
+
+                let id = symbols.translate_add(ident_begin..self.current, self.file);
+
+                macro_rules! consume_whitespace_macro {
+                    () => {
+                        while self.peek_eqs(data, &WHITESPACE) {
+                            self.current += 1;
+                        }
+
+                        if self.current == data.len() {
+                            break;
+                        }
+
+                        if self.peek_eq(data, b'\n') {
+                            break;
+                        } else if self.peek_eq_series(data, &CRLF) {
+                            break;
+                        } else if self.peek_eq_series(data, &[b'\\', b'\n']) {
+                            self.current += 2;
+                            continue;
+                        } else if self.peek_eq_series(data, &[b'\\', b'\r', b'\n']) {
+                            self.current += 3;
+                            continue;
+                        }
+                    };
+                }
+
+                if !self.peek_eq(data, b'(') {
+                    self.output.push(Token::new(
+                        TokenKind::MacroDef(id),
+                        begin..self.current,
+                        self.file,
+                    ));
+
+                    loop {
+                        consume_whitespace_macro!();
+                        let tok = self.lex_token(buckets, symbols, data)?;
+                        self.output.push(tok);
+                    }
+
+                    self.output.push(Token::new(
+                        TokenKind::MacroDefEnd,
+                        self.current..self.current,
+                        self.file,
+                    ));
+
+                    return Ok(());
+                }
+
+                self.output.push(Token::new(
+                    TokenKind::FuncMacroDef(id),
+                    begin..self.current,
+                    self.file,
+                ));
+
+                loop {
+                    consume_whitespace_macro!();
+                    let tok = self.lex_token(buckets, symbols, data)?;
+                    self.output.push(tok);
+                }
+
+                self.output.push(Token::new(
+                    TokenKind::MacroDefEnd,
+                    self.current..self.current,
+                    self.file,
+                ));
+
+                return Ok(());
+            }
+            "include" => {
+                while self.peek_eqs(data, &WHITESPACE) {
+                    self.current += 1;
+                }
+
+                if self.peek_eq(data, b'"') {
+                    self.current += 1;
+                    let name_begin = self.current;
+                    while self.peek_neq(data, b'"') {
+                        self.current += 1;
+                    }
+
+                    let id = symbols.translate_add(name_begin..self.current, self.file);
+                    self.current += 1;
+                    if !self.peek_eq(data, b'\n') && !self.peek_eq_series(data, &CRLF) {
+                        return Err(expected_newline("include", begin, self.current, self.file));
+                    }
+
+                    let map_err = |err| {
+                        error!(
+                            "Error finding file",
+                            l(begin as u32, self.current as u32, self.file),
+                            format!("got error '{}'", err)
+                        )
+                    };
+                    let include_id = symbols.add_from_symbols(self.file, id).map_err(map_err)?;
+                    self.output.push(Token::new(
+                        TokenKind::Include(include_id),
+                        begin..self.current,
+                        self.file,
+                    ));
+
+                    if incomplete.contains(&include_id) {
+                        return Err(error!(
+                            "include cycle detected",
+                            l(begin as u32, self.current as u32, self.file),
+                            "found here"
+                        ));
+                    }
+
+                    if let Some(_) = token_db.get(&include_id) {
+                        return Ok(());
+                    }
+
+                    incomplete.insert(include_id);
+                    let toks =
+                        Lexer::new(include_id).lex_file(buckets, incomplete, token_db, symbols)?;
+                    token_db.insert(include_id, toks);
+                    incomplete.remove(&include_id);
+                    return Ok(());
+                } else if self.peek_eq(data, b'<') {
+                    self.current += 1;
+                    let name_begin = self.current;
+
+                    while self.peek_neq(data, b'>') {
+                        self.current += 1;
+                    }
+
+                    let id = symbols.translate_add(name_begin..self.current, self.file);
+                    self.current += 1;
+                    if !self.peek_eq(data, b'\n') && !self.peek_eq_series(data, &CRLF) {
+                        return Err(expected_newline("include", begin, self.current, self.file));
+                    }
+                    self.output.push(Token::new(
+                        TokenKind::IncludeSys(id),
+                        begin..self.current,
+                        self.file,
+                    ));
+
+                    if let Some(_) = token_db.get(&id) {
+                        return Ok(());
+                    }
+
+                    let toks = Lexer::new(id).lex_file(buckets, incomplete, token_db, symbols)?;
+                    token_db.insert(id, toks);
+                    return Ok(());
+                }
+            }
+            _ => {
+                return Err(error!(
+                    "invalid compiler directive",
+                    l(begin as u32, self.current as u32, self.file),
+                    "directive found here"
+                ));
+            }
+        }
+
+        return Ok(());
     }
 
-    if *current == data.len() {
-        return Ok(true);
+    pub fn lex_token(
+        &mut self,
+        buckets: BucketListRef<'b>,
+        symbols: &mut FileDb,
+        data: &[u8],
+    ) -> Result<Token<'b>, Error> {
+        let begin = self.current;
+        self.current += 1;
+
+        macro_rules! ret_tok {
+            ($arg1:expr) => {{
+                return Ok(Token::new($arg1, begin..self.current, self.file));
+            }};
+        }
+
+        match data[begin] {
+            x if (x >= b'a' && x <= b'z') || x == b'_' => {
+                while self.peek_check(data, is_ident_char) {
+                    self.current += 1;
+                }
+
+                let word = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
+                match word {
+                    "if" => ret_tok!(TokenKind::If),
+                    "else" => ret_tok!(TokenKind::Else),
+                    "do" => ret_tok!(TokenKind::Do),
+                    "while" => ret_tok!(TokenKind::While),
+                    "for" => ret_tok!(TokenKind::For),
+                    "break" => ret_tok!(TokenKind::Break),
+                    "continue" => ret_tok!(TokenKind::Continue),
+                    "return" => ret_tok!(TokenKind::Return),
+                    "struct" => ret_tok!(TokenKind::Struct),
+                    "typedef" => ret_tok!(TokenKind::Typedef),
+                    "sizeof" => ret_tok!(TokenKind::Sizeof),
+                    "void" => ret_tok!(TokenKind::Void),
+                    "int" => ret_tok!(TokenKind::Int),
+                    "char" => ret_tok!(TokenKind::Char),
+                    word => {
+                        let id = symbols.translate_add(begin..self.current, self.file);
+                        if word.ends_with("_t") || word == "va_list" {
+                            ret_tok!(TokenKind::TypeIdent(id));
+                        } else {
+                            ret_tok!(TokenKind::Ident(id));
+                        }
+                    }
+                }
+            }
+
+            x if (x >= b'A' && x <= b'Z') => {
+                while self.peek_check(data, is_ident_char) {
+                    self.current += 1;
+                }
+
+                let id = symbols.translate_add(begin..self.current, self.file);
+                ret_tok!(TokenKind::TypeIdent(id));
+            }
+
+            x if (x >= b'0' && x <= b'9') => {
+                let mut int_value: i32 = (x - b'0') as i32;
+                while self.peek_check(data, |b| b >= b'0' && b <= b'9') {
+                    int_value *= 10;
+                    int_value += (data[self.current] - b'0') as i32;
+                    self.current += 1;
+                }
+
+                ret_tok!(TokenKind::IntLiteral(int_value));
+            }
+
+            b'\"' => {
+                let mut cur = self.lex_character(b'\"', data)?;
+                let mut chars = Vec::new();
+                while cur != CLOSING_CHAR {
+                    chars.push(cur);
+                    cur = self.lex_character(b'\"', data)?;
+                }
+
+                let string = unsafe { std::str::from_utf8_unchecked(&chars) };
+                let string = buckets.add_str(string);
+                ret_tok!(TokenKind::StringLiteral(string));
+            }
+
+            b'\'' => {
+                let byte = self.lex_character(b'\'', data)?;
+                if byte == CLOSING_CHAR {
+                    return Err(error!(
+                        "empty character literal",
+                        l(begin as u32, self.current as u32, self.file),
+                        "found here"
+                    ));
+                }
+
+                let closing = self.expect(data)?;
+                if closing != b'\'' {
+                    return Err(error!(
+                        "expected closing single quote",
+                        l(begin as u32, self.current as u32, self.file),
+                        "this should be a closing single quote"
+                    ));
+                }
+
+                ret_tok!(TokenKind::CharLiteral(byte));
+            }
+
+            b'{' => ret_tok!(TokenKind::LBrace),
+            b'}' => ret_tok!(TokenKind::RBrace),
+            b'(' => ret_tok!(TokenKind::LParen),
+            b')' => ret_tok!(TokenKind::RParen),
+            b'[' => ret_tok!(TokenKind::LBracket),
+            b']' => ret_tok!(TokenKind::RBracket),
+            b'~' => ret_tok!(TokenKind::Tilde),
+            b';' => ret_tok!(TokenKind::Semicolon),
+            b':' => ret_tok!(TokenKind::Colon),
+            b',' => ret_tok!(TokenKind::Comma),
+            b'?' => ret_tok!(TokenKind::Question),
+
+            b'.' => {
+                if self.peek_eq(data, b'.') {
+                    self.current += 1;
+                    if self.peek_eq(data, b'.') {
+                        self.current += 1;
+                        ret_tok!(TokenKind::DotDotDot);
+                    }
+
+                    return Err(invalid_token(self.file, begin, self.current));
+                }
+
+                ret_tok!(TokenKind::Dot);
+            }
+            b'+' => {
+                if self.peek_eq(data, b'+') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::PlusPlus);
+                } else if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::PlusEq);
+                } else {
+                    ret_tok!(TokenKind::Plus);
+                }
+            }
+            b'-' => {
+                if self.peek_eq(data, b'-') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::DashDash);
+                } else if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::DashEq);
+                } else if self.peek_eq(data, b'>') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::Arrow);
+                } else {
+                    ret_tok!(TokenKind::Dash);
+                }
+            }
+            b'/' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::SlashEq);
+                } else {
+                    ret_tok!(TokenKind::Slash);
+                }
+            }
+            b'*' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::StarEq);
+                } else {
+                    ret_tok!(TokenKind::Star);
+                }
+            }
+            b'%' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::PercentEq);
+                } else {
+                    ret_tok!(TokenKind::Percent);
+                }
+            }
+            b'>' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::Geq);
+                } else {
+                    ret_tok!(TokenKind::Gt);
+                }
+            }
+            b'<' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::Leq);
+                } else {
+                    ret_tok!(TokenKind::Lt);
+                }
+            }
+            b'!' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::Neq);
+                } else {
+                    ret_tok!(TokenKind::Bang);
+                }
+            }
+            b'=' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::EqEq);
+                } else {
+                    ret_tok!(TokenKind::Eq);
+                }
+            }
+            b'|' => {
+                if self.peek_eq(data, b'|') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::LineLine);
+                } else if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::LineEq);
+                } else {
+                    ret_tok!(TokenKind::Line);
+                }
+            }
+            b'&' => {
+                if self.peek_eq(data, b'&') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::AmpAmp);
+                } else if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::AmpEq);
+                } else {
+                    ret_tok!(TokenKind::Amp);
+                }
+            }
+            b'^' => {
+                if self.peek_eq(data, b'=') {
+                    self.current += 1;
+                    ret_tok!(TokenKind::CaretEq);
+                } else {
+                    ret_tok!(TokenKind::Caret);
+                }
+            }
+
+            x => {
+                return Err(invalid_token(self.file, begin, self.current));
+            }
+        }
     }
 
-    lex_token(buckets, symbols, file, data, current, output)?;
-    return Ok(false);
+    #[inline]
+    pub fn expect(&mut self, data: &[u8]) -> Result<u8, Error> {
+        if self.current == data.len() {
+            return Err(error!("unexpected end of file"));
+        }
+
+        let cur = self.current;
+        self.current += 1;
+        return Ok(data[cur]);
+    }
+
+    #[inline]
+    pub fn peek_expect(&self, data: &[u8]) -> Result<u8, Error> {
+        if self.current == data.len() {
+            return Err(error!("unexpected end of file"));
+        }
+
+        return Ok(data[self.current]);
+    }
+
+    #[inline]
+    pub fn peek_check(&self, data: &[u8], checker: impl Fn(u8) -> bool) -> bool {
+        if self.current >= data.len() {
+            return false;
+        }
+
+        return checker(data[self.current]);
+    }
+
+    #[inline]
+    pub fn peek_eq(&self, data: &[u8], byte: u8) -> bool {
+        if self.current >= data.len() {
+            return false;
+        }
+
+        return data[self.current] == byte;
+    }
+
+    pub fn peek_neq_series(&self, data: &[u8], bytes: &[u8]) -> bool {
+        let byte_len = bytes.len();
+        if self.current + bytes.len() > data.len() {
+            return false;
+        }
+
+        let eq_slice = &data[(self.current)..(self.current + byte_len)];
+        return eq_slice != bytes;
+    }
+
+    pub fn peek_eq_series(&self, data: &[u8], bytes: &[u8]) -> bool {
+        let byte_len = bytes.len();
+        if self.current + bytes.len() > data.len() {
+            return false;
+        }
+
+        let eq_slice = &data[(self.current)..(self.current + byte_len)];
+        return eq_slice == bytes;
+    }
+
+    #[inline]
+    pub fn peek_neq(&self, data: &[u8], byte: u8) -> bool {
+        if self.current >= data.len() {
+            return false;
+        }
+
+        return data[self.current] != byte;
+    }
+
+    #[inline]
+    pub fn peek_neqs(&self, data: &[u8], bytes: &[u8]) -> bool {
+        if self.current >= data.len() {
+            return false;
+        }
+
+        for byte in bytes {
+            if data[self.current] == *byte {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    #[inline]
+    pub fn peek_eqs(&self, data: &[u8], bytes: &[u8]) -> bool {
+        if self.current >= data.len() {
+            return false;
+        }
+
+        for byte in bytes {
+            if data[self.current] == *byte {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    pub fn lex_character(&mut self, surround: u8, data: &[u8]) -> Result<u8, Error> {
+        loop {
+            let cur_b = self.expect(data)?;
+            let cur: char = cur_b.into();
+
+            if !cur.is_ascii() {
+                return Err(error!(
+                    "character is not valid ascii",
+                    l(self.current as u32 - 1, self.current as u32, self.file),
+                    "invalid character literal here"
+                ));
+            }
+
+            if cur_b == surround {
+                return Ok(CLOSING_CHAR);
+            }
+
+            if cur_b == b'\n' || cur_b == b'\r' {
+                if surround == b'\"' {
+                    return Err(error!(
+                        "invalid character found when parsing string literal",
+                        l(self.current as u32 - 1, self.current as u32, self.file),
+                        "invalid character here"
+                    ));
+                } else {
+                    return Err(error!(
+                        "invalid character found when parsing character literal",
+                        l(self.current as u32 - 1, self.current as u32, self.file),
+                        "invalid character here"
+                    ));
+                }
+            }
+
+            if cur_b != b'\\' {
+                return Ok(cur_b);
+            }
+
+            match self.expect(data)? {
+                b'n' => return Ok(b'\n'),
+                b'\n' => continue,
+                b'\'' => return Ok(b'\''),
+                b'"' => return Ok(b'"'),
+                _ => {
+                    return Err(error!(
+                        "invalid escape sequence",
+                        l(self.current as u32 - 2, self.current as u32, self.file),
+                        "invalid escape sequence here"
+                    ))
+                }
+            }
+        }
+    }
 }
 
 pub fn is_ident_char(cur: u8) -> bool {
@@ -298,481 +822,6 @@ pub fn is_ident_char(cur: u8) -> bool {
         || (cur >= b'A' && cur <= b'Z')
         || cur == b'_'
         || (cur >= b'0' && cur <= b'9')
-}
-
-pub fn lex_macro<'a, 'b>(
-    buckets: BucketListRef<'b>,
-    incomplete: &mut HashSet<u32>,
-    token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb<'a>,
-    file: u32,
-    data: &'a [u8],
-    current: &mut usize,
-    output: &mut Vec<Token<'b>>,
-) -> Result<(), Error> {
-    if peek_eq(data, current, b'#') {
-        *current += 1;
-    } else {
-        return Ok(());
-    }
-
-    // macros!
-    let begin = *current;
-    while peek_neqs(data, current, &WHITESPACE) {
-        *current += 1;
-    }
-
-    let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
-    match directive {
-        "define" => {
-            while peek_eqs(data, current, &WHITESPACE) {
-                *current += 1;
-            }
-
-            let begin = *current;
-            if begin == data.len() {
-                return Err(error!(
-                    "unexpected end of file",
-                    l(begin as u32, begin as u32, file),
-                    "EOF found here"
-                ));
-            }
-
-            while peek_check(data, current, is_ident_char) {
-                *current += 1;
-            }
-
-            // Don't add the empty string
-            if *current - begin == 0 {
-                return Err(error!(
-                    "expected an identifer for macro declaration",
-                    l(begin as u32, begin as u32 + 1, file),
-                    "This should be an identifier"
-                ));
-            }
-
-            let id = symbols.translate_add(begin..*current, file);
-            output.push(Token::new(TokenKind::MacroDef(id), begin..*current, file));
-
-            loop {
-                while peek_eqs(data, current, &WHITESPACE) {
-                    *current += 1;
-                }
-
-                if *current == data.len() {
-                    break;
-                }
-
-                if peek_eq(data, current, b'\n') {
-                    break;
-                } else if peek_eq_series(data, current, &CRLF) {
-                    break;
-                } else if peek_eq_series(data, current, &[b'\\', b'\n']) {
-                    *current += 2;
-                    continue;
-                } else if peek_eq_series(data, current, &[b'\\', b'\r', b'\n']) {
-                    *current += 3;
-                    continue;
-                }
-
-                lex_token(buckets, symbols, file, data, current, output)?;
-            }
-
-            output.push(Token::new(TokenKind::MacroDefEnd, *current..*current, file));
-            return Ok(());
-        }
-        "include" => {
-            while peek_eqs(data, current, &WHITESPACE) {
-                *current += 1;
-            }
-
-            if peek_eq(data, current, b'"') {
-                *current += 1;
-                let name_begin = *current;
-                while peek_neq(data, current, b'"') {
-                    *current += 1;
-                }
-
-                let id = symbols.translate_add(name_begin..*current, file);
-                *current += 1;
-                if !peek_eq(data, current, b'\n') && !peek_eq_series(data, current, &CRLF) {
-                    return Err(expected_newline("include", begin, *current, file));
-                }
-
-                let map_err = |err| {
-                    error!(
-                        "Error finding file",
-                        l(begin as u32, *current as u32, file),
-                        format!("got error '{}'", err)
-                    )
-                };
-                let include_id = symbols.add_from_symbols(file, id).map_err(map_err)?;
-                output.push(Token::new(
-                    TokenKind::Include(include_id),
-                    begin..*current,
-                    file,
-                ));
-
-                if incomplete.contains(&include_id) {
-                    return Err(error!(
-                        "include cycle detected",
-                        l(begin as u32, *current as u32, file),
-                        "found here"
-                    ));
-                }
-
-                if let Some(_) = token_db.get(&include_id) {
-                    return Ok(());
-                }
-
-                incomplete.insert(include_id);
-                let include = symbols.source(include_id).unwrap();
-                let toks =
-                    lex_file_rec(buckets, incomplete, token_db, symbols, include_id, include)?;
-                token_db.insert(include_id, toks);
-                incomplete.remove(&include_id);
-                return Ok(());
-            } else if peek_eq(data, current, b'<') {
-                *current += 1;
-                let name_begin = *current;
-
-                while peek_neq(data, current, b'>') {
-                    *current += 1;
-                }
-
-                let id = symbols.translate_add(name_begin..*current, file);
-                *current += 1;
-                if !peek_eq(data, current, b'\n') && !peek_eq_series(data, current, &CRLF) {
-                    return Err(expected_newline("include", begin, *current, file));
-                }
-                output.push(Token::new(TokenKind::IncludeSys(id), begin..*current, file));
-
-                if let Some(_) = token_db.get(&id) {
-                    return Ok(());
-                }
-
-                let include = symbols.source(id).unwrap();
-                let toks =
-                    lex_file_rec(buckets, incomplete, token_db, symbols, id, include).unwrap();
-                token_db.insert(id, toks);
-                return Ok(());
-            }
-        }
-        _ => {
-            return Err(error!(
-                "invalid compiler directive",
-                l(begin as u32, *current as u32, file),
-                "directive found here"
-            ));
-        }
-    }
-
-    return Ok(());
-}
-
-pub fn lex_token<'a, 'b>(
-    buckets: BucketListRef<'b>,
-    symbols: &mut FileDb<'a>,
-    file: u32,
-    data: &'a [u8],
-    current: &mut usize,
-    output: &mut Vec<Token<'b>>,
-) -> Result<(), Error> {
-    let begin = *current;
-    *current += 1;
-
-    macro_rules! ret_tok {
-        ($arg1:expr) => {{
-            output.push(Token::new($arg1, begin..*current, file));
-            return Ok(());
-        }};
-    }
-
-    match data[begin] {
-        x if (x >= b'a' && x <= b'z') || x == b'_' => {
-            while peek_check(data, current, is_ident_char) {
-                *current += 1;
-            }
-
-            let word = unsafe { std::str::from_utf8_unchecked(&data[begin..*current]) };
-            match word {
-                "if" => ret_tok!(TokenKind::If),
-                "else" => ret_tok!(TokenKind::Else),
-                "do" => ret_tok!(TokenKind::Do),
-                "while" => ret_tok!(TokenKind::While),
-                "for" => ret_tok!(TokenKind::For),
-                "break" => ret_tok!(TokenKind::Break),
-                "continue" => ret_tok!(TokenKind::Continue),
-                "return" => ret_tok!(TokenKind::Return),
-                "struct" => ret_tok!(TokenKind::Struct),
-                "typedef" => ret_tok!(TokenKind::Typedef),
-                "sizeof" => ret_tok!(TokenKind::Sizeof),
-                "void" => ret_tok!(TokenKind::Void),
-                "int" => ret_tok!(TokenKind::Int),
-                "char" => ret_tok!(TokenKind::Char),
-                word => {
-                    let id = symbols.translate_add(begin..*current, file);
-                    if word.ends_with("_t") || word == "va_list" {
-                        ret_tok!(TokenKind::TypeIdent(id));
-                    } else {
-                        ret_tok!(TokenKind::Ident(id));
-                    }
-                }
-            }
-        }
-
-        x if (x >= b'A' && x <= b'Z') => {
-            while peek_check(data, current, is_ident_char) {
-                *current += 1;
-            }
-
-            let id = symbols.translate_add(begin..*current, file);
-            ret_tok!(TokenKind::TypeIdent(id));
-        }
-
-        x if (x >= b'0' && x <= b'9') => {
-            let mut int_value: i32 = (x - b'0') as i32;
-            while peek_check(data, current, |b| b >= b'0' && b <= b'9') {
-                int_value *= 10;
-                int_value += (data[*current] - b'0') as i32;
-                *current += 1;
-            }
-
-            ret_tok!(TokenKind::IntLiteral(int_value));
-        }
-
-        b'\"' => {
-            let mut cur = lex_character(b'\"', file, data, current)?;
-            let mut chars = Vec::new();
-            while cur != CLOSING_CHAR {
-                chars.push(cur);
-                cur = lex_character(b'\"', file, data, current)?;
-            }
-
-            let string = unsafe { std::str::from_utf8_unchecked(&chars) };
-            let string = buckets.add_str(string);
-            ret_tok!(TokenKind::StringLiteral(string));
-        }
-
-        b'\'' => {
-            let byte = lex_character(b'\'', file, data, current)?;
-            if byte == CLOSING_CHAR {
-                return Err(error!(
-                    "empty character literal",
-                    l(begin as u32, *current as u32, file),
-                    "found here"
-                ));
-            }
-
-            let closing = expect(data, current)?;
-            if closing != b'\'' {
-                return Err(error!(
-                    "expected closing single quote",
-                    l(begin as u32, *current as u32, file),
-                    "this should be a closing single quote"
-                ));
-            }
-
-            ret_tok!(TokenKind::CharLiteral(byte));
-        }
-
-        b'{' => ret_tok!(TokenKind::LBrace),
-        b'}' => ret_tok!(TokenKind::RBrace),
-        b'(' => ret_tok!(TokenKind::LParen),
-        b')' => ret_tok!(TokenKind::RParen),
-        b'[' => ret_tok!(TokenKind::LBracket),
-        b']' => ret_tok!(TokenKind::RBracket),
-        b'~' => ret_tok!(TokenKind::Tilde),
-        b';' => ret_tok!(TokenKind::Semicolon),
-        b',' => ret_tok!(TokenKind::Comma),
-
-        b'.' => {
-            if peek_eq(data, current, b'.') {
-                *current += 1;
-                if peek_eq(data, current, b'.') {
-                    *current += 1;
-                    ret_tok!(TokenKind::DotDotDot);
-                }
-
-                return Err(invalid_token(file, begin, *current));
-            }
-
-            ret_tok!(TokenKind::Dot);
-        }
-        b'+' => {
-            if peek_eq(data, current, b'+') {
-                *current += 1;
-                ret_tok!(TokenKind::PlusPlus);
-            } else if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::PlusEq);
-            } else {
-                ret_tok!(TokenKind::Plus);
-            }
-        }
-        b'-' => {
-            if peek_eq(data, current, b'-') {
-                *current += 1;
-                ret_tok!(TokenKind::DashDash);
-            } else if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::DashEq);
-            } else if peek_eq(data, current, b'>') {
-                *current += 1;
-                ret_tok!(TokenKind::Arrow);
-            } else {
-                ret_tok!(TokenKind::Dash);
-            }
-        }
-        b'/' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::SlashEq);
-            } else {
-                ret_tok!(TokenKind::Slash);
-            }
-        }
-        b'*' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::StarEq);
-            } else {
-                ret_tok!(TokenKind::Star);
-            }
-        }
-        b'%' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::PercentEq);
-            } else {
-                ret_tok!(TokenKind::Percent);
-            }
-        }
-        b'>' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::Geq);
-            } else {
-                ret_tok!(TokenKind::Gt);
-            }
-        }
-        b'<' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::Leq);
-            } else {
-                ret_tok!(TokenKind::Lt);
-            }
-        }
-        b'!' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::Neq);
-            } else {
-                ret_tok!(TokenKind::Not);
-            }
-        }
-        b'=' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::EqEq);
-            } else {
-                ret_tok!(TokenKind::Eq);
-            }
-        }
-        b'|' => {
-            if peek_eq(data, current, b'|') {
-                *current += 1;
-                ret_tok!(TokenKind::LineLine);
-            } else if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::LineEq);
-            } else {
-                ret_tok!(TokenKind::Line);
-            }
-        }
-        b'&' => {
-            if peek_eq(data, current, b'&') {
-                *current += 1;
-                ret_tok!(TokenKind::AmpAmp);
-            } else if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::AmpEq);
-            } else {
-                ret_tok!(TokenKind::Amp);
-            }
-        }
-        b'^' => {
-            if peek_eq(data, current, b'=') {
-                *current += 1;
-                ret_tok!(TokenKind::CaretEq);
-            } else {
-                ret_tok!(TokenKind::Caret);
-            }
-        }
-
-        x => {
-            return Err(invalid_token(file, begin, *current));
-        }
-    }
-}
-
-pub fn lex_character(
-    surround: u8,
-    file: u32,
-    data: &[u8],
-    current: &mut usize,
-) -> Result<u8, Error> {
-    loop {
-        let cur_b = expect(data, current)?;
-        let cur: char = cur_b.into();
-
-        if !cur.is_ascii() {
-            return Err(error!(
-                "character is not valid ascii",
-                l(*current as u32 - 1, *current as u32, file),
-                "invalid character literal here"
-            ));
-        }
-
-        if cur_b == surround {
-            return Ok(CLOSING_CHAR);
-        }
-
-        if cur_b == b'\n' || cur_b == b'\r' {
-            if surround == b'\"' {
-                return Err(error!(
-                    "invalid character found when parsing string literal",
-                    l(*current as u32 - 1, *current as u32, file),
-                    "invalid character here"
-                ));
-            } else {
-                return Err(error!(
-                    "invalid character found when parsing character literal",
-                    l(*current as u32 - 1, *current as u32, file),
-                    "invalid character here"
-                ));
-            }
-        }
-
-        if cur_b != b'\\' {
-            return Ok(cur_b);
-        }
-
-        match expect(data, current)? {
-            b'n' => return Ok(b'\n'),
-            b'\n' => continue,
-            b'\'' => return Ok(b'\''),
-            b'"' => return Ok(b'"'),
-            _ => {
-                return Err(error!(
-                    "invalid escape sequence",
-                    l(*current as u32 - 2, *current as u32, file),
-                    "invalid escape sequence here"
-                ))
-            }
-        }
-    }
 }
 
 #[inline]

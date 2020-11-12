@@ -6,65 +6,68 @@ use core::slice;
 use std::collections::HashMap;
 
 pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
-pub type FuncMacroDb<'a> = HashMap<u32, FuncMacro<'a>>;
-pub type MacroDb<'a> = HashMap<u32, Macro<'a>>;
-
-pub fn parse_tokens<'a, 'b>(
-    buckets: BucketListRef<'b>,
-    token_db: &TokenDb<'a>,
-    ast_db: &mut AstDb<'b>,
-    file: u32,
-) -> Result<ASTProgram<'b>, Error> {
-    if let Some(stmts) = ast_db.get(&file) {
-        return Ok(ASTProgram { stmts });
-    }
-
-    let mut parser = Parser::new();
-    let mut parse_result = Vec::new();
-    parser.parse_tokens_rec(buckets, token_db, ast_db, file, &mut parse_result)?;
-    let stmts = buckets.add_array(parse_result);
-    let prev = ast_db.insert(file, stmts);
-    debug_assert!(prev.is_none());
-    return Ok(ASTProgram { stmts });
-}
 
 pub struct Parser<'b> {
-    pub macros: HashMap<u32, Macro<'b>>,
-    pub func_macros: HashMap<u32, FuncMacro<'b>>,
+    pub db: AstDb<'b>,
 }
 
-pub fn peek_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
+pub fn peek_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
     return Some(*tokens.get(*current)?);
 }
 
-pub fn peek2_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<Token<'a>> {
+pub fn peek2_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
     return Some(*tokens.get(*current + 1)?);
 }
 
-pub fn peek<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
+pub fn peek<'a>(tokens: &[Token<'a>], current: &usize) -> Result<Token<'a>, Error> {
     let map_err = || error!("expected token");
     peek_o(tokens, current).ok_or_else(map_err)
 }
 
-pub fn pop<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
+pub fn pop<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
     let tok = peek(tokens, current)?;
     *current += 1;
     Ok(tok)
 }
 
+/// True if the parse is about to see a type, false otherwise
+pub fn peek_type_or_expr<'a>(tokens: &'a [Token<'a>], current: &usize) -> Result<bool, Error> {
+    let tok = peek(tokens, current)?;
+    match tok.kind {
+        TokenKind::TypeIdent(_) => return Ok(true),
+        TokenKind::Int | TokenKind::Char | TokenKind::Struct => return Ok(true),
+        _ => return Ok(false),
+    }
+}
+
 impl<'b> Parser<'b> {
     pub fn new() -> Self {
-        Self {
-            macros: HashMap::new(),
-            func_macros: HashMap::new(),
+        Self { db: HashMap::new() }
+    }
+
+    pub fn parse_tokens<'a>(
+        &mut self,
+        buckets: BucketListRef<'b>,
+        token_db: &TokenDb<'a>,
+        file: u32,
+    ) -> Result<ASTProgram<'b>, Error> {
+        if let Some(stmts) = self.db.get(&file) {
+            return Ok(ASTProgram { stmts });
         }
+
+        let mut parser = Parser::new();
+        let mut parse_result = Vec::new();
+        parser.parse_tokens_rec(buckets, token_db, file, &mut parse_result)?;
+        let stmts = buckets.add_array(parse_result);
+        let prev = self.db.insert(file, stmts);
+        debug_assert!(prev.is_none());
+        return Ok(ASTProgram { stmts });
     }
 
     pub fn parse_tokens_rec<'a>(
         &mut self,
         mut buckets: BucketListRef<'b>,
         tdb: &TokenDb<'a>,
-        adb: &mut AstDb<'b>,
         file: u32,
         parse_result: &mut Vec<GlobalStmt<'b>>,
     ) -> Result<(), Error> {
@@ -76,7 +79,7 @@ impl<'b> Parser<'b> {
                 break;
             }
 
-            self.parse_global_decls(buckets, tdb, adb, tokens, &mut current, parse_result)?;
+            self.parse_global_decls(buckets, tdb, tokens, &mut current, parse_result)?;
 
             while let Some(next) = buckets.next() {
                 buckets = next;
@@ -125,7 +128,45 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_bool_or(buckets, tokens, current)
+        let condition = self.parse_bool_or(buckets, tokens, current)?;
+
+        let question_tok = peek(tokens, current)?;
+        if question_tok.kind != TokenKind::Question {
+            return Ok(condition);
+        }
+
+        pop(tokens, current).unwrap();
+
+        let if_true = self.parse_expr(buckets, tokens, current)?;
+
+        let colon_tok = pop(tokens, current)?;
+        if colon_tok.kind != TokenKind::Colon {
+            return Err(error!(
+                "expected ':' token, got something else instead",
+                colon_tok.loc,
+                format!(
+                    "this was interpreted as {:?} when it should be a ':'",
+                    colon_tok
+                ),
+                question_tok.loc,
+                "expected ':' because of matching '?' here"
+            ));
+        }
+
+        let if_false = self.parse_bool_or(buckets, tokens, current)?;
+
+        let condition = buckets.add(condition);
+        let if_true = buckets.add(if_true);
+        let if_false = buckets.add(if_false);
+
+        return Ok(Expr {
+            loc: l_from(condition.loc, if_false.loc),
+            kind: ExprKind::Ternary {
+                condition,
+                if_true,
+                if_false,
+            },
+        });
     }
 
     pub fn parse_bool_or<'a>(
@@ -179,7 +220,39 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_comparison(buckets, tokens, current)
+        let mut expr = self.parse_comparison(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::EqEq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Eq, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Neq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Neq, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_comparison<'a>(
@@ -205,7 +278,7 @@ impl<'b> Parser<'b> {
                         loc: l_from(start_loc, end_loc),
                     };
                 }
-                TokenKind::EqEq => {
+                TokenKind::Gt => {
                     pop(tokens, current).unwrap();
 
                     let right = self.parse_shift(buckets, tokens, current)?;
@@ -214,7 +287,20 @@ impl<'b> Parser<'b> {
                     let right = buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Eq, left, right),
+                        kind: ExprKind::BinOp(BinOp::Gt, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Geq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Geq, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
@@ -243,7 +329,7 @@ impl<'b> Parser<'b> {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
                 TokenKind::Plus => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
                     let right = self.parse_multiply(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
@@ -255,7 +341,7 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::Dash => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
                     let right = self.parse_multiply(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
@@ -277,7 +363,37 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_prefix(buckets, tokens, current)
+        let mut expr = self.parse_prefix(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Slash => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_prefix(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Div, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Star => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_prefix(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Mul, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_prefix<'a>(
@@ -288,8 +404,50 @@ impl<'b> Parser<'b> {
     ) -> Result<Expr<'b>, Error> {
         let tok = peek(tokens, current)?;
         match tok.kind {
+            TokenKind::Sizeof => {
+                pop(tokens, current).unwrap();
+
+                let lparen_tok = peek(tokens, current)?;
+                if lparen_tok.kind == TokenKind::LParen {
+                    pop(tokens, current).unwrap();
+
+                    if peek_type_or_expr(tokens, current)? {
+                        let sizeof_type = parse_type_prefix(tokens, current)?;
+                        let mut pointer_count = 0;
+                        while peek(tokens, current)?.kind == TokenKind::Star {
+                            pointer_count += 1;
+                            pop(tokens, current).unwrap();
+                        }
+
+                        let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc)?;
+                        return Ok(Expr {
+                            kind: ExprKind::SizeofType {
+                                sizeof_type,
+                                pointer_count,
+                            },
+                            loc: l_from(tok.loc, rparen_loc),
+                        });
+                    }
+
+                    let target = self.parse_expr(buckets, tokens, current)?;
+                    let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc)?;
+                    let target = buckets.add(target);
+                    return Ok(Expr {
+                        loc: l_from(tok.loc, rparen_loc),
+                        kind: ExprKind::SizeofExpr(target),
+                    });
+                }
+
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::SizeofExpr(target),
+                });
+            }
+
             TokenKind::Amp => {
-                pop(tokens, current).expect("shouldn't fail");
+                pop(tokens, current).unwrap();
                 let target = self.parse_prefix(buckets, tokens, current)?;
                 let target = buckets.add(target);
                 return Ok(Expr {
@@ -298,7 +456,7 @@ impl<'b> Parser<'b> {
                 });
             }
             TokenKind::Star => {
-                pop(tokens, current).expect("shouldn't fail");
+                pop(tokens, current).unwrap();
                 let target = self.parse_prefix(buckets, tokens, current)?;
                 let target = buckets.add(target);
                 return Ok(Expr {
@@ -306,6 +464,26 @@ impl<'b> Parser<'b> {
                     kind: ExprKind::Deref(target),
                 });
             }
+
+            TokenKind::Bang => {
+                pop(tokens, current).unwrap();
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::UnaryOp(UnaryOp::Not, target),
+                });
+            }
+            TokenKind::Dash => {
+                pop(tokens, current).unwrap();
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::UnaryOp(UnaryOp::Neg, target),
+                });
+            }
+
             TokenKind::LParen => {
                 let type_tok = if let Some(tok) = peek2_o(tokens, current) {
                     tok
@@ -314,21 +492,9 @@ impl<'b> Parser<'b> {
                 };
 
                 let (lparen, cast_to) = match type_tok.kind {
-                    TokenKind::Struct => {
+                    TokenKind::Struct | TokenKind::Char | TokenKind::Void | TokenKind::Int => {
                         let lparen = pop(tokens, current).unwrap();
-                        let start_loc = pop(tokens, current).unwrap().loc;
-                        let (ident, ident_loc) = expect_any_ident(tokens, current)?;
-
-                        let ast_type = ASTType {
-                            kind: ASTTypeKind::Struct { ident },
-                            loc: l_from(start_loc, ident_loc),
-                        };
-
-                        (lparen, ast_type)
-                    }
-                    TokenKind::Char | TokenKind::Void | TokenKind::Int => {
-                        let lparen = pop(tokens, current).unwrap();
-                        let ast_type = parse_simple_type_prefix(tokens, current)?;
+                        let ast_type = parse_type_prefix(tokens, current)?;
                         (lparen, ast_type)
                     }
                     _ => return self.parse_postfix(buckets, tokens, current),
@@ -381,7 +547,7 @@ impl<'b> Parser<'b> {
                         let mut comma_tok = peek(tokens, current)?;
 
                         while comma_tok.kind == TokenKind::Comma {
-                            pop(tokens, current).expect("shouldn't fail");
+                            pop(tokens, current).unwrap();
                             params.push(self.parse_expr(buckets, tokens, current)?);
                             comma_tok = peek(tokens, current)?;
                         }
@@ -397,7 +563,7 @@ impl<'b> Parser<'b> {
                         }
                     }
 
-                    let end_loc = pop(tokens, current).expect("shouldn't fail").loc;
+                    let end_loc = pop(tokens, current).unwrap().loc;
                     let params = buckets.add_array(params);
                     operand = Expr {
                         loc: l_from(start_loc, end_loc),
@@ -410,7 +576,7 @@ impl<'b> Parser<'b> {
                 TokenKind::PlusPlus => {
                     operand = Expr {
                         kind: ExprKind::PostIncr(buckets.add(operand)),
-                        loc: l_from(start_loc, pop(tokens, current).expect("shouldn't fail").loc),
+                        loc: l_from(start_loc, pop(tokens, current).unwrap().loc),
                     };
                 }
                 TokenKind::DashDash => {
@@ -420,15 +586,19 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::LBracket => {
-                    pop(tokens, current).unwrap();
+                    let lbracket = pop(tokens, current).unwrap();
                     let index = self.parse_expr(buckets, tokens, current)?;
-                    expect_rbracket(tokens, current)?;
+                    let rbracket_tok = expect_rbracket(tokens, current, lbracket.loc)?;
+
+                    let loc = l_from(start_loc, rbracket_tok.loc);
+
                     operand = Expr {
-                        loc: l_from(start_loc, index.loc),
-                        kind: ExprKind::Index {
-                            ptr: buckets.add(operand),
-                            index: buckets.add(index),
-                        },
+                        kind: ExprKind::BinOp(
+                            BinOp::Index,
+                            buckets.add(operand),
+                            buckets.add(index),
+                        ),
+                        loc,
                     };
                 }
                 TokenKind::Arrow => {
@@ -445,7 +615,7 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::Dot => {
-                    pop(tokens, current).expect("shouldn't fail");
+                    pop(tokens, current).unwrap();
 
                     let (member, loc) = expect_any_ident(tokens, current)?;
 
@@ -482,6 +652,28 @@ impl<'b> Parser<'b> {
                     loc: tok.loc,
                 })
             }
+            TokenKind::LBrace => {
+                let start_loc = tok.loc;
+                let mut expr = self.parse_expr(buckets, tokens, current)?;
+                let mut expr_list = Vec::new();
+                while peek(tokens, current)?.kind == TokenKind::Comma {
+                    expr_list.push(expr);
+                    pop(tokens, current).unwrap();
+                    expr = self.parse_expr(buckets, tokens, current)?;
+                }
+
+                let end_loc = expect_rbrace(tokens, current, tok.loc)?;
+
+                if expr_list.len() == 0 {
+                    return Ok(expr);
+                } else {
+                    expr_list.push(expr);
+                    return Ok(Expr {
+                        kind: ExprKind::BraceList(buckets.add_array(expr_list)),
+                        loc: l_from(start_loc, end_loc),
+                    });
+                }
+            }
             TokenKind::LParen => {
                 let start_loc = tok.loc;
                 let mut expr = self.parse_expr(buckets, tokens, current)?;
@@ -499,7 +691,7 @@ impl<'b> Parser<'b> {
                 } else {
                     expr_list.push(expr);
                     return Ok(Expr {
-                        kind: ExprKind::List(buckets.add_array(expr_list)),
+                        kind: ExprKind::ParenList(buckets.add_array(expr_list)),
                         loc: l_from(start_loc, end_loc),
                     });
                 }
@@ -521,19 +713,76 @@ impl<'b> Parser<'b> {
         }
     }
 
-    fn parse_simple_decl<'a>(
+    fn parse_decl_receiver<'a>(
         &self,
         buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<Decl<'b>, Error> {
-        let mut pointer_count: u32 = 0;
+    ) -> Result<DeclReceiver<'b>, Error> {
+        let mut pointer_count = 0;
+        let loc = peek(tokens, current)?.loc;
         while peek(tokens, current)?.kind == TokenKind::Star {
             pointer_count += 1;
             pop(tokens, current).unwrap();
         }
 
         let (ident, ident_loc) = expect_ident(tokens, current)?;
+
+        let mut end_loc = ident_loc;
+        let mut array_dims = Vec::new();
+        while peek(tokens, current)?.kind == TokenKind::LBracket {
+            let lbracket_tok = pop(tokens, current).unwrap();
+            let rbracket_tok = peek(tokens, current)?;
+
+            if rbracket_tok.kind == TokenKind::RBracket {
+                pop(tokens, current).unwrap();
+                array_dims.push(0);
+                end_loc = rbracket_tok.loc;
+                continue;
+            }
+
+            let expr = self.parse_expr(buckets, tokens, current)?;
+            match   expr.kind{
+                ExprKind::IntLiteral(value) => {
+                    if value <= 0 {
+                        return Err(error!(
+                            "array dimension value must be at least 1",
+                            expr.loc, "invalid array dimension found here"
+                        ));
+                    }
+
+                    array_dims.push(value as u32);
+                }
+                _ => {
+                    return Err(error!(
+                        "TCI currently doesn't accept anything but integer literals as array dimensions",
+                        expr.loc, "non-conforming expression found here"
+                    ))
+                }
+            }
+
+            let rbracket_tok = expect_rbracket(tokens, current, lbracket_tok.loc)?;
+            end_loc = rbracket_tok.loc;
+        }
+
+        let array_dims = buckets.add_array(array_dims);
+
+        return Ok(DeclReceiver {
+            loc: l_from(loc, end_loc),
+            ident,
+            pointer_count,
+            array_dims,
+        });
+    }
+
+    fn parse_simple_decl<'a>(
+        &self,
+        buckets: BucketListRef<'b>,
+        tokens: &'a [Token<'a>],
+        current: &mut usize,
+    ) -> Result<Decl<'b>, Error> {
+        let recv = self.parse_decl_receiver(buckets, tokens, current)?;
+
         let tok = peek(tokens, current)?;
         let expr = if tok.kind == TokenKind::Eq {
             pop(tokens, current).unwrap();
@@ -541,57 +790,40 @@ impl<'b> Parser<'b> {
         } else {
             Expr {
                 kind: ExprKind::Uninit,
-                loc: ident_loc,
+                loc: recv.loc,
             }
         };
 
         return Ok(Decl {
-            pointer_count,
-            ident,
-            loc: l_from(ident_loc, expr.loc),
+            recv,
+            loc: l_from(recv.loc, expr.loc),
             expr,
         });
     }
 
     fn parse_inner_struct_decl<'a>(
         &self,
+        buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<InnerStructDecl, Error> {
-        let decl_type = match peek(tokens, current)?.kind {
-            TokenKind::Struct => {
-                let start_loc = pop(tokens, current).unwrap().loc;
-                let (ident, ident_loc) = expect_any_ident(tokens, current)?;
+    ) -> Result<InnerStructDecl<'b>, Error> {
+        let decl_type = parse_type_prefix(tokens, current)?;
 
-                ASTType {
-                    kind: ASTTypeKind::Struct { ident },
-                    loc: l_from(start_loc, ident_loc),
-                }
-            }
-            _ => parse_simple_type_prefix(tokens, current)?,
-        };
-
-        let mut pointer_count: u32 = 0;
-        while peek(tokens, current)?.kind == TokenKind::Star {
-            pop(tokens, current).unwrap();
-            pointer_count += 1;
-        }
-
-        let (ident, ident_loc) = expect_ident(tokens, current)?;
+        let recv = self.parse_decl_receiver(buckets, tokens, current)?;
 
         return Ok(InnerStructDecl {
-            loc: l_from(decl_type.loc, ident_loc),
-            pointer_count,
+            loc: l_from(decl_type.loc, recv.loc),
             decl_type,
-            ident,
+            recv,
         });
     }
 
     fn parse_param_decl<'a>(
         &self,
+        buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<ParamDecl, Error> {
+    ) -> Result<ParamDecl<'b>, Error> {
         let vararg_tok = peek(tokens, current)?;
         if vararg_tok.kind == TokenKind::DotDotDot {
             pop(tokens, current).unwrap();
@@ -601,12 +833,11 @@ impl<'b> Parser<'b> {
             });
         }
 
-        let struct_decl = self.parse_inner_struct_decl(tokens, current)?;
+        let struct_decl = self.parse_inner_struct_decl(buckets, tokens, current)?;
         return Ok(ParamDecl {
             kind: ParamKind::StructLike {
                 decl_type: struct_decl.decl_type,
-                pointer_count: struct_decl.pointer_count,
-                ident: struct_decl.ident,
+                recv: struct_decl.recv,
             },
             loc: struct_decl.loc,
         });
@@ -636,7 +867,6 @@ impl<'b> Parser<'b> {
         &mut self,
         buckets: BucketListRef<'b>,
         token_db: &TokenDb<'a>,
-        ast_db: &mut AstDb<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
         decls: &mut Vec<GlobalStmt<'b>>,
@@ -649,77 +879,6 @@ impl<'b> Parser<'b> {
         }
 
         let decl_type = match peek(tokens, current)?.kind {
-            TokenKind::IncludeSys(include_id) => {
-                pop(tokens, current).unwrap();
-                if let Some(include_stmts) = ast_db.get(&include_id) {
-                    decls.extend_from_slice(include_stmts);
-                    return Ok(());
-                }
-
-                let mut include_stmts = Vec::new();
-                self.parse_tokens_rec(buckets, token_db, ast_db, include_id, &mut include_stmts)?;
-                let stmts = buckets.add_array(include_stmts);
-                let prev = ast_db.insert(include_id, stmts);
-                debug_assert!(prev.is_none());
-                decls.extend_from_slice(stmts);
-
-                return Ok(());
-            }
-            TokenKind::Include(include_id) => {
-                pop(tokens, current).unwrap();
-                if let Some(include_stmts) = ast_db.get(&include_id) {
-                    decls.extend_from_slice(include_stmts);
-                    return Ok(());
-                }
-
-                let mut include_stmts = Vec::new();
-                self.parse_tokens_rec(buckets, token_db, ast_db, include_id, &mut include_stmts)?;
-                let stmts = buckets.add_array(include_stmts);
-                let prev = ast_db.insert(include_id, stmts);
-                debug_assert!(prev.is_none());
-                decls.extend_from_slice(stmts);
-
-                return Ok(());
-            }
-            TokenKind::MacroDef(ident) => {
-                let tok = pop(tokens, current).unwrap();
-
-                if peek(tokens, current)?.kind == TokenKind::LParen {
-                    let lparen = pop(tokens, current).unwrap();
-                    let mut params = Vec::new();
-                    if peek(tokens, current)?.kind != TokenKind::RParen {
-                        params.push(expect_ident(tokens, current)?);
-                        while peek(tokens, current)?.kind == TokenKind::Comma {
-                            params.push(expect_ident(tokens, current)?);
-                        }
-                    }
-
-                    expect_rparen(tokens, current, lparen.loc)?;
-
-                    let expr = self.parse_expr(buckets, tokens, current)?;
-                    let params = buckets.add_array(params);
-                    self.func_macros.insert(
-                        ident,
-                        FuncMacro {
-                            ident,
-                            params,
-                            expr,
-                        },
-                    );
-                } else {
-                    let expr = self.parse_expr(buckets, tokens, current)?;
-                    self.macros.insert(ident, Macro { ident, expr });
-                }
-
-                let end_tok = pop(tokens, current)?;
-                if end_tok.kind != TokenKind::MacroDefEnd {
-                    return Err(error!(
-                        "expected macro definition to end here",
-                        end_tok.loc, "expected this to be a newline"
-                    ));
-                }
-                return Ok(());
-            }
             TokenKind::Struct => {
                 let start_loc = pop(tokens, current).unwrap().loc;
                 let (ident, ident_loc) = expect_any_ident(tokens, current)?;
@@ -731,7 +890,7 @@ impl<'b> Parser<'b> {
 
                     let mut decls = Vec::new();
                     while peek(tokens, current)?.kind != TokenKind::RBrace {
-                        decls.push(self.parse_inner_struct_decl(tokens, current)?);
+                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
                         eat_semicolon(tokens, current)?;
                     }
 
@@ -768,7 +927,7 @@ impl<'b> Parser<'b> {
                     loc: l_from(start_loc, ident_loc),
                 }
             }
-            _ => parse_simple_type_prefix(tokens, current)?,
+            _ => parse_type_prefix(tokens, current)?,
         };
 
         let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
@@ -820,11 +979,11 @@ impl<'b> Parser<'b> {
         let mut params = Vec::new();
         let rparen_tok = peek(tokens, current)?;
         if rparen_tok.kind != TokenKind::RParen {
-            params.push(self.parse_param_decl(tokens, current)?);
+            params.push(self.parse_param_decl(buckets, tokens, current)?);
             let mut comma_tok = peek(tokens, current)?;
             while comma_tok.kind == TokenKind::Comma {
                 pop(tokens, current).unwrap();
-                params.push(self.parse_param_decl(tokens, current)?);
+                params.push(self.parse_param_decl(buckets, tokens, current)?);
                 comma_tok = peek(tokens, current)?;
             }
 
@@ -840,9 +999,9 @@ impl<'b> Parser<'b> {
             ret_stmt!(GlobalStmt {
                 loc: l_from(decl_type.loc, end_loc),
                 kind: GlobalStmtKind::FuncDecl {
-                    pointer_count: decl.pointer_count,
+                    pointer_count: decl.recv.pointer_count,
                     return_type: decl_type,
-                    ident: decl.ident,
+                    ident: decl.recv.ident,
                     params,
                 },
             });
@@ -870,8 +1029,8 @@ impl<'b> Parser<'b> {
             loc: l_from(decl_type.loc, end_loc),
             kind: GlobalStmtKind::Func {
                 return_type: decl_type,
-                pointer_count: decl.pointer_count,
-                ident: decl.ident,
+                pointer_count: decl.recv.pointer_count,
+                ident: decl.recv.ident,
                 params,
                 body,
             },
@@ -934,8 +1093,8 @@ impl<'b> Parser<'b> {
                 let lparen_tok = expect_lparen(tokens, current)?;
 
                 let (first_part, semi_tok) = match peek(tokens, current)?.kind {
-                    TokenKind::Char | TokenKind::Int | TokenKind::Void => {
-                        let decl_type = parse_simple_type_prefix(tokens, current)?;
+                    TokenKind::Struct | TokenKind::Char | TokenKind::Int | TokenKind::Void => {
+                        let decl_type = parse_type_prefix(tokens, current)?;
                         let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
                         decls.push(decl);
                         let semi = eat_semicolon(tokens, current)?;
@@ -987,7 +1146,7 @@ impl<'b> Parser<'b> {
 
                 let post_exprs = buckets.add_array(post_exprs);
                 let post_expr = Expr {
-                    kind: ExprKind::List(post_exprs),
+                    kind: ExprKind::ParenList(post_exprs),
                     loc: l(semi2.loc.end, rparen_loc.start, rparen_loc.file),
                 };
 
@@ -1096,8 +1255,8 @@ impl<'b> Parser<'b> {
                 });
             }
 
-            TokenKind::Int | TokenKind::Char | TokenKind::Void => {
-                let decl_type = parse_simple_type_prefix(tokens, current)?;
+            TokenKind::Struct | TokenKind::Int | TokenKind::Char | TokenKind::Void => {
+                let decl_type = parse_type_prefix(tokens, current)?;
                 let start_loc = decl_type.loc;
                 let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
                 let end_loc = decl.loc;
@@ -1111,37 +1270,6 @@ impl<'b> Parser<'b> {
                         decls: buckets.add_array(decls),
                     },
                 });
-            }
-
-            TokenKind::Struct => {
-                let start_loc = pop(tokens, current).unwrap().loc;
-                let (ident, loc) = expect_any_ident(tokens, current)?;
-
-                let decl_type = ASTType {
-                    kind: ASTTypeKind::Struct { ident },
-                    loc: l_from(start_loc, loc),
-                };
-
-                let start_loc = decl_type.loc;
-                let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
-                let end_loc = decl.loc;
-                decls.push(decl);
-                eat_semicolon(tokens, current)?;
-
-                return Ok(Stmt {
-                    loc: l_from(start_loc, end_loc),
-                    kind: StmtKind::Decl {
-                        decl_type,
-                        decls: buckets.add_array(decls),
-                    },
-                });
-            }
-
-            TokenKind::Include(_) | TokenKind::IncludeSys(_) => {
-                return Err(error!(
-                    "include directives aren't allowed inside functions",
-                    tok.loc, "found here"
-                ));
             }
 
             TokenKind::Break => {
@@ -1176,10 +1304,7 @@ impl<'b> Parser<'b> {
     }
 }
 
-fn parse_simple_type_prefix<'a>(
-    tokens: &'a [Token<'a>],
-    current: &mut usize,
-) -> Result<ASTType, Error> {
+fn parse_type_prefix<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<ASTType, Error> {
     let tok = pop(tokens, current)?;
     match tok.kind {
         TokenKind::Int => {
@@ -1200,7 +1325,15 @@ fn parse_simple_type_prefix<'a>(
                 loc: tok.loc,
             })
         }
-        TokenKind::Struct => panic!("struct should be handled by another function"),
+        TokenKind::Struct => {
+            let start_loc = tok.loc;
+            let (ident, ident_loc) = expect_any_ident(tokens, current)?;
+
+            return Ok(ASTType {
+                kind: ASTTypeKind::Struct { ident },
+                loc: l_from(start_loc, ident_loc),
+            });
+        }
         _ => return Err(unexpected_token("type", &tok)),
     }
 }
@@ -1253,19 +1386,25 @@ pub fn expect_ident<'a>(
     }
 }
 
-pub fn expect_rbracket<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<(), Error> {
+pub fn expect_rbracket<'a>(
+    tokens: &[Token<'a>],
+    current: &mut usize,
+    lbracket_loc: CodeLoc,
+) -> Result<Token<'a>, Error> {
     let tok = pop(tokens, current)?;
     if tok.kind != TokenKind::RBracket {
         return Err(error!(
             "expected ']' token, got something else instead",
             tok.loc,
-            format!("this was interpreted as {:?} when it should be a ']'", tok)
+            format!("this was interpreted as {:?} when it should be a ']'", tok),
+            lbracket_loc,
+            "expected ']' because of matching '[' here"
         ));
     }
-    return Ok(());
+    return Ok(tok);
 }
 
-pub fn expect_lbrace<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<(), Error> {
+pub fn expect_lbrace<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<(), Error> {
     let tok = pop(tokens, current)?;
     if tok.kind != TokenKind::LBrace {
         return Err(error!(
@@ -1275,6 +1414,24 @@ pub fn expect_lbrace<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result
         ));
     }
     return Ok(());
+}
+
+pub fn expect_rbrace<'a>(
+    tokens: &'a [Token<'a>],
+    current: &mut usize,
+    matching_tok: CodeLoc,
+) -> Result<CodeLoc, Error> {
+    let tok = pop(tokens, current)?;
+    if tok.kind != TokenKind::RBrace {
+        return Err(error!(
+            "expected '}' token, got something else instead",
+            tok.loc,
+            format!("this was interpreted as {:?} when it should be a '}}'", tok),
+            matching_tok,
+            "matching left brace here".to_string()
+        ));
+    }
+    return Ok(tok.loc);
 }
 
 pub fn expect_rparen<'a>(

@@ -9,11 +9,15 @@ services:
     # Enables the web UI and tells Traefik to listen to docker
     command:
       - "--api.insecure=true"
-      - "--providers.docker=true"
+      - "--api.debug=true"
+
       # You need to actively say traefik.enable=true
+      - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+
       - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
       - "--certificatesresolvers.mytlschallenge.acme.email=al5932@nyu.edu"
       - "--certificatesresolvers.mytlschallenge.acme.storage=letsencrypt/acme.json"
@@ -26,12 +30,6 @@ services:
       # So that Traefik can listen to the Docker events
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "./letsencrypt:/letsencrypt"
-#    labels:
-#      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https" 
-      # Redirects all traffic to HTTPS
-#      - "traefik.http.routers.redirs.rule=hostregexp(`{host:.+}`)"
-#      - "traefik.http.routers.redirs.entrypoints=web"
-#      - "traefik.http.routers.redirs.middlewares=redirect-to-https"
   tci:
     image: a1liu/tci:latest
     labels:
@@ -45,7 +43,7 @@ services:
       - "traefik.http.routers.tci-https.tls.certresolver=mytlschallenge"
 
         #HTTP
-      - "traefik.http.routers.tci-http.rule=Host(`tci.a1liu.com`)"
+      - "traefik.http.routers.tci-http.rule=Host(`tci.a1liu.com`, `localhost`)"
       - "traefik.http.routers.tci-http.service=tci-http"
       - "traefik.http.routers.tci-http.entrypoints=web"
       - "traefik.http.services.tci-http.loadbalancer.server.port=3000"

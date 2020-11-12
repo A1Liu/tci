@@ -77,7 +77,6 @@ pub struct HttpResponse<'a> {
 }
 
 pub const CT_TEXT_HTML: &'static str = "text; html; charset=UTF-8";
-pub const CT_PNG: &'static str = "image/png";
 
 pub type HttpHandler =
     for<'a> fn(HttpHeader, &'a mut [u8]) -> Result<HttpResponse<'a>, WebServerError>;
