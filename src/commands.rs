@@ -4,7 +4,7 @@ use crate::runtime::*;
 use crate::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "command", content = "data")]
 pub enum Command {
     AddFile {

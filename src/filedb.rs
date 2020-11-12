@@ -5,7 +5,7 @@ use core::include_bytes;
 use core::{mem, ops, str};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::fs::{canonicalize, read_to_string};
+use std::fs::read_to_string;
 use std::io;
 use std::path::Path;
 
@@ -204,8 +204,6 @@ impl FileDb {
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again. Errors if the file already exists in the database.
     pub fn add(&mut self, file_name: &str, source: &str) -> Result<u32, io::Error> {
-        let file_name_owned = canonicalize(file_name)?;
-        let file_name = file_name_owned.to_str().unwrap();
         if let Some(id) = self.file_names.get(file_name) {
             return Err(io::ErrorKind::AlreadyExists.into());
         }
@@ -226,8 +224,6 @@ impl FileDb {
     /// refer to it again. Returns existing file handle if file already exists in
     /// the database
     pub fn add_from_fs(&mut self, file_name: &str) -> Result<u32, io::Error> {
-        let file_name_owned = canonicalize(file_name)?;
-        let file_name = file_name_owned.to_str().unwrap();
         if let Some(id) = self.file_names.get(file_name) {
             return Ok(*id);
         }
