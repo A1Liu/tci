@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 
 export default function FileUpload() {
+  const [currentFiles, setCurrentFiles] = useState([]);
   const [socket, setSocket] = useState(undefined);
   const [message, setMessage] = useState("");
   const [showAlert, setShowAlert] = useState(false);
@@ -12,7 +13,7 @@ export default function FileUpload() {
     sock.onmessage = (evt) => {
       const resp = JSON.parse(evt.data);
       setMessage(resp);
-      if (resp.response) {
+      if (resp.response !== "Confirm") {
         setShowAlert(true);
       }
     };
@@ -39,6 +40,11 @@ export default function FileUpload() {
 
   async function handleOnChange(event) {
     const file = event.target.files[0];
+    currentFiles.unshift(file);
+    if (currentFiles.length >= 15) {
+      currentFiles.pop();
+    }
+    setCurrentFiles(currentFiles);
     const convertFileToString = (uploadedFile) =>
       new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -69,7 +75,17 @@ export default function FileUpload() {
       >
         Upload a File
       </button>
-
+      {currentFiles.length !== 0 ? (
+        <div className="flex flex-col">
+          {Object.entries(currentFiles).map(([idx, file]) => {
+            return (
+              <div key={idx} className="mb-2">
+                {file.name}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
