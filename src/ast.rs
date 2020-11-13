@@ -20,6 +20,11 @@ pub enum BinOp {
     Geq,
     Eq,
     Neq,
+    BitAnd,
+    BitXor,
+    BitOr,
+    BoolAnd,
+    BoolOr,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
