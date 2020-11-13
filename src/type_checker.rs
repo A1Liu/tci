@@ -244,6 +244,16 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
         });
     });
 
+    add_op_ol!(Leq, I32, I32, |buckets, l, r| {
+        let result_type = TCType::new(TCTypeKind::Char, 0);
+
+        return Ok(TCExpr {
+            loc: l_from(l.loc, r.loc),
+            kind: TCExprKind::LeqI32(buckets.add(l), buckets.add(r)),
+            expr_type: result_type,
+        });
+    });
+
     add_op_ol!(Eq, I32, I32, |buckets, l, r| {
         let result_type = TCType::new(TCTypeKind::Char, 0);
 

@@ -278,6 +278,19 @@ impl<'b> Parser<'b> {
                         loc: l_from(start_loc, end_loc),
                     };
                 }
+                TokenKind::Leq => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Leq, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
                 TokenKind::Gt => {
                     pop(tokens, current).unwrap();
 
