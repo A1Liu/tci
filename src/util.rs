@@ -172,7 +172,7 @@ pub const NO_FILE: CodeLoc = CodeLoc {
     file: !0,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,
@@ -888,5 +888,74 @@ where
             map.serialize_entry(key, value)?;
         }
         map.end()
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct n32 {
+    pub data: u32,
+}
+
+impl n32 {
+    pub const NULL: n32 = n32 { data: !0 };
+
+    pub fn new(data: u32) -> Self {
+        if data == Self::NULL.data {
+            panic!("NullPointerException");
+        }
+
+        Self { data }
+    }
+}
+
+impl Into<u32> for n32 {
+    fn into(self) -> u32 {
+        if self == Self::NULL {
+            panic!("NullPointerException");
+        }
+
+        return self.data;
+    }
+}
+
+impl From<u32> for n32 {
+    fn from(data: u32) -> Self {
+        Self::new(data)
+    }
+}
+
+impl ops::Add<u32> for n32 {
+    type Output = n32;
+
+    fn add(mut self, rhs: u32) -> n32 {
+        self.data += rhs;
+        if self == Self::NULL {
+            panic!("NullPointerException");
+        }
+        return self;
+    }
+}
+
+impl fmt::Debug for n32 {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        if *self == Self::NULL {
+            write!(fmt, "null")
+        } else {
+            write!(fmt, "{}", self.data)
+        }
+    }
+}
+
+impl Serialize for n32 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if *self == Self::NULL {
+            serializer.serialize_none()
+        } else {
+            serializer.serialize_u32(self.data)
+        }
     }
 }

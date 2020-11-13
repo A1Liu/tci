@@ -35,7 +35,10 @@ pub fn peek_type_or_expr<'a>(tokens: &'a [Token<'a>], current: &usize) -> Result
     let tok = peek(tokens, current)?;
     match tok.kind {
         TokenKind::TypeIdent(_) => return Ok(true),
-        TokenKind::Int | TokenKind::Char | TokenKind::Struct => return Ok(true),
+        TokenKind::Int | TokenKind::Long => return Ok(true),
+        TokenKind::Unsigned | TokenKind::Signed => return Ok(true),
+        TokenKind::Float | TokenKind::Double => return Ok(true),
+        TokenKind::Char | TokenKind::Struct | TokenKind::Void => return Ok(true),
         _ => return Ok(false),
     }
 }
@@ -412,7 +415,7 @@ impl<'b> Parser<'b> {
                     pop(tokens, current).unwrap();
 
                     if peek_type_or_expr(tokens, current)? {
-                        let sizeof_type = parse_type_prefix(tokens, current)?;
+                        let sizeof_type = self.parse_type_prefix(buckets, tokens, current)?;
                         let mut pointer_count = 0;
                         while peek(tokens, current)?.kind == TokenKind::Star {
                             pointer_count += 1;
@@ -492,9 +495,13 @@ impl<'b> Parser<'b> {
                 };
 
                 let (lparen, cast_to) = match type_tok.kind {
-                    TokenKind::Struct | TokenKind::Char | TokenKind::Void | TokenKind::Int => {
+                    TokenKind::TypeIdent(_)
+                    | TokenKind::Struct
+                    | TokenKind::Char
+                    | TokenKind::Void
+                    | TokenKind::Int => {
                         let lparen = pop(tokens, current).unwrap();
-                        let ast_type = parse_type_prefix(tokens, current)?;
+                        let ast_type = self.parse_type_prefix(buckets, tokens, current)?;
                         (lparen, ast_type)
                     }
                     _ => return self.parse_postfix(buckets, tokens, current),
@@ -652,6 +659,25 @@ impl<'b> Parser<'b> {
                     loc: tok.loc,
                 })
             }
+            TokenKind::CharLiteral(c) => {
+                return Ok(Expr {
+                    kind: ExprKind::CharLiteral(c),
+                    loc: tok.loc,
+                })
+            }
+            TokenKind::StringLiteral(string) => {
+                let mut string = string.to_string();
+                let mut end_loc = tok.loc;
+                while let TokenKind::StringLiteral(tstr) = peek(tokens, current)?.kind {
+                    string.push_str(tstr);
+                    end_loc = l_from(end_loc, pop(tokens, current).unwrap().loc);
+                }
+
+                return Ok(Expr {
+                    kind: ExprKind::StringLiteral(buckets.add_str(&string)),
+                    loc: l_from(tok.loc, end_loc),
+                });
+            }
             TokenKind::LBrace => {
                 let start_loc = tok.loc;
                 let mut expr = self.parse_expr(buckets, tokens, current)?;
@@ -696,39 +722,18 @@ impl<'b> Parser<'b> {
                     });
                 }
             }
-            TokenKind::StringLiteral(string) => {
-                let mut string = string.to_string();
-                let mut end_loc = tok.loc;
-                while let TokenKind::StringLiteral(tstr) = peek(tokens, current)?.kind {
-                    string.push_str(tstr);
-                    end_loc = l_from(end_loc, pop(tokens, current).unwrap().loc);
-                }
-
-                return Ok(Expr {
-                    kind: ExprKind::StringLiteral(buckets.add_str(&string)),
-                    loc: l_from(tok.loc, end_loc),
-                });
-            }
             _ => return Err(unexpected_token("expression", &tok)),
         }
     }
 
-    fn parse_decl_receiver<'a>(
+    fn parse_brackets<'a>(
         &self,
         buckets: BucketListRef<'b>,
         tokens: &'a [Token<'a>],
         current: &mut usize,
-    ) -> Result<DeclReceiver<'b>, Error> {
-        let mut pointer_count = 0;
-        let loc = peek(tokens, current)?.loc;
-        while peek(tokens, current)?.kind == TokenKind::Star {
-            pointer_count += 1;
-            pop(tokens, current).unwrap();
-        }
-
-        let (ident, ident_loc) = expect_ident(tokens, current)?;
-
-        let mut end_loc = ident_loc;
+    ) -> Result<Option<(&'b [u32], CodeLoc)>, Error> {
+        let start_loc = peek(tokens, current)?.loc;
+        let mut end_loc = start_loc;
         let mut array_dims = Vec::new();
         while peek(tokens, current)?.kind == TokenKind::LBracket {
             let lbracket_tok = pop(tokens, current).unwrap();
@@ -764,14 +769,43 @@ impl<'b> Parser<'b> {
             let rbracket_tok = expect_rbracket(tokens, current, lbracket_tok.loc)?;
             end_loc = rbracket_tok.loc;
         }
+        if array_dims.len() == 0 {
+            return Ok(None);
+        }
 
         let array_dims = buckets.add_array(array_dims);
+        return Ok(Some((array_dims, l_from(start_loc, end_loc))));
+    }
+
+    fn parse_decl_receiver<'a>(
+        &self,
+        buckets: BucketListRef<'b>,
+        tokens: &'a [Token<'a>],
+        current: &mut usize,
+    ) -> Result<DeclReceiver<'b>, Error> {
+        let mut pointer_count = 0;
+        let loc = peek(tokens, current)?.loc;
+        while peek(tokens, current)?.kind == TokenKind::Star {
+            pointer_count += 1;
+            pop(tokens, current).unwrap();
+        }
+
+        let (ident, end_loc) = expect_any_ident(tokens, current)?;
+
+        if let Some((array_dims, end_loc)) = self.parse_brackets(buckets, tokens, current)? {
+            return Ok(DeclReceiver {
+                loc: l_from(loc, end_loc),
+                ident,
+                pointer_count,
+                array_dims,
+            });
+        }
 
         return Ok(DeclReceiver {
             loc: l_from(loc, end_loc),
             ident,
             pointer_count,
-            array_dims,
+            array_dims: &[],
         });
     }
 
@@ -801,13 +835,13 @@ impl<'b> Parser<'b> {
         });
     }
 
-    fn parse_inner_struct_decl<'a>(
+    fn parse_inner_struct_decl(
         &self,
         buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
+        tokens: &[Token],
         current: &mut usize,
     ) -> Result<InnerStructDecl<'b>, Error> {
-        let decl_type = parse_type_prefix(tokens, current)?;
+        let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
 
         let recv = self.parse_decl_receiver(buckets, tokens, current)?;
 
@@ -833,14 +867,57 @@ impl<'b> Parser<'b> {
             });
         }
 
-        let struct_decl = self.parse_inner_struct_decl(buckets, tokens, current)?;
-        return Ok(ParamDecl {
-            kind: ParamKind::StructLike {
-                decl_type: struct_decl.decl_type,
-                recv: struct_decl.recv,
-            },
-            loc: struct_decl.loc,
-        });
+        let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
+        let decl_recv_start_loc = peek(tokens, current)?.loc;
+        let mut end_loc = decl_type.loc;
+
+        let mut pointer_count = 0;
+        while peek(tokens, current)?.kind == TokenKind::Star {
+            pointer_count += 1;
+            end_loc = pop(tokens, current).unwrap().loc;
+        }
+
+        let ident = if let TokenKind::Ident(ident) = peek(tokens, current)?.kind {
+            end_loc = pop(tokens, current).unwrap().loc;
+            Some(ident)
+        } else {
+            None
+        };
+
+        let array_dims =
+            if let Some((ad, ad_loc)) = self.parse_brackets(buckets, tokens, current)? {
+                end_loc = ad_loc;
+                ad
+            } else {
+                &[]
+            };
+
+        match ident {
+            None => {
+                return Ok(ParamDecl {
+                    kind: ParamKind::TypeOnly {
+                        decl_type: decl_type,
+                        pointer_count,
+                        array_dims,
+                    },
+                    loc: l_from(decl_type.loc, end_loc),
+                })
+            }
+            Some(ident) => {
+                return Ok(ParamDecl {
+                    kind: ParamKind::StructLike {
+                        decl_type: decl_type,
+                        recv: DeclReceiver {
+                            ident,
+                            pointer_count,
+                            loc: l_from(decl_recv_start_loc, end_loc),
+                            array_dims,
+                        },
+                    },
+                    loc: l_from(decl_type.loc, end_loc),
+                });
+            }
+        }
     }
 
     fn parse_multi_decl<'a>(
@@ -879,56 +956,34 @@ impl<'b> Parser<'b> {
         }
 
         let decl_type = match peek(tokens, current)?.kind {
-            TokenKind::Struct => {
-                let start_loc = pop(tokens, current).unwrap().loc;
-                let (ident, ident_loc) = expect_any_ident(tokens, current)?;
-                let tok = peek(tokens, current)?;
-
-                if tok.kind == TokenKind::LBrace {
-                    // parse as type definition
-                    pop(tokens, current).unwrap();
-
-                    let mut decls = Vec::new();
-                    while peek(tokens, current)?.kind != TokenKind::RBrace {
-                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
-                        eat_semicolon(tokens, current)?;
-                    }
-
-                    let end_loc = pop(tokens, current).unwrap().loc;
-                    eat_semicolon(tokens, current)?;
-
-                    ret_stmt!(GlobalStmt {
-                        kind: GlobalStmtKind::StructDecl(StructDecl {
-                            ident,
-                            ident_loc,
-                            loc: l_from(start_loc, end_loc),
-                            members: Some(buckets.add_array(decls)),
-                        }),
-                        loc: l_from(start_loc, end_loc),
-                    });
-                }
-
-                if tok.kind == TokenKind::Semicolon {
-                    pop(tokens, current).unwrap();
-
-                    ret_stmt!(GlobalStmt {
-                        loc: l_from(start_loc, ident_loc),
-                        kind: GlobalStmtKind::StructDecl(StructDecl {
-                            ident,
-                            loc: l_from(start_loc, ident_loc),
-                            ident_loc,
-                            members: None,
-                        }),
-                    });
-                }
-
-                ASTType {
-                    kind: ASTTypeKind::Struct { ident },
-                    loc: l_from(start_loc, ident_loc),
-                }
+            TokenKind::Typedef => {
+                let typedef_tok = pop(tokens, current).unwrap();
+                let ast_type = self.parse_type_prefix(buckets, tokens, current)?;
+                let recv = self.parse_decl_receiver(buckets, tokens, current)?;
+                eat_semicolon(tokens, current)?;
+                ret_stmt!(GlobalStmt {
+                    kind: GlobalStmtKind::Typedef { ast_type, recv },
+                    loc: l_from(typedef_tok.loc, recv.loc)
+                });
             }
-            _ => parse_type_prefix(tokens, current)?,
+            _ => self.parse_type_prefix(buckets, tokens, current)?,
         };
+
+        let semicolon_tok = peek(tokens, current)?;
+        if semicolon_tok.kind == TokenKind::Semicolon {
+            if let ASTTypeKind::Struct(decl) = decl_type.kind {
+                pop(tokens, current).unwrap();
+                ret_stmt!(GlobalStmt {
+                    kind: GlobalStmtKind::StructDecl(decl),
+                    loc: decl_type.loc,
+                });
+            }
+
+            return Err(error!(
+                "declared a primitive data type",
+                decl_type.loc, "declared a primitive datatype here"
+            ));
+        }
 
         let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
         let tok = pop(tokens, current)?;
@@ -1085,6 +1140,23 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Stmt<'b>, Error> {
+        if peek_type_or_expr(tokens, current)? {
+            let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
+            let start_loc = decl_type.loc;
+            let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
+            let end_loc = decl.loc;
+            decls.push(decl);
+            eat_semicolon(tokens, current)?;
+
+            return Ok(Stmt {
+                loc: l_from(start_loc, end_loc),
+                kind: StmtKind::Decl {
+                    decl_type,
+                    decls: buckets.add_array(decls),
+                },
+            });
+        }
+
         let tok = peek(tokens, current)?;
         match &tok.kind {
             TokenKind::For => {
@@ -1092,27 +1164,23 @@ impl<'b> Parser<'b> {
 
                 let lparen_tok = expect_lparen(tokens, current)?;
 
-                let (first_part, semi_tok) = match peek(tokens, current)?.kind {
-                    TokenKind::Struct | TokenKind::Char | TokenKind::Int | TokenKind::Void => {
-                        let decl_type = parse_type_prefix(tokens, current)?;
-                        let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
-                        decls.push(decl);
-                        let semi = eat_semicolon(tokens, current)?;
-                        (Ok((decl_type, decls)), semi)
-                    }
-                    TokenKind::Semicolon => {
-                        let semi = eat_semicolon(tokens, current).unwrap();
-                        let expr = Expr {
-                            kind: ExprKind::Uninit,
-                            loc: l(lparen_tok.loc.end, semi.loc.start, semi.loc.file),
-                        };
-                        (Err(expr), semi)
-                    }
-                    _ => {
-                        let expr = self.parse_expr(buckets, tokens, current)?;
-                        let semi = eat_semicolon(tokens, current)?;
-                        (Err(expr), semi)
-                    }
+                let (first_part, semi_tok) = if peek_type_or_expr(tokens, current)? {
+                    let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
+                    let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
+                    decls.push(decl);
+                    let semi = eat_semicolon(tokens, current)?;
+                    (Ok((decl_type, decls)), semi)
+                } else if peek(tokens, current)?.kind == TokenKind::Semicolon {
+                    let semi = eat_semicolon(tokens, current).unwrap();
+                    let expr = Expr {
+                        kind: ExprKind::Uninit,
+                        loc: l(lparen_tok.loc.end, semi.loc.start, semi.loc.file),
+                    };
+                    (Err(expr), semi)
+                } else {
+                    let expr = self.parse_expr(buckets, tokens, current)?;
+                    let semi = eat_semicolon(tokens, current)?;
+                    (Err(expr), semi)
                 };
 
                 let (condition, semi2) = match peek(tokens, current)?.kind {
@@ -1255,23 +1323,6 @@ impl<'b> Parser<'b> {
                 });
             }
 
-            TokenKind::Struct | TokenKind::Int | TokenKind::Char | TokenKind::Void => {
-                let decl_type = parse_type_prefix(tokens, current)?;
-                let start_loc = decl_type.loc;
-                let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
-                let end_loc = decl.loc;
-                decls.push(decl);
-                eat_semicolon(tokens, current)?;
-
-                return Ok(Stmt {
-                    loc: l_from(start_loc, end_loc),
-                    kind: StmtKind::Decl {
-                        decl_type,
-                        decls: buckets.add_array(decls),
-                    },
-                });
-            }
-
             TokenKind::Break => {
                 pop(tokens, current).unwrap();
                 eat_semicolon(tokens, current)?;
@@ -1302,39 +1353,237 @@ impl<'b> Parser<'b> {
             }
         }
     }
-}
 
-fn parse_type_prefix<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<ASTType, Error> {
-    let tok = pop(tokens, current)?;
-    match tok.kind {
-        TokenKind::Int => {
-            return Ok(ASTType {
-                kind: ASTTypeKind::Int,
-                loc: tok.loc,
-            })
-        }
-        TokenKind::Void => {
-            return Ok(ASTType {
-                kind: ASTTypeKind::Void,
-                loc: tok.loc,
-            })
-        }
-        TokenKind::Char => {
-            return Ok(ASTType {
-                kind: ASTTypeKind::Char,
-                loc: tok.loc,
-            })
-        }
-        TokenKind::Struct => {
-            let start_loc = tok.loc;
-            let (ident, ident_loc) = expect_any_ident(tokens, current)?;
+    fn parse_type_prefix(
+        &self,
+        buckets: BucketListRef<'b>,
+        tokens: &[Token],
+        current: &mut usize,
+    ) -> Result<ASTType<'b>, Error> {
+        let mut kind;
 
-            return Ok(ASTType {
-                kind: ASTTypeKind::Struct { ident },
-                loc: l_from(start_loc, ident_loc),
-            });
+        let mut tok = peek(tokens, current)?;
+        match tok.kind {
+            TokenKind::Int => kind = ASTTypeKind::Int,
+            TokenKind::Void => kind = ASTTypeKind::Void,
+            TokenKind::Char => kind = ASTTypeKind::Char,
+            TokenKind::Long => kind = ASTTypeKind::Long,
+            TokenKind::Unsigned => kind = ASTTypeKind::Unsigned,
+            TokenKind::TypeIdent(ident) => {
+                pop(tokens, current).unwrap();
+
+                return Ok(ASTType {
+                    kind: ASTTypeKind::Ident(ident),
+                    loc: tok.loc,
+                });
+            }
+            TokenKind::Struct => {
+                pop(tokens, current).unwrap();
+
+                let start_loc = tok.loc;
+                if let Some((ident, ident_loc)) = any_ident_o(tokens, current) {
+                    let end_loc = ident_loc;
+
+                    if peek(tokens, current)?.kind == TokenKind::LBrace {
+                        pop(tokens, current).unwrap();
+
+                        let mut decls = Vec::new();
+                        while peek(tokens, current)?.kind != TokenKind::RBrace {
+                            decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
+                            eat_semicolon(tokens, current)?;
+                        }
+                        // parse as type definition
+                        let end_loc = pop(tokens, current).unwrap().loc;
+                        let members = &*buckets.add_array(decls);
+
+                        return Ok(ASTType {
+                            kind: ASTTypeKind::Struct(StructDecl::NamedDef { ident, members }),
+                            loc: l_from(start_loc, end_loc),
+                        });
+                    }
+
+                    return Ok(ASTType {
+                        kind: ASTTypeKind::Struct(StructDecl::Named(ident)),
+                        loc: l_from(start_loc, end_loc),
+                    });
+                } else {
+                    expect_lbrace(tokens, current)?;
+                    let mut decls = Vec::new();
+                    while peek(tokens, current)?.kind != TokenKind::RBrace {
+                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
+                        eat_semicolon(tokens, current)?;
+                    }
+
+                    let end_loc = pop(tokens, current).unwrap().loc;
+                    let members = &*buckets.add_array(decls);
+
+                    return Ok(ASTType {
+                        kind: ASTTypeKind::Struct(StructDecl::Unnamed(members)),
+                        loc: l_from(start_loc, end_loc),
+                    });
+                }
+            }
+            _ => return Err(unexpected_token("type", &tok)),
         }
-        _ => return Err(unexpected_token("type", &tok)),
+
+        let start_loc = pop(tokens, current).unwrap().loc;
+        let mut end_loc = start_loc;
+
+        macro_rules! reject {
+            ( $( $ident:ident),* ) => {{
+                $(
+                    if tok.kind == TokenKind::$ident {
+                        return Err(error!(
+                            "token not allowed in this context",
+                            tok.loc, "illegal token found here"
+                        ));
+                    }
+                )*
+            }};
+        }
+
+        // TODO how do you do this cleaner?
+        tok = peek(tokens, current)?;
+        loop {
+            use ASTTypeKind as ATK;
+
+            match kind {
+                ATK::Int => {
+                    reject!(Char, Void, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedInt,
+                        TokenKind::Long => kind = ATK::LongInt,
+                        _ => break,
+                    }
+                }
+                ATK::Long => {
+                    reject!(Char, Void);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLong,
+                        TokenKind::Long => kind = ATK::LongLong,
+                        TokenKind::Int => kind = ATK::LongInt,
+                        _ => break,
+                    }
+                }
+                ATK::Char => {
+                    reject!(Long, Char, Void, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedChar,
+                        _ => break,
+                    }
+                }
+                ATK::Unsigned => {
+                    reject!(Void);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::Unsigned,
+                        TokenKind::Char => kind = ATK::UnsignedChar,
+                        TokenKind::Int => kind = ATK::UnsignedInt,
+                        TokenKind::Long => kind = ATK::UnsignedLong,
+                        _ => break,
+                    }
+                }
+                ATK::Void => {
+                    reject!(Char, Void, Int, Long, Unsigned);
+                    break;
+                }
+
+                ATK::LongInt => {
+                    reject!(Char, Void, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLongInt,
+                        TokenKind::Long => kind = ATK::LongLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::LongLongInt => {
+                    reject!(Char, Void, Int, Long);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLongLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::LongLong => {
+                    reject!(Char, Void, Long);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLongLongInt,
+                        TokenKind::Int => kind = ATK::LongLongInt,
+                        _ => break,
+                    }
+                }
+
+                ATK::UnsignedInt => {
+                    reject!(Char, Void, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedInt,
+                        TokenKind::Long => kind = ATK::UnsignedLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::UnsignedLong => {
+                    reject!(Char, Void);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLong,
+                        TokenKind::Long => kind = ATK::UnsignedLongLong,
+                        TokenKind::Int => kind = ATK::UnsignedLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::UnsignedLongInt => {
+                    reject!(Char, Void, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLongInt,
+                        TokenKind::Long => kind = ATK::UnsignedLongLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::UnsignedLongLong => {
+                    reject!(Char, Void, Long);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLongLong,
+                        TokenKind::Int => kind = ATK::UnsignedLongLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::UnsignedLongLongInt => {
+                    reject!(Char, Void, Long, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedLongLongInt,
+                        _ => break,
+                    }
+                }
+                ATK::UnsignedChar => {
+                    reject!(Char, Void, Long, Int);
+
+                    match tok.kind {
+                        TokenKind::Unsigned => kind = ATK::UnsignedChar,
+                        _ => break,
+                    }
+                }
+
+                ATK::Struct(_) | ATK::Ident(_) => unreachable!(),
+            }
+
+            end_loc = pop(tokens, current).unwrap().loc;
+
+            tok = peek(tokens, current)?;
+        }
+
+        return Ok(ASTType {
+            kind,
+            loc: l_from(start_loc, end_loc),
+        });
     }
 }
 
@@ -1344,6 +1593,19 @@ pub fn unexpected_token(parsing_what: &str, tok: &Token) -> Error {
         tok.loc,
         format!("this was interpreted as {:?}", tok)
     );
+}
+
+pub fn any_ident_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<(u32, CodeLoc)> {
+    let tok = peek_o(tokens, current)?;
+    if let TokenKind::Ident(id) = tok.kind {
+        pop(tokens, current).unwrap();
+        return Some((id, tok.loc));
+    } else if let TokenKind::TypeIdent(id) = tok.kind {
+        pop(tokens, current).unwrap();
+        return Some((id, tok.loc));
+    } else {
+        None
+    }
 }
 
 pub fn expect_any_ident<'a>(
@@ -1361,6 +1623,25 @@ pub fn expect_any_ident<'a>(
             tok.loc,
             format!(
                 "this was interpreted as {:?} when it should be an identifier",
+                tok
+            )
+        ));
+    }
+}
+
+pub fn expect_type_ident<'a>(
+    tokens: &'a [Token<'a>],
+    current: &mut usize,
+) -> Result<(u32, CodeLoc), Error> {
+    let tok = pop(tokens, current)?;
+    if let TokenKind::TypeIdent(id) = tok.kind {
+        return Ok((id, tok.loc));
+    } else {
+        return Err(error!(
+            "expected type identifier token, got something else instead",
+            tok.loc,
+            format!(
+                "this was interpreted as {:?} when it should be a type identifier",
                 tok
             )
         ));

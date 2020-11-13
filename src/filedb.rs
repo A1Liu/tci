@@ -125,6 +125,9 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     // System files have the same symbol id as their file id. These lines need to come first.
     add_syslib_sym!("stdio.h");
     add_syslib_sym!("stdlib.h");
+    add_syslib_sym!("string.h");
+    add_syslib_sym!("stddef.h");
+    add_syslib_sym!("stdint.h");
 
     add_sym!("main");
     add_sym!("va_list");

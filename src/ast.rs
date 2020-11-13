@@ -31,10 +31,10 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, Copy)]
 pub enum ExprKind<'a> {
     IntLiteral(i32),
-    CharLiteral(u8),
+    CharLiteral(i8),
     StringLiteral(&'a str),
     SizeofType {
-        sizeof_type: ASTType,
+        sizeof_type: ASTType<'a>,
         pointer_count: u32,
     },
     SizeofExpr(&'a Expr<'a>),
@@ -48,7 +48,7 @@ pub enum ExprKind<'a> {
         params: &'a [Expr<'a>],
     },
     Cast {
-        cast_to: ASTType,
+        cast_to: ASTType<'a>,
         pointer_count: u32,
         cast_to_loc: CodeLoc,
         expr: &'a Expr<'a>,
@@ -91,7 +91,7 @@ pub struct DeclReceiver<'a> {
 
 #[derive(Debug)]
 pub struct InnerStructDecl<'a> {
-    pub decl_type: ASTType,
+    pub decl_type: ASTType<'a>,
     pub recv: DeclReceiver<'a>,
     pub loc: CodeLoc,
 }
@@ -99,8 +99,13 @@ pub struct InnerStructDecl<'a> {
 #[derive(Debug, Clone)]
 pub enum ParamKind<'a> {
     StructLike {
-        decl_type: ASTType,
+        decl_type: ASTType<'a>,
         recv: DeclReceiver<'a>,
+    },
+    TypeOnly {
+        decl_type: ASTType<'a>,
+        pointer_count: u32,
+        array_dims: &'a [u32],
     },
     Vararg,
 }
@@ -111,12 +116,14 @@ pub struct ParamDecl<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone)]
-pub struct StructDecl<'a> {
-    pub ident: u32,
-    pub ident_loc: CodeLoc,
-    pub members: Option<&'a [InnerStructDecl<'a>]>,
-    pub loc: CodeLoc,
+#[derive(Debug, Clone, Copy)]
+pub enum StructDecl<'a> {
+    Named(u32),
+    NamedDef {
+        ident: u32,
+        members: &'a [InnerStructDecl<'a>],
+    },
+    Unnamed(&'a [InnerStructDecl<'a>]),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,21 +136,26 @@ pub struct Decl<'a> {
 #[derive(Debug, Clone)]
 pub enum GlobalStmtKind<'a> {
     Func {
-        return_type: ASTType,
+        // TODO func declaration span separate from global_stmt.span
+        return_type: ASTType<'a>,
         pointer_count: u32,
         ident: u32,
         params: &'a [ParamDecl<'a>],
         body: &'a [Stmt<'a>],
     },
     FuncDecl {
-        return_type: ASTType,
+        return_type: ASTType<'a>,
         pointer_count: u32,
         ident: u32,
         params: &'a [ParamDecl<'a>],
     },
     StructDecl(StructDecl<'a>),
+    Typedef {
+        ast_type: ASTType<'a>,
+        recv: DeclReceiver<'a>,
+    },
     Decl {
-        decl_type: ASTType,
+        decl_type: ASTType<'a>,
         decls: &'a [Decl<'a>],
     },
 }
@@ -155,23 +167,37 @@ pub struct GlobalStmt<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ASTTypeKind {
+pub enum ASTTypeKind<'a> {
+    Struct(StructDecl<'a>),
+    Ident(u32),
     Int,
-    Struct { ident: u32 },
+    Long,
     Char,
+    Unsigned,
     Void,
+
+    LongInt,
+    LongLongInt,
+    LongLong,
+
+    UnsignedInt,
+    UnsignedLong,
+    UnsignedLongInt,
+    UnsignedLongLong,
+    UnsignedLongLongInt,
+    UnsignedChar,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ASTType {
-    pub kind: ASTTypeKind,
+pub struct ASTType<'a> {
+    pub kind: ASTTypeKind<'a>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone)]
 pub enum StmtKind<'a> {
     Decl {
-        decl_type: ASTType,
+        decl_type: ASTType<'a>,
         decls: &'a [Decl<'a>],
     },
     Expr(Expr<'a>),
@@ -191,7 +217,7 @@ pub enum StmtKind<'a> {
         body: Block<'a>,
     },
     ForDecl {
-        at_start_decl_type: ASTType,
+        at_start_decl_type: ASTType<'a>,
         at_start: &'a [Decl<'a>],
         condition: Expr<'a>,
         post_expr: Expr<'a>,
@@ -232,41 +258,58 @@ pub const TC_UNKNOWN_ALIGN: u32 = !0;
 pub const TC_UNKNOWN_ARRAY_SIZE: u32 = 0;
 pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     size: TC_UNKNOWN_SIZE,
-    align: 0,
+    align: TC_UNKNOWN_ALIGN,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct TCStructMember {
     pub decl_type: TCType,
     pub ident: u32,
     pub loc: CodeLoc,
     pub offset: u32,
+    pub decl_idx: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TCStructDefn<'a> {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TCStructDefnMeta {
     pub defn_idx: u32,
-    pub members: &'a [TCStructMember],
     pub loc: CodeLoc,
     pub sa: SizeAlign,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct TCStruct<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct TCStructDefn {
+    pub members: Vec<TCStructMember>,
+    pub meta: TCStructDefnMeta,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct TCStruct {
     pub decl_idx: u32,
-    pub defn: Option<TCStructDefn<'a>>,
+    pub defn: Option<TCStructDefn>,
     pub decl_loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TCTypedef {
+    pub typedef: TCType,
+    pub defn_idx: u32,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum TCTypeKind {
     I32, // int
+    U32, // unsigned int
     U64, // unsigned long
     I64, // long
-    Char,
+    I8,  // char
+    U8,  // unsigned char
     Void,
     Struct { ident: u32, sa: SizeAlign },
+    AnonStruct { loc: CodeLoc, sa: SizeAlign },
+    Ident { ident: u32, sa: SizeAlign },
     Uninit { size: u32 },
     BraceList,
 }
@@ -309,20 +352,27 @@ impl TCType {
             TCArrayKind::Fixed(_) => return TCShallowType::Pointer,
         }
 
-        if self.pointer_count > 0 {
-            if let TCTypeKind::Void = self.kind {
+        if let TCTypeKind::Void = self.kind {
+            if self.pointer_count == 1 {
                 return TCShallowType::VoidPointer;
             }
+        }
+
+        if self.pointer_count > 0 {
             return TCShallowType::Pointer;
         }
 
         match self.kind {
             TCTypeKind::I32 => TCShallowType::I32,
-            TCTypeKind::U64 => TCShallowType::U64,
+            TCTypeKind::U32 => TCShallowType::U32,
             TCTypeKind::I64 => TCShallowType::I64,
-            TCTypeKind::Char => TCShallowType::Char,
+            TCTypeKind::U64 => TCShallowType::U64,
+            TCTypeKind::I8 => TCShallowType::I8,
+            TCTypeKind::U8 => TCShallowType::U8,
             TCTypeKind::Void => TCShallowType::Void,
             TCTypeKind::Struct { .. } => TCShallowType::Struct,
+            TCTypeKind::AnonStruct { .. } => TCShallowType::Struct,
+            TCTypeKind::Ident { .. } => panic!("cannot make shallow of ident"),
             TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
             TCTypeKind::BraceList => panic!("cannot make shallow of brace list"),
         }
@@ -339,17 +389,26 @@ impl TCType {
             return 8;
         }
 
+        use TCTypeKind as TCTK;
         let element_size = match self.kind {
-            TCTypeKind::U64 | TCTypeKind::I64 => 8,
-            TCTypeKind::I32 => 4,
-            TCTypeKind::Char => 1,
-            TCTypeKind::Void => 0,
-            TCTypeKind::Struct { sa, .. } => {
+            TCTK::U64 | TCTK::I64 => 8,
+            TCTK::I32 | TCTK::U32 => 4,
+            TCTK::I8 | TCTK::U8 => 1,
+            TCTK::Void => 0,
+            TCTK::Struct { sa, .. } => {
                 debug_assert!(sa.size != TC_UNKNOWN_SIZE);
                 sa.size
             }
-            TCTypeKind::Uninit { size } => size,
-            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
+            TCTK::AnonStruct { sa, .. } => {
+                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+                sa.size
+            }
+            TCTK::Ident { sa, .. } => {
+                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+                sa.size
+            }
+            TCTK::Uninit { size } => size,
+            TCTK::BraceList => TC_UNKNOWN_SIZE,
         };
 
         return element_size * multiplier;
@@ -361,17 +420,26 @@ impl TCType {
             return 8;
         }
 
+        use TCTypeKind as TCTK;
         match self.kind {
-            TCTypeKind::U64 | TCTypeKind::I64 => 8,
-            TCTypeKind::I32 => 4,
-            TCTypeKind::Char => 1,
-            TCTypeKind::Void => 0,
-            TCTypeKind::Struct { sa, .. } => {
-                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
+            TCTK::U64 | TCTK::I64 => 8,
+            TCTK::I32 | TCTK::U32 => 4,
+            TCTK::I8 | TCTK::U8 => 1,
+            TCTK::Void => 0,
+            TCTK::Struct { sa, .. } => {
+                debug_assert!(sa != TC_UNKNOWN_SA);
                 sa.align
             }
-            TCTypeKind::Uninit { size } => size,
-            TCTypeKind::BraceList => TC_UNKNOWN_ALIGN,
+            TCTK::AnonStruct { sa, .. } => {
+                debug_assert!(sa != TC_UNKNOWN_SA);
+                sa.align
+            }
+            TCTK::Ident { sa, .. } => {
+                debug_assert!(sa != TC_UNKNOWN_SA);
+                sa.align
+            }
+            TCTK::Uninit { size } => size,
+            TCTK::BraceList => TC_UNKNOWN_ALIGN,
         }
     }
 
@@ -380,11 +448,15 @@ impl TCType {
         #[rustfmt::skip]
         let result = match self.kind {
             TCTypeKind::I32 => write!(writer, "int"),
+            TCTypeKind::U32 => write!(writer, "unsigned int"),
             TCTypeKind::U64 => write!(writer, "unsigned long"),
             TCTypeKind::I64 => write!(writer, "long"),
-            TCTypeKind::Char => write!(writer, "char"),
+            TCTypeKind::I8 => write!(writer, "char"),
+            TCTypeKind::U8 => write!(writer, "unsigned char"),
             TCTypeKind::Void => write!(writer, "void"),
             TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", files.symbol_to_str(ident)),
+            TCTypeKind::AnonStruct { .. } => write!(writer, "struct ?"),
+            TCTypeKind::Ident{ident, ..} => write!(writer, "{}", files.symbol_to_str(ident)),
             TCTypeKind::Uninit { .. } => return "void".to_string(),
             TCTypeKind::BraceList => return "brace_list".to_string()
         };
@@ -418,9 +490,11 @@ pub const BRACE_LIST: TCType = TCType {
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum TCShallowType {
     I32, // int
+    U32, // unsigned int
     U64, // unsigned long
     I64, // long
-    Char,
+    I8,  // char
+    U8,  // unsigned char
     Void,
     Struct,
     Pointer,
@@ -435,19 +509,19 @@ pub struct TCVar {
     pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TCFuncParam {
-    pub decl_type: TCType,
+    pub param_type: TCType,
     pub ident: u32,
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TCFuncType<'a> {
+#[derive(Debug, Clone)]
+pub struct TCFuncType {
     pub decl_idx: u32,
     pub return_type: TCType,
     pub loc: CodeLoc,
-    pub params: &'a [TCFuncParam],
+    pub params: Vec<(TCType, CodeLoc)>,
     pub varargs: bool,
 }
 
@@ -455,12 +529,13 @@ pub struct TCFuncType<'a> {
 pub struct TCFuncDefn<'a> {
     pub defn_idx: u32,
     pub loc: CodeLoc,
+    pub params: Vec<TCFuncParam>,
     pub stmts: &'a [TCStmt<'a>],
 }
 
 #[derive(Debug, Clone)]
 pub struct TCFunc<'a> {
-    pub func_type: TCFuncType<'a>,
+    pub func_type: TCFuncType,
     pub defn: Option<TCFuncDefn<'a>>,
 }
 
@@ -514,8 +589,10 @@ pub struct TCBlock<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum TCExprKind<'a> {
     Uninit,
-    IntLiteral(i32),
-    LongLiteral(i64),
+    I8Literal(i8),
+    I32Literal(i32),
+    I64Literal(i64),
+    U64Literal(u64),
     StringLiteral(&'a str),
     LocalIdent {
         var_offset: i16,
@@ -524,34 +601,40 @@ pub enum TCExprKind<'a> {
         var_offset: i16,
     },
 
-    FixedArrayToPtr(&'a TCExpr<'a>),
+    TypePun(&'a TCExpr<'a>),
     Array(&'a [TCExpr<'a>]),
 
     BraceList(&'a [TCExpr<'a>]),
     ParenList(&'a [TCExpr<'a>]),
 
-    AddU32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
     SubI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
     MulI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
     DivI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
     LtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     GtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    EqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    NeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     LeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     GeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    Eq32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    Neq32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    Eq64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    AddU32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    SubU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    DivU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    LtU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    MulU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),
 
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
+    ZConv64To32(&'a TCExpr<'a>),
 
     Assign {
         target: TCAssignTarget<'a>,
@@ -590,7 +673,7 @@ pub struct TCExpr<'a> {
     pub loc: CodeLoc,
 }
 
-impl<'a> PartialEq for TCFuncType<'a> {
+impl PartialEq for TCFuncType {
     fn eq(&self, other: &Self) -> bool {
         if self.return_type != other.return_type {
             return false;
@@ -601,7 +684,7 @@ impl<'a> PartialEq for TCFuncType<'a> {
         }
 
         for i in 0..self.params.len() {
-            if self.params[i].decl_type != other.params[i].decl_type {
+            if self.params[i].0 != other.params[i].0 {
                 return false;
             }
         }

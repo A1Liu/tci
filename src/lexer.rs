@@ -12,7 +12,7 @@ pub enum TokenKind<'a> {
     TypeIdent(u32),
     IntLiteral(i32),
     StringLiteral(&'a str),
-    CharLiteral(u8),
+    CharLiteral(i8),
 
     Include(u32),
     IncludeSys(u32),
@@ -23,7 +23,14 @@ pub enum TokenKind<'a> {
     Void,
     Char,
     Int,
+    Long,
+    Float,
+    Double,
+    Unsigned,
+    Signed,
     Struct,
+    Union,
+    Enum,
     Sizeof,
     Typedef,
 
@@ -190,6 +197,7 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                 }
 
+                self.current += 2;
                 continue;
             }
 
@@ -272,6 +280,21 @@ impl<'b> Lexer<'b> {
 
                         if self.current == data.len() {
                             break;
+                        }
+
+                        if self.peek_eq_series(data, &[b'/', b'/']) {
+                            self.current += 2;
+                            while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                                self.current += 1;
+                            }
+                        } else if self.peek_eq_series(data, &[b'/', b'*']) {
+                            self.current += 2;
+                            while self.peek_neq_series(data, &[b'*', b'/']) {
+                                self.current += 1;
+                            }
+
+                            self.current += 2;
+                            continue;
                         }
 
                         if self.peek_eq(data, b'\n') {
@@ -452,11 +475,18 @@ impl<'b> Lexer<'b> {
                     "continue" => ret_tok!(TokenKind::Continue),
                     "return" => ret_tok!(TokenKind::Return),
                     "struct" => ret_tok!(TokenKind::Struct),
+                    "union" => ret_tok!(TokenKind::Union),
+                    "enum" => ret_tok!(TokenKind::Enum),
                     "typedef" => ret_tok!(TokenKind::Typedef),
                     "sizeof" => ret_tok!(TokenKind::Sizeof),
                     "void" => ret_tok!(TokenKind::Void),
-                    "int" => ret_tok!(TokenKind::Int),
                     "char" => ret_tok!(TokenKind::Char),
+                    "int" => ret_tok!(TokenKind::Int),
+                    "long" => ret_tok!(TokenKind::Long),
+                    "unsigned" => ret_tok!(TokenKind::Unsigned),
+                    "signed" => ret_tok!(TokenKind::Signed),
+                    "float" => ret_tok!(TokenKind::Float),
+                    "double" => ret_tok!(TokenKind::Double),
                     word => {
                         let id = symbols.translate_add(begin..self.current, self.file);
                         if word.ends_with("_t") || word == "va_list" {
@@ -520,7 +550,7 @@ impl<'b> Lexer<'b> {
                     ));
                 }
 
-                ret_tok!(TokenKind::CharLiteral(byte));
+                ret_tok!(TokenKind::CharLiteral(byte as i8));
             }
 
             b'{' => ret_tok!(TokenKind::LBrace),

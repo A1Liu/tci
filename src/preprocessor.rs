@@ -22,7 +22,9 @@ pub fn preprocess_file_rec<'a>(
 
     let expect = || error!("expected token");
 
+    let mut current = 0;
     while let Some(mut tok) = toks.next() {
+        current += 1;
         let id = match tok.kind {
             TokenKind::Ident(id) | TokenKind::TypeIdent(id) => id,
             TokenKind::Include(id) | TokenKind::IncludeSys(id) => {
@@ -86,6 +88,8 @@ pub fn preprocess_file_rec<'a>(
             }
         };
 
+        let start_loc = tok.loc;
+
         let (macro_params, macro_toks) = match &macro_def.kind {
             MacroKind::Marker => {
                 return Err(error!(
@@ -96,7 +100,9 @@ pub fn preprocess_file_rec<'a>(
             MacroKind::Value(toks) => {
                 let mut expanded = HashSet::new();
                 expanded.insert(id);
-                let mut expanded_toks = preprocess_slice(&mut expanded, macros, toks)?;
+                let toks = expand_macro(toks, HashMap::new(), tok.loc);
+                let mut expanded_toks = preprocess_slice(&mut expanded, macros, &toks)?;
+                expanded.remove(&id);
                 output.append(&mut expanded_toks);
                 continue;
             }
@@ -117,6 +123,7 @@ pub fn preprocess_file_rec<'a>(
         let mut actual_params = Vec::new();
         let mut paren_count = 0;
         let mut current_tok = toks.next().ok_or_else(expect)?;
+        let mut end_loc = current_tok.loc;
 
         if current_tok.kind != TokenKind::RParen {
             loop {
@@ -133,12 +140,16 @@ pub fn preprocess_file_rec<'a>(
                     }
 
                     current_tok = toks.next().ok_or_else(expect)?;
+                    end_loc = current_tok.loc;
                 }
 
                 actual_params.push(current_param);
                 if current_tok.kind == TokenKind::RParen {
                     break;
                 }
+
+                current_tok = toks.next().ok_or_else(expect)?;
+                end_loc = current_tok.loc;
             }
         }
 
@@ -165,7 +176,7 @@ pub fn preprocess_file_rec<'a>(
 
         let mut expanded = HashSet::new();
         expanded.insert(id);
-        let expanded_toks = expand_macro(macro_toks, params_hash);
+        let expanded_toks = expand_macro(macro_toks, params_hash, l_from(start_loc, end_loc));
         let mut expanded_toks = preprocess_slice(&mut expanded, macros, &expanded_toks)?;
         output.append(&mut expanded_toks);
     }
@@ -207,6 +218,8 @@ pub fn preprocess_slice<'a>(
             }
         };
 
+        let start_loc = tok.loc;
+
         let (macro_params, macro_toks) = match &macro_def.kind {
             MacroKind::Marker => {
                 return Err(error!(
@@ -216,7 +229,8 @@ pub fn preprocess_slice<'a>(
             }
             MacroKind::Value(toks) => {
                 expanded.insert(id);
-                let mut expanded_toks = preprocess_slice(expanded, macros, toks)?;
+                let toks = expand_macro(toks, HashMap::new(), tok.loc);
+                let mut expanded_toks = preprocess_slice(expanded, macros, &toks)?;
                 expanded.remove(&id);
                 output.append(&mut expanded_toks);
                 continue;
@@ -238,6 +252,7 @@ pub fn preprocess_slice<'a>(
         let mut actual_params = Vec::new();
         let mut paren_count = 0;
         let mut current_tok = toks.next().ok_or_else(expect)?;
+        let mut end_loc = current_tok.loc;
 
         if current_tok.kind != TokenKind::RParen {
             loop {
@@ -254,12 +269,16 @@ pub fn preprocess_slice<'a>(
                     }
 
                     current_tok = toks.next().ok_or_else(expect)?;
+                    end_loc = current_tok.loc;
                 }
 
                 actual_params.push(current_param);
                 if current_tok.kind == TokenKind::RParen {
                     break;
                 }
+
+                current_tok = toks.next().ok_or_else(expect)?;
+                end_loc = current_tok.loc;
             }
         }
 
@@ -285,7 +304,7 @@ pub fn preprocess_slice<'a>(
         }
 
         expanded.insert(id);
-        let expanded_toks = expand_macro(macro_toks, params_hash);
+        let expanded_toks = expand_macro(macro_toks, params_hash, l_from(start_loc, end_loc));
         let mut expanded_toks = preprocess_slice(expanded, macros, &expanded_toks)?;
         expanded.remove(&id);
         output.append(&mut expanded_toks);
@@ -365,21 +384,32 @@ pub fn parse_func_macro<'a>(loc: CodeLoc, macro_def: &[Token<'a>]) -> Result<Mac
 pub fn expand_macro<'a>(
     macro_def: &[Token<'a>],
     params: HashMap<u32, Vec<Token<'a>>>,
+    loc: CodeLoc,
 ) -> Vec<Token<'a>> {
-    let mut from = Vec::new();
+    let mut output = Vec::new();
 
     for tok in macro_def {
         match &tok.kind {
             TokenKind::TypeIdent(id) | TokenKind::Ident(id) => {
                 if let Some(expand) = params.get(id) {
-                    from.extend_from_slice(expand);
+                    for tok in expand {
+                        let mut token = *tok;
+                        token.loc = loc;
+                        output.push(token);
+                    }
                 } else {
-                    from.push(*tok);
+                    let mut token = *tok;
+                    token.loc = loc;
+                    output.push(token);
                 }
             }
-            x => from.push(*tok),
+            x => {
+                let mut token = *tok;
+                token.loc = loc;
+                output.push(token);
+            }
         }
     }
 
-    return from;
+    return output;
 }

@@ -11,8 +11,8 @@ use core::mem::{align_of, size_of};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
-pub struct ASMFunc<'a> {
-    pub func_type: TCFuncType<'a>,
+pub struct ASMFunc {
+    pub func_type: TCFuncType,
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
@@ -41,17 +41,24 @@ pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
     ];
 }
 
-pub struct Assembler<'a> {
+#[derive(Debug, Clone)]
+pub struct ASMRuntimeStruct {
+    pub members: Option<Vec<TCStructMember>>,
+    pub loc: CodeLoc,
+    pub sa: SizeAlign,
+}
+
+pub struct Assembler {
     pub opcodes: Vec<TaggedOpcode>,
     pub func_types: HashMap<u32, u32>,
     pub data: VarBuffer,
-    pub functions: HashMap<u32, ASMFunc<'a>>, // keys are identifier symbols
-    pub types: HashMap<u32, RuntimeStruct<'a>>,
+    pub functions: HashMap<u32, ASMFunc>, // keys are identifier symbols
+    pub types: HashMap<u32, ASMRuntimeStruct>,
     pub symbols: Vec<RuntimeVar>,
     pub struct_member_count: usize,
 }
 
-impl<'a> Assembler<'a> {
+impl Assembler {
     pub fn new() -> Self {
         Self {
             opcodes: Vec::new(),
@@ -64,15 +71,15 @@ impl<'a> Assembler<'a> {
         }
     }
 
-    pub fn add_file(&mut self, typed_ast: TypedFuncs<'a>) -> Result<(), Error> {
-        for (struct_id, struct_type) in typed_ast.types.structs.iter() {
-            let struct_type = match &struct_type.defn {
+    pub fn add_file(&mut self, typed_ast: TypedFuncs) -> Result<(), Error> {
+        for (struct_id, struct_type) in typed_ast.types.structs.into_iter() {
+            let struct_type = match struct_type.defn {
                 Some(struct_type) => struct_type,
                 None => {
-                    if !self.types.contains_key(struct_id) {
+                    if !self.types.contains_key(&struct_id) {
                         self.types.insert(
-                            *struct_id,
-                            RuntimeStruct {
+                            struct_id,
+                            ASMRuntimeStruct {
                                 members: None,
                                 loc: struct_type.decl_loc,
                                 sa: TC_UNKNOWN_SA,
@@ -84,33 +91,37 @@ impl<'a> Assembler<'a> {
                 }
             };
 
-            if let Some(RuntimeStruct { members, loc, sa }) = self.types.get_mut(struct_id) {
+            let member_count = struct_type.members.len();
+            if let Some(ASMRuntimeStruct { members, loc, sa }) = self.types.get_mut(&struct_id) {
                 if let Some(members) = members {
                     if members != &struct_type.members {
                         return Err(error!(
                             "multiple, conflicting definitions of same type",
-                            *loc, "first one found here", struct_type.loc, "second one found here"
+                            *loc,
+                            "first one found here",
+                            struct_type.meta.loc,
+                            "second one found here"
                         ));
                     }
                 } else {
+                    self.struct_member_count += member_count;
                     *members = Some(struct_type.members);
-                    *loc = struct_type.loc;
-                    *sa = struct_type.sa;
-                    self.struct_member_count += struct_type.members.len();
+                    *loc = struct_type.meta.loc;
+                    *sa = struct_type.meta.sa;
                 }
 
                 continue;
             }
 
             self.types.insert(
-                *struct_id,
-                RuntimeStruct {
+                struct_id,
+                ASMRuntimeStruct {
                     members: Some(struct_type.members),
-                    loc: struct_type.loc,
-                    sa: struct_type.sa,
+                    loc: struct_type.meta.loc,
+                    sa: struct_type.meta.sa,
                 },
             );
-            self.struct_member_count += struct_type.members.len();
+            self.struct_member_count += member_count;
         }
 
         // Add function return sizes
@@ -126,37 +137,39 @@ impl<'a> Assembler<'a> {
         return Ok(());
     }
 
-    pub fn add_function(&mut self, ident: u32, func: TCFunc<'a>) -> Result<(), Error> {
-        let (func_type, func_header) = match self.functions.get(&ident) {
+    pub fn add_function(&mut self, ident: u32, func: TCFunc) -> Result<(), Error> {
+        let asm_func = match self.functions.get_mut(&ident) {
             Some(asm_func) => {
                 if asm_func.func_type != func.func_type {
                     let error = func_decl_mismatch(asm_func.func_type.loc, func.func_type.loc);
                     return Err(error);
                 }
-                (asm_func.func_type, asm_func.func_header)
+                asm_func
             }
-            None => (func.func_type, None),
-        };
+            None => {
+                self.functions.insert(
+                    ident,
+                    ASMFunc {
+                        func_type: func.func_type,
+                        func_header: None,
+                    },
+                );
 
-        let mut asm_func = ASMFunc {
-            func_type,
-            func_header: None,
+                self.functions.get_mut(&ident).unwrap()
+            }
         };
 
         let defn = match func.defn {
             Some(defn) => defn,
-            None => {
-                self.functions.insert(ident, asm_func);
-                return Ok(());
-            }
+            None => return Ok(()),
         };
 
-        if let Some((_func_header, defn_loc)) = func_header {
-            return Err(func_redef(defn_loc, defn.loc));
+        if let Some((_func_header, defn_loc)) = &asm_func.func_header {
+            return Err(func_redef(*defn_loc, defn.loc));
         }
 
         asm_func.func_header = Some((self.opcodes.len() as u32, defn.loc));
-        let param_count = func_type.params.len() as u32;
+        let param_count = asm_func.func_type.params.len() as u32;
 
         self.opcodes.push(TaggedOpcode {
             op: Opcode::Func(ident),
@@ -171,7 +184,6 @@ impl<'a> Assembler<'a> {
             loc: defn.loc,
         });
 
-        self.functions.insert(ident, asm_func);
         return Ok(());
     }
 
@@ -352,12 +364,20 @@ impl<'a> Assembler<'a> {
                 };
                 ops.push(tagged);
             }
-            TCExprKind::IntLiteral(val) => {
+            TCExprKind::I8Literal(val) => {
+                tagged.op = Opcode::MakeTempI8(*val);
+                ops.push(tagged);
+            }
+            TCExprKind::I32Literal(val) => {
                 tagged.op = Opcode::MakeTempI32(*val);
                 ops.push(tagged);
             }
-            TCExprKind::LongLiteral(val) => {
+            TCExprKind::I64Literal(val) => {
                 tagged.op = Opcode::MakeTempI64(*val);
+                ops.push(tagged);
+            }
+            TCExprKind::U64Literal(val) => {
+                tagged.op = Opcode::MakeTempU64(*val);
                 ops.push(tagged);
             }
             TCExprKind::StringLiteral(val) => {
@@ -385,7 +405,7 @@ impl<'a> Assembler<'a> {
                 ops.push(tagged);
             }
 
-            TCExprKind::FixedArrayToPtr(array) => {
+            TCExprKind::TypePun(array) => {
                 ops.append(&mut self.translate_expr(array));
             }
             TCExprKind::Array(exprs) => {
@@ -426,6 +446,12 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::SubI32;
                 ops.push(tagged);
             }
+            TCExprKind::SubU64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::SubU64;
+                ops.push(tagged);
+            }
 
             TCExprKind::MulI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
@@ -439,11 +465,23 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::MulI64;
                 ops.push(tagged);
             }
+            TCExprKind::MulU64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::MulU64;
+                ops.push(tagged);
+            }
 
             TCExprKind::DivI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::DivI32;
+                ops.push(tagged);
+            }
+            TCExprKind::DivU64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::DivU64;
                 ops.push(tagged);
             }
 
@@ -461,6 +499,12 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::CompLtI32;
                 ops.push(tagged);
             }
+            TCExprKind::LtU64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::CompLtU64;
+                ops.push(tagged);
+            }
             TCExprKind::LeqI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
@@ -475,17 +519,23 @@ impl<'a> Assembler<'a> {
                 tagged.op = Opcode::CompLeqI32;
                 ops.push(tagged);
             }
-            TCExprKind::EqI32(l, r) => {
+
+            TCExprKind::Eq32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompEqI32;
+                tagged.op = Opcode::CompEq32;
                 ops.push(tagged);
             }
-
-            TCExprKind::NeqI32(l, r) => {
+            TCExprKind::Neq32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompNeqI32;
+                tagged.op = Opcode::CompNeq32;
+                ops.push(tagged);
+            }
+            TCExprKind::Eq64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::CompEq64;
                 ops.push(tagged);
             }
 
@@ -508,6 +558,11 @@ impl<'a> Assembler<'a> {
             TCExprKind::ZConv32To64(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::ZExtend32To64;
+                ops.push(tagged);
+            }
+            TCExprKind::ZConv64To32(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::PopKeep { keep: 4, drop: 4 };
                 ops.push(tagged);
             }
 
@@ -779,8 +834,9 @@ impl<'a> Assembler<'a> {
         macro_rules! type_mapper {
             () => {
                 |(id, value)| {
+                    let mapper = |members: &Vec<_>| &*frame.add_slice(members);
                     let runtime_struct = RuntimeStruct {
-                        members: value.members.map(|members| &*frame.add_slice(members)),
+                        members: value.members.as_ref().map(mapper),
                         loc: value.loc,
                         sa: value.sa,
                     };

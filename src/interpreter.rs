@@ -81,9 +81,11 @@ pub enum Opcode {
     StackDealloc,                           // Pops a variable off of the stack
     StackAddToTemp, // Pops a variable off the stack, adding it to the temporary storage below
 
+    MakeTempI8(i8),
     MakeTempI32(i32),
     MakeTempI64(i64),
-    MakeTempFloat64(f64),
+    MakeTempU64(u64),
+    MakeTempF64(f64),
     MakeTempBinaryPtr { var: u32, offset: u32 },
     MakeTempLocalStackPtr { var: i16, offset: u32 },
 
@@ -119,18 +121,24 @@ pub enum Opcode {
 
     SubI32,
     SubI64,
+    SubU64,
 
     MulI32,
 
     DivI32,
+    DivI64,
+    DivU64,
 
     CompLtI32,
+    CompLtU64,
     CompLeqI32,
-    CompEqI32,
-    CompNeqI32,
+
+    CompEq32,
+    CompNeq32,
+    CompEq64,
 
     MulI64,
-    DivI64,
+    MulU64,
     ModI64,
 
     Jump(u32),
@@ -317,9 +325,11 @@ impl Runtime {
                 self.memory.pop_stack_var_onto_stack()?;
             }
 
+            Opcode::MakeTempI8(value) => self.memory.push_stack(value),
             Opcode::MakeTempI32(value) => self.memory.push_stack(value.to_be()),
             Opcode::MakeTempI64(value) => self.memory.push_stack(value.to_be()),
-            Opcode::MakeTempFloat64(value) => self.memory.push_stack(value),
+            Opcode::MakeTempU64(value) => self.memory.push_stack(value.to_be()),
+            Opcode::MakeTempF64(value) => self.memory.push_stack(value),
             Opcode::MakeTempBinaryPtr { var, offset } => {
                 let ptr = VarPointer::new_binary(var, offset);
                 self.memory.push_stack(ptr);
@@ -440,6 +450,11 @@ impl Runtime {
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_div(word2).to_be());
             }
+            Opcode::DivU64 => {
+                let word2 = u64::from_be(self.memory.pop_stack()?);
+                let word1 = u64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_div(word2).to_be());
+            }
 
             Opcode::CompLeqI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
@@ -451,16 +466,27 @@ impl Runtime {
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 < word2) as u8);
             }
-            Opcode::CompEqI32 => {
+
+            Opcode::CompLtU64 => {
+                let word2 = u64::from_be(self.memory.pop_stack()?);
+                let word1 = u64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 < word2) as u8);
+            }
+
+            Opcode::CompEq32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 == word2) as u8);
             }
-
-            Opcode::CompNeqI32 => {
+            Opcode::CompNeq32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 != word2) as u8);
+            }
+            Opcode::CompEq64 => {
+                let word2 = u64::from_be(self.memory.pop_stack()?);
+                let word1 = u64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 == word2) as u8);
             }
 
             Opcode::AddU64 => {
@@ -470,18 +496,28 @@ impl Runtime {
                 self.memory.push_stack(word1.wrapping_add(word2).to_be());
             }
             Opcode::SubI64 => {
+                let word2 = i64::from_be(self.memory.pop_stack()?);
+                let word1 = i64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_sub(word2).to_be());
+            }
+            Opcode::SubU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_sub(word2).to_be());
             }
             Opcode::MulI64 => {
+                let word2 = i64::from_be(self.memory.pop_stack()?);
+                let word1 = i64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_mul(word2).to_be());
+            }
+            Opcode::MulU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_mul(word2).to_be());
             }
             Opcode::DivI64 => {
-                let word2 = u64::from_be(self.memory.pop_stack()?);
-                let word1 = u64::from_be(self.memory.pop_stack()?);
+                let word2 = i64::from_be(self.memory.pop_stack()?);
+                let word1 = i64::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_div(word2).to_be());
             }
             Opcode::ModI64 => {
@@ -719,6 +755,17 @@ pub fn printf_internal(
                 current_offset += 1;
 
                 write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?).map_err(map_err)?;
+            }
+            b'l' => {
+                if format_str[idx2 + 1] == b'd' {
+                    idx2 += 1;
+                    // TODO actually implement standard printf
+                    let var_ptr = VarPointer::new_stack(current_offset, 0);
+                    let value = i64::from_be(sel.memory.get_var(var_ptr)?);
+                    current_offset += 1;
+
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                }
             }
             b'd' => {
                 let var_ptr = VarPointer::new_stack(current_offset, 0);
