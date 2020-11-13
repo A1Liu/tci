@@ -2,6 +2,7 @@ import "./tailwind.css";
 import "./App.css";
 import FileUpload from "./components/fileUpload";
 import Terminal from "./components/terminal";
+import Editor from "./components/editor";
 
 function App() {
   return (
@@ -18,10 +19,10 @@ function App() {
           <FileUpload />
         </div>
         {/* Will replace with Split Component later */}
-        <div className="w-full md:w-5/6 bg-gray-500 p-0 text-center text-gray-200">
-          <div className="flex h-screen md:flex-row flex-wrap">
-            <div className="w-full md:w-1/2 bg-gray-800 p-4 text-center border-solid border-2 border-opacity-50 border-gray-600">
-              Editor
+        <div className="h-screen w-full md:w-5/6 bg-gray-500 p-0 text-center text-gray-200">
+          <div className="flex h-full md:flex-row flex-wrap">
+            <div className="w-full md:w-1/2 bg-gray-800 text-center border-solid border border-gray-600">
+              <Editor />
             </div>
             <div
               id="terminal-div"
