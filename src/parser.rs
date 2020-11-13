@@ -175,7 +175,26 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_bool_and(buckets, tokens, current)
+        let mut expr = self.parse_bool_and(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Amp => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_bool_and(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::BoolOr, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_bool_and<'a>(
@@ -184,7 +203,26 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_bit_or(buckets, tokens, current)
+        let mut expr = self.parse_bit_or(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Amp => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_bit_or(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::BoolAnd, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_bit_or<'a>(
@@ -193,7 +231,26 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_bit_xor(buckets, tokens, current)
+        let mut expr = self.parse_bit_xor(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Amp => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_bit_xor(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::BitOr, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_bit_xor<'a>(
@@ -202,7 +259,26 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_bit_and(buckets, tokens, current)
+        let mut expr = self.parse_bit_and(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Amp => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_bit_and(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::BitXor, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_bit_and<'a>(
@@ -211,7 +287,26 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_equality(buckets, tokens, current)
+        let mut expr = self.parse_equality(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::Amp => {
+                    pop(tokens, current).unwrap();
+
+                    let right = self.parse_equality(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::BitAnd, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                _ => return Ok(expr),
+            }
+        }
     }
 
     pub fn parse_equality<'a>(
@@ -227,7 +322,7 @@ impl<'b> Parser<'b> {
                 TokenKind::EqEq => {
                     pop(tokens, current).unwrap();
 
-                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let right = self.parse_comparison(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
                     let right = buckets.add(right);
@@ -240,7 +335,7 @@ impl<'b> Parser<'b> {
                 TokenKind::Neq => {
                     pop(tokens, current).unwrap();
 
-                    let right = self.parse_shift(buckets, tokens, current)?;
+                    let right = self.parse_comparison(buckets, tokens, current)?;
                     let end_loc = right.loc;
                     let left = buckets.add(expr);
                     let right = buckets.add(right);
