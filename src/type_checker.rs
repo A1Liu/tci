@@ -72,93 +72,35 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     let mut right_op: BinOpValids = HashSet::new();
     let mut expr_to_type: AssignOL = HashMap::new();
 
-    unified_bin_op.insert((BinOp::Add, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::AddU32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I32, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    macro_rules! add_unified_bin_op {
+        ($op:ident, $ty:ident, $expr_kind:ident, $type_kind:ident) => {{
+            unified_bin_op.insert((BinOp::$op, TCShallowType::$ty), |env, l, r| {
+                return Ok(TCExpr {
+                    kind: TCExprKind::$expr_kind(env.buckets.add(l), env.buckets.add(r)),
+                    expr_type: TCType::new(TCTypeKind::$type_kind, 0),
+                    loc: l_from(l.loc, r.loc),
+                });
+            });
+        }};
+    }
 
-    unified_bin_op.insert((BinOp::Add, TCShallowType::U32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::AddU32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::U32, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Add, I32, AddU32, I32);
+    add_unified_bin_op!(Add, U32, AddU32, U32);
+    add_unified_bin_op!(Add, U64, AddU64, U64);
+    add_unified_bin_op!(Add, I64, AddU64, I64);
 
-    unified_bin_op.insert((BinOp::Add, TCShallowType::U64), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::AddU64(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::U64, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Sub, I32, SubI32, I32);
 
-    unified_bin_op.insert((BinOp::Add, TCShallowType::I64), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::AddU64(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I64, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Div, I32, DivI32, I32);
+    add_unified_bin_op!(Div, U64, DivU64, U64);
 
-    unified_bin_op.insert((BinOp::Sub, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::SubI32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I32, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Lt, I32, LtI32, I8);
 
-    unified_bin_op.insert((BinOp::Div, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::DivI32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I32, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Geq, I32, GeqI32, I8);
 
-    unified_bin_op.insert((BinOp::Div, TCShallowType::U64), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::DivU64(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::U64, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Gt, I32, GtI32, I8);
 
-    unified_bin_op.insert((BinOp::Lt, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::LtI32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I8, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
-
-    unified_bin_op.insert((BinOp::Geq, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::GeqI32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I8, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
-
-    unified_bin_op.insert((BinOp::Gt, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::GtI32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I8, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
-
-    unified_bin_op.insert((BinOp::Eq, TCShallowType::I32), |env, l, r| {
-        return Ok(TCExpr {
-            kind: TCExprKind::Eq32(env.buckets.add(l), env.buckets.add(r)),
-            expr_type: TCType::new(TCTypeKind::I8, 0),
-            loc: l_from(l.loc, r.loc),
-        });
-    });
+    add_unified_bin_op!(Eq, I32, Eq32, I8);
 
     macro_rules! add_un_op_ol {
         ($op:ident, $operand:ident, $func:expr) => {{
