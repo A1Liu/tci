@@ -378,14 +378,23 @@ impl TCType {
         }
     }
 
+    pub fn is_pointer(&self) -> bool {
+        match self.array_kind {
+            TCArrayKind::None => {}
+            TCArrayKind::Fixed(_) => return true,
+        }
+
+        return self.pointer_count > 0;
+    }
+
     pub fn rank(&self) -> u32 {
         match self.array_kind {
             TCArrayKind::None => {}
-            TCArrayKind::Fixed(_) => return 0,
+            TCArrayKind::Fixed(_) => return u32::MAX,
         }
 
         if self.pointer_count > 0 {
-            return 0;
+            return u32::MAX;
         }
 
         match self.kind {
