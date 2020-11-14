@@ -200,98 +200,29 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     });
 
     macro_rules! add_assign_ol {
-        ($left:ident, $right:ident, $func:expr) => {{
-            expr_to_type.insert((TCShallowType::$left, TCShallowType::$right), $func);
+        ($left:ident, $right:ident, $expr_kind:ident) => {{
+            expr_to_type.insert(
+                (TCShallowType::$left, TCShallowType::$right),
+                |buckets, e, t| {
+                    return TCExpr {
+                        loc: e.loc,
+                        kind: TCExprKind::$expr_kind(buckets.add(e)),
+                        expr_type: t,
+                    };
+                },
+            );
         }};
     }
 
-    add_assign_ol!(I8, I32, |buckets, e, t| {
-        let result_type = TCType::new(TCTypeKind::I32, 0);
-
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::SConv8To32(buckets.add(e)),
-            expr_type: result_type,
-        };
-    });
-
-    add_assign_ol!(Pointer, VoidPointer, |buckets, e, t| {
-        let result_type = TCType::new(TCTypeKind::Void, 1);
-
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::TypePun(buckets.add(e)),
-            expr_type: result_type,
-        };
-    });
-
-    add_assign_ol!(VoidPointer, VoidPointer, |buckets, e, t| {
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::TypePun(buckets.add(e)),
-            expr_type: t,
-        };
-    });
-
-    add_assign_ol!(Pointer, Pointer, |buckets, e, t| {
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::TypePun(buckets.add(e)),
-            expr_type: t,
-        };
-    });
-
-    add_assign_ol!(VoidPointer, Pointer, |buckets, e, t| {
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::TypePun(buckets.add(e)),
-            expr_type: t,
-        };
-    });
-
-    add_assign_ol!(I32, VoidPointer, |buckets, e, t| {
-        let result_type = TCType::new(TCTypeKind::Void, 1);
-
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::SConv32To64(buckets.add(e)),
-            expr_type: result_type,
-        };
-    });
-
-    add_assign_ol!(I32, Pointer, |buckets, e, t| {
-        let result_type = t;
-
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::SConv32To64(buckets.add(e)),
-            expr_type: result_type,
-        };
-    });
-
-    add_assign_ol!(I32, U64, |buckets, e, t| {
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::SConv32To64(buckets.add(e)),
-            expr_type: t,
-        };
-    });
-
-    add_assign_ol!(U32, U64, |buckets, e, t| {
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::ZConv32To64(buckets.add(e)),
-            expr_type: t,
-        };
-    });
-
-    add_assign_ol!(U64, I32, |buckets, e, t| {
-        return TCExpr {
-            loc: e.loc,
-            kind: TCExprKind::ZConv64To32(buckets.add(e)),
-            expr_type: t,
-        };
-    });
+    add_assign_ol!(I8, I32, SConv8To32);
+    add_assign_ol!(Pointer, VoidPointer, TypePun);
+    add_assign_ol!(VoidPointer, Pointer, TypePun);
+    add_assign_ol!(Pointer, Pointer, TypePun);
+    add_assign_ol!(I32, VoidPointer, SConv32To64);
+    add_assign_ol!(I32, Pointer, SConv32To64);
+    add_assign_ol!(I32, U64, SConv32To64);
+    add_assign_ol!(U32, U64, ZConv32To64);
+    add_assign_ol!(U64, I32, ZConv64To32);
 
     Overloads {
         unary_op,
