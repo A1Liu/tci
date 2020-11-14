@@ -378,6 +378,51 @@ impl TCType {
         }
     }
 
+    pub fn rank(&self) -> u32 {
+        match self.array_kind {
+            TCArrayKind::None => {}
+            TCArrayKind::Fixed(_) => return 0,
+        }
+
+        if self.pointer_count > 0 {
+            return 0;
+        }
+
+        match self.kind {
+            TCTypeKind::U8 => return 1,
+            TCTypeKind::I8 => return 2,
+            TCTypeKind::I32 => return 9,
+            TCTypeKind::U32 => return 10,
+            TCTypeKind::I64 => return 11,
+            TCTypeKind::U64 => return 12,
+            _ => {}
+        }
+
+        return 0;
+        // https://overiq.com/c-programming-101/implicit-type-conversion-in-c/
+        // If one operand is of type long double, then the other operand will be
+        // converted to long double and then the result of the operation will be a long double.
+        // Otherwise, If one operand is of type double then the other operand will be
+        // converted to double and the result of the operation will be a double.
+        // Otherwise, If one operand is of type float then the other operand will be
+        // converted to float and the result of the operation will be a float.
+        // Otherwise, If one operand is of type unsigned long int then the other operand
+        // will be converted to unsigned long int and the result of the operation will be an unsigned long int.
+        // Otherwise, If one operand is of type long intand the other is of type unsigned
+        // int then there are two possibilities:
+        //     If long int can represent all the values of an unsigned int, the operand of
+        //     type unsigned int will be converted to long int and the result will be a long int.
+        //     Otherwise, If long int can't represent all the values of an unsigned int,
+        //     the operand of both of the operands will be converted to unsigned long int and
+        //     the result will be an unsigned long int.
+        // Otherwise, If one operand is of type long int then the other operand will be
+        // converted to long int and the result of the operation will be a long int.
+        // Otherwise, If one operand is of type unsigned int then the other operand will be
+        // converted to unsigned int and the result of the operation will be an unsigned int.
+        // Otherwise, If one operand is of type int then the other operand will be converted
+        // to int and the result of the operation will be an int.
+    }
+
     #[inline]
     pub fn size(&self) -> u32 {
         let multiplier = match self.array_kind {
