@@ -186,12 +186,6 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_op_ol!(Sub, Pointer, U64, |env, l, r| {
         let expr_type = l.expr_type;
 
-        let r = TCExpr {
-            loc: r.loc,
-            kind: TCExprKind::SConv32To64(env.buckets.add(r)),
-            expr_type,
-        };
-
         return Ok(TCExpr {
             loc: l_from(l.loc, r.loc),
             kind: TCExprKind::SubU64(env.buckets.add(l), env.buckets.add(r)),
