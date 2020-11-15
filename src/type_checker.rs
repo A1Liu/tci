@@ -6,21 +6,17 @@ use std::collections::{HashMap, HashSet};
 
 pub fn unify<'a>(
     env: CheckEnv<'_, 'a>,
-    l: TCExpr<'a>,
-    r: TCExpr<'a>,
+    mut l: TCExpr<'a>,
+    mut r: TCExpr<'a>,
 ) -> Result<(TCExpr<'a>, TCExpr<'a>), Error> {
-    if l.expr_type == r.expr_type {
+    l.expr_type = env.resolve_typedef(l.expr_type, l.loc)?;
+    r.expr_type = env.resolve_typedef(r.expr_type, r.loc)?;
+
+    if l.expr_type.to_shallow() == r.expr_type.to_shallow() {
         return Ok((l, r));
     }
 
-    let l_et = env.resolve_typedef(l.expr_type, l.loc)?;
-    let r_et = env.resolve_typedef(r.expr_type, r.loc)?;
-
-    if l_et.to_shallow() == r_et.to_shallow() {
-        return Ok((l, r));
-    }
-
-    let (l_rank, r_rank) = (l_et.rank(), r_et.rank());
+    let (l_rank, r_rank) = (l.expr_type.rank(), r.expr_type.rank());
     if l_rank == 0 || r_rank == 0 {
         return Err(error!(
             "can't unify these two types",
@@ -32,12 +28,12 @@ pub fn unify<'a>(
     }
 
     if l_rank > r_rank {
-        let key = (r_et.to_shallow(), l_et.to_shallow());
-        let r = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, r, l_et);
+        let key = (r.expr_type.to_shallow(), l.expr_type.to_shallow());
+        let r = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, r, l.expr_type);
         return Ok((l, r));
     } else {
-        let key = (l_et.to_shallow(), r_et.to_shallow());
-        let l = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, l, r_et);
+        let key = (l.expr_type.to_shallow(), r.expr_type.to_shallow());
+        let l = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, l, r.expr_type);
         return Ok((l, r));
     }
 }
@@ -90,11 +86,13 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_unified_bin_op!(Add, I64, AddU64, I64);
 
     add_unified_bin_op!(Sub, I32, SubI32, I32);
+    add_unified_bin_op!(Sub, U64, SubU64, U64);
 
     add_unified_bin_op!(Div, I32, DivI32, I32);
     add_unified_bin_op!(Div, U64, DivU64, U64);
 
     add_unified_bin_op!(Lt, I32, LtI32, I8);
+    add_unified_bin_op!(Lt, U64, LtU64, I8);
 
     add_unified_bin_op!(Geq, I32, GeqI32, I8);
 
@@ -496,6 +494,10 @@ impl TypeEnv {
 
         let expr_type = self.resolve_typedef(expr.expr_type, expr.loc)?;
         let assign_type = self.resolve_typedef(*assign_type, assign_loc)?;
+        if assign_type == expr_type {
+            return Ok(expr);
+        }
+
         let key = (expr_type.to_shallow(), assign_type.to_shallow());
         match OVERLOADS.expr_to_type.get(&key) {
             Some(transform) => return Ok(transform(buckets, expr, assign_type)),
@@ -2372,14 +2374,21 @@ pub fn check_expr_allow_brace<'b>(
 
             let (l, r) = unify(env, l, r)?;
             let key = (op, l.expr_type.to_shallow());
-            println!("key: {:?}", key);
             let map_err = || {
                 error!(
                     "invalid operands to binary expression",
                     l.loc,
-                    format!("this has type {}", l.expr_type.display(env.files)),
+                    format!(
+                        "this has type {} (invalid for {:?})",
+                        l.expr_type.display(env.files),
+                        op
+                    ),
                     r.loc,
-                    format!("this has type {}", r.expr_type.display(env.files))
+                    format!(
+                        "this has type {} (invalid for {:?})",
+                        r.expr_type.display(env.files),
+                        op
+                    )
                 )
             };
 

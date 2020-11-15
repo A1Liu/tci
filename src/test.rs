@@ -163,7 +163,8 @@ gen_test_should_succeed!(
     includes,
     control_flow,
     macros,
-    binary_search //, ("dyn_array_ptr/", dyn_array_ptr, main)
+    binary_search,
+    ("dyn_array_ptr/", dyn_array_ptr, main)
 );
 
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
