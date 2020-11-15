@@ -132,6 +132,7 @@ pub enum Opcode {
     CompLtI32,
     CompLtU64,
     CompLeqI32,
+    CompLeqU64,
 
     CompEq32,
     CompNeq32,
@@ -227,6 +228,7 @@ impl Runtime {
         lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
         lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
+        lib_funcs.insert(INIT_SYMS.translate["realloc"], realloc);
 
         let memory = Memory::new_with_binary(program.data);
         let s = Self {
@@ -467,6 +469,11 @@ impl Runtime {
                 self.memory.push_stack((word1 < word2) as u8);
             }
 
+            Opcode::CompLeqU64 => {
+                let word2 = u64::from_be(self.memory.pop_stack()?);
+                let word1 = u64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 <= word2) as u8);
+            }
             Opcode::CompLtU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
@@ -670,6 +677,15 @@ impl Runtime {
 pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
+    let size = u64::from_be(sel.memory.get_var(top_ptr)?);
+    let var_pointer = sel.memory.add_heap_var(size as u32); // TODO overflow
+    sel.memory.set(ret_ptr, var_pointer)?;
+    return Ok(None);
+}
+
+pub fn realloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
+    let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 2, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
     let var_pointer = sel.memory.add_heap_var(size as u32); // TODO overflow
     sel.memory.set(ret_ptr, var_pointer)?;
