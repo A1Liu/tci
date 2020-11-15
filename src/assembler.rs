@@ -568,7 +568,12 @@ impl Assembler {
 
             TCExprKind::Assign { target, value } => {
                 ops.append(&mut self.translate_expr(value));
+                let bytes = value.expr_type.size();
+                tagged.op = Opcode::PushDup { bytes };
+                ops.push(tagged);
                 ops.append(&mut self.translate_assign(target));
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                ops.push(tagged);
             }
 
             TCExprKind::Ternary {
@@ -633,14 +638,14 @@ impl Assembler {
                 ops.push(tagged);
             }
             TCExprKind::Ref(lvalue) => match lvalue.kind {
-                TCAssignKind::LocalIdent { var_offset } => {
+                TCAssignTargetKind::LocalIdent { var_offset } => {
                     tagged.op = Opcode::MakeTempLocalStackPtr {
                         var: var_offset,
                         offset: 0,
                     };
                     ops.push(tagged);
                 }
-                TCAssignKind::Ptr(expr) => {
+                TCAssignTargetKind::Ptr(expr) => {
                     ops.append(&mut self.translate_expr(expr));
                 }
             },
@@ -718,22 +723,17 @@ impl Assembler {
         };
 
         match assign.kind {
-            TCAssignKind::Ptr(expr) => {
-                let bytes = assign.target_type.size();
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
+            TCAssignTargetKind::Ptr(expr) => {
                 ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::Set { offset: 0, bytes };
+                tagged.op = Opcode::MakeTempU64(assign.offset as u64);
+                ops.push(tagged);
+                tagged.op = Opcode::AddU64;
                 ops.push(tagged);
             }
-            TCAssignKind::LocalIdent { var_offset } => {
-                let (bytes, offset) = (assign.target_type.size(), assign.offset);
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::SetLocal {
+            TCAssignTargetKind::LocalIdent { var_offset } => {
+                tagged.op = Opcode::MakeTempLocalStackPtr {
                     var: var_offset,
-                    offset,
-                    bytes,
+                    offset: assign.offset,
                 };
                 ops.push(tagged);
             }

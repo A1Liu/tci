@@ -601,14 +601,14 @@ pub struct TCFunc<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TCAssignKind<'a> {
+pub enum TCAssignTargetKind<'a> {
     LocalIdent { var_offset: i16 },
     Ptr(&'a TCExpr<'a>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCAssignTarget<'a> {
-    pub kind: TCAssignKind<'a>,
+    pub kind: TCAssignTargetKind<'a>,
     pub defn_loc: Option<CodeLoc>,
     pub target_loc: CodeLoc,
     pub target_type: TCType,

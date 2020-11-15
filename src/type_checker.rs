@@ -2566,7 +2566,7 @@ fn check_assign_target<'b>(
                 }
             };
 
-            let kind = TCAssignKind::LocalIdent {
+            let kind = TCAssignTargetKind::LocalIdent {
                 var_offset: tc_var.var_offset,
             };
 
@@ -2617,7 +2617,7 @@ fn check_assign_target<'b>(
             let member_info = env.check_struct_member(struct_id, base.loc, *member)?;
 
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(env.buckets.add(base)),
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(base)),
                 defn_loc: Some(member_info.loc),
                 target_loc: expr.loc,
                 target_type: member_info.decl_type,
@@ -2630,7 +2630,7 @@ fn check_assign_target<'b>(
 
             let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(env.buckets.add(ptr)),
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(ptr)),
                 target_loc: expr.loc,
                 defn_loc: None,
                 target_type,
@@ -2647,7 +2647,7 @@ fn check_assign_target<'b>(
 
             let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(env.buckets.add(sum)),
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(sum)),
                 target_loc: expr.loc,
                 defn_loc: None,
                 target_type,
