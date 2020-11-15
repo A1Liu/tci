@@ -50,6 +50,11 @@ canvas{
 
 #terminal-text{
   white-space: pre-wrap;
+  background-color: #1E1E1E;
+  height: 100vh;
+  padding-left: 5px;
+  padding-top: 5px;
+  overflow: scroll;
 }
 .term-caret {
   display: inline-block;

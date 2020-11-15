@@ -69,7 +69,7 @@ export default function FileUpload() {
         onChange={handleOnChange}
       />
       <button
-        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-6 mb-6 rounded "
+        className="bg-blue-600 hover:bg-blue-800 text-white font-bold py-2 px-6 mb-6 rounded "
         type="button"
         onClick={handleOnClick}
       >
