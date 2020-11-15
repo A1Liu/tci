@@ -839,10 +839,9 @@ impl<'b> Parser<'b> {
                     };
                 }
                 TokenKind::PlusPlus => {
-                    let loc = l_from(start_loc, pop(tokens, current).unwrap().loc);
                     operand = Expr {
                         kind: ExprKind::PostIncr(buckets.add(operand)),
-                        loc,
+                        loc: l_from(start_loc, pop(tokens, current).unwrap().loc),
                     };
                 }
                 TokenKind::DashDash => {
