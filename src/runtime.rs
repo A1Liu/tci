@@ -77,32 +77,42 @@ impl Var {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct VarPointer {
+pub struct VarPointerFields {
     _tid: u16,
     _idx: u16,
     _offset: u32,
 }
 
+#[derive(Clone, Copy)]
+pub union VarPointer {
+    fields: VarPointerFields,
+    value: u64,
+}
+
 impl fmt::Display for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let fields = self.fields();
+
         return write!(
             formatter,
             "0x{:x}{:0>4x}{:0>8x}",
-            u16::from_be(self._tid),
-            u16::from_be(self._idx),
-            u32::from_be(self._offset)
+            u16::from_be(fields._tid),
+            u16::from_be(fields._idx),
+            u32::from_be(fields._offset)
         );
     }
 }
 
 impl fmt::Debug for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let fields = self.fields();
+
         return write!(
             formatter,
             "0x{:x}{:0>4x}{:0>8x}",
-            u16::from_be(self._tid),
-            u16::from_be(self._idx),
-            u32::from_be(self._offset)
+            u16::from_be(fields._tid),
+            u16::from_be(fields._idx),
+            u32::from_be(fields._offset)
         );
     }
 }
@@ -111,11 +121,23 @@ impl VarPointer {
     pub const STACK_BIT: u16 = 1u16 << 14;
     pub const RESERVED_BITS: u16 = Self::BINARY_BIT | Self::STACK_BIT;
 
+    #[inline]
+    pub fn fields(&self) -> VarPointerFields {
+        unsafe { self.fields }
+    }
+
+    #[inline]
+    pub fn fields_mut(&mut self) -> &mut VarPointerFields {
+        unsafe { &mut self.fields }
+    }
+
     pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
         Self {
-            _tid: Self::STACK_BIT.to_be(),
-            _idx: idx.to_be(),
-            _offset: offset.to_be(),
+            fields: VarPointerFields {
+                _tid: Self::STACK_BIT.to_be(),
+                _idx: idx.to_be(),
+                _offset: offset.to_be(),
+            },
         }
     }
 
@@ -126,9 +148,11 @@ impl VarPointer {
         }
 
         Self {
-            _tid: tid.to_be(),
-            _idx: (idx as u16).to_be(),
-            _offset: offset.to_be(),
+            fields: VarPointerFields {
+                _tid: tid.to_be(),
+                _idx: (idx as u16).to_be(),
+                _offset: offset.to_be(),
+            },
         }
     }
 
@@ -141,28 +165,30 @@ impl VarPointer {
         let tid = tid | Self::BINARY_BIT;
 
         Self {
-            _tid: tid.to_be(),
-            _idx: (idx as u16).to_be(),
-            _offset: offset.to_be(),
+            fields: VarPointerFields {
+                _tid: tid.to_be(),
+                _idx: (idx as u16).to_be(),
+                _offset: offset.to_be(),
+            },
         }
     }
 
     pub fn is_stack(&self) -> bool {
-        return (u16::from_be(self._tid) & Self::STACK_BIT) != 0;
+        return (u16::from_be(self.fields()._tid) & Self::STACK_BIT) != 0;
     }
 
     pub fn is_binary(&self) -> bool {
-        return (u16::from_be(self._tid) & Self::BINARY_BIT) != 0;
+        return (u16::from_be(self.fields()._tid) & Self::BINARY_BIT) != 0;
     }
 
     pub fn is_heap(&self) -> bool {
-        return (u16::from_be(self._tid) & Self::RESERVED_BITS) == 0;
+        return (u16::from_be(self.fields()._tid) & Self::RESERVED_BITS) == 0;
     }
 
     // returns u16::MAX if not attached to a thread
     pub fn tid(&self) -> u16 {
         if self.is_stack() {
-            return u16::from_be(self._tid) & !Self::RESERVED_BITS;
+            return u16::from_be(self.fields()._tid) & !Self::RESERVED_BITS;
         }
 
         return u16::MAX;
@@ -170,25 +196,37 @@ impl VarPointer {
 
     pub fn var_idx(self) -> usize {
         if self.is_stack() {
-            return u16::from_be(self._idx) as usize;
+            return u16::from_be(self.fields()._idx) as usize;
         }
 
-        let top = ((u16::from_be(self._tid) & !Self::RESERVED_BITS) as u32) << 16;
-        return (top | u16::from_be(self._idx) as u32) as usize;
+        let top = ((u16::from_be(self.fields()._tid) & !Self::RESERVED_BITS) as u32) << 16;
+        return (top | u16::from_be(self.fields()._idx) as u32) as usize;
     }
 
     pub fn with_offset(self, offset: u32) -> Self {
         let mut ptr = self;
-        ptr._offset = offset.to_be();
+        ptr.fields_mut()._offset = offset.to_be();
         return ptr;
     }
 
     pub fn offset(self) -> u32 {
-        u32::from_be(self._offset)
+        u32::from_be(self.fields()._offset)
     }
 
     pub fn set_offset(&mut self, offset: u32) {
-        self._offset = offset.to_be();
+        self.fields_mut()._offset = offset.to_be();
+    }
+
+    pub fn add(self, add: u64) -> Self {
+        Self {
+            value: (u64::from_be(unsafe { self.value }).wrapping_add(1)).to_be(),
+        }
+    }
+
+    pub fn sub(self, add: u64) -> Self {
+        Self {
+            value: (u64::from_be(unsafe { self.value }).wrapping_sub(1)).to_be(),
+        }
     }
 }
 

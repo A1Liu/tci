@@ -229,6 +229,7 @@ impl Runtime {
         lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
         lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
         lib_funcs.insert(INIT_SYMS.translate["realloc"], realloc);
+        lib_funcs.insert(INIT_SYMS.translate["memcpy"], memcpy);
 
         let memory = Memory::new_with_binary(program.data);
         let s = Self {
@@ -253,7 +254,8 @@ impl Runtime {
         loop {
             let ret = self.run_op();
             for event in self.memory.events() {
-                write!(io, "{}", event.to_string())?;
+                let string = event.to_string();
+                write!(io, "{}", string)?;
             }
 
             if let Some(exit) = ret? {
@@ -611,14 +613,12 @@ impl Runtime {
             }
             Opcode::LibCall(func_name) => {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
-                    self.memory.push_callstack(op.loc);
                     lib_func(self)?;
-                    self.memory.pop_callstack();
                 } else {
                     return Err(error!(
                         "InvalidLibraryFunction",
-                        "library function symbol {} is invalid (this is a problem with tci)",
-                        func_name
+                        "library function symbol '{}' is invalid (this is a problem with tci)",
+                        self.program.files.symbols[func_name as usize]
                     ));
                 }
             }
@@ -674,6 +674,30 @@ impl Runtime {
     }
 }
 
+pub fn memcpy(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+    let stack_len = sel.memory.stack_length();
+    let size_param_ptr = VarPointer::new_stack(stack_len, 0);
+    let src_param_ptr = VarPointer::new_stack(stack_len - 1, 0);
+    let dest_param_ptr = VarPointer::new_stack(stack_len - 2, 0);
+    let ret_ptr = VarPointer::new_stack(stack_len - 3, 0);
+
+    let size = u64::from_be(sel.memory.get_var(size_param_ptr)?);
+    let mut src: VarPointer = sel.memory.get_var(src_param_ptr)?;
+    let mut dest: VarPointer = sel.memory.get_var(dest_param_ptr)?;
+    let to_ret = dest;
+
+    for _ in 0..size {
+        // PERFORMANCE this is so slow lmao
+        let byte: u8 = sel.memory.get_var(src)?;
+        sel.memory.set(dest, byte)?;
+        src = src.add(1);
+        dest = dest.add(1);
+    }
+
+    sel.memory.set(ret_ptr, to_ret)?;
+    return Ok(None);
+}
+
 pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
@@ -684,11 +708,40 @@ pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
 }
 
 pub fn realloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
-    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
-    let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 2, 0);
-    let size = u64::from_be(sel.memory.get_var(top_ptr)?);
-    let var_pointer = sel.memory.add_heap_var(size as u32); // TODO overflow
-    sel.memory.set(ret_ptr, var_pointer)?;
+    let stack_len = sel.memory.stack_length();
+    let size_ptr = VarPointer::new_stack(stack_len, 0);
+    let to_free_ptr = VarPointer::new_stack(stack_len - 1, 0);
+    let ret_ptr = VarPointer::new_stack(stack_len - 2, 0);
+
+    let to_free: VarPointer = sel.memory.get_var(to_free_ptr)?;
+    if !to_free.is_heap() {
+        return Err(error!(
+            "InvalidPointer",
+            "called realloc on a pointer that was not from the heap"
+        ));
+    }
+
+    if to_free.offset() != 0 {
+        return Err(error!(
+            "InvalidPointer",
+            "called realloc on a pointer that was {} bytes off of its allocation",
+            to_free.offset()
+        ));
+    }
+
+    let size = u64::from_be(sel.memory.get_var(size_ptr)?);
+    let new_alloc_ptr = sel.memory.add_heap_var(size as u32); // TODO overflow
+
+    let (mut src, mut dest) = (to_free, new_alloc_ptr);
+    for _ in 0..size {
+        // PERFORMANCE this is so slow lmao
+        let byte: u8 = sel.memory.get_var(src)?;
+        sel.memory.set(dest, byte)?;
+        src = src.add(1);
+        dest = dest.add(1);
+    }
+
+    sel.memory.set(ret_ptr, new_alloc_ptr)?;
     return Ok(None);
 }
 
@@ -728,6 +781,7 @@ pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     return Ok(None);
 }
 
+#[allow(unused_assignments)] // TODO remove this when we make this fully standard compliant
 pub fn printf_internal(
     sel: &mut Runtime,
     format_ptr: VarPointer,
@@ -737,6 +791,43 @@ pub fn printf_internal(
     // OPTIMIZE This does an unnecessary linear scan
     let format_str = sel.cstring_bytes(sel.memory.get_var(format_ptr)?)?;
     let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
+
+    // CREDIT heavily inspired by https://github.com/mpaland/printf/blob/master/printf.c
+
+    const FLAGS_ZEROPAD: u32 = 1;
+    const FLAGS_LEFT: u32 = 2;
+    const FLAGS_PLUS: u32 = 4;
+    const FLAGS_SPACE: u32 = 8;
+    const FLAGS_HASH: u32 = 16;
+    const FLAGS_PRECISION: u32 = 32;
+    const FLAGS_LONG: u32 = 64;
+    const FLAGS_LONG_LONG: u32 = 128;
+
+    let mut next_ptr = || {
+        let var_ptr = VarPointer::new_stack(current_offset, 0);
+        current_offset += 1;
+        return var_ptr;
+    };
+
+    let parse_int = |begin: usize| {
+        let mut idx = begin;
+        if format_str[idx] >= b'0' && format_str[idx] <= b'9' {
+            let mut collect = 0;
+            loop {
+                collect *= 10;
+                collect += (format_str[idx] - b'0') as usize;
+                idx += 1;
+
+                if format_str[idx] < b'0' || format_str[idx] > b'9' {
+                    break;
+                }
+            }
+
+            return Some((collect, idx - begin));
+        }
+
+        return None;
+    };
 
     let mut idx = 0;
     while idx < format_str.len() {
@@ -761,34 +852,112 @@ pub fn printf_internal(
             ));
         }
 
+        // format specifier?  %[flags][width][.precision][length]
+        let mut flags = 0;
+        let mut width = 0;
+        let mut precision = 0;
+
+        loop {
+            match format_str[idx2] {
+                b'0' => flags |= FLAGS_ZEROPAD,
+                b'-' => flags |= FLAGS_LEFT,
+                b'+' => flags |= FLAGS_PLUS,
+                b' ' => flags |= FLAGS_SPACE,
+                b'#' => flags |= FLAGS_HASH,
+                _ => break,
+            }
+            idx += 1;
+        }
+
+        if let Some((w, diff)) = parse_int(idx2) {
+            idx2 += diff;
+            width = w;
+        } else if format_str[idx2] == b'*' {
+            let mut next = i32::from_be(sel.memory.get_var(next_ptr())?);
+            if next < 0 {
+                flags |= FLAGS_LEFT;
+                next *= -1;
+            }
+
+            width = next as usize;
+            idx2 += 1;
+        }
+
+        if format_str[idx2] == b'.' {
+            flags |= FLAGS_PRECISION;
+            idx2 += 1;
+
+            if let Some((prec, diff)) = parse_int(idx2) {
+                idx2 += diff;
+                precision = prec;
+            } else if format_str[idx2] == b'*' {
+                let next = i32::from_be(sel.memory.get_var(next_ptr())?);
+                precision = if next > 0 { next } else { 0 } as usize;
+                idx2 += 1;
+            }
+        }
+
         match format_str[idx2] {
+            b'l' => {
+                flags |= FLAGS_LONG;
+                idx2 += 1;
+                if format_str[idx2] == b'l' {
+                    flags |= FLAGS_LONG_LONG;
+                    idx2 += 1;
+                }
+            }
+            _ => {}
+        }
+
+        match format_str[idx2] {
+            b'u' => {
+                let base = 10;
+                flags &= !FLAGS_HASH;
+                if (flags & FLAGS_PRECISION) != 0 {
+                    flags &= !FLAGS_ZEROPAD;
+                }
+                flags &= !(FLAGS_PLUS | FLAGS_SPACE);
+
+                if (flags & FLAGS_LONG_LONG) != 0 {
+                    let value = u64::from_be(sel.memory.get_var(next_ptr())?);
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                } else if (flags & FLAGS_LONG) != 0 {
+                    let value = u64::from_be(sel.memory.get_var(next_ptr())?);
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                } else {
+                    let value = u32::from_be(sel.memory.get_var(next_ptr())?);
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                }
+            }
+            b'i' | b'd' => {
+                let base = 10;
+                flags &= !FLAGS_HASH;
+                if (flags & FLAGS_PRECISION) != 0 {
+                    flags &= !FLAGS_ZEROPAD;
+                }
+
+                if (flags & FLAGS_LONG_LONG) != 0 {
+                    let value = i64::from_be(sel.memory.get_var(next_ptr())?);
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                } else if (flags & FLAGS_LONG) != 0 {
+                    let value = i64::from_be(sel.memory.get_var(next_ptr())?);
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                } else {
+                    let value = i32::from_be(sel.memory.get_var(next_ptr())?);
+                    write!(&mut out, "{}", value).map_err(map_err)?;
+                }
+            }
+            b'c' => {
+                let value: u8 = sel.memory.get_var(next_ptr())?;
+                write!(&mut out, "{}", char::from(value)).map_err(map_err)?;
+            }
             b'%' => {
                 write_utf8_lossy(&mut out, &[b'%']).map_err(map_err)?;
             }
             b's' => {
-                let var_ptr = VarPointer::new_stack(current_offset, 0);
-                let char_ptr = sel.memory.get_var(var_ptr)?;
-                current_offset += 1;
+                let char_ptr = sel.memory.get_var(next_ptr())?;
 
                 write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?).map_err(map_err)?;
-            }
-            b'l' => {
-                if format_str[idx2 + 1] == b'd' {
-                    idx2 += 1;
-                    // TODO actually implement standard printf
-                    let var_ptr = VarPointer::new_stack(current_offset, 0);
-                    let value = i64::from_be(sel.memory.get_var(var_ptr)?);
-                    current_offset += 1;
-
-                    write!(&mut out, "{}", value).map_err(map_err)?;
-                }
-            }
-            b'd' => {
-                let var_ptr = VarPointer::new_stack(current_offset, 0);
-                let value = i32::from_be(sel.memory.get_var(var_ptr)?);
-                current_offset += 1;
-
-                write!(&mut out, "{}", value).map_err(map_err)?;
             }
             byte => {
                 return Err(error!(

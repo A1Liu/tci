@@ -11,6 +11,20 @@ use std::io;
 pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+#[allow(unused_macros)]
+macro_rules! debug {
+    ($expr:expr) => {{
+        let expr = $expr;
+        println!(
+            "DEBUG ({}:{}): {} = {:?}",
+            file!(),
+            line!(),
+            stringify!($expr),
+            expr
+        );
+    }};
+}
+
 macro_rules! error {
     ($arg1:expr) => {
         $crate::util::Error::new($arg1, vec![])
