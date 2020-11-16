@@ -116,6 +116,106 @@ impl<'b> Parser<'b> {
                     kind: ExprKind::Assign(left, right),
                 });
             }
+            TokenKind::PlusEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::DashEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::StarEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::SlashEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::PercentEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::LtLtEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::GtGtEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::AmpEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::CaretEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
+            TokenKind::LineEq => {
+                pop(tokens, current).unwrap();
+                let right = self.parse_assignment(buckets, tokens, current)?;
+                let (right, left) = buckets.add((right, left));
+                return Ok(Expr {
+                    loc: l_from(left.loc, right.loc),
+                    //Not sure if I should create new ExprKind or modify Assign
+                    kind: ExprKind::Assign(left, right),
+                });
+            }
             _ => {
                 return Ok(left);
             }
@@ -179,7 +279,7 @@ impl<'b> Parser<'b> {
         loop {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
-                TokenKind::Amp => {
+                TokenKind::LineLine => {
                     pop(tokens, current).unwrap();
 
                     let right = self.parse_bool_and(buckets, tokens, current)?;
@@ -207,7 +307,7 @@ impl<'b> Parser<'b> {
         loop {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
-                TokenKind::Amp => {
+                TokenKind::AmpAmp => {
                     pop(tokens, current).unwrap();
 
                     let right = self.parse_bit_or(buckets, tokens, current)?;
@@ -235,7 +335,7 @@ impl<'b> Parser<'b> {
         loop {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
-                TokenKind::Amp => {
+                TokenKind::Line => {
                     pop(tokens, current).unwrap();
 
                     let right = self.parse_bit_xor(buckets, tokens, current)?;
@@ -263,7 +363,7 @@ impl<'b> Parser<'b> {
         loop {
             let start_loc = expr.loc;
             match peek(tokens, current)?.kind {
-                TokenKind::Amp => {
+                TokenKind::Caret => {
                     pop(tokens, current).unwrap();
 
                     let right = self.parse_bit_and(buckets, tokens, current)?;
@@ -423,7 +523,36 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        self.parse_add(buckets, tokens, current)
+        let mut expr = self.parse_add(buckets, tokens, current)?;
+        loop {
+            let start_loc = expr.loc;
+            match peek(tokens, current)?.kind {
+                TokenKind::GtGt => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_add(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Add, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::LtLt => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_add(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Add, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+            }
+        }
     }
 
     pub fn parse_add<'a>(
@@ -496,6 +625,18 @@ impl<'b> Parser<'b> {
 
                     expr = Expr {
                         kind: ExprKind::BinOp(BinOp::Mul, left, right),
+                        loc: l_from(start_loc, end_loc),
+                    };
+                }
+                TokenKind::Percent => {
+                    pop(tokens, current).unwrap();
+                    let right = self.parse_prefix(buckets, tokens, current)?;
+                    let end_loc = right.loc;
+                    let left = buckets.add(expr);
+                    let right = buckets.add(right);
+
+                    expr = Expr {
+                        kind: ExprKind::BinOp(BinOp::Mod, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
@@ -579,7 +720,16 @@ impl<'b> Parser<'b> {
                 let target = buckets.add(target);
                 return Ok(Expr {
                     loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::UnaryOp(UnaryOp::Not, target),
+                    kind: ExprKind::UnaryOp(UnaryOp::BoolNot, target),
+                });
+            }
+            TokenKind::Tilde => {
+                pop(tokens, current).unwrap();
+                let target = self.parse_prefix(buckets, tokens, current)?;
+                let target = buckets.add(target);
+                return Ok(Expr {
+                    loc: l_from(tok.loc, target.loc),
+                    kind: ExprKind::UnaryOp(UnaryOp::BitNot, target),
                 });
             }
             TokenKind::Dash => {
