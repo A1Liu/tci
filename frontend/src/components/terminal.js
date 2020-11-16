@@ -47,7 +47,12 @@ class Terminal extends Component {
   render() {
     return (
       <div>
-        <p id="terminal-title">Terminal</p>
+        <div
+          id="terminal-title"
+          className="h-10 text-white bg-gray-800 py-1 px-6 w-full"
+        >
+          <div>Terminal</div>
+        </div>
         <p id="terminal-text">
           root$ &nbsp;
           <span className="term-caret">&#x2588;</span>
@@ -56,4 +61,5 @@ class Terminal extends Component {
     );
   }
 }
+
 export default Terminal;

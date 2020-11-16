@@ -5,14 +5,11 @@ use crate::{compile, emit_err};
 use core::mem;
 use std::fs::read_to_string;
 
-fn test_file_should_succeed(filename: &str) {
+fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     let config = codespan_reporting::term::Config::default();
-    let mut files = FileDb::new(true);
     let mut writer = StringWriter::new();
 
-    files.add_from_fs(filename).unwrap();
-
-    let program = match compile(&mut files) {
+    let program = match compile(files) {
         Ok(program) => program,
         Err(errs) => {
             emit_err(&errs, &files, &mut writer);
@@ -51,7 +48,7 @@ fn test_file_should_succeed(filename: &str) {
 
     let output = writer.into_string();
     println!("{}", output);
-    match read_to_string(String::from(filename) + ".out") {
+    match read_to_string(output_file) {
         Ok(expected) => {
             if output != expected.replace("\r\n", "\n") {
                 // for (idx, op) in program.ops.iter().enumerate() {
@@ -120,14 +117,32 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
 }
 
 macro_rules! gen_test_should_succeed {
-    ( $( $ident:ident ),* ) => {
+    ( $( $ident:tt ),* ) => {
         $(
-            #[test]
-            fn $ident() {
-                test_file_should_succeed(concat!("test/", stringify!($ident), ".c"));
-            }
+            gen_test_should_succeed!(@S, $ident);
         )*
     };
+    (@S, ( $folder:literal, $name:ident, $( $ident:ident),* ) ) => {
+            #[test]
+            fn $name() {
+                let mut files = FileDb::new(true);
+                files.add_from_fs(concat!("test/", $folder, stringify!($name), ".c")).unwrap();
+                $(
+                files.add_from_fs(concat!("test/", $folder, stringify!($ident), ".c")).unwrap();
+                )*
+
+                test_file_should_succeed(&mut files,concat!("test/", stringify!($name), ".c.out"));
+            }
+    };
+    (@S, $ident:ident) => {
+            #[test]
+            fn $ident() {
+                let mut files = FileDb::new(true);
+                files.add_from_fs(concat!("test/", stringify!($ident), ".c")).unwrap();
+                test_file_should_succeed(&mut files,concat!("test/", stringify!($ident), ".c.out"));
+            }
+    };
+
 }
 
 macro_rules! gen_test_runtime_should_fail {
@@ -148,6 +163,7 @@ gen_test_should_succeed!(
     includes,
     control_flow,
     macros,
-    binary_search
+    binary_search //, ("dyn_array_ptr/", dyn_array_ptr, main)
 );
+
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
