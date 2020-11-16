@@ -3,8 +3,9 @@
 
 #define dyn_array_declare(name, type) type *name = (type *)0;
 #define dyn_array_new(type) ((type *)0)
-#define dyn_array_capacity(arr) *__dyn_array_capacity_ptr(arr)
-#define dyn_array_len(arr) *__dyn_array_len_ptr(arr)
+#define dyn_array_capacity(arr)                                                \
+  (arr == NULL ? 0 : *__dyn_array_capacity_ptr(arr))
+#define dyn_array_len(arr) (arr == NULL ? 0 : *__dyn_array_len_ptr(arr))
 
 #define dyn_array_add(arr, elem)                                               \
   (__dyn_array_ensure_add(arr, sizeof(**arr)),                                 \
