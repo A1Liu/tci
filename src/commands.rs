@@ -32,7 +32,10 @@ pub enum Command {
 pub enum CommandResult {
     Confirm(&'static str),
     Compiled(Program<'static>),
-    InvalidCommand,
+    InvalidCommand {
+        state: &'static str,
+        command: &'static str,
+    },
     IOError(String),
     Stdout(String),
     Stderr(String),
@@ -41,7 +44,14 @@ pub enum CommandResult {
     CompileError(String),
     RuntimeError(String),
     Status(RuntimeDiagnostic),
-    StatusRet { status: RuntimeDiagnostic, ret: i32 },
+    FileId {
+        path: String,
+        file_id: u32,
+    },
+    StatusRet {
+        status: RuntimeDiagnostic,
+        ret: i32,
+    },
 }
 
 impl From<WriteEvent> for CommandResult {
@@ -54,6 +64,7 @@ impl From<WriteEvent> for CommandResult {
     }
 }
 
+#[derive(IntoStaticStr)]
 pub enum WSState {
     Files(FileDbSlim),
     Running(Runtime),
@@ -91,7 +102,11 @@ impl WSState {
 
         if let Self::Files(files) = self {
             if let Command::AddFile { path, data } = &command {
-                files.add(path, data);
+                let file_id = files.add(path, data);
+                messages.push(CommandResult::FileId {
+                    path: path.to_string(),
+                    file_id,
+                });
             } else if let Command::Compile = &command {
                 let mut db = files.file_db();
                 let program = match compile(&mut db) {
@@ -104,9 +119,12 @@ impl WSState {
                 };
 
                 *self = Self::Running(Runtime::new(program, StringArray::new()));
-                ret!(CommandResult::Compiled(program));
+                messages.push(CommandResult::Compiled(program));
             } else {
-                ret!(CommandResult::InvalidCommand);
+                ret!(CommandResult::InvalidCommand {
+                    state: (&*self).into(),
+                    command: command.into()
+                });
             }
 
             ret!(CommandResult::Confirm(command.into()));
@@ -219,7 +237,10 @@ impl WSState {
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
-                _ => ret!(CommandResult::InvalidCommand),
+                _ => ret!(CommandResult::InvalidCommand {
+                    state: (&*self).into(),
+                    command: command.into()
+                }),
             }
         }
 
