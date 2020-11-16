@@ -554,6 +554,7 @@ impl<'b> Parser<'b> {
                         loc: l_from(start_loc, end_loc),
                     };
                 }
+                _ => return Ok(expr),
             }
         }
     }
