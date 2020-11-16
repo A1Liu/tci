@@ -22,6 +22,8 @@ pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet
     m.insert(INIT_SYMS.translate["exit"]);
     m.insert(INIT_SYMS.translate["malloc"]);
     m.insert(INIT_SYMS.translate["free"]);
+    m.insert(INIT_SYMS.translate["realloc"]);
+    m.insert(INIT_SYMS.translate["memcpy"]);
     m
 });
 
@@ -499,6 +501,14 @@ impl Assembler {
                 tagged.op = Opcode::CompLtI32;
                 ops.push(tagged);
             }
+            TCExprKind::GeqU64(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                ops.push(tagged);
+                tagged.op = Opcode::CompLeqU64;
+                ops.push(tagged);
+            }
             TCExprKind::LtU64(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
@@ -560,15 +570,41 @@ impl Assembler {
                 tagged.op = Opcode::ZExtend32To64;
                 ops.push(tagged);
             }
-            TCExprKind::ZConv64To32(expr) => {
+
+            TCExprKind::Conv64To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::PopKeep { keep: 4, drop: 4 };
                 ops.push(tagged);
             }
 
+            TCExprKind::PostIncrU64(target) => {
+                ops.append(&mut self.translate_assign(target));
+                tagged.op = Opcode::PushDup { bytes: 8 };
+                ops.push(tagged);
+                let bytes = 8;
+                tagged.op = Opcode::Get { offset: 0, bytes };
+                ops.push(tagged);
+                tagged.op = Opcode::PushDup { bytes };
+                ops.push(tagged);
+                tagged.op = Opcode::MakeTempU64(1);
+                ops.push(tagged);
+                tagged.op = Opcode::AddU64;
+                ops.push(tagged);
+                let top = bytes * 2;
+                tagged.op = Opcode::Swap { top, bottom: 8 };
+                ops.push(tagged);
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                ops.push(tagged);
+            }
+
             TCExprKind::Assign { target, value } => {
                 ops.append(&mut self.translate_expr(value));
+                let bytes = value.expr_type.size();
+                tagged.op = Opcode::PushDup { bytes };
+                ops.push(tagged);
                 ops.append(&mut self.translate_assign(target));
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                ops.push(tagged);
             }
 
             TCExprKind::Ternary {
@@ -633,14 +669,14 @@ impl Assembler {
                 ops.push(tagged);
             }
             TCExprKind::Ref(lvalue) => match lvalue.kind {
-                TCAssignKind::LocalIdent { var_offset } => {
+                TCAssignTargetKind::LocalIdent { var_offset } => {
                     tagged.op = Opcode::MakeTempLocalStackPtr {
                         var: var_offset,
                         offset: 0,
                     };
                     ops.push(tagged);
                 }
-                TCAssignKind::Ptr(expr) => {
+                TCAssignTargetKind::Ptr(expr) => {
                     ops.append(&mut self.translate_expr(expr));
                 }
             },
@@ -718,22 +754,17 @@ impl Assembler {
         };
 
         match assign.kind {
-            TCAssignKind::Ptr(expr) => {
-                let bytes = assign.target_type.size();
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
+            TCAssignTargetKind::Ptr(expr) => {
                 ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::Set { offset: 0, bytes };
+                tagged.op = Opcode::MakeTempU64(assign.offset as u64);
+                ops.push(tagged);
+                tagged.op = Opcode::AddU64;
                 ops.push(tagged);
             }
-            TCAssignKind::LocalIdent { var_offset } => {
-                let (bytes, offset) = (assign.target_type.size(), assign.offset);
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::SetLocal {
+            TCAssignTargetKind::LocalIdent { var_offset } => {
+                tagged.op = Opcode::MakeTempLocalStackPtr {
                     var: var_offset,
-                    offset,
-                    bytes,
+                    offset: assign.offset,
                 };
                 ops.push(tagged);
             }

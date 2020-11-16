@@ -601,14 +601,14 @@ pub struct TCFunc<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TCAssignKind<'a> {
+pub enum TCAssignTargetKind<'a> {
     LocalIdent { var_offset: i16 },
     Ptr(&'a TCExpr<'a>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCAssignTarget<'a> {
-    pub kind: TCAssignKind<'a>,
+    pub kind: TCAssignTargetKind<'a>,
     pub defn_loc: Option<CodeLoc>,
     pub target_loc: CodeLoc,
     pub target_type: TCType,
@@ -685,6 +685,7 @@ pub enum TCExprKind<'a> {
     AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
     SubU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
     DivU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    GeqU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
     LtU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
@@ -695,7 +696,10 @@ pub enum TCExprKind<'a> {
 
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
-    ZConv64To32(&'a TCExpr<'a>),
+
+    Conv64To32(&'a TCExpr<'a>),
+
+    PostIncrU64(TCAssignTarget<'a>),
 
     Assign {
         target: TCAssignTarget<'a>,
