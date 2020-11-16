@@ -1,10 +1,12 @@
+use crate::filedb::*;
 use crate::interpreter::Program;
 use crate::interpreter::*;
 use crate::runtime::*;
 use crate::*;
 use serde::{Deserialize, Serialize};
+use strum_macros::IntoStaticStr;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, IntoStaticStr)]
 #[serde(tag = "command", content = "data")]
 pub enum Command {
     AddFile {
@@ -28,7 +30,7 @@ pub enum Command {
 #[derive(Serialize)]
 #[serde(tag = "response", content = "data")]
 pub enum CommandResult {
-    Confirm(Command),
+    Confirm(&'static str),
     Compiled(Program<'static>),
     InvalidCommand,
     IOError(String),
@@ -53,7 +55,7 @@ impl From<WriteEvent> for CommandResult {
 }
 
 pub enum WSState {
-    Files(FileDb),
+    Files(FileDbSlim),
     Running(Runtime),
 }
 
@@ -73,7 +75,7 @@ impl Drop for WSState {
 
 impl Default for WSState {
     fn default() -> Self {
-        Self::Files(FileDb::new(false))
+        Self::Files(FileDbSlim::new())
     }
 }
 
@@ -89,18 +91,14 @@ impl WSState {
 
         if let Self::Files(files) = self {
             if let Command::AddFile { path, data } = &command {
-                match files.add(path, data) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        ret!(CommandResult::IOError(format!("{}", err)));
-                    }
-                }
+                files.add(path, data);
             } else if let Command::Compile = &command {
-                let program = match compile(files) {
+                let mut db = files.file_db();
+                let program = match compile(&mut db) {
                     Ok(prog) => prog,
                     Err(err) => {
                         let mut writer = StringWriter::new();
-                        emit_err(&err, files, &mut writer);
+                        emit_err(&err, &mut db, &mut writer);
                         ret!(CommandResult::CompileError(writer.into_string()));
                     }
                 };
@@ -111,7 +109,7 @@ impl WSState {
                 ret!(CommandResult::InvalidCommand);
             }
 
-            ret!(CommandResult::Confirm(command));
+            ret!(CommandResult::Confirm(command.into()));
         }
 
         if let Self::Running(runtime) = self {
@@ -225,6 +223,6 @@ impl WSState {
             }
         }
 
-        ret!(CommandResult::Confirm(command));
+        ret!(CommandResult::Confirm(command.into()));
     }
 }
