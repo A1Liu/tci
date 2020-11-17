@@ -61,6 +61,7 @@ impl From<Utf8Error> for WebServerError {
     }
 }
 
+#[derive(Debug)]
 pub enum WSResponse<'a> {
     Response {
         message_type: WebSocketSendMessageType,
@@ -146,6 +147,17 @@ impl<State: Default + 'static> WebServer<State> {
         let mut web_socket = ws::WebSocketServer::new_server();
         let mut num_bytes = 0;
 
+        macro_rules! stream_read {
+            () => {{
+                let read_bytes = stream.read(&mut tcp_recv[num_bytes..])?;
+                if read_bytes == 0 {
+                    return Ok(());
+                }
+
+                num_bytes += read_bytes;
+            }};
+        }
+
         loop {
             let mut headers = [ws::httparse::EMPTY_HEADER; 32];
 
@@ -153,12 +165,7 @@ impl<State: Default + 'static> WebServer<State> {
                 return Err(WebServerError::RequestTooLarge(num_bytes));
             }
 
-            num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
-
-            // read until the stream is closed (zero bytes read from the stream)
-            if num_bytes == 0 {
-                return Ok(());
-            }
+            stream_read!();
 
             // assume that the client has sent us an http request. Since we may not read the
             // header all in one go we need to check for HttpHeaderIncomplete and continue reading
@@ -188,23 +195,20 @@ impl<State: Default + 'static> WebServer<State> {
             }
         }
 
-        let mut ws_num_bytes = 0;
         let mut state = State::default();
         loop {
             if num_bytes >= tcp_recv.len() {
                 return Err(WebServerError::PayloadTooLarge(num_bytes));
             }
 
-            num_bytes += stream.read(&mut tcp_recv[num_bytes..])?;
-            if num_bytes == 0 {
-                return Ok(());
+            stream_read!();
+            let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[..])?;
+            if !ws_result.end_of_message {
+                continue;
             }
 
-            let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[ws_num_bytes..])?;
-            ws_num_bytes += ws_result.len_to;
-
-            if ws_num_bytes == ws_buf.len() {
-                return Err(WebServerError::RequestTooLarge(ws_num_bytes));
+            if ws_result.len_to >= ws_buf.len() {
+                return Err(WebServerError::RequestTooLarge(ws_result.len_to));
             }
 
             num_bytes -= ws_result.len_from;
@@ -212,12 +216,7 @@ impl<State: Default + 'static> WebServer<State> {
                 tcp_recv[i] = tcp_recv[i + ws_result.len_from];
             }
 
-            if !ws_result.end_of_message {
-                continue;
-            }
-
-            let (ws_in, ws_out) = ws_buf.split_at_mut(ws_num_bytes);
-            ws_num_bytes = 0;
+            let (ws_in, ws_out) = ws_buf.split_at_mut(ws_result.len_to);
             loop {
                 let response = ws_handler(ws_result.message_type, &mut state, ws_in, scratch_buf)?;
                 match response {

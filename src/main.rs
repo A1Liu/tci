@@ -365,6 +365,7 @@ fn ws_respond<'a>(
         return Ok(net_io::WSResponse::None);
     }
 
+    //debug!(state.results[state.results_idx]);
     let mut cursor = std::io::Cursor::new(&mut out_buffer[..]);
     serde_json::to_writer(&mut cursor, &state.results[state.results_idx]).unwrap();
     let len = cursor.position() as usize;

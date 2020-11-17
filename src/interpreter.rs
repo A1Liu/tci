@@ -206,7 +206,7 @@ impl<'a> fmt::Debug for Program<'a> {
 
 type LibFunc = for<'a> fn(&'a mut Runtime) -> Result<Option<i32>, IError>;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct RuntimeDiagnostic {
     pub callstack: u32,
     pub fp: u16,
