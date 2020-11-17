@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct IError {
     pub short_name: String,
     pub message: String,

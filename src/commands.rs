@@ -41,8 +41,14 @@ pub enum CommandResult {
     Stderr(String),
     Unwind(u32),
     Snapshot(MemorySnapshot),
-    CompileError(String),
-    RuntimeError(String),
+    CompileError {
+        rendered: String,
+        error: Vec<Error>,
+    },
+    RuntimeError {
+        rendered: String,
+        error: IError,
+    },
     Status(RuntimeDiagnostic),
     FileId {
         path: String,
@@ -120,7 +126,10 @@ impl WSState {
                 Err(err) => {
                     let mut writer = StringWriter::new();
                     emit_err(&err, &mut db, &mut writer);
-                    ret!(CommandResult::CompileError(writer.into_string()));
+                    ret!(CommandResult::CompileError {
+                        rendered: writer.into_string(),
+                        error: err
+                    });
                 }
             };
 
@@ -134,9 +143,10 @@ impl WSState {
                 Command::RunOp => {
                     let ret = match runtime.run_op() {
                         Ok(ret) => ret,
-                        Err(err) => {
-                            let err = render_err(&err, &runtime.memory.callstack, &runtime.program);
-                            ret!(CommandResult::RuntimeError(err));
+                        Err(error) => {
+                            let rendered =
+                                render_err(&error, &runtime.memory.callstack, &runtime.program);
+                            ret!(CommandResult::RuntimeError { rendered, error });
                         }
                     };
 
@@ -156,9 +166,10 @@ impl WSState {
                 Command::RunCount(count) => {
                     let ret = match runtime.run_op_count(count) {
                         Ok(prog) => prog,
-                        Err(err) => {
-                            let err = render_err(&err, &runtime.memory.callstack, &runtime.program);
-                            ret!(CommandResult::RuntimeError(err));
+                        Err(error) => {
+                            let rendered =
+                                render_err(&error, &runtime.memory.callstack, &runtime.program);
+                            ret!(CommandResult::RuntimeError { rendered, error });
                         }
                     };
 
@@ -182,9 +193,10 @@ impl WSState {
                 } => {
                     let ret = match runtime.run_count_or_until(count, pc, stack_size) {
                         Ok(ret) => ret,
-                        Err(err) => {
-                            let err = render_err(&err, &runtime.memory.callstack, &runtime.program);
-                            ret!(CommandResult::RuntimeError(err));
+                        Err(error) => {
+                            let rendered =
+                                render_err(&error, &runtime.memory.callstack, &runtime.program);
+                            ret!(CommandResult::RuntimeError { error, rendered });
                         }
                     };
 
