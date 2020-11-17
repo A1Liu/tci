@@ -41,7 +41,7 @@ export default function FileUpload() {
 
   async function handleOnChange(event) {
     const file = event.target.files[0];
-    await addFile(file);
+    addFile(file);
     const convertFileToString = (uploadedFile) =>
       new Promise((resolve, reject) => {
         const reader = new FileReader();

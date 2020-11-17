@@ -11,20 +11,28 @@ export const FileUploadProvider = ({ children }) => {
   const [fileList, setFiles] = useState([]);
 
   const addFile = async (fileContents) => {
-    const read = new FileReader();
+    const convertFileToString = (uploadedFile) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        if (uploadedFile) {
+          reader.readAsText(uploadedFile);
+        }
+        reader.onload = () => {
+          resolve(reader.result);
+        };
+        reader.onerror = (error) => reject(error);
+      });
 
-    read.onload = (e) => {
-      setFiles(() => [
-        ...fileList,
-        {
-          name: fileContents.name,
-          file: fileContents,
-          contents: e.target.result,
-        },
-      ]);
-    };
+    const result = await convertFileToString(fileContents);
 
-    read.readAsText(fileContents);
+    setFiles(() => [
+      ...fileList,
+      {
+        name: fileContents.name,
+        file: fileContents,
+        contents: result,
+      },
+    ]);
   };
 
   return (

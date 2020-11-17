@@ -3,6 +3,8 @@ import Editor from "react-simple-code-editor";
 import Highlight, { defaultProps } from "prism-react-renderer";
 import theme from "prism-react-renderer/themes/vsDark";
 
+import { useFileUpload } from "./fileUploadContext";
+
 const starter = `
 // Online C compiler to run C program online
 #include <stdio.h>
@@ -18,6 +20,8 @@ int main() {
 export default function BasicEditor() {
   const [socket, setSocket] = useState(undefined);
   const [code, setCode] = useState(starter);
+  // eslint-disable-next-line no-unused-vars
+  const { files } = useFileUpload();
 
   const styles = {
     root: {
