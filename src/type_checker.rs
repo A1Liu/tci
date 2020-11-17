@@ -6,21 +6,17 @@ use std::collections::{HashMap, HashSet};
 
 pub fn unify<'a>(
     env: CheckEnv<'_, 'a>,
-    l: TCExpr<'a>,
-    r: TCExpr<'a>,
+    mut l: TCExpr<'a>,
+    mut r: TCExpr<'a>,
 ) -> Result<(TCExpr<'a>, TCExpr<'a>), Error> {
-    if l.expr_type == r.expr_type {
+    l.expr_type = env.resolve_typedef(l.expr_type, l.loc)?;
+    r.expr_type = env.resolve_typedef(r.expr_type, r.loc)?;
+
+    if l.expr_type.to_shallow() == r.expr_type.to_shallow() {
         return Ok((l, r));
     }
 
-    let l_et = env.resolve_typedef(l.expr_type, l.loc)?;
-    let r_et = env.resolve_typedef(r.expr_type, r.loc)?;
-
-    if l_et.to_shallow() == r_et.to_shallow() {
-        return Ok((l, r));
-    }
-
-    let (l_rank, r_rank) = (l_et.rank(), r_et.rank());
+    let (l_rank, r_rank) = (l.expr_type.rank(), r.expr_type.rank());
     if l_rank == 0 || r_rank == 0 {
         return Err(error!(
             "can't unify these two types",
@@ -32,12 +28,12 @@ pub fn unify<'a>(
     }
 
     if l_rank > r_rank {
-        let key = (r_et.to_shallow(), l_et.to_shallow());
-        let r = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, r, l_et);
+        let key = (r.expr_type.to_shallow(), l.expr_type.to_shallow());
+        let r = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, r, l.expr_type);
         return Ok((l, r));
     } else {
-        let key = (l_et.to_shallow(), r_et.to_shallow());
-        let l = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, l, r_et);
+        let key = (l.expr_type.to_shallow(), r.expr_type.to_shallow());
+        let l = OVERLOADS.expr_to_type.get(&key).unwrap()(env.buckets, l, r.expr_type);
         return Ok((l, r));
     }
 }
@@ -90,17 +86,24 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_unified_bin_op!(Add, I64, AddU64, I64);
 
     add_unified_bin_op!(Sub, I32, SubI32, I32);
+    add_unified_bin_op!(Sub, U64, SubU64, U64);
+
+    add_unified_bin_op!(Mul, U64, MulU64, U64);
 
     add_unified_bin_op!(Div, I32, DivI32, I32);
     add_unified_bin_op!(Div, U64, DivU64, U64);
 
     add_unified_bin_op!(Lt, I32, LtI32, I8);
+    add_unified_bin_op!(Lt, U64, LtU64, I8);
 
     add_unified_bin_op!(Geq, I32, GeqI32, I8);
+    add_unified_bin_op!(Geq, U64, GeqU64, I8);
 
     add_unified_bin_op!(Gt, I32, GtI32, I8);
 
     add_unified_bin_op!(Eq, I32, Eq32, I8);
+    add_unified_bin_op!(Eq, VoidPointer, Eq64, I8);
+    add_unified_bin_op!(Eq, Pointer, Eq64, I8);
 
     macro_rules! add_un_op_ol {
         ($op:ident, $operand:ident, $func:expr) => {{
@@ -183,6 +186,41 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
         });
     });
 
+    add_op_ol!(Sub, Pointer, Pointer, |env, l, r| {
+        let l_elem_type = env.deref(&l.expr_type, l.loc).unwrap();
+        let r_elem_type = env.deref(&r.expr_type, r.loc).unwrap();
+        if l_elem_type != r_elem_type {
+            // TODO implement actual type equality
+            return Err(error!(
+                "pointers aren't the same type",
+                l.loc,
+                format!("this has type {}", l.expr_type.display(env.files)),
+                r.loc,
+                format!("this has type {}", r.expr_type.display(env.files))
+            ));
+        }
+
+        let expr_type = TCType::new(TCTypeKind::U64, 0);
+        let loc = l_from(l.loc, r.loc);
+        let diff = TCExpr {
+            kind: TCExprKind::SubU64(env.buckets.add(l), env.buckets.add(r)),
+            loc,
+            expr_type,
+        };
+
+        let divisor = TCExpr {
+            kind: TCExprKind::U64Literal(l_elem_type.size() as u64),
+            expr_type,
+            loc,
+        };
+
+        return Ok(TCExpr {
+            kind: TCExprKind::SubU64(env.buckets.add(diff), env.buckets.add(divisor)),
+            loc,
+            expr_type,
+        });
+    });
+
     add_op_ol!(Sub, Pointer, U64, |env, l, r| {
         let expr_type = l.expr_type;
 
@@ -216,7 +254,8 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_assign_ol!(I32, Pointer, SConv32To64);
     add_assign_ol!(I32, U64, SConv32To64);
     add_assign_ol!(U32, U64, ZConv32To64);
-    add_assign_ol!(U64, I32, ZConv64To32);
+    add_assign_ol!(U64, I32, Conv64To32);
+    add_assign_ol!(U64, U32, Conv64To32);
 
     Overloads {
         unary_op,
@@ -335,6 +374,10 @@ impl TypeEnv {
             anon_structs: HashMap::new(),
             typedefs: HashMap::new(),
         }
+    }
+
+    pub fn type_eq(&self, l: TCType, r: TCType) -> bool {
+        return l == r;
     }
 
     /// Used to check the return type of functions
@@ -496,6 +539,10 @@ impl TypeEnv {
 
         let expr_type = self.resolve_typedef(expr.expr_type, expr.loc)?;
         let assign_type = self.resolve_typedef(*assign_type, assign_loc)?;
+        if assign_type == expr_type {
+            return Ok(expr);
+        }
+
         let key = (expr_type.to_shallow(), assign_type.to_shallow());
         match OVERLOADS.expr_to_type.get(&key) {
             Some(transform) => return Ok(transform(buckets, expr, assign_type)),
@@ -548,17 +595,19 @@ impl TypeEnv {
         &self,
         buckets: BucketListRef<'b>,
         files: &FileDb,
-        cast_to: &TCType,
+        cast_to: TCType,
         cast_to_loc: CodeLoc,
-        expr: TCExpr<'b>,
+        mut expr: TCExpr<'b>,
     ) -> Result<TCExpr<'b>, Error> {
-        if cast_to == &expr.expr_type {
+        let cast_to = self.resolve_typedef(cast_to, cast_to_loc)?;
+        expr.expr_type = self.resolve_typedef(expr.expr_type, expr.loc)?;
+        if cast_to == expr.expr_type {
             return Ok(expr);
         }
 
         let key = (expr.expr_type.to_shallow(), cast_to.to_shallow());
         match OVERLOADS.expr_to_type.get(&key) {
-            Some(transform) => return Ok(transform(buckets, expr, *cast_to)),
+            Some(transform) => return Ok(transform(buckets, expr, cast_to)),
             None => {}
         }
 
@@ -698,6 +747,10 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
             files,
             decl_idx,
         }
+    }
+
+    pub fn type_eq(&self, l: TCType, r: TCType) -> bool {
+        return self.types.type_eq(l, r);
     }
 
     pub fn deref(&self, tc_type: &TCType, value_loc: CodeLoc) -> Result<TCType, Error> {
@@ -883,7 +936,7 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
     #[inline]
     pub fn cast_convert(
         &self,
-        cast_to: &TCType,
+        cast_to: TCType,
         cast_to_loc: CodeLoc,
         expr: TCExpr<'b>,
     ) -> Result<TCExpr<'b>, Error> {
@@ -1082,7 +1135,7 @@ pub struct UncheckedEnv<'b> {
     pub funcs: HashMap<u32, UncheckedFunc<'b>>,
     pub struct_types: HashMap<u32, UncheckedStruct>,
     pub anon_struct_types: HashMap<CodeLoc, UncheckedStruct>,
-    pub typedefs: HashMap<u32, ITypedef>,
+    pub typedefs: HashMap<u32, ITypedef>, // TODO what if someone redefines a typedef?
 }
 
 pub fn sequentialize<'a, 'b>(
@@ -1273,6 +1326,12 @@ pub fn sequentialize_rec<'a, 'b>(
             if let Some(decl) = decl {
                 sequentialize_struct_decl(buckets, files, g_decl_idx, env, decl, ast_type.loc)?;
             }
+
+            // TODO this ignores redefinition of typedefs
+            if env.typedefs.contains_key(&recv.ident) {
+                return Ok(());
+            }
+
             let defn_idx = *g_decl_idx;
             *g_decl_idx += 1;
 
@@ -1284,6 +1343,7 @@ pub fn sequentialize_rec<'a, 'b>(
                     loc: global_stmt.loc,
                 },
             );
+
             return Ok(());
         }
     };
@@ -1412,32 +1472,12 @@ fn check_typedef(
     current_ident: u32,
     loc: CodeLoc,
 ) -> Result<(TCStructDefnMeta, TCType), Error> {
-    let typedef = if let Some(typedef) = unchecked.typedefs.get(&current_ident) {
-        typedef
-    } else {
-        return Err(error!(
-            "typedef does not exist",
-            loc, "typedef referenced here"
-        ));
-    };
-
-    let mut typedef_meta = TCStructDefnMeta {
-        defn_idx: typedef.defn_idx,
-        loc: typedef.loc,
-        sa: TC_UNKNOWN_SA,
-    };
+    let map_err = || error!("typedef does not exist", loc, "typedef referenced here");
+    let typedef = unchecked.typedefs.get(&current_ident).ok_or_else(map_err)?;
 
     if let ITypeKind::Ident(id) = typedef.def.kind {
-        let other = if let Some(typedef) = unchecked.typedefs.get(&id) {
-            typedef
-        } else {
-            return Err(error!(
-                "typedef does not exist",
-                loc, "typedef referenced here"
-            ));
-        };
-
-        if other.defn_idx > typedef_meta.defn_idx {
+        let other = unchecked.typedefs.get(&id).ok_or_else(map_err)?;
+        if other.defn_idx > typedef.defn_idx {
             return Err(typedef_defined_later(other.loc, typedef.loc));
         }
     }
@@ -1447,7 +1487,7 @@ fn check_typedef(
             let meta = check_named_struct_type(types, visited, unchecked, ident, typedef.loc)?;
             let meta = meta.ok_or_else(|| member_incomplete_type(typedef.loc))?;
 
-            if meta.defn_idx > typedef_meta.defn_idx {
+            if meta.defn_idx > typedef.defn_idx {
                 return Err(struct_defined_later(meta.loc, typedef.loc));
             }
 
@@ -1458,7 +1498,7 @@ fn check_typedef(
         ITypeKind::AnonStruct(loc) => {
             let meta = check_unnamed_struct_type(types, visited, unchecked, loc, typedef.loc)?;
 
-            if meta.defn_idx > typedef_meta.defn_idx {
+            if meta.defn_idx > typedef.defn_idx {
                 return Err(struct_defined_later(meta.loc, typedef.loc));
             }
 
@@ -1469,7 +1509,7 @@ fn check_typedef(
         ITypeKind::Ident(ident) => {
             let (meta, tc_type) = check_typedef(types, visited, unchecked, ident, typedef.loc)?;
 
-            if meta.defn_idx > typedef_meta.defn_idx {
+            if meta.defn_idx > typedef.defn_idx {
                 return Err(typedef_defined_later(meta.loc, typedef.loc));
             }
 
@@ -1478,7 +1518,12 @@ fn check_typedef(
         _ => typedef.def.into(),
     };
 
-    typedef_meta.sa = sa(tc_type.size(), tc_type.align());
+    let typedef_meta = TCStructDefnMeta {
+        defn_idx: typedef.defn_idx,
+        loc: typedef.loc,
+        sa: sa(tc_type.size(), tc_type.align()),
+    };
+
     types.typedefs.insert(
         current_ident,
         TCTypedef {
@@ -1487,6 +1532,7 @@ fn check_typedef(
             loc,
         },
     );
+
     return Ok((typedef_meta, tc_type));
 }
 
@@ -1644,6 +1690,11 @@ fn check_struct_type<'b>(
             }
             ITypeKind::Ident(ident) => {
                 let (meta, tc_type) = check_typedef(types, visited, unchecked, ident, member.loc)?;
+
+                if meta.defn_idx > member.decl_idx {
+                    return Err(typedef_defined_later(meta.loc, member.loc));
+                }
+
                 tc_type
             }
             _ => member.member_type.into(),
@@ -1721,6 +1772,8 @@ pub fn check_file<'a>(
             unchecked.loc,
         )?;
     }
+
+    // TODO what if someone redefines a typedef?
 
     let mut func_types = HashMap::new();
     for (func_name, func) in unchecked_env.funcs.iter() {
@@ -2301,6 +2354,28 @@ pub fn check_expr_allow_brace<'b>(
             });
         }
 
+        ExprKind::PostIncr(target) => {
+            let mut target = check_assign_target(env, local_env, target)?;
+            target.target_type = env.resolve_typedef(target.target_type, target.target_loc)?;
+            match target.target_type.to_shallow() {
+                TCShallowType::U64 | TCShallowType::I64 => {
+                    return Ok(TCExpr {
+                        expr_type: target.target_type,
+                        loc: expr.loc,
+                        kind: TCExprKind::PostIncrU64(target),
+                    });
+                }
+                TCShallowType::Struct | TCShallowType::Void => {
+                    return Err(error!(
+                        "expression type is not valid for post increment",
+                        target.target_loc,
+                        format!("this is of type {}", target.target_type.display(env.files))
+                    ));
+                }
+                _ => unimplemented!(),
+            }
+        }
+
         ExprKind::Assign(target, value) => {
             let target = check_assign_target(env, local_env, target)?;
             let value = check_expr(env, local_env, value)?;
@@ -2372,14 +2447,21 @@ pub fn check_expr_allow_brace<'b>(
 
             let (l, r) = unify(env, l, r)?;
             let key = (op, l.expr_type.to_shallow());
-            println!("key: {:?}", key);
             let map_err = || {
                 error!(
                     "invalid operands to binary expression",
                     l.loc,
-                    format!("this has type {}", l.expr_type.display(env.files)),
+                    format!(
+                        "this has type {} (invalid for {:?})",
+                        l.expr_type.display(env.files),
+                        op
+                    ),
                     r.loc,
-                    format!("this has type {}", r.expr_type.display(env.files))
+                    format!(
+                        "this has type {} (invalid for {:?})",
+                        r.expr_type.display(env.files),
+                        op
+                    )
                 )
             };
 
@@ -2536,7 +2618,7 @@ pub fn check_expr_allow_brace<'b>(
         } => {
             let cast_to = env.check_return_type(&cast_to, pointer_count)?;
             let expr = check_expr(env, local_env, expr)?;
-            return env.cast_convert(&cast_to, cast_to_loc, expr);
+            return env.cast_convert(cast_to, cast_to_loc, expr);
         }
 
         x => panic!("{:?} is unimplemented", x),
@@ -2557,7 +2639,7 @@ fn check_assign_target<'b>(
                 }
             };
 
-            let kind = TCAssignKind::LocalIdent {
+            let kind = TCAssignTargetKind::LocalIdent {
                 var_offset: tc_var.var_offset,
             };
 
@@ -2608,7 +2690,7 @@ fn check_assign_target<'b>(
             let member_info = env.check_struct_member(struct_id, base.loc, *member)?;
 
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(env.buckets.add(base)),
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(base)),
                 defn_loc: Some(member_info.loc),
                 target_loc: expr.loc,
                 target_type: member_info.decl_type,
@@ -2621,7 +2703,7 @@ fn check_assign_target<'b>(
 
             let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(env.buckets.add(ptr)),
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(ptr)),
                 target_loc: expr.loc,
                 defn_loc: None,
                 target_type,
@@ -2638,7 +2720,7 @@ fn check_assign_target<'b>(
 
             let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
-                kind: TCAssignKind::Ptr(env.buckets.add(sum)),
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(sum)),
                 target_loc: expr.loc,
                 defn_loc: None,
                 target_type,

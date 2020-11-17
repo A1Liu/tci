@@ -131,7 +131,7 @@ macro_rules! gen_test_should_succeed {
                 files.add_from_fs(concat!("test/", $folder, stringify!($ident), ".c")).unwrap();
                 )*
 
-                test_file_should_succeed(&mut files,concat!("test/", stringify!($name), ".c.out"));
+                test_file_should_succeed(&mut files,concat!("test/", $folder, stringify!($name), ".c.out"));
             }
     };
     (@S, $ident:ident) => {
@@ -163,7 +163,8 @@ gen_test_should_succeed!(
     includes,
     control_flow,
     macros,
-    binary_search //, ("dyn_array_ptr/", dyn_array_ptr, main)
+    binary_search,
+    ("dyn_array_ptr/", dyn_array_ptr, main)
 );
 
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

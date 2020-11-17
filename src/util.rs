@@ -11,6 +11,20 @@ use std::io;
 pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+#[allow(unused_macros)]
+macro_rules! debug {
+    ($expr:expr) => {{
+        let expr = $expr;
+        println!(
+            "DEBUG ({}:{}): {} = {:?}",
+            file!(),
+            line!(),
+            stringify!($expr),
+            expr
+        );
+    }};
+}
+
 macro_rules! error {
     ($arg1:expr) => {
         $crate::util::Error::new($arg1, vec![])
@@ -127,13 +141,13 @@ impl<Obj> ops::Deref for LazyStatic<Obj> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct ErrorSection {
     pub location: CodeLoc,
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct Error {
     pub message: String,
     pub sections: Vec<ErrorSection>,

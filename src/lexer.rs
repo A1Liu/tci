@@ -56,13 +56,16 @@ pub enum TokenKind<'a> {
     Percent,
     PlusPlus,
     DashDash,
+    
     Eq,
     EqEq,
     Neq,
     Leq,
     Lt,
+    LtLt, // <<
     Geq,
     Gt,
+    GtGt, // >>
     Amp,
     AmpAmp,
     Line,     // |
@@ -76,6 +79,8 @@ pub enum TokenKind<'a> {
     SlashEq,
     StarEq,
     PercentEq,
+    LtLtEq,
+    GtGtEq,
 
     LBrace,
     RBrace,
