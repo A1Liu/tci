@@ -27,7 +27,7 @@ pub enum Command {
     Forwards(u32),
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(tag = "response", content = "data")]
 pub enum CommandResult {
     Confirm(&'static str),
