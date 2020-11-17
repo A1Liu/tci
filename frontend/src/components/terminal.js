@@ -30,6 +30,26 @@ function unFocusTerminal() {
   focus = false;
 }
 
+function print(outputStr) {
+  const terminalText = document.querySelector("#terminal-text");
+  const result = terminalText.childNodes[0];
+  // print on new line if line has commands
+  if (output[lineNum].length !== 0) {
+    result.nodeValue += "\n";
+    lineNum += 1;
+    output.push([]);
+  }
+  for (let i = 0; i < outputStr.length; i += 1) {
+    const character = outputStr[i];
+    output[lineNum].push(character);
+    result.nodeValue += character;
+  }
+  // add a new line after print
+  result.nodeValue += "\nroot$ ";
+  lineNum += 1;
+  output.push([]);
+}
+
 function unwind(num) {
   const terminalText = document.querySelector("#terminal-text");
   const result = terminalText.childNodes[0];
@@ -83,6 +103,8 @@ function logKey(e) {
     command = command.replace(/\s/g, ""); // remove spaces
     if (command === "unwind") {
       unwind(5 + 6);
+    } else if (command === "print") {
+      print("test\ntest2");
     } else {
       lineNum += 1;
       output.push([]);
