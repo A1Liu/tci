@@ -2,14 +2,32 @@ import React, { Component } from "react";
 
 const output = [[]];
 let lineNum = 0;
+let focus = false;
 
 function caretToggle() {
+  if (!focus) {
+    return;
+  }
   const caret = document.getElementsByClassName("term-caret")[0];
   if (caret.classList.contains("blink")) {
     caret.classList.remove("blink");
   } else {
     caret.classList.add("blink");
   }
+}
+
+function focusTerminal() {
+  const terminalDiv = document.getElementById("terminal-text");
+  terminalDiv.classList.add("focus");
+  focus = true;
+}
+
+function unFocusTerminal() {
+  const terminalDiv = document.getElementById("terminal-text");
+  const caret = document.getElementsByClassName("term-caret")[0];
+  terminalDiv.classList.remove("focus");
+  caret.classList.add("blink");
+  focus = false;
 }
 
 function unwind(num) {
@@ -49,6 +67,13 @@ function unwind(num) {
 }
 
 function logKey(e) {
+  if (!focus) {
+    return;
+  }
+  // prevent scrolling with spacebar
+  if (e.keyCode === 32 && e.target === document.body) {
+    e.preventDefault();
+  }
   const terminalText = document.querySelector("#terminal-text");
   const character = `${String.fromCharCode(e.keyCode)}`.toLowerCase();
   const result = terminalText.childNodes[0];
@@ -87,6 +112,11 @@ class Terminal extends Component {
   componentDidMount() {
     document.addEventListener("keydown", logKey);
     setInterval(caretToggle, 500);
+
+    const terminalDiv = document.getElementById("terminal-div");
+    const editorDiv = document.getElementById("editor-div");
+    terminalDiv.addEventListener("click", focusTerminal);
+    editorDiv.addEventListener("click", unFocusTerminal);
   }
 
   render() {
@@ -100,7 +130,7 @@ class Terminal extends Component {
         </div>
         <p id="terminal-text">
           root$ &nbsp;
-          <span className="term-caret">&#x2588;</span>
+          <span className="term-caret blink">&#x2588;</span>
         </p>
       </div>
     );

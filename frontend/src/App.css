@@ -44,6 +44,7 @@ canvas{
 #terminal-div{
   text-align: left;
 }
+
 #terminal-title{
   text-align: center;
 }
@@ -56,6 +57,11 @@ canvas{
   padding-top: 5px;
   overflow: scroll;
 }
+
+.focus{
+  border: 0.01em solid blue;
+}
+
 .term-caret {
   display: inline-block;
   color: white;
