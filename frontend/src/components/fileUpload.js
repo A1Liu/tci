@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useFileUpload } from "./fileUploadContext";
 
 export default function FileUpload() {
-  const [currentFiles, setCurrentFiles] = useState([]);
+  const { files, addFile } = useFileUpload();
   const [socket, setSocket] = useState(undefined);
   const [message, setMessage] = useState("");
   const [showAlert, setShowAlert] = useState(false);
@@ -40,11 +41,7 @@ export default function FileUpload() {
 
   async function handleOnChange(event) {
     const file = event.target.files[0];
-    currentFiles.unshift(file);
-    if (currentFiles.length >= 15) {
-      currentFiles.pop();
-    }
-    setCurrentFiles(currentFiles);
+    await addFile(file);
     const convertFileToString = (uploadedFile) =>
       new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -75,9 +72,9 @@ export default function FileUpload() {
       >
         Upload a File
       </button>
-      {currentFiles.length !== 0 ? (
+      {files.length !== 0 && (
         <div className="flex flex-col">
-          {Object.entries(currentFiles).map(([idx, file]) => {
+          {Object.entries(files).map(([idx, file]) => {
             return (
               <div key={idx} className="mb-2">
                 {file.name}
@@ -85,7 +82,7 @@ export default function FileUpload() {
             );
           })}
         </div>
-      ) : null}
+      )}
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
