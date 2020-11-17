@@ -164,13 +164,14 @@ impl FileDbSlim {
             self.garbage_size += file_slot.size();
             self.size -= file_slot.size();
             *file_slot = file;
-            return *file_idx;
+            return *file_idx + 1 + INIT_SYMS.files.len() as u32;
         }
 
         let file_idx = self.files.len() as u32;
         self.size += file.size();
         self.files.push(file);
-        return file_idx;
+        self.file_names.insert(file._name, file_idx);
+        return file_idx + 1 + INIT_SYMS.files.len() as u32;
     }
 }
 
@@ -314,6 +315,7 @@ impl FileDb {
         let file = File::new(self.buckets_next, file_name, &source);
         self._size += file.size() + mem::size_of::<File>();
         self.files.push(file);
+        self.file_names.insert(file._name, file_id);
 
         while let Some(b) = self.buckets_next.next() {
             self.buckets_next = b;
@@ -339,6 +341,7 @@ impl FileDb {
         let file = File::new(self.buckets_next, file_name, &source);
         self._size += file.size() + mem::size_of::<File>();
         self.files.push(file);
+        self.file_names.insert(file._name, file_id);
 
         while let Some(b) = self.buckets_next.next() {
             self.buckets_next = b;

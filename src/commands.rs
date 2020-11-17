@@ -65,20 +65,23 @@ impl From<WriteEvent> for CommandResult {
 }
 
 #[derive(IntoStaticStr)]
-pub enum WSState {
-    Files(FileDbSlim),
+pub enum WSStateState {
+    // LMAO this name
     Running(Runtime),
+    NotRunning,
+}
+
+pub struct WSState {
+    state: WSStateState,
+    files: FileDbSlim,
 }
 
 impl Drop for WSState {
     fn drop(&mut self) {
-        match self {
-            WSState::Files(db) => {}
-            WSState::Running(runtime) => {
-                let mut buckets = runtime.program.buckets;
-                while let Some(b) = unsafe { buckets.dealloc() } {
-                    buckets = b;
-                }
+        if let WSStateState::Running(runtime) = &self.state {
+            let mut buckets = runtime.program.buckets;
+            while let Some(b) = unsafe { buckets.dealloc() } {
+                buckets = b;
             }
         }
     }
@@ -86,7 +89,10 @@ impl Drop for WSState {
 
 impl Default for WSState {
     fn default() -> Self {
-        Self::Files(FileDbSlim::new())
+        Self {
+            state: WSStateState::NotRunning,
+            files: FileDbSlim::new(),
+        }
     }
 }
 
@@ -100,37 +106,30 @@ impl WSState {
             }};
         }
 
-        if let Self::Files(files) = self {
-            if let Command::AddFile { path, data } = &command {
-                let file_id = files.add(path, data);
-                messages.push(CommandResult::FileId {
-                    path: path.to_string(),
-                    file_id,
-                });
-            } else if let Command::Compile = &command {
-                let mut db = files.file_db();
-                let program = match compile(&mut db) {
-                    Ok(prog) => prog,
-                    Err(err) => {
-                        let mut writer = StringWriter::new();
-                        emit_err(&err, &mut db, &mut writer);
-                        ret!(CommandResult::CompileError(writer.into_string()));
-                    }
-                };
+        if let Command::AddFile { path, data } = &command {
+            let file_id = self.files.add(path, data);
+            messages.push(CommandResult::FileId {
+                path: path.to_string(),
+                file_id,
+            });
+            ret!(CommandResult::Confirm(command.into()));
+        } else if let Command::Compile = &command {
+            let mut db = self.files.file_db();
+            let program = match compile(&mut db) {
+                Ok(prog) => prog,
+                Err(err) => {
+                    let mut writer = StringWriter::new();
+                    emit_err(&err, &mut db, &mut writer);
+                    ret!(CommandResult::CompileError(writer.into_string()));
+                }
+            };
 
-                *self = Self::Running(Runtime::new(program, StringArray::new()));
-                messages.push(CommandResult::Compiled(program));
-            } else {
-                ret!(CommandResult::InvalidCommand {
-                    state: (&*self).into(),
-                    command: command.into()
-                });
-            }
-
+            self.state = WSStateState::Running(Runtime::new(program, StringArray::new()));
+            messages.push(CommandResult::Compiled(program));
             ret!(CommandResult::Confirm(command.into()));
         }
 
-        if let Self::Running(runtime) = self {
+        if let WSStateState::Running(runtime) = &mut self.state {
             match command {
                 Command::RunOp => {
                     let ret = match runtime.run_op() {
@@ -238,12 +237,15 @@ impl WSState {
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 _ => ret!(CommandResult::InvalidCommand {
-                    state: (&*self).into(),
+                    state: (&self.state).into(),
                     command: command.into()
                 }),
             }
         }
 
-        ret!(CommandResult::Confirm(command.into()));
+        ret!(CommandResult::InvalidCommand {
+            state: (&self.state).into(),
+            command: command.into()
+        });
     }
 }
