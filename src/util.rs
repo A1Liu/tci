@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 #[allow(unused_macros)]
 macro_rules! debug {
     ($expr:expr) => {{
-        let expr = $expr;
+        let expr = &$expr;
         println!(
             "DEBUG ({}:{}): {} = {:?}",
             file!(),

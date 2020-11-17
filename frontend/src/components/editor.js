@@ -3,21 +3,25 @@ import Editor from "react-simple-code-editor";
 import Highlight, { defaultProps } from "prism-react-renderer";
 import theme from "prism-react-renderer/themes/vsDark";
 
-const starter = `  
-  // Online C compiler to run C program online
-  #include <stdio.h>
+import { useFileUpload } from "./fileUploadContext";
 
-  int main() {
-      // Write C code here
-      printf("Hello world");
+const starter = `
+// Online C compiler to run C program online
+#include <stdio.h>
 
-      return 0;
-  }
+int main() {
+    // Write C code here
+    printf("Hello world");
+
+    return 0;
+}
 `;
 
 export default function BasicEditor() {
   const [socket, setSocket] = useState(undefined);
   const [code, setCode] = useState(starter);
+  // eslint-disable-next-line no-unused-vars
+  const { files } = useFileUpload();
 
   const styles = {
     root: {
@@ -37,12 +41,23 @@ export default function BasicEditor() {
     const sock = new WebSocket("wss://tci.a1liu.com");
 
     sock.onmessage = (evt) => {
-      console.log(evt.data);
+      const resp = JSON.parse(evt.data);
+      console.log(resp);
     };
     setSocket(sock);
   }, []);
 
   const compile = () => {
+    socket.send(
+      JSON.stringify({
+        command: "AddFile",
+        data: {
+          path: "main.c",
+          data: code,
+        },
+      })
+    );
+
     socket.send(
       JSON.stringify({
         command: "Compile",
