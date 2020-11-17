@@ -141,13 +141,13 @@ impl<Obj> ops::Deref for LazyStatic<Obj> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct ErrorSection {
     pub location: CodeLoc,
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct Error {
     pub message: String,
     pub sections: Vec<ErrorSection>,
