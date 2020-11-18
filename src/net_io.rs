@@ -201,7 +201,10 @@ impl<State: Default + 'static> WebServer<State> {
                 return Err(WebServerError::PayloadTooLarge(num_bytes));
             }
 
-            stream_read!();
+            if num_bytes == 0 {
+                stream_read!();
+            }
+
             let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[..])?;
             if !ws_result.end_of_message {
                 continue;

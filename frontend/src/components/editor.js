@@ -1,26 +1,13 @@
-import React, { useState } from "react";
 import Editor from "react-simple-code-editor";
 import Highlight, { defaultProps } from "prism-react-renderer";
 import theme from "prism-react-renderer/themes/vsDark";
 
 import { useFileUpload } from "./fileUploadContext";
 
-const starter = `
-// Online C compiler to run C program online
-#include <stdio.h>
-
-int main() {
-    // Write C code here
-    printf("Hello world");
-
-    return 0;
-}
-`;
-
 export default function BasicEditor() {
-  const [code, setCode] = useState(starter);
+  const { files, addFile, currentFile, sockSend } = useFileUpload();
+  const code = files[currentFile];
   // eslint-disable-next-line no-unused-vars
-  const { socket } = useFileUpload();
 
   const styles = {
     root: {
@@ -33,25 +20,11 @@ export default function BasicEditor() {
   };
 
   const onValueChange = (content) => {
-    setCode(content);
+    addFile(currentFile, content);
   };
 
   const compile = () => {
-    socket.send(
-      JSON.stringify({
-        command: "AddFile",
-        data: {
-          path: "main.c",
-          data: code,
-        },
-      })
-    );
-
-    socket.send(
-      JSON.stringify({
-        command: "Compile",
-      })
-    );
+    sockSend("Compile", undefined);
   };
 
   const highlight = (currCode) => (

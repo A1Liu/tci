@@ -31,12 +31,6 @@
     "lint:fix": "eslint --fix src/**/*.js",
     "format": "prettier --write src/**/*.js"
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
   "devDependencies": {
     "eslint": "^7.12.0",
     "eslint-config-airbnb": "^18.2.0",

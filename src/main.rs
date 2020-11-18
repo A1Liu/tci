@@ -315,9 +315,14 @@ fn ws_respond<'a>(
                 let command = match serde_json::from_slice(ws_buffer) {
                     Ok(c) => c,
                     Err(err) => {
-                        let len =
-                            write_b!(out_buffer, "deserialization of command failed ({})", err)
-                                .unwrap();
+                        let mut string = String::new();
+                        string_append_utf8_lossy(&mut string, ws_buffer);
+                        let len = write_b!(
+                            out_buffer,
+                            "{{\"response\":\"DeserializationError\",\"data\":{}}}",
+                            string
+                        )
+                        .unwrap();
                         state.results_idx = 1;
                         return Ok(net_io::WSResponse::Response {
                             message_type: WebSocketSendMessageType::Text,

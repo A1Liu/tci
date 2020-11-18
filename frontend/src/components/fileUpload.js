@@ -2,22 +2,9 @@ import React, { useState, useRef } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function FileUpload() {
-  const { files, addFile, socket } = useFileUpload();
+  const { files, addFile, setCurrentFile } = useFileUpload();
   const [showAlert, setShowAlert] = useState(false);
   const hiddenFileInput = useRef(null);
-
-  const submitFile = (path, fileContent) => {
-    console.log(fileContent);
-    socket.send(
-      JSON.stringify({
-        command: "AddFile",
-        data: {
-          path,
-          data: fileContent,
-        },
-      })
-    );
-  };
 
   const handleOnClick = (event) => {
     event.preventDefault();
@@ -26,7 +13,6 @@ export default function FileUpload() {
 
   async function handleOnChange(event) {
     const file = event.target.files[0];
-    addFile(file);
     const convertFileToString = (uploadedFile) =>
       new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -38,8 +24,9 @@ export default function FileUpload() {
         };
         reader.onerror = (error) => reject(error);
       });
+
     const result = await convertFileToString(file);
-    submitFile(`${file.name}`, result);
+    addFile(file.name, result);
   }
 
   return (
@@ -59,11 +46,16 @@ export default function FileUpload() {
       </button>
       {files.length !== 0 && (
         <div className="flex flex-col">
-          {Object.entries(files).map(([idx, file]) => {
+          {Object.entries(files).map(([name, _contents]) => {
             return (
-              <div key={idx} className="mb-2">
-                {file.name}
-              </div>
+              <button
+                key={name}
+                className="mb-2"
+                type="button"
+                onClick={() => setCurrentFile(name)}
+              >
+                {name}
+              </button>
             );
           })}
         </div>

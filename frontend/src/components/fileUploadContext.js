@@ -1,85 +1,117 @@
 /* eslint-disable no-console */
 /* eslint-disable react/prop-types */
-import React, { createContext, useState, useEffect } from "react";
+import React, { createContext, useEffect, useState, useRef } from "react";
 
 const FileUploadContext = createContext({
-  files: [], // array of files
-  addFile: (files) => console.log(files),
-  compile: (code) => console.log(code),
-  addListener: (listener) => console.log(listener),
-  response: "",
-  socket: {},
+  files: {}, // array of files
+  currentFile: "",
+  setCurrentFile: (file) => console.log(file),
+  addFile: (file) => console.log(file),
+  addListener: (messages, listener) => console.log(messages, listener),
+  sockSend: (command, data) => console.log(command, data),
+  addGlobalListener: (listener) => console.log(listener),
 });
 
+const starter = `// Online C compiler to run C program online
+#include <stdio.h>
+
+int main() {
+    // Write C code here
+    printf("Hello world");
+
+    return 0;
+}
+`;
+
 export const FileUploadProvider = ({ children }) => {
-  const [fileList, setFiles] = useState([]);
-  const [socket, setSocket] = useState(undefined);
-  const [responseStr, setResponse] = useState("");
-  const [listeners, setListeners] = useState([]);
+  const [files, setFiles] = useState({ "main.c": starter });
+  const [currentFile, setCurrentFile] = useState("main.c");
+  const open = useRef(false);
+  const backlog = useRef([]);
+  const globalListeners = useRef([]);
+  const listeners = useRef({});
+  const socket = useRef(undefined);
 
-  useEffect(() => {
-    const sock = new WebSocket("wss://tci.a1liu.com");
-    sock.onmessage = (evt) => {
-      const resp = JSON.parse(evt.data);
-      if (resp.response === "Stdout") {
-        console.log(`${resp.data} \n\n`);
-      } else if (resp.response === "StatusRet") {
-        console.log(`...Program exit with exit code ${resp.data.ret}`);
-      } else if (resp.response === "RuntimeError") {
-        console.log(resp);
-      } else if (
-        resp.response !== "FileId" &&
-        resp.response !== "Confirm" &&
-        typeof sock !== "undefined"
-      ) {
-        sock.send(
-          JSON.stringify({
-            command: "RunOp",
-          })
-        );
-      }
-      setResponse(resp);
-    };
-    setSocket(sock);
-  }, []);
+  const sockSend = (command, data) => {
+    const value = JSON.stringify({ command, data });
+    if (!open.current) return backlog.current.push(value);
 
-  const addListener = (listener) => {
-    setListeners([...listeners, listener]);
+    if (backlog.current.length !== 0) {
+      backlog.current.forEach((item) => socket.current.send(item));
+      backlog.current = [];
+    }
+
+    return socket.current.send(value);
   };
 
-  const addFile = async (fileContents) => {
-    const convertFileToString = (uploadedFile) =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        if (uploadedFile) {
-          reader.readAsText(uploadedFile);
-        }
-        reader.onload = () => {
-          resolve(reader.result);
-        };
-        reader.onerror = (error) => reject(error);
-      });
+  if (socket.current === undefined) {
+    const sock = new WebSocket("wss://tci.a1liu.com");
 
-    const result = await convertFileToString(fileContents);
+    sock.onopen = (_evt) => {
+      console.log("now open for business");
 
-    setFiles(() => [
-      ...fileList,
-      {
-        name: fileContents.name,
-        file: fileContents,
-        contents: result,
-      },
-    ]);
+      backlog.current.forEach((item) => sock.send(item));
+      backlog.current = [];
+      open.current = true;
+    };
+
+    sock.onmessage = (evt) => {
+      const resp = JSON.parse(evt.data);
+      globalListeners.current.forEach((gl) =>
+        gl(sockSend, resp.response, resp.data)
+      );
+
+      const messageListeners = listeners.current[resp.response];
+      if (messageListeners !== undefined)
+        messageListeners.forEach((l) => l(sockSend, resp.response, resp.data));
+    };
+
+    socket.current = sock;
+  }
+
+  const addListener = (m, listener) => {
+    const messages = Array.isArray(m) ? m : [m];
+    messages.forEach((message) => {
+      if (listeners.current[message] === undefined)
+        listeners.current[message] = [listener];
+      else listeners.current[message].push(listener);
+    });
+  };
+
+  const addGlobalListener = (listener) => {
+    globalListeners.current.push(listener);
+  };
+
+  useEffect(() => {
+    addListener(
+      ["Stdout", "Status", "StatusRet", "RuntimeError", "CompileError"],
+      (_send, resp, data) => {
+        console.log(`response: ${resp} with data ${JSON.stringify(data)}`);
+      }
+    );
+
+    sockSend("AddFile", { path: "main.c", data: starter });
+  }, []);
+
+  const addFile = (path, contents) => {
+    setFiles((f) => {
+      const newFiles = {};
+      newFiles[path] = contents;
+      return { ...f, ...newFiles };
+    });
+    sockSend("AddFile", { path, data: contents });
   };
 
   return (
     <FileUploadContext.Provider
       value={{
-        files: fileList,
+        files,
+        currentFile,
+        setCurrentFile,
         addFile,
-        response: responseStr,
-        socket,
+        sockSend,
         addListener,
+        addGlobalListener,
       }}
     >
       {children}
