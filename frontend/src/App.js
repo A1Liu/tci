@@ -20,17 +20,11 @@ function App() {
             <FileUpload />
           </div>
           <div className="md:w-5/6 p-0 text-center text-gray-200">
-            <div className="flex h-full md:flex-row flex-wrap">
-              <div
-                id="editor-div"
-                className="w-full md:w-1/2 text-center border-r border-gray-800"
-              >
+            <div className="flex md:flex-row flex-wrap">
+              <div className="w-full md:w-1/2 text-center border-r border-gray-800">
                 <BasicEditor />
               </div>
-              <div
-                id="terminal-div"
-                className="w-full md:w-1/2 text-center border-solid"
-              >
+              <div className="w-full md:w-1/2 text-center border-solid">
                 <Terminal />
               </div>
             </div>

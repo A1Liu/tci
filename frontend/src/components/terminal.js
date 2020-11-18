@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from "react";
-import Editor from "react-simple-code-editor";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function Terminal() {
-  const { addListener, highlight, styles } = useFileUpload();
+  const { addListener } = useFileUpload();
   const [content, setContent] = useState("");
 
   useEffect(() => {
@@ -35,13 +34,17 @@ export default function Terminal() {
       >
         <div>Terminal</div>
       </div>
-      <Editor
+      <textarea
         value={content}
-        readOnly="readonly"
-        onValueChange={() => {}}
-        highlight={() => highlight(content, "bash")}
-        style={styles.root}
-        className="h-screen"
+        onChange={() => {}}
+        readOnly
+        className="h-screen w-full"
+        style={{
+          backgroundColor: "#1E1E1E",
+          color: "#00FF00",
+          boxSizing: "border-box",
+          fontFamily: '"Dank Mono", "Fira Code", monospace',
+        }}
       />
     </div>
   );

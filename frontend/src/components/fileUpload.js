@@ -15,9 +15,9 @@ export default function FileUpload() {
   async function handleOnChange(event) {
     const file = event.target.files[0];
     if (
-      !file.name.includes(".c") &&
-      !file.name.includes(".C") &&
-      !file.name.includes(".h")
+      !file.name.endsWith(".c") &&
+      !file.name.endsWith(".C") &&
+      !file.name.endsWith(".h")
     ) {
       setMessage("Invalid file type");
       setShowAlert(true);
