@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Editor from "react-simple-code-editor";
 import Highlight, { defaultProps } from "prism-react-renderer";
 import theme from "prism-react-renderer/themes/vsDark";
@@ -18,10 +18,10 @@ int main() {
 `;
 
 export default function BasicEditor() {
-  const [socket, setSocket] = useState(undefined);
+  // const [socket, setSocket] = useState(undefined);
   const [code, setCode] = useState(starter);
   // eslint-disable-next-line no-unused-vars
-  const { files } = useFileUpload();
+  const { socket } = useFileUpload();
 
   const styles = {
     root: {
@@ -37,15 +37,15 @@ export default function BasicEditor() {
     setCode(content);
   };
 
-  useEffect(() => {
-    const sock = new WebSocket("wss://tci.a1liu.com");
+  // useEffect(() => {
+  //   const sock = new WebSocket("wss://tci.a1liu.com");
 
-    sock.onmessage = (evt) => {
-      const resp = JSON.parse(evt.data);
-      console.log(resp);
-    };
-    setSocket(sock);
-  }, []);
+  //   sock.onmessage = (evt) => {
+  //     const resp = JSON.parse(evt.data);
+  //     console.log(resp);
+  //   };
+  //   setSocket(sock);
+  // }, []);
 
   const compile = () => {
     socket.send(

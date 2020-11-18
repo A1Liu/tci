@@ -1,5 +1,5 @@
 import "./tailwind.css";
-import "./App.css";
+// import "./App.css";
 import { FileUploadProvider } from "./components/fileUploadContext";
 import FileUpload from "./components/fileUpload";
 import Terminal from "./components/terminal";
