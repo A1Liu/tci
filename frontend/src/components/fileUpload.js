@@ -1,28 +1,13 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function FileUpload() {
-  const { files, addFile } = useFileUpload();
-  const [socket, setSocket] = useState(undefined);
-  const [message, setMessage] = useState("");
+  const { files, addFile, socket } = useFileUpload();
   const [showAlert, setShowAlert] = useState(false);
   const hiddenFileInput = useRef(null);
 
-  useEffect(() => {
-    const sock = new WebSocket("wss://tci.a1liu.com");
-
-    sock.onmessage = (evt) => {
-      const resp = JSON.parse(evt.data);
-      setMessage(resp);
-      if (resp.response !== "Confirm") {
-        setShowAlert(true);
-      }
-    };
-
-    setSocket(sock);
-  }, []);
-
   const submitFile = (path, fileContent) => {
+    console.log(fileContent);
     socket.send(
       JSON.stringify({
         command: "AddFile",
@@ -86,9 +71,8 @@ export default function FileUpload() {
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
-            <span className="inline-block align-middle mr-8">
-              {`${message.data}`}
-            </span>
+            <span className="inline-block align-middle mr-8" />
+            {/* {`${Response.data}`} */}
             <button
               type="button"
               className="absolute bg-transparent text-2xl font-semibold leading-none right-0 top-0 mt-4 mr-6 outline-none focus:outline-none"
