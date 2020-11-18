@@ -636,6 +636,13 @@ impl<'b> Lexer<'b> {
                 if self.peek_eq(data, b'=') {
                     self.current += 1;
                     ret_tok!(TokenKind::Geq);
+                } else if self.peek_eq(data, b'>') {
+                    self.current += 1;
+                    if self.peek_eq(data, b'=') {
+                        self.current += 1;
+                        ret_tok!(TokenKind::GtGtEq);
+                    }
+                    ret_tok!(TokenKind::GtGt);
                 } else {
                     ret_tok!(TokenKind::Gt);
                 }
@@ -644,6 +651,13 @@ impl<'b> Lexer<'b> {
                 if self.peek_eq(data, b'=') {
                     self.current += 1;
                     ret_tok!(TokenKind::Leq);
+                } else if self.peek_eq(data, b'<') {
+                    self.current += 1;
+                    if self.peek_eq(data, b'=') {
+                        self.current += 1;
+                        ret_tok!(TokenKind::LtLtEq);
+                    }
+                    ret_tok!(TokenKind::LtLt);
                 } else {
                     ret_tok!(TokenKind::Lt);
                 }
