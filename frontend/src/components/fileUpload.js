@@ -2,11 +2,12 @@ import React, { useState, useRef } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function FileUpload() {
-  const { files, addFile, socket, compiledResponse } = useFileUpload();
+  const { files, addFile, socket } = useFileUpload();
   const [showAlert, setShowAlert] = useState(false);
   const hiddenFileInput = useRef(null);
 
   const submitFile = (path, fileContent) => {
+    console.log(fileContent);
     socket.send(
       JSON.stringify({
         command: "AddFile",
@@ -26,7 +27,19 @@ export default function FileUpload() {
   async function handleOnChange(event) {
     const file = event.target.files[0];
     addFile(file);
-    submitFile(file);
+    const convertFileToString = (uploadedFile) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        if (uploadedFile) {
+          reader.readAsText(uploadedFile);
+        }
+        reader.onload = () => {
+          resolve(reader.result);
+        };
+        reader.onerror = (error) => reject(error);
+      });
+    const result = await convertFileToString(file);
+    submitFile(`${file.name}`, result);
   }
 
   return (
@@ -58,9 +71,8 @@ export default function FileUpload() {
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
-            <span className="inline-block align-middle mr-8">
-              {`${compiledResponse.data}`}
-            </span>
+            <span className="inline-block align-middle mr-8" />
+            {/* {`${Response.data}`} */}
             <button
               type="button"
               className="absolute bg-transparent text-2xl font-semibold leading-none right-0 top-0 mt-4 mr-6 outline-none focus:outline-none"

@@ -5,26 +5,47 @@ import React, { createContext, useState, useEffect } from "react";
 const FileUploadContext = createContext({
   files: [], // array of files
   addFile: (files) => console.log(files),
-  compiledResponse: { response: "", data: "" },
   compile: (code) => console.log(code),
+  addListener: (listener) => console.log(listener),
+  response: "",
   socket: {},
 });
 
 export const FileUploadProvider = ({ children }) => {
   const [fileList, setFiles] = useState([]);
   const [socket, setSocket] = useState(undefined);
-  const [compileResp, setCompileResp] = useState({
-    response: "",
-    data: "",
-  });
+  const [responseStr, setResponse] = useState("");
+  const [listeners, setListeners] = useState([]);
 
   useEffect(() => {
     const sock = new WebSocket("wss://tci.a1liu.com");
     sock.onmessage = (evt) => {
-      setCompileResp(evt.data);
+      const resp = JSON.parse(evt.data);
+      if (resp.response === "Stdout") {
+        console.log(`${resp.data} \n\n`);
+      } else if (resp.response === "StatusRet") {
+        console.log(`...Program exit with exit code ${resp.data.ret}`);
+      } else if (resp.response === "RuntimeError") {
+        console.log(resp);
+      } else if (
+        resp.response !== "FileId" &&
+        resp.response !== "Confirm" &&
+        typeof sock !== "undefined"
+      ) {
+        sock.send(
+          JSON.stringify({
+            command: "RunOp",
+          })
+        );
+      }
+      setResponse(resp);
     };
     setSocket(sock);
   }, []);
+
+  const addListener = (listener) => {
+    setListeners([...listeners, listener]);
+  };
 
   const addFile = async (fileContents) => {
     const convertFileToString = (uploadedFile) =>
@@ -56,8 +77,9 @@ export const FileUploadProvider = ({ children }) => {
       value={{
         files: fileList,
         addFile,
-        compiledResponse: compileResp,
+        response: responseStr,
         socket,
+        addListener,
       }}
     >
       {children}
