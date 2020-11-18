@@ -4,6 +4,7 @@ import { useFileUpload } from "./fileUploadContext";
 export default function FileUpload() {
   const { files, addFile, setCurrentFile } = useFileUpload();
   const [showAlert, setShowAlert] = useState(false);
+  const [message, setMessage] = useState("");
   const hiddenFileInput = useRef(null);
 
   const handleOnClick = (event) => {
@@ -13,20 +14,29 @@ export default function FileUpload() {
 
   async function handleOnChange(event) {
     const file = event.target.files[0];
-    const convertFileToString = (uploadedFile) =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        if (uploadedFile) {
-          reader.readAsText(uploadedFile);
-        }
-        reader.onload = () => {
-          resolve(reader.result);
-        };
-        reader.onerror = (error) => reject(error);
-      });
+    if (
+      !file.name.includes(".c") &&
+      !file.name.includes(".C") &&
+      !file.name.includes(".h")
+    ) {
+      setMessage("Invalid file type");
+      setShowAlert(true);
+    } else {
+      const convertFileToString = (uploadedFile) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          if (uploadedFile) {
+            reader.readAsText(uploadedFile);
+          }
+          reader.onload = () => {
+            resolve(reader.result);
+          };
+          reader.onerror = (error) => reject(error);
+        });
 
-    const result = await convertFileToString(file);
-    addFile(file.name, result);
+      const result = await convertFileToString(file);
+      addFile(file.name, result);
+    }
   }
 
   return (
@@ -52,7 +62,9 @@ export default function FileUpload() {
                 key={name}
                 className="mb-2"
                 type="button"
-                onClick={() => setCurrentFile(name)}
+                onClick={() => {
+                  setCurrentFile(name);
+                }}
               >
                 {name}
               </button>
@@ -63,8 +75,9 @@ export default function FileUpload() {
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
-            <span className="inline-block align-middle mr-8" />
-            {/* {`${Response.data}`} */}
+            <span className="inline-block align-middle mr-8">
+              {`${message}`}
+            </span>
             <button
               type="button"
               className="absolute bg-transparent text-2xl font-semibold leading-none right-0 top-0 mt-4 mr-6 outline-none focus:outline-none"

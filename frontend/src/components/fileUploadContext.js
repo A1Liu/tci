@@ -1,10 +1,16 @@
 /* eslint-disable no-console */
 /* eslint-disable react/prop-types */
 import React, { createContext, useEffect, useState, useRef } from "react";
+import Highlight, { defaultProps } from "prism-react-renderer";
+import theme from "prism-react-renderer/themes/vsDark";
 
 const FileUploadContext = createContext({
   files: {}, // array of files
   currentFile: "",
+  styles: {},
+  highlight: (currCode, language) => {
+    console.log(currCode, language);
+  },
   setCurrentFile: (file) => console.log(file),
   addFile: (file) => console.log(file),
   addListener: (messages, listener) => console.log(messages, listener),
@@ -32,6 +38,37 @@ export const FileUploadProvider = ({ children }) => {
   const listeners = useRef({});
   const socket = useRef(undefined);
 
+  const highlight = (currCode, language) => (
+    <Highlight
+      {...defaultProps}
+      theme={theme}
+      code={currCode}
+      language={language}
+    >
+      {({ tokens, getLineProps, getTokenProps }) => (
+        <>
+          {tokens.map((line, i) => (
+            <div {...getLineProps({ line, key: i })}>
+              {line.map((token, key) => (
+                <span {...getTokenProps({ token, key })} />
+              ))}
+            </div>
+          ))}
+        </>
+      )}
+    </Highlight>
+  );
+
+  const styles = {
+    root: {
+      boxSizing: "border-box",
+      fontFamily: '"Dank Mono", "Fira Code", monospace',
+      ...theme.plain,
+      outline: 0,
+      overflow: "scroll",
+    },
+  };
+
   const sockSend = (command, data) => {
     const value = JSON.stringify({ command, data });
     if (!open.current) return backlog.current.push(value);
@@ -46,7 +83,6 @@ export const FileUploadProvider = ({ children }) => {
 
   if (socket.current === undefined) {
     const sock = new WebSocket("wss://tci.a1liu.com");
-    // const sock = new WebSocket("ws://localhost:4000");
 
     sock.onopen = (_evt) => {
       console.log("now open for business");
@@ -101,6 +137,7 @@ export const FileUploadProvider = ({ children }) => {
       newFiles[path] = contents;
       return { ...f, ...newFiles };
     });
+    setCurrentFile(path);
     sockSend("AddFile", { path, data: contents });
   };
 
@@ -109,6 +146,8 @@ export const FileUploadProvider = ({ children }) => {
       value={{
         files,
         currentFile,
+        styles,
+        highlight,
         setCurrentFile,
         addFile,
         sockSend,
