@@ -50,7 +50,7 @@ export default function BasicEditor() {
           className="text-white py-1 px-6"
           style={{ backgroundColor: "#1E1E1E" }}
         >
-          <div>main.c</div>
+          <div>{currentFile}</div>
         </div>
         <div className="bg-gray-800 w-full flex flex-end">
           <button
