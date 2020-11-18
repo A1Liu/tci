@@ -141,9 +141,7 @@ export default function Terminal() {
     // }
 
     addListener("Stdout", (send, resp, data) => {
-      let currentContent = content;
-      currentContent += `${data}`;
-      setContent(currentContent);
+      setContent((c) => c + data);
     });
 
     addListener("Compiled", (send, _resp, _data) => {

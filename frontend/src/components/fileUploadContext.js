@@ -57,7 +57,6 @@ export const FileUploadProvider = ({ children }) => {
     };
 
     sock.onmessage = (evt) => {
-      console.log(evt.data);
       const resp = JSON.parse(evt.data);
       globalListeners.current.forEach((gl) =>
         gl(sockSend, resp.response, resp.data)
@@ -86,7 +85,7 @@ export const FileUploadProvider = ({ children }) => {
 
   useEffect(() => {
     addListener(
-      ["Stdout", "Status", "StatusRet", "RuntimeError", "CompileError"],
+      ["Stdout", "RuntimeError", "CompileError"],
       (_send, resp, data) => {
         console.log(`response: ${resp} with data ${JSON.stringify(data)}`);
       }
