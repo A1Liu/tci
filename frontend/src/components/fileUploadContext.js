@@ -46,6 +46,7 @@ export const FileUploadProvider = ({ children }) => {
 
   if (socket.current === undefined) {
     const sock = new WebSocket("wss://tci.a1liu.com");
+    // const sock = new WebSocket("ws://localhost:4000");
 
     sock.onopen = (_evt) => {
       console.log("now open for business");
@@ -56,6 +57,7 @@ export const FileUploadProvider = ({ children }) => {
     };
 
     sock.onmessage = (evt) => {
+      console.log(evt.data);
       const resp = JSON.parse(evt.data);
       globalListeners.current.forEach((gl) =>
         gl(sockSend, resp.response, resp.data)

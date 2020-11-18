@@ -197,7 +197,7 @@ fn main() {
             http_handler: respond_to_http_request,
             ws_handler: ws_respond,
         };
-        let addr = "0.0.0.0:3000";
+        let addr = "0.0.0.0:4000";
         server.serve(addr).unwrap();
 
         return;

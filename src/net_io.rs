@@ -207,6 +207,7 @@ impl<State: Default + 'static> WebServer<State> {
 
             let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[..])?;
             if !ws_result.end_of_message {
+                stream_read!();
                 continue;
             }
 

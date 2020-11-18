@@ -40,14 +40,14 @@ services:
       - "traefik.http.routers.tci-https.rule=Host(`tci.a1liu.com`)"
       - "traefik.http.routers.tci-https.service=tci-https"
       - "traefik.http.routers.tci-https.entrypoints=websecure"
-      - "traefik.http.services.tci-https.loadbalancer.server.port=3000"
+      - "traefik.http.services.tci-https.loadbalancer.server.port=4000"
       - "traefik.http.routers.tci-https.tls.certresolver=mytlschallenge"
 
         #HTTP
       - "traefik.http.routers.tci-http.rule=Host(`tci.a1liu.com`, `localhost`)"
       - "traefik.http.routers.tci-http.service=tci-http"
       - "traefik.http.routers.tci-http.entrypoints=web"
-      - "traefik.http.services.tci-http.loadbalancer.server.port=3000"
+      - "traefik.http.services.tci-http.loadbalancer.server.port=4000"
   watchtower:
     image: v2tec/watchtower
     volumes:
