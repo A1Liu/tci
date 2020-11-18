@@ -1,8 +1,10 @@
-import React, { Component } from "react";
+import React, { useEffect, useState } from "react";
+import { useFileUpload } from "./fileUploadContext";
 
 const output = [[]];
 let lineNum = 0;
 let focus = false;
+let firstRun = true;
 
 function caretToggle() {
   if (!focus) {
@@ -33,12 +35,9 @@ function unFocusTerminal() {
 function print(outputStr) {
   const terminalText = document.querySelector("#terminal-text");
   const result = terminalText.childNodes[0];
-  // print on new line if line has commands
-  if (output[lineNum].length !== 0) {
-    result.nodeValue += "\n";
-    lineNum += 1;
-    output.push([]);
-  }
+  result.nodeValue += "\n";
+  lineNum += 1;
+  output.push([]);
   for (let i = 0; i < outputStr.length; i += 1) {
     const character = outputStr[i];
     output[lineNum].push(character);
@@ -125,38 +124,43 @@ function logKey(e) {
   }
 }
 
-class Terminal extends Component {
-  constructor(props) {
-    super(props);
-    this.state = {};
-  }
+export default function Terminal() {
+  const { response } = useFileUpload();
+  const [content, setContent] = useState("");
 
-  componentDidMount() {
-    document.addEventListener("keydown", logKey);
-    setInterval(caretToggle, 500);
+  useEffect(() => {
+    // do this setup only once
+    if (firstRun) {
+      document.addEventListener("keydown", logKey);
+      const terminalDiv = document.getElementById("terminal-div");
+      const editorDiv = document.getElementById("editor-div");
+      terminalDiv.addEventListener("click", focusTerminal);
+      editorDiv.addEventListener("click", unFocusTerminal);
+      setInterval(caretToggle, 500);
+      firstRun = false;
+    }
+    let currentContent = content;
+    if (response.response === "StatusRet") {
+      currentContent += `...Program exit with exit code ${response.data.ret}`;
+      print(currentContent);
+    } else if (response.response === "Stdout") {
+      currentContent += `${response.data} \n\n`;
+    }
+    setContent(currentContent);
+  }, [response]);
 
-    const terminalDiv = document.getElementById("terminal-div");
-    const editorDiv = document.getElementById("editor-div");
-    terminalDiv.addEventListener("click", focusTerminal);
-    editorDiv.addEventListener("click", unFocusTerminal);
-  }
-
-  render() {
-    return (
-      <div>
-        <div
-          id="terminal-title"
-          className="h-10 text-white bg-gray-800 py-1 px-6 w-full"
-        >
-          <div>Terminal</div>
-        </div>
-        <p id="terminal-text">
-          root$ &nbsp;
-          <span className="term-caret blink">&#x2588;</span>
-        </p>
+  return (
+    <div>
+      <div
+        id="terminal-title"
+        className="h-10 text-white bg-gray-800 py-1 px-6 w-full"
+      >
+        <div>Terminal</div>
       </div>
-    );
-  }
+      <p id="terminal-text">
+        root$ &nbsp;
+        <span className="term-caret blink">&#x2588;</span>
+      </p>
+    </div>
+  );
 }
-
-export default Terminal;
