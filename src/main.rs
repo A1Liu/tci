@@ -319,7 +319,7 @@ fn ws_respond<'a>(
                         string_append_utf8_lossy(&mut string, ws_buffer);
                         let len = write_b!(
                             out_buffer,
-                            "{{\"response\":\"DeserializationError\",\"data\":{}}}",
+                            "{{\"response\":\"DeserializationError\",\"data\":\"{}\"}}",
                             string
                         )
                         .unwrap();
