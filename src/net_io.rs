@@ -116,7 +116,7 @@ impl<State: Default + 'static> WebServer<State> {
                     let s = *self;
                     thread::spawn(move || match s.handle(stream) {
                         Ok(()) => {}
-                        Err(e) => println!("error: {:?}", e),
+                        Err(error) => debug!(error),
                     });
                 }
                 Err(e) => println!("failed to establish a connection: {}", e),
@@ -196,6 +196,8 @@ impl<State: Default + 'static> WebServer<State> {
         }
 
         let mut state = State::default();
+        let mut tcp_bytes = 0;
+        let mut ws_bytes = 0;
         loop {
             if num_bytes >= tcp_recv.len() {
                 return Err(WebServerError::PayloadTooLarge(num_bytes));
@@ -205,22 +207,27 @@ impl<State: Default + 'static> WebServer<State> {
                 stream_read!();
             }
 
-            let ws_result = web_socket.read(&tcp_recv[..num_bytes], &mut ws_buf[..])?;
+            let ws_result =
+                web_socket.read(&tcp_recv[tcp_bytes..num_bytes], &mut ws_buf[ws_bytes..])?;
+            tcp_bytes += ws_result.len_from;
+            ws_bytes += ws_result.len_to;
             if !ws_result.end_of_message {
                 stream_read!();
                 continue;
             }
 
-            if ws_result.len_to >= ws_buf.len() {
-                return Err(WebServerError::RequestTooLarge(ws_result.len_to));
+            if ws_bytes >= ws_buf.len() {
+                return Err(WebServerError::RequestTooLarge(ws_bytes));
             }
 
-            num_bytes -= ws_result.len_from;
+            num_bytes -= tcp_bytes;
             for i in 0..num_bytes {
-                tcp_recv[i] = tcp_recv[i + ws_result.len_from];
+                tcp_recv[i] = tcp_recv[i + tcp_bytes];
             }
+            tcp_bytes = 0;
 
-            let (ws_in, ws_out) = ws_buf.split_at_mut(ws_result.len_to);
+            let (ws_in, ws_out) = ws_buf.split_at_mut(ws_bytes);
+            ws_bytes = 0;
             loop {
                 let response = ws_handler(ws_result.message_type, &mut state, ws_in, scratch_buf)?;
                 match response {
