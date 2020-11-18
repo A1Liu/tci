@@ -51,6 +51,6 @@ services:
     image: v2tec/watchtower
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 30 --cleanup
+    command: --interval 120 --cleanup
     restart: unless-stopped
 
