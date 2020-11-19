@@ -46,7 +46,6 @@ export const FileUploadProvider = ({ children }) => {
 
   if (socket.current === undefined) {
     const sock = new WebSocket("wss://tci.a1liu.com");
-    // const sock = new WebSocket("ws://localhost:4000");
 
     sock.onopen = (_evt) => {
       console.log("now open for business");
@@ -100,6 +99,7 @@ export const FileUploadProvider = ({ children }) => {
       newFiles[path] = contents;
       return { ...f, ...newFiles };
     });
+    setCurrentFile(path);
     sockSend("AddFile", { path, data: contents });
   };
 

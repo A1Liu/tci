@@ -1,23 +1,12 @@
 import Editor from "react-simple-code-editor";
 import Highlight, { defaultProps } from "prism-react-renderer";
 import theme from "prism-react-renderer/themes/vsDark";
-
 import { useFileUpload } from "./fileUploadContext";
 
 export default function BasicEditor() {
   const { files, addFile, currentFile, sockSend } = useFileUpload();
   const code = files[currentFile];
   // eslint-disable-next-line no-unused-vars
-
-  const styles = {
-    root: {
-      boxSizing: "border-box",
-      fontFamily: '"Dank Mono", "Fira Code", monospace',
-      ...theme.plain,
-      outline: 0,
-      overflow: "scroll",
-    },
-  };
 
   const onValueChange = (content) => {
     addFile(currentFile, content);
@@ -43,6 +32,16 @@ export default function BasicEditor() {
     </Highlight>
   );
 
+  const styles = {
+    root: {
+      boxSizing: "border-box",
+      fontFamily: '"Dank Mono", "Fira Code", monospace',
+      ...theme.plain,
+      outline: 0,
+      overflow: "scroll",
+    },
+  };
+
   return (
     <div>
       <div className="h-10 w-full flex">
@@ -65,7 +64,7 @@ export default function BasicEditor() {
       <Editor
         value={code}
         onValueChange={onValueChange}
-        highlight={highlight}
+        highlight={() => highlight(code, "c")}
         style={styles.root}
         className="h-screen p-8"
       />
