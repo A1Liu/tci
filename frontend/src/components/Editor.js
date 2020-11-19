@@ -3,10 +3,25 @@ import Highlight, { defaultProps } from "prism-react-renderer";
 import theme from "prism-react-renderer/themes/vsDark";
 import { useFileUpload } from "./fileUploadContext";
 
+const HighlightedCode = ({ code }) => (
+  <Highlight {...defaultProps} theme={theme} code={code} language="c">
+    {({ tokens, getLineProps, getTokenProps }) => (
+      <>
+        {tokens.map((line, i) => (
+          <div {...getLineProps({ line, key: i })}>
+            {line.map((token, key) => (
+              <span {...getTokenProps({ token, key })} />
+            ))}
+          </div>
+        ))}
+      </>
+    )}
+  </Highlight>
+);
+
 export default function BasicEditor() {
   const { files, addFile, currentFile, sockSend } = useFileUpload();
   const code = files[currentFile];
-  // eslint-disable-next-line no-unused-vars
 
   const onValueChange = (content) => {
     addFile(currentFile, content);
@@ -15,22 +30,6 @@ export default function BasicEditor() {
   const compile = () => {
     sockSend("Compile", undefined);
   };
-
-  const highlight = (currCode) => (
-    <Highlight {...defaultProps} theme={theme} code={currCode} language="c">
-      {({ tokens, getLineProps, getTokenProps }) => (
-        <>
-          {tokens.map((line, i) => (
-            <div {...getLineProps({ line, key: i })}>
-              {line.map((token, key) => (
-                <span {...getTokenProps({ token, key })} />
-              ))}
-            </div>
-          ))}
-        </>
-      )}
-    </Highlight>
-  );
 
   const styles = {
     root: {
@@ -64,7 +63,7 @@ export default function BasicEditor() {
       <Editor
         value={code}
         onValueChange={onValueChange}
-        highlight={() => highlight(code, "c")}
+        highlight={() => <HighlightedCode code={code} />}
         style={styles.root}
         className="h-screen p-8"
         padding={8}

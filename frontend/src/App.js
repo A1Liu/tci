@@ -1,8 +1,8 @@
 import "./tailwind.css";
 import { FileUploadProvider } from "./components/fileUploadContext";
-import FileUpload from "./components/fileUpload";
-import Terminal from "./components/terminal";
-import BasicEditor from "./components/editor";
+import FileUpload from "./components/FileUpload";
+import Terminal from "./components/Terminal";
+import BasicEditor from "./components/Editor";
 
 function App() {
   return (

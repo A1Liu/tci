@@ -3,7 +3,7 @@
 import React, { createContext, useEffect, useState, useRef } from "react";
 
 const FileUploadContext = createContext({
-  files: {}, // array of files
+  files: {}, // hashmap of files
   currentFile: "",
   setCurrentFile: (file) => console.log(file),
   addFile: (file) => console.log(file),
@@ -46,7 +46,7 @@ export const FileUploadProvider = ({ children }) => {
 
   if (socket.current === undefined) {
     const createWebSocket = () => {
-      const sock = new WebSocket("wss://tci.a1liu.com");
+      const sock = new WebSocket("wss://tci.a1liu.com"); // NOTE: Use .env with API_URL env var
       // const sock = new WebSocket("ws://localhost:4000");
 
       sock.onopen = (_evt) => {
