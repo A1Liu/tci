@@ -67,6 +67,7 @@ export default function BasicEditor() {
         highlight={() => highlight(code, "c")}
         style={styles.root}
         className="h-screen p-8"
+        padding={8}
       />
     </div>
   );

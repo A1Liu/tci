@@ -45,28 +45,39 @@ export const FileUploadProvider = ({ children }) => {
   };
 
   if (socket.current === undefined) {
-    const sock = new WebSocket("wss://tci.a1liu.com");
+    const createWebSocket = () => {
+      const sock = new WebSocket("wss://tci.a1liu.com");
+      // const sock = new WebSocket("ws://localhost:4000");
 
-    sock.onopen = (_evt) => {
-      console.log("now open for business");
+      sock.onopen = (_evt) => {
+        console.log("now open for business");
 
-      backlog.current.forEach((item) => sock.send(item));
-      backlog.current = [];
-      open.current = true;
+        backlog.current.forEach((item) => sock.send(item));
+        backlog.current = [];
+        open.current = true;
+      };
+
+      sock.onmessage = (evt) => {
+        const resp = JSON.parse(evt.data);
+        globalListeners.current.forEach((gl) =>
+          gl(sockSend, resp.response, resp.data)
+        );
+
+        const messageListeners = listeners.current[resp.response];
+        if (messageListeners !== undefined)
+          messageListeners.forEach((l) =>
+            l(sockSend, resp.response, resp.data)
+          );
+      };
+
+      sock.onclose = () => {
+        socket.current = null;
+        setTimeout(createWebSocket, 5000);
+      };
+
+      socket.current = sock;
     };
-
-    sock.onmessage = (evt) => {
-      const resp = JSON.parse(evt.data);
-      globalListeners.current.forEach((gl) =>
-        gl(sockSend, resp.response, resp.data)
-      );
-
-      const messageListeners = listeners.current[resp.response];
-      if (messageListeners !== undefined)
-        messageListeners.forEach((l) => l(sockSend, resp.response, resp.data));
-    };
-
-    socket.current = sock;
+    createWebSocket();
   }
 
   const addListener = (m, listener) => {
