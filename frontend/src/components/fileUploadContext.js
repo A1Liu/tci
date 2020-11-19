@@ -110,6 +110,7 @@ export const FileUploadProvider = ({ children }) => {
       newFiles[path] = contents;
       return { ...f, ...newFiles };
     });
+    setCurrentFile(path);
     sockSend("AddFile", { path, data: contents });
   };
 
