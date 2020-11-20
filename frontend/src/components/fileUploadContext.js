@@ -6,6 +6,7 @@ const FileUploadContext = createContext({
   files: {}, // array of files
   currentFile: "",
   setCurrentFile: (file) => console.log(file),
+  setFiles: (files) => console.log(files),
   addFile: (file) => console.log(file),
   addListener: (messages, listener) => console.log(messages, listener),
   sockSend: (command, data) => console.log(command, data),
@@ -119,6 +120,7 @@ export const FileUploadProvider = ({ children }) => {
       value={{
         files,
         currentFile,
+        setFiles,
         setCurrentFile,
         addFile,
         sockSend,

@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function FileUpload() {
-  const { files, addFile, setCurrentFile } = useFileUpload();
+  const { addFile } = useFileUpload();
   const [showAlert, setShowAlert] = useState(false);
   const [message, setMessage] = useState("");
   const hiddenFileInput = useRef(null);
@@ -54,24 +54,6 @@ export default function FileUpload() {
       >
         Upload a File
       </button>
-      {files.length !== 0 && (
-        <div className="flex flex-col">
-          {Object.entries(files).map(([name, _contents]) => {
-            return (
-              <button
-                key={name}
-                className="mb-2"
-                type="button"
-                onClick={() => {
-                  setCurrentFile(name);
-                }}
-              >
-                {name}
-              </button>
-            );
-          })}
-        </div>
-      )}
       <div>
         {showAlert ? (
           <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
