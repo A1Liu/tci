@@ -1,6 +1,7 @@
-import Editor from "react-simple-code-editor";
-import Highlight, { defaultProps } from "prism-react-renderer";
-import theme from "prism-react-renderer/themes/vsDark";
+import AceEditor from "react-ace";
+
+import "ace-builds/src-noconflict/mode-csharp";
+import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function BasicEditor() {
@@ -21,32 +22,6 @@ export default function BasicEditor() {
 
   const compile = () => {
     sockSend("Compile", undefined);
-  };
-
-  const highlight = (currCode) => (
-    <Highlight {...defaultProps} theme={theme} code={currCode} language="c">
-      {({ tokens, getLineProps, getTokenProps }) => (
-        <>
-          {tokens.map((line, i) => (
-            <div {...getLineProps({ line, key: i })}>
-              {line.map((token, key) => (
-                <span {...getTokenProps({ token, key })} />
-              ))}
-            </div>
-          ))}
-        </>
-      )}
-    </Highlight>
-  );
-
-  const styles = {
-    root: {
-      boxSizing: "border-box",
-      fontFamily: '"Dank Mono", "Fira Code", monospace',
-      ...theme.plain,
-      outline: 0,
-      overflow: "scroll",
-    },
   };
 
   return (
@@ -106,13 +81,19 @@ export default function BasicEditor() {
           </button>
         </div>
       </div>
-      <Editor
+      <AceEditor
+        mode="csharp"
+        theme="monokai"
+        onChange={onValueChange}
         value={code}
-        onValueChange={onValueChange}
-        highlight={() => highlight(code, "c")}
-        style={styles.root}
-        className="h-screen p-8"
-        padding={8}
+        fontSize={12}
+        setOptions={{
+          enableLiveAutocompletion: true,
+          enableSnippets: true,
+          showLineNumbers: true,
+          tabSize: 2,
+        }}
+        style={{ height: "100vh", width: "full" }}
       />
     </div>
   );
