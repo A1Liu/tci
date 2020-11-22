@@ -34,7 +34,6 @@ export default function Terminal() {
       </div>
       <textarea
         value={content}
-        onChange={() => {}}
         readOnly
         className="h-screen w-full"
         style={{
