@@ -3,8 +3,6 @@ import { useFileUpload } from "./fileUploadContext";
 
 export default function NavBar() {
   const { addFile, sockSend } = useFileUpload();
-  //   const [showAlert, setShowAlert] = useState(false);
-  //   const [message, setMessage] = useState("");
   const hiddenFileInput = useRef(null);
 
   const handleOnClick = (event) => {
@@ -19,13 +17,10 @@ export default function NavBar() {
   async function handleOnChange(event) {
     const file = event.target.files[0];
     if (
-      !file.name.endsWith(".c") &&
-      !file.name.endsWith(".C") &&
-      !file.name.endsWith(".h")
+      file.name.endsWith(".c") ||
+      file.name.endsWith(".C") ||
+      file.name.endsWith(".h")
     ) {
-      //   setMessage("Invalid file type");
-      //   setShowAlert(true);
-    } else {
       const convertFileToString = (uploadedFile) =>
         new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -59,22 +54,6 @@ export default function NavBar() {
         >
           Upload a File
         </button>
-        {/* <div>
-          {showAlert ? (
-            <div className="text-white px-6 py-4 border-0 rounded relative mb-4 bg-red-500">
-              <span className="inline-block align-middle mr-8">
-                {`${message}`}
-              </span>
-              <button
-                type="button"
-                className="absolute bg-transparent text-2xl font-semibold leading-none right-0 top-0 mt-4 mr-6 outline-none focus:outline-none"
-                onClick={() => setShowAlert(false)}
-              >
-                <span>×</span>
-              </button>
-            </div>
-          ) : null}
-        </div> */}
       </div>
       <button
         className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
