@@ -180,6 +180,11 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_unified_bin_op!(Eq, Pointer, Eq64, I8);
 
     add_unified_bin_op!(RShift, I32, RShiftI32, I32);
+    add_unified_bin_op!(LShift, I32, LShiftI32, I32);
+
+    add_unified_bin_op!(BitAnd, I32, BitAndI32, I32);
+    add_unified_bin_op!(BitOr, I32, BitOrI32, I32);
+    add_unified_bin_op!(BitXor, I32, BitXorI32, I32);
 
     macro_rules! add_un_op_ol {
         ($op:ident, $operand:ident, $func:expr) => {{

@@ -529,12 +529,39 @@ impl Assembler {
                 tagged.op = Opcode::CompLeqI32;
                 ops.push(tagged);
             }
+
             TCExprKind::RShiftI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::RShiftI32;
                 ops.push(tagged);
             }
+            TCExprKind::LShiftI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::LShiftI32;
+                ops.push(tagged);
+            }
+
+            TCExprKind::BitAndI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::BitAndI32;
+                ops.push(tagged);
+            }
+            TCExprKind::BitOrI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::BitOrI32;
+                ops.push(tagged);
+            }
+            TCExprKind::BitXorI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::BitXorI32;
+                ops.push(tagged);
+            }
+
             TCExprKind::Eq32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));

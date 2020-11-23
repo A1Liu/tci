@@ -694,6 +694,11 @@ pub enum TCExprKind<'a> {
     MulU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     RShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    LShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    BitAndI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BitOrI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BitXorI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),

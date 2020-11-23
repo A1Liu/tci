@@ -8,6 +8,9 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
 use std::convert::TryInto;
+use std::ops::BitAnd;
+use std::ops::BitOr;
+use std::ops::BitXor;
 
 macro_rules! error {
     ($arg1:tt,$($arg:tt)*) => {
@@ -144,6 +147,11 @@ pub enum Opcode {
     ModI64,
 
     RShiftI32,
+    LShiftI32,
+
+    BitAndI32,
+    BitOrI32,
+    BitXorI32,
 
     Jump(u32),
 
@@ -541,6 +549,27 @@ impl Runtime {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be());
+            }
+            Opcode::LShiftI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be());
+            }
+
+            Opcode::BitAndI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.bitand(word2).to_be());
+            }
+            Opcode::BitOrI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.bitor(word2).to_be());
+            }
+            Opcode::BitXorI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.bitxor(word2).to_be());
             }
 
             Opcode::Jump(target) => {
