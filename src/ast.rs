@@ -21,6 +21,8 @@ pub enum BinOp {
     Geq,
     Eq,
     Neq,
+    LShift,
+    RShift,
     BitAnd,
     BitXor,
     BitOr,
@@ -690,6 +692,8 @@ pub enum TCExprKind<'a> {
 
     MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
     MulU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    RShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),

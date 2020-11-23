@@ -529,7 +529,12 @@ impl Assembler {
                 tagged.op = Opcode::CompLeqI32;
                 ops.push(tagged);
             }
-
+            TCExprKind::RShiftI32(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::RShiftI32;
+                ops.push(tagged);
+            }
             TCExprKind::Eq32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
@@ -548,7 +553,6 @@ impl Assembler {
                 tagged.op = Opcode::CompEq64;
                 ops.push(tagged);
             }
-
             TCExprKind::SConv8To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::SExtend8To32;

@@ -7,6 +7,7 @@ use core::fmt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
+use std::convert::TryInto;
 
 macro_rules! error {
     ($arg1:tt,$($arg:tt)*) => {
@@ -141,6 +142,8 @@ pub enum Opcode {
     MulI64,
     MulU64,
     ModI64,
+
+    RShiftI32,
 
     Jump(u32),
 
@@ -533,6 +536,11 @@ impl Runtime {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 % word2).to_be());
+            }
+            Opcode::RShiftI32 => {
+                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word1 = i32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be());
             }
 
             Opcode::Jump(target) => {
