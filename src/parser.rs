@@ -538,7 +538,7 @@ impl<'b> Parser<'b> {
                     let right = buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Add, left, right),
+                        kind: ExprKind::BinOp(BinOp::RShift, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
@@ -550,7 +550,7 @@ impl<'b> Parser<'b> {
                     let right = buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Add, left, right),
+                        kind: ExprKind::BinOp(BinOp::LShift, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
