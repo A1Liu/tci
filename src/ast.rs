@@ -700,6 +700,9 @@ pub enum TCExprKind<'a> {
     BitOrI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
     BitXorI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
+    BitAndI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BitOrI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),
 

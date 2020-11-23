@@ -543,10 +543,22 @@ impl Assembler {
                 ops.push(tagged);
             }
 
+            TCExprKind::BitAndI8(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::BitAndI8;
+                ops.push(tagged);
+            }
             TCExprKind::BitAndI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
                 tagged.op = Opcode::BitAndI32;
+                ops.push(tagged);
+            }
+            TCExprKind::BitOrI8(l, r) => {
+                ops.append(&mut self.translate_expr(l));
+                ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::BitOrI8;
                 ops.push(tagged);
             }
             TCExprKind::BitOrI32(l, r) => {

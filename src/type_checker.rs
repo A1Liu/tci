@@ -186,6 +186,9 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_unified_bin_op!(BitOr, I32, BitOrI32, I32);
     add_unified_bin_op!(BitXor, I32, BitXorI32, I32);
 
+    add_unified_bin_op!(BoolAnd, I8, BitAndI8, I8);
+    add_unified_bin_op!(BoolOr, I8, BitOrI8, I8);
+
     macro_rules! add_un_op_ol {
         ($op:ident, $operand:ident, $func:expr) => {{
             unary_op.insert((UnaryOp::$op, TCShallowType::$operand), $func);

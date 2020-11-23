@@ -149,7 +149,9 @@ pub enum Opcode {
     RShiftI32,
     LShiftI32,
 
+    BitAndI8,
     BitAndI32,
+    BitOrI8,
     BitOrI32,
     BitXorI32,
 
@@ -556,10 +558,20 @@ impl Runtime {
                 self.memory.push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be());
             }
 
+            Opcode::BitAndI8 => {
+                let word2 = i8::from_be(self.memory.pop_stack()?);
+                let word1 = i8::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.bitand(word2).to_be());
+            }
             Opcode::BitAndI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.bitand(word2).to_be());
+            }
+            Opcode::BitOrI8 => {
+                let word2 = i8::from_be(self.memory.pop_stack()?);
+                let word1 = i8::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack(word1.bitor(word2).to_be());
             }
             Opcode::BitOrI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
