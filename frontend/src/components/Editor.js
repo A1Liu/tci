@@ -9,7 +9,6 @@ export default function BasicEditor() {
     files,
     addFile,
     currentFile,
-    sockSend,
     setFiles,
     setCurrentFile,
   } = useFileUpload();
@@ -20,18 +19,14 @@ export default function BasicEditor() {
     addFile(currentFile, content);
   };
 
-  const compile = () => {
-    sockSend("Compile", undefined);
-  };
-
   return (
     <div>
       <div className="h-10 w-full flex">
         <div className="bg-gray-800 w-full text-white">
-          <nav className="flex flex-row">
+          <nav className="flex flex-row w-full overflow-auto">
             {Object.keys(files).map((name) => {
               return name === "main.c" ? (
-                <div className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-50">
+                <div key={name} className="flex flex-row bg-gray-700 h-10">
                   <button
                     type="button"
                     className="mt-1 py-1 px-4"
@@ -41,7 +36,10 @@ export default function BasicEditor() {
                   </button>
                 </div>
               ) : (
-                <div className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-50">
+                <div
+                  key={name}
+                  className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-500"
+                >
                   <button
                     type="button"
                     className="py-2 px-2"
@@ -70,15 +68,6 @@ export default function BasicEditor() {
               );
             })}
           </nav>
-        </div>
-        <div className="bg-gray-800 flex flex-end">
-          <button
-            className="bg-blue-600 hover:bg-blue-800 text-white py-1 px-6 ml-auto"
-            type="button"
-            onClick={compile}
-          >
-            Run
-          </button>
         </div>
       </div>
       <AceEditor
