@@ -1,5 +1,4 @@
 use crate::filedb::*;
-use crate::interpreter::Program;
 use crate::interpreter::*;
 use crate::runtime::*;
 use crate::*;
@@ -13,6 +12,7 @@ pub enum Command {
         path: String,
         data: String,
     },
+    RemoveFile(u32),
     Compile,
     RunUntilScopedPC(u32),
     RunOp,
@@ -31,7 +31,7 @@ pub enum Command {
 #[serde(tag = "response", content = "data")]
 pub enum CommandResult {
     Confirm(&'static str),
-    Compiled(Program<'static>),
+    Compiled,
     InvalidCommand {
         state: &'static str,
         command: &'static str,
@@ -70,9 +70,8 @@ impl From<WriteEvent> for CommandResult {
     }
 }
 
-#[derive(IntoStaticStr)]
+#[derive(IntoStaticStr)] // LMAO this name
 pub enum WSStateState {
-    // LMAO this name
     Running(Runtime),
     NotRunning,
 }
@@ -112,30 +111,38 @@ impl WSState {
             }};
         }
 
-        if let Command::AddFile { path, data } = &command {
-            let file_id = self.files.add(path, data);
-            messages.push(CommandResult::FileId {
-                path: path.to_string(),
-                file_id,
-            });
-            ret!(CommandResult::Confirm(command.into()));
-        } else if let Command::Compile = &command {
-            let mut db = self.files.file_db();
-            let program = match compile(&mut db) {
-                Ok(prog) => prog,
-                Err(err) => {
-                    let mut writer = StringWriter::new();
-                    emit_err(&err, &mut db, &mut writer);
-                    ret!(CommandResult::CompileError {
-                        rendered: writer.into_string(),
-                        error: err
-                    });
-                }
-            };
+        match &command {
+            Command::AddFile { path, data } => {
+                let file_id = self.files.add(path, data);
+                messages.push(CommandResult::FileId {
+                    path: path.to_string(),
+                    file_id,
+                });
+                ret!(CommandResult::Confirm(command.into()));
+            }
+            Command::RemoveFile(id) => {
+                self.files.remove(*id);
+                ret!(CommandResult::Confirm(command.into()));
+            }
+            Command::Compile => {
+                let mut db = self.files.file_db();
+                let program = match compile(&mut db) {
+                    Ok(prog) => prog,
+                    Err(err) => {
+                        let mut writer = StringWriter::new();
+                        emit_err(&err, &mut db, &mut writer);
+                        ret!(CommandResult::CompileError {
+                            rendered: writer.into_string(),
+                            error: err
+                        });
+                    }
+                };
 
-            self.state = WSStateState::Running(Runtime::new(program, StringArray::new()));
-            messages.push(CommandResult::Compiled(program));
-            ret!(CommandResult::Confirm(command.into()));
+                self.state = WSStateState::Running(Runtime::new(program, StringArray::new()));
+                messages.push(CommandResult::Compiled);
+                ret!(CommandResult::Confirm(command.into()));
+            }
+            _ => {}
         }
 
         if let WSStateState::Running(runtime) = &mut self.state {
