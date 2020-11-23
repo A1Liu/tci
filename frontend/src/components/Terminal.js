@@ -26,10 +26,7 @@ export default function Terminal() {
 
   return (
     <div>
-      <div
-        id="terminal-title"
-        className="h-10 text-white bg-gray-800 py-1 px-6 w-full"
-      >
+      <div className="h-10 text-white bg-gray-800 py-1 px-6 w-full">
         <div>Terminal</div>
       </div>
       <textarea
