@@ -12,7 +12,7 @@ pub enum Command {
         path: String,
         data: String,
     },
-    RemoveFile(u32),
+    RemoveFile(String),
     Compile,
     RunUntilScopedPC(u32),
     RunOp,
@@ -120,8 +120,8 @@ impl WSState {
                 });
                 ret!(CommandResult::Confirm(command.into()));
             }
-            Command::RemoveFile(id) => {
-                self.files.remove(*id);
+            Command::RemoveFile(path) => {
+                self.files.remove_str(path);
                 ret!(CommandResult::Confirm(command.into()));
             }
             Command::Compile => {
