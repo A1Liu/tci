@@ -18,9 +18,9 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
         }
     };
     mem::drop(files);
-    // for (idx, op) in program.ops.iter().enumerate() {
-    //     println!("op {}: {:?}", idx, op);
-    // }
+    for (idx, op) in program.ops.iter().enumerate() {
+        println!("op {}: {:?}", idx, op);
+    }
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
@@ -164,7 +164,8 @@ gen_test_should_succeed!(
     control_flow,
     macros,
     binary_search,
-    ("dyn_array_ptr/", dyn_array_ptr, main)
+    ("dyn_array_ptr/", dyn_array_ptr, main),
+    ("arrays/", arrays, main)
 );
 
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
