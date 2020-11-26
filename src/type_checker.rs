@@ -1678,6 +1678,7 @@ fn check_struct_type<'b>(
                 let meta = check_unnamed_struct_type(types, visited, unchecked, loc, member.loc)?;
 
                 if meta.defn_idx > member.decl_idx {
+                    // TODO can this ever go off?
                     return Err(struct_defined_later(meta.loc, member.loc));
                 }
 
