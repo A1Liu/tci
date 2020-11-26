@@ -2,7 +2,14 @@ import React, { useRef } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function NavBar() {
-  const { addFile, sockSend, replay, setReplay } = useFileUpload();
+  const {
+    replay,
+    addFile,
+    sockSend,
+    startReplay,
+    addListener,
+    updateListener,
+  } = useFileUpload();
   const hiddenFileInput = useRef(null);
 
   const handleOnClick = (event) => {
@@ -11,7 +18,15 @@ export default function NavBar() {
   };
 
   const handleCheckBox = () => {
-    setReplay(!replay);
+    updateListener("Status");
+    if (!replay) {
+      addListener("Status", (_send, _resp, _data) => {});
+    } else {
+      addListener("Status", (send, _resp, _data) => {
+        send("RunOp", undefined);
+      });
+    }
+    startReplay(!replay);
   };
 
   const compile = () => {

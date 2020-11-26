@@ -12,7 +12,6 @@ export default function BasicEditor() {
     sockSend,
     setFiles,
     setCurrentFile,
-    // addListener,
   } = useFileUpload();
   const code = files[currentFile];
   // eslint-disable-next-line no-unused-vars

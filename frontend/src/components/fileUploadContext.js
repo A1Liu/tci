@@ -5,14 +5,15 @@ import React, { createContext, useEffect, useState, useRef } from "react";
 const FileUploadContext = createContext({
   files: {}, // array of files
   currentFile: "",
-  replay: false,
+  replay: "",
   setCurrentFile: (file) => console.log(file),
   setFiles: (files) => console.log(files),
   addFile: (file) => console.log(file),
   addListener: (messages, listener) => console.log(messages, listener),
   sockSend: (command, data) => console.log(command, data),
   addGlobalListener: (listener) => console.log(listener),
-  setReplay: (bool) => console.log(bool),
+  startReplay: (bool) => console.log(bool),
+  updateListener: (message) => console.log(message),
 });
 
 const starter = `// Online C compiler to run C program online
@@ -41,6 +42,25 @@ export const FileUploadProvider = ({ children }) => {
   const listeners = useRef({});
   const socket = useRef(undefined);
 
+  const addListener = (m, listener) => {
+    const messages = Array.isArray(m) ? m : [m];
+    messages.forEach((message) => {
+      if (listeners.current[message] === undefined)
+        listeners.current[message] = [listener];
+      else listeners.current[message].push(listener);
+    });
+  };
+
+  const updateListener = (message) => {
+    if (listeners.current[message] !== undefined) {
+      listeners.current[message] = [];
+    }
+  };
+
+  const addGlobalListener = (listener) => {
+    globalListeners.current.push(listener);
+  };
+
   const sockSend = (command, data) => {
     const value = JSON.stringify({ command, data });
     if (!open.current) return backlog.current.push(value);
@@ -68,16 +88,15 @@ export const FileUploadProvider = ({ children }) => {
 
       sock.onmessage = (evt) => {
         const resp = JSON.parse(evt.data);
-        console.log(resp);
         globalListeners.current.forEach((gl) =>
           gl(sockSend, resp.response, resp.data)
         );
 
         const messageListeners = listeners.current[resp.response];
         if (messageListeners !== undefined)
-          messageListeners.forEach((l) =>
-            l(sockSend, resp.response, resp.data)
-          );
+          messageListeners.forEach((l) => {
+            l(sockSend, resp.response, resp.data, replay);
+          });
       };
 
       sock.onclose = () => {
@@ -89,19 +108,6 @@ export const FileUploadProvider = ({ children }) => {
     };
     createWebSocket();
   }
-
-  const addListener = (m, listener) => {
-    const messages = Array.isArray(m) ? m : [m];
-    messages.forEach((message) => {
-      if (listeners.current[message] === undefined)
-        listeners.current[message] = [listener];
-      else listeners.current[message].push(listener);
-    });
-  };
-
-  const addGlobalListener = (listener) => {
-    globalListeners.current.push(listener);
-  };
 
   useEffect(() => {
     addListener(
@@ -139,19 +145,24 @@ export const FileUploadProvider = ({ children }) => {
     sockSend("AddFile", { path, data: contents });
   };
 
+  const startReplay = (bool) => {
+    setReplay(bool);
+  };
+
   return (
     <FileUploadContext.Provider
       value={{
         files,
         currentFile,
         replay,
-        setReplay,
+        startReplay,
         setFiles,
         setCurrentFile,
         addFile,
         sockSend,
         addListener,
         addGlobalListener,
+        updateListener,
       }}
     >
       {children}
