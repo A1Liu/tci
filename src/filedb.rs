@@ -177,6 +177,7 @@ impl FileDbSlim {
     }
 
     pub fn remove_id(&mut self, file: u32) -> bool {
+        let file = file - 1 - INIT_SYMS.files.len() as u32;
         let file_slot = self.files.get_mut(file as usize);
         let file_slot = match file_slot {
             Some(f) => f,
