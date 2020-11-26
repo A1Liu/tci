@@ -1,5 +1,5 @@
 import AceEditor from "react-ace";
-
+import React from "react";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
@@ -9,8 +9,10 @@ export default function BasicEditor() {
     files,
     addFile,
     currentFile,
+    sockSend,
     setFiles,
     setCurrentFile,
+    // addListener,
   } = useFileUpload();
   const code = files[currentFile];
   // eslint-disable-next-line no-unused-vars
@@ -18,6 +20,19 @@ export default function BasicEditor() {
   const onValueChange = (content) => {
     addFile(currentFile, content);
   };
+
+  const removeFile = (fileId) => {
+    sockSend("RemoveFile", fileId);
+  };
+
+  const annotations = [
+    {
+      row: 2, // must be 0 based
+      column: 0, // must be 0 based
+      text: "current.point", // text to show in tooltip
+      type: "error",
+    },
+  ];
 
   return (
     <div>
@@ -60,6 +75,7 @@ export default function BasicEditor() {
                       const keys = Object.keys(newFiles);
                       setCurrentFile(keys[keys.length - 1]);
                       setFiles(newFiles);
+                      removeFile(files[name].fileId);
                     }}
                   >
                     <span>×</span>
@@ -74,7 +90,7 @@ export default function BasicEditor() {
         mode="csharp"
         theme="monokai"
         onChange={onValueChange}
-        value={code}
+        value={code.content}
         fontSize={12}
         setOptions={{
           enableLiveAutocompletion: true,
@@ -83,6 +99,7 @@ export default function BasicEditor() {
           tabSize: 2,
         }}
         style={{ height: "100vh", width: "full" }}
+        annotations={annotations}
       />
     </div>
   );

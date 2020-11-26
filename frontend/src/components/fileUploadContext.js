@@ -25,7 +25,12 @@ int main() {
 `;
 
 export const FileUploadProvider = ({ children }) => {
-  const [files, setFiles] = useState({ "main.c": starter });
+  const [files, setFiles] = useState({
+    "main.c": {
+      content: starter,
+      fileId: -1,
+    },
+  });
   const [currentFile, setCurrentFile] = useState("main.c");
   const open = useRef(false);
   const backlog = useRef([]);
@@ -60,6 +65,7 @@ export const FileUploadProvider = ({ children }) => {
 
       sock.onmessage = (evt) => {
         const resp = JSON.parse(evt.data);
+        console.log(resp);
         globalListeners.current.forEach((gl) =>
           gl(sockSend, resp.response, resp.data)
         );
@@ -102,13 +108,28 @@ export const FileUploadProvider = ({ children }) => {
       }
     );
 
+    addListener("FileId", (send, resp, data) => {
+      const fileName = data.path;
+      setFiles((f) => {
+        const newFiles = {};
+        newFiles[fileName] = {
+          content: f[fileName].content,
+          fileId: data.file_id,
+        };
+        return { ...f, ...newFiles };
+      });
+    });
+
     sockSend("AddFile", { path: "main.c", data: starter });
   }, []);
 
   const addFile = (path, contents) => {
     setFiles((f) => {
       const newFiles = {};
-      newFiles[path] = contents;
+      newFiles[path] = {
+        content: contents,
+        fileId: -1,
+      };
       return { ...f, ...newFiles };
     });
     setCurrentFile(path);
