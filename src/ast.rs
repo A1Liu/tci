@@ -353,6 +353,10 @@ impl TCType {
         }
     }
 
+    pub fn is_array(&self) -> bool {
+        return self.array_kind != TCArrayKind::None;
+    }
+
     pub fn to_shallow(&self) -> TCShallowType {
         match self.array_kind {
             TCArrayKind::None => {}
@@ -473,6 +477,15 @@ impl TCType {
         };
 
         return element_size * multiplier;
+    }
+
+    pub fn repr_size(&self) -> u32 {
+        match self.array_kind {
+            TCArrayKind::Fixed(len) => return 8,
+            TCArrayKind::None => {}
+        }
+
+        return self.size();
     }
 
     #[inline]
@@ -658,12 +671,9 @@ pub enum TCExprKind<'a> {
     LocalIdent {
         var_offset: i16,
     },
-    LocalArrayIdent {
-        var_offset: i16,
-    },
 
-    TypePun(&'a TCExpr<'a>),
     Array(&'a [TCExpr<'a>]),
+    TypePun(&'a TCExpr<'a>),
 
     BraceList(&'a [TCExpr<'a>]),
     ParenList(&'a [TCExpr<'a>]),
@@ -699,6 +709,7 @@ pub enum TCExprKind<'a> {
 
     Conv64To32(&'a TCExpr<'a>),
 
+    PostIncrU32(TCAssignTarget<'a>),
     PostIncrU64(TCAssignTarget<'a>),
 
     Assign {

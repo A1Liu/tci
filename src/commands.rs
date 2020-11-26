@@ -121,7 +121,7 @@ impl WSState {
                 ret!(CommandResult::Confirm(command.into()));
             }
             Command::RemoveFile(id) => {
-                self.files.remove(*id);
+                self.files.remove_id(*id);
                 ret!(CommandResult::Confirm(command.into()));
             }
             Command::Compile => {

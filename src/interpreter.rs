@@ -83,6 +83,7 @@ pub enum Opcode {
 
     MakeTempI8(i8),
     MakeTempI32(i32),
+    MakeTempU32(u32),
     MakeTempI64(i64),
     MakeTempU64(u64),
     MakeTempF64(f64),
@@ -230,6 +231,7 @@ impl Runtime {
         lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
         lib_funcs.insert(INIT_SYMS.translate["realloc"], realloc);
         lib_funcs.insert(INIT_SYMS.translate["memcpy"], memcpy);
+        lib_funcs.insert(INIT_SYMS.translate["strlen"], strlen);
 
         let memory = Memory::new_with_binary(program.data);
         let s = Self {
@@ -331,6 +333,7 @@ impl Runtime {
 
             Opcode::MakeTempI8(value) => self.memory.push_stack(value),
             Opcode::MakeTempI32(value) => self.memory.push_stack(value.to_be()),
+            Opcode::MakeTempU32(value) => self.memory.push_stack(value.to_be()),
             Opcode::MakeTempI64(value) => self.memory.push_stack(value.to_be()),
             Opcode::MakeTempU64(value) => self.memory.push_stack(value.to_be()),
             Opcode::MakeTempF64(value) => self.memory.push_stack(value),
@@ -672,6 +675,18 @@ impl Runtime {
 
         return Ok(&str_bytes[0..idx]);
     }
+}
+
+pub fn strlen(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+    let stack_len = sel.memory.stack_length();
+    let char_param_ptr = VarPointer::new_stack(stack_len, 0);
+    let ret_ptr = VarPointer::new_stack(stack_len - 1, 0);
+    let char_ptr: VarPointer = sel.memory.get_var(char_param_ptr)?;
+    let cstring = sel.cstring_bytes(char_ptr)?;
+    let len: u64 = cstring.len() as u64;
+
+    sel.memory.set(ret_ptr, len.to_be())?;
+    return Ok(None);
 }
 
 pub fn memcpy(sel: &mut Runtime) -> Result<Option<i32>, IError> {

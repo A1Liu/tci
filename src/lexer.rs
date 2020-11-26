@@ -56,7 +56,7 @@ pub enum TokenKind<'a> {
     Percent,
     PlusPlus,
     DashDash,
-    
+
     Eq,
     EqEq,
     Neq,
@@ -854,6 +854,7 @@ impl<'b> Lexer<'b> {
                 b'\n' => continue,
                 b'\'' => return Ok(b'\''),
                 b'"' => return Ok(b'"'),
+                b'0' => return Ok(b'\0'),
                 _ => {
                     return Err(error!(
                         "invalid escape sequence",

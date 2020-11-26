@@ -161,7 +161,23 @@ impl FileDbSlim {
         return new;
     }
 
-    pub fn remove(&mut self, file: u32) -> bool {
+    pub fn remove_str(&mut self, file: &str) -> bool {
+        let file = if let Some(file) = self.file_names.remove(file) {
+            file
+        } else {
+            return false;
+        };
+        let file_slot = &mut self.files[file as usize];
+        let file_data = file_slot.take().unwrap();
+
+        self.garbage_size += file_data.size();
+        self.size -= file_data.size();
+        self.empty_slots.push(file);
+        return true;
+    }
+
+    pub fn remove_id(&mut self, file: u32) -> bool {
+        let file = file - 1 - INIT_SYMS.files.len() as u32;
         let file_slot = self.files.get_mut(file as usize);
         let file_slot = match file_slot {
             Some(f) => f,
@@ -269,6 +285,7 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     add_sym!("free");
     add_sym!("realloc");
     add_sym!("memcpy");
+    add_sym!("strlen");
 
     InitSyms {
         names,
