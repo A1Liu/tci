@@ -2,7 +2,7 @@ import React, { useRef } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function NavBar() {
-  const { addFile, sockSend } = useFileUpload();
+  const { addFile, sockSend, replay, setReplay } = useFileUpload();
   const hiddenFileInput = useRef(null);
 
   const handleOnClick = (event) => {
@@ -10,8 +10,20 @@ export default function NavBar() {
     hiddenFileInput.current.click();
   };
 
+  const handleCheckBox = () => {
+    setReplay(!replay);
+  };
+
   const compile = () => {
     sockSend("Compile", undefined);
+  };
+
+  const moveForward = () => {
+    sockSend("RunOp", undefined);
+  };
+
+  const moveBackward = () => {
+    sockSend("Back", 1);
   };
 
   async function handleOnChange(event) {
@@ -55,27 +67,48 @@ export default function NavBar() {
           Upload a File
         </button>
       </div>
-      <button
-        className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
-        type="button"
-        onClick={compile}
-      >
-        Prev
-      </button>
-      <button
-        className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
-        type="button"
-        onClick={compile}
-      >
-        Run
-      </button>
-      <button
-        className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
-        type="button"
-        onClick={compile}
-      >
-        Next
-      </button>
+      <div className="ml-5 pt-1">
+        <input
+          type="checkbox"
+          id="replay"
+          checked={replay}
+          onChange={handleCheckBox}
+        />
+        <span className="ml-1 text-white">Replay</span>
+      </div>
+      {replay ? (
+        <>
+          <button
+            className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
+            type="button"
+            onClick={moveBackward}
+          >
+            Prev
+          </button>
+          <button
+            className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
+            type="button"
+            onClick={compile}
+          >
+            Run
+          </button>
+          <button
+            className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
+            type="button"
+            onClick={moveForward}
+          >
+            Next
+          </button>{" "}
+        </>
+      ) : (
+        <button
+          className="bg-blue-600 hover:bg-blue-800 text-white text-bold py px-4 rounded ml-8"
+          type="button"
+          onClick={compile}
+        >
+          Play
+        </button>
+      )}
     </nav>
   );
 }

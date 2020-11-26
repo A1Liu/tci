@@ -27,10 +27,10 @@ export default function BasicEditor() {
 
   const annotations = [
     {
-      row: 2, // must be 0 based
+      row: 3, // must be 0 based
       column: 0, // must be 0 based
-      text: "current.point", // text to show in tooltip
-      type: "error",
+      text: "current point", // text to show in tooltip
+      type: "info",
     },
   ];
 

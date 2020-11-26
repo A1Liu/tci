@@ -5,12 +5,14 @@ import React, { createContext, useEffect, useState, useRef } from "react";
 const FileUploadContext = createContext({
   files: {}, // array of files
   currentFile: "",
+  replay: false,
   setCurrentFile: (file) => console.log(file),
   setFiles: (files) => console.log(files),
   addFile: (file) => console.log(file),
   addListener: (messages, listener) => console.log(messages, listener),
   sockSend: (command, data) => console.log(command, data),
   addGlobalListener: (listener) => console.log(listener),
+  setReplay: (bool) => console.log(bool),
 });
 
 const starter = `// Online C compiler to run C program online
@@ -32,6 +34,7 @@ export const FileUploadProvider = ({ children }) => {
     },
   });
   const [currentFile, setCurrentFile] = useState("main.c");
+  const [replay, setReplay] = useState(false);
   const open = useRef(false);
   const backlog = useRef([]);
   const globalListeners = useRef([]);
@@ -141,6 +144,8 @@ export const FileUploadProvider = ({ children }) => {
       value={{
         files,
         currentFile,
+        replay,
+        setReplay,
         setFiles,
         setCurrentFile,
         addFile,

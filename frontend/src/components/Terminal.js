@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useFileUpload } from "./fileUploadContext";
 
 export default function Terminal() {
-  const { addListener } = useFileUpload();
+  const { addListener, replay } = useFileUpload();
   const [content, setContent] = useState("");
 
   useEffect(() => {
@@ -11,15 +11,21 @@ export default function Terminal() {
     });
 
     addListener("Compiled", (send, _resp, _data) => {
-      send("RunOp", undefined);
-      setContent("");
+      if (!replay) {
+        send("RunOp", undefined);
+        setContent("");
+      }
     });
 
-    addListener("Status", (send, _resp, _data) => {
-      send("RunOp", undefined);
+    addListener("Status", (_send, _resp, _data) => {
+      // send("RunOp", undefined);
     });
 
     addListener("CompileError", (send, _resp, data) => {
+      setContent(data.rendered);
+    });
+
+    addListener("RuntimeError", (send, _resp, data) => {
       setContent(data.rendered);
     });
   }, []);
