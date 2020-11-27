@@ -1625,8 +1625,6 @@ fn check_struct_type<'b>(
     let mut align: u32 = 0;
     let mut typed_members = Vec::new();
 
-    println!("struct boi");
-
     for member in defn.members.iter() {
         if member.member_type.pointer_count != 0 {
             let offset = align_u32(size, 8);
