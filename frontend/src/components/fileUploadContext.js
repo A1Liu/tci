@@ -6,6 +6,7 @@ const FileUploadContext = createContext({
   files: {}, // array of files
   currentFile: "",
   replay: "",
+  location: {},
   setCurrentFile: (file) => console.log(file),
   setFiles: (files) => console.log(files),
   addFile: (file) => console.log(file),
@@ -14,15 +15,14 @@ const FileUploadContext = createContext({
   addGlobalListener: (listener) => console.log(listener),
   startReplay: (bool) => console.log(bool),
   updateListener: (message) => console.log(message),
+  setLocation: (location) => console.log(location),
 });
 
 const starter = `// Online C compiler to run C program online
 #include <stdio.h>
-
 int main() {
     // Write C code here
     printf("Hello world");
-
     return 0;
 }
 `;
@@ -36,6 +36,11 @@ export const FileUploadProvider = ({ children }) => {
   });
   const [currentFile, setCurrentFile] = useState("main.c");
   const [replay, setReplay] = useState(false);
+  const [location, setLocation] = useState({
+    start: -1,
+    end: -1,
+    file: -1,
+  });
   const open = useRef(false);
   const backlog = useRef([]);
   const globalListeners = useRef([]);
@@ -88,6 +93,7 @@ export const FileUploadProvider = ({ children }) => {
 
       sock.onmessage = (evt) => {
         const resp = JSON.parse(evt.data);
+        console.log(resp);
         globalListeners.current.forEach((gl) =>
           gl(sockSend, resp.response, resp.data)
         );
@@ -155,6 +161,7 @@ export const FileUploadProvider = ({ children }) => {
         files,
         currentFile,
         replay,
+        location,
         startReplay,
         setFiles,
         setCurrentFile,
@@ -163,6 +170,7 @@ export const FileUploadProvider = ({ children }) => {
         addListener,
         addGlobalListener,
         updateListener,
+        setLocation,
       }}
     >
       {children}

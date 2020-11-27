@@ -9,6 +9,7 @@ export default function NavBar() {
     startReplay,
     addListener,
     updateListener,
+    setLocation,
   } = useFileUpload();
   const hiddenFileInput = useRef(null);
 
@@ -20,7 +21,13 @@ export default function NavBar() {
   const handleCheckBox = () => {
     updateListener("Status");
     if (!replay) {
-      addListener("Status", (_send, _resp, _data) => {});
+      addListener("Status", (_send, _resp, data) => {
+        setLocation({
+          start: data.loc.start,
+          end: data.loc.end,
+          file: data.loc.file,
+        });
+      });
     } else {
       addListener("Status", (send, _resp, _data) => {
         send("RunOp", undefined);

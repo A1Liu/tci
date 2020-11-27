@@ -4,11 +4,26 @@ import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
 
+const parseLineNumber = (code, start, _end) => {
+  const lines = code.split("\n");
+  let lineNumber = 0;
+  let currentChars = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    currentChars += lines[i].length + 1;
+    lineNumber += 1;
+    if (currentChars >= start) {
+      return lineNumber;
+    }
+  }
+  return lineNumber;
+};
+
 export default function BasicEditor() {
   const {
     files,
-    addFile,
     currentFile,
+    location,
+    addFile,
     sockSend,
     setFiles,
     setCurrentFile,
@@ -26,10 +41,10 @@ export default function BasicEditor() {
 
   const annotations = [
     {
-      row: 3, // must be 0 based
+      row: parseLineNumber(code.content, location.start, location.end), // must be 0 based
       column: 0, // must be 0 based
       text: "current point", // text to show in tooltip
-      type: "info",
+      type: "error",
     },
   ];
 
