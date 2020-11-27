@@ -1,5 +1,6 @@
 import AceEditor from "react-ace";
 import React from "react";
+import "../App.css";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
@@ -29,6 +30,7 @@ export default function BasicEditor() {
     setCurrentFile,
   } = useFileUpload();
   const code = files[currentFile];
+  const rowNumber = parseLineNumber(code.content, location.start, location.end);
   // eslint-disable-next-line no-unused-vars
 
   const onValueChange = (content) => {
@@ -41,10 +43,10 @@ export default function BasicEditor() {
 
   const annotations = [
     {
-      row: parseLineNumber(code.content, location.start, location.end), // must be 0 based
+      row: rowNumber, // must be 0 based
       column: 0, // must be 0 based
       text: "current point", // text to show in tooltip
-      type: "error",
+      type: "info",
     },
   ];
 
@@ -100,6 +102,7 @@ export default function BasicEditor() {
           </nav>
         </div>
       </div>
+      <div className="neutral" />
       <AceEditor
         mode="csharp"
         theme="monokai"

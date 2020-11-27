@@ -16,9 +16,9 @@ function App() {
           </li>
         </ul>
         <NavBar />
-        <div className="flex min-h-screen flex-wrap ">
-          <div className="md:w-full">
-            <div className="flex md:flex-row flex-wrap">
+        <div className="flex min-h-screen">
+          <div className="w-screen">
+            <div className="flex md:flex-row">
               <div className="w-full md:w-1/2 text-center border-r border-gray-800">
                 <BasicEditor />
               </div>
