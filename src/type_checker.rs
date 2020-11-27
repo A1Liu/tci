@@ -549,26 +549,6 @@ impl TypeEnv {
             None => {}
         }
 
-        // match expr.expr_type.array_kind {
-        //     TCArrayKind::None => {}
-        //     TCArrayKind::Fixed(n) => {
-        //         let array_ptr = TCExpr {
-        //             expr_type: TCType::new(expr.expr_type.kind, expr.expr_type.pointer_count + 1),
-        //             loc: expr.loc,
-        //             kind: TCExprKind::TypePun(buckets.add(expr)),
-        //         };
-
-        //         return self.implicit_convert(
-        //             buckets,
-        //             files,
-        //             &assign_type,
-        //             assign_loc,
-        //             assign_loc_is_defn,
-        //             array_ptr,
-        //         );
-        //     }
-        // }
-
         if assign_loc_is_defn {
             return Err(error!(
                 "value cannot be converted to target type",
@@ -1073,7 +1053,7 @@ impl IType {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct UncheckedStructMember {
     pub ident: u32,
     pub member_type: IType,
@@ -1081,6 +1061,7 @@ pub struct UncheckedStructMember {
     pub decl_idx: u32,
 }
 
+#[derive(Debug)]
 pub struct UncheckedStructDefn {
     pub members: Vec<UncheckedStructMember>,
     pub defn_idx: u32,
@@ -1645,9 +1626,9 @@ fn check_struct_type<'b>(
     let mut typed_members = Vec::new();
 
     for member in defn.members.iter() {
-        let offset = size;
         if member.member_type.pointer_count != 0 {
-            size = align_u32(size, 8) + 8;
+            let offset = align_u32(size, 8);
+            size = offset + 8;
             align = u32::max(8, align);
 
             typed_members.push(TCStructMember {
@@ -1678,6 +1659,7 @@ fn check_struct_type<'b>(
                 let meta = check_unnamed_struct_type(types, visited, unchecked, loc, member.loc)?;
 
                 if meta.defn_idx > member.decl_idx {
+                    // TODO can this ever go off?
                     return Err(struct_defined_later(meta.loc, member.loc));
                 }
 
@@ -1699,7 +1681,8 @@ fn check_struct_type<'b>(
 
         // m prefix to mean member's size align (m_size)
         let (m_size, m_align) = (tc_type.size(), tc_type.align());
-        size = align_u32(size, m_align) + m_size;
+        let offset = align_u32(size, m_align);
+        size = offset + m_size;
         align = u32::max(m_align, align);
 
         typed_members.push(TCStructMember {

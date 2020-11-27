@@ -10,6 +10,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
 pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::*;
 
 #[allow(unused_macros)]
 macro_rules! debug {
@@ -225,7 +226,8 @@ pub fn align_u32(size: u32, align: u32) -> u32 {
         return 0;
     }
 
-    ((size - 1) / align * align) + align
+    let result = ((size - 1) / align * align) + align;
+    return result;
 }
 
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
@@ -972,4 +974,29 @@ impl Serialize for n32 {
             serializer.serialize_u32(self.data)
         }
     }
+}
+
+pub static INDENT: LazyStatic<Mutex<String>> =
+    lazy_static!(indent_init, Mutex<String>, { Mutex::new("".to_string()) });
+
+#[allow(unused_macros)]
+macro_rules! indent {
+    ($format:literal) => {{
+        print!("{}", INDENT.lock().unwrap());
+        println!($format);
+    }};
+    ($format:literal,$($e:expr),* ) => {{
+        print!("{}", INDENT.lock().unwrap());
+        println!($format, $( $e ),*);
+    }};
+}
+
+pub fn indent_go_down() {
+    *INDENT.lock().unwrap() += "  ";
+}
+
+pub fn indent_return() {
+    let mut i = INDENT.lock().unwrap();
+    i.pop();
+    i.pop();
 }
