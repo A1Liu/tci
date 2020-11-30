@@ -9,10 +9,7 @@ function searchFileName(fileId, files) {
   const file = Object.keys(files).find(
     (fileName) => files[fileName].fileId === fileId
   );
-  if (file === undefined || file === null) {
-    return "main.c";
-  }
-  return file;
+  return file ?? "main.c";
 }
 
 export default function BasicEditor() {
