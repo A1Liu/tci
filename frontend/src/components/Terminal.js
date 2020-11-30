@@ -22,6 +22,10 @@ export default function Terminal() {
     addListener("CompileError", (send, _resp, data) => {
       setContent(data.rendered);
     });
+
+    addListener("RuntimeError", (send, _resp, data) => {
+      setContent(data.rendered);
+    });
   }, []);
 
   return (

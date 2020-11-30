@@ -1,5 +1,6 @@
 import AceEditor from "react-ace";
-
+import { Range } from "ace-builds";
+import React, { useEffect, useRef, useState } from "react";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
@@ -7,17 +8,63 @@ import { useFileUpload } from "./fileUploadContext";
 export default function BasicEditor() {
   const {
     files,
-    addFile,
     currentFile,
+    location,
+    replay,
+    addFile,
+    sockSend,
     setFiles,
     setCurrentFile,
   } = useFileUpload();
   const code = files[currentFile];
+  const aceEditor = useRef(null);
+  const [markerId, setMarkerId] = useState(null);
+  const [currentLocation, setCurrentLocation] = useState({
+    row: 0,
+    column: 0,
+  });
   // eslint-disable-next-line no-unused-vars
+
+  const annotations = [
+    {
+      row: currentLocation.row, // must be 0 based
+      column: currentLocation.column, // must be 0 based
+      text: "current execution", // text to show in tooltip
+      type: "info",
+    },
+  ];
 
   const onValueChange = (content) => {
     addFile(currentFile, content);
   };
+
+  const removeFile = (fileId) => {
+    sockSend("RemoveFile", fileId);
+  };
+
+  useEffect(() => {
+    if (aceEditor !== null) {
+      if (markerId !== null) {
+        aceEditor.current.editor.session.removeMarker(markerId);
+      }
+      const {
+        row,
+        column,
+      } = aceEditor.current.editor.session
+        .getDocument()
+        .indexToPosition(location.start, 0);
+      const marker = aceEditor.current.editor.session.addMarker(
+        new Range(row, 0, row, column),
+        "ace_active-line",
+        "fullLine"
+      );
+      setMarkerId(marker);
+      setCurrentLocation({
+        row,
+        column,
+      });
+    }
+  }, [location]);
 
   return (
     <div>
@@ -60,6 +107,7 @@ export default function BasicEditor() {
                       const keys = Object.keys(newFiles);
                       setCurrentFile(keys[keys.length - 1]);
                       setFiles(newFiles);
+                      removeFile(files[name].fileId);
                     }}
                   >
                     <span>×</span>
@@ -70,15 +118,18 @@ export default function BasicEditor() {
           </nav>
         </div>
       </div>
+      <div className="neutral" />
       <AceEditor
+        ref={aceEditor}
         mode="csharp"
         theme="monokai"
         onChange={onValueChange}
-        value={code}
+        value={code.content}
+        annotations={annotations}
+        readOnly={replay}
         fontSize={12}
+        highlightActiveLine={false}
         setOptions={{
-          enableLiveAutocompletion: true,
-          enableSnippets: true,
           showLineNumbers: true,
           tabSize: 2,
         }}
