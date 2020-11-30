@@ -195,7 +195,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::LShift,
+                    },
                 });
             }
             TokenKind::GtGtEq => {
@@ -205,7 +209,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::RShift,
+                    },
                 });
             }
             TokenKind::AmpEq => {
