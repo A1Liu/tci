@@ -650,6 +650,122 @@ impl Assembler {
                 ops.push(tagged);
             }
 
+            TCExprKind::MutAssign { target, value, op } => {
+                ops.append(&mut self.translate_assign(target));
+                tagged.op = Opcode::PushDup { bytes: 8 };
+                ops.push(tagged);
+
+                let bytes = target.target_type.size();
+                tagged.op = Opcode::Get { offset: 0, bytes };
+                ops.push(tagged);
+
+                tagged.op = Opcode::PushDup { bytes };
+                ops.push(tagged);
+
+                ops.append(&mut self.translate_expr(value));
+                
+                match op {
+                    BinOp::Add => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 | TCTypeKind::U32 => {
+                                tagged.op = Opcode::AddU32;
+                                
+                            }
+                            TCTypeKind::I64 | TCTypeKind::U64 => {
+                                tagged.op = Opcode::AddU32;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::Sub => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::SubI32;
+                            }
+                            TCTypeKind::I64 => {
+                                tagged.op = Opcode::SubI64;
+                            }
+                            TCTypeKind::U64 => {
+                                tagged.op = Opcode::SubU64;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::Mul => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::MulI32;
+                            }
+                            TCTypeKind::I64 => {
+                                tagged.op = Opcode::MulI64;
+                            }
+                            TCTypeKind::U64 => {
+                                tagged.op = Opcode::MulU64;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::Div => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::DivI32;
+                            }
+                            TCTypeKind::I64 => {
+                                tagged.op = Opcode::DivI64;
+                            }
+                            TCTypeKind::U64 => {
+                                tagged.op = Opcode::DivU64;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::Mod => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::ModI32;
+                            }
+                            TCTypeKind::I64 => {
+                                tagged.op = Opcode::ModI64;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::BitAnd => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::BitAndI32;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::BitXor => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::BitXorI32;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    BinOp::BitOr => {
+                        match target.target_type.kind {
+                            TCTypeKind::I32 => {
+                                tagged.op = Opcode::BitOrI32;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+                ops.push(tagged);
+
+                let top = bytes * 2;
+                tagged.op = Opcode::Swap { top, bottom: 8 };
+                ops.push(tagged);
+
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                ops.push(tagged);
+            }
+
             TCExprKind::Ternary {
                 condition,
                 if_true,

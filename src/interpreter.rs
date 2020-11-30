@@ -128,6 +128,8 @@ pub enum Opcode {
     SubU64,
 
     MulI32,
+    MulI64,
+    MulU64,
 
     DivI32,
     DivI64,
@@ -142,8 +144,7 @@ pub enum Opcode {
     CompNeq32,
     CompEq64,
 
-    MulI64,
-    MulU64,
+    ModI32,
     ModI64,
 
     RShiftI32,
@@ -364,11 +365,13 @@ impl Runtime {
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
+                println!("PUSHDUP {:?}", self.memory.stack);
             }
             Opcode::Swap { top, bottom } => {
                 self.memory.dup_top_stack_bytes(top + bottom)?;
                 self.memory.pop_bytes(top)?;
                 self.memory.pop_keep_bytes(top + bottom, bottom)?;
+                println!("SWAP    {:?}", self.memory.stack);
             }
             Opcode::PopIntoTopVar { offset, bytes } => {
                 let ptr = VarPointer::new_stack(self.memory.stack_length(), offset);
@@ -439,18 +442,21 @@ impl Runtime {
                 // TODO check for overflow
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.push_stack_bytes_from(ptr, bytes)?;
+                println!("GET     {:?}", self.memory.stack);
             }
             Opcode::Set { offset, bytes } => {
                 let ptr: VarPointer = self.memory.pop_stack()?;
                 // TODO check for overflow
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.pop_stack_bytes_into(ptr, bytes)?;
+                println!("SET     {:?}", self.memory.stack);
             }
 
             Opcode::AddU32 => {
                 let word2 = u32::from_be(self.memory.pop_stack()?);
                 let word1 = u32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_add(word2).to_be());
+                println!("ADD     {:?}", self.memory.stack);
             }
             Opcode::SubI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
@@ -541,6 +547,11 @@ impl Runtime {
                 let word2 = i64::from_be(self.memory.pop_stack()?);
                 let word1 = i64::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_div(word2).to_be());
+            }
+            Opcode::ModI32 => {
+                let word2 = u32::from_be(self.memory.pop_stack()?);
+                let word1 = u32::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 % word2).to_be());
             }
             Opcode::ModI64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);

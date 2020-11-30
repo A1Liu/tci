@@ -52,6 +52,11 @@ pub enum ExprKind<'a> {
     UnaryOp(UnaryOp, &'a Expr<'a>),
     Not(&'a Expr<'a>),
     Assign(&'a Expr<'a>, &'a Expr<'a>),
+    MutAssign {
+        target: &'a Expr<'a>,
+        value: &'a Expr<'a>,
+        op: BinOp,
+    },
     Call {
         function: &'a Expr<'a>,
         params: &'a [Expr<'a>],
@@ -716,6 +721,12 @@ pub enum TCExprKind<'a> {
     Assign {
         target: TCAssignTarget<'a>,
         value: &'a TCExpr<'a>,
+    },
+
+    MutAssign {
+        target: TCAssignTarget<'a>,
+        value: &'a TCExpr<'a>,
+        op: BinOp,
     },
 
     Ternary {
