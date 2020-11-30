@@ -559,12 +559,12 @@ impl Runtime {
                 self.memory.push_stack((word1 % word2).to_be());
             }
             Opcode::RShiftI32 => {
-                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word2 = u8::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be());
             }
             Opcode::LShiftI32 => {
-                let word2 = i32::from_be(self.memory.pop_stack()?);
+                let word2 = u8::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be());
             }

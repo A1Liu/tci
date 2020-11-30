@@ -340,6 +340,7 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_assign_ol!(U32, U64, ZConv32To64);
     add_assign_ol!(U64, I32, Conv64To32);
     add_assign_ol!(U64, U32, Conv64To32);
+    add_assign_ol!(I32, U8, Conv32To8);
 
     Overloads {
         unary_op,
@@ -2483,6 +2484,7 @@ pub fn check_expr_allow_brace<'b>(
                 BinOp::LShift | BinOp::RShift => TCType::new(TCTypeKind::U8, 0),
                 _ => target.target_type,
             };
+
             let value = env.assign_convert(&target_type, target.target_loc, value)?;
             let value = env.buckets.add(value);
 

@@ -714,6 +714,7 @@ pub enum TCExprKind<'a> {
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
 
+    Conv32To8(&'a TCExpr<'a>),
     Conv64To32(&'a TCExpr<'a>),
 
     PostIncrU64(TCAssignTarget<'a>),
