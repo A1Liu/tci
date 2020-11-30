@@ -30,7 +30,7 @@ export default function NavBar() {
       });
     } else {
       addListener("Status", (send, _resp, _data) => {
-        send("RunOp", undefined);
+        send("RunCount", 50);
       });
     }
     startReplay(!replay);
@@ -41,11 +41,11 @@ export default function NavBar() {
   };
 
   const moveForward = () => {
-    sockSend("RunOp", undefined);
+    sockSend("RunLine", undefined);
   };
 
   const moveBackward = () => {
-    sockSend("Back", 1);
+    sockSend("BackLine", 1);
   };
 
   async function handleOnChange(event) {

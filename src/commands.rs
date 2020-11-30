@@ -17,6 +17,8 @@ pub enum Command {
     RunUntilScopedPC(u32),
     RunOp,
     RunCount(u32),
+    RunLoc,
+    RunLine,
     RunCountOrUntil {
         count: u32,
         stack_size: u16,
@@ -24,6 +26,7 @@ pub enum Command {
     },
     Snapshot,
     Back(u32),
+    BackLine(u32),
 }
 
 #[derive(Debug, Serialize)]
@@ -35,6 +38,7 @@ pub enum CommandResult {
         state: &'static str,
         command: &'static str,
     },
+    DeserializationError(String),
     IOError(String),
     Stdout(String),
     Stderr(String),
@@ -150,6 +154,10 @@ impl WSState {
                     let ret = match runtime.run_op() {
                         Ok(ret) => ret,
                         Err(error) => {
+                            for event in runtime.memory.events() {
+                                messages.push(event.into());
+                            }
+
                             let rendered =
                                 render_err(&error, &runtime.memory.callstack, &runtime.program);
                             ret!(CommandResult::RuntimeError { rendered, error });
@@ -165,6 +173,88 @@ impl WSState {
                             status: runtime.diagnostic(),
                             ret,
                         });
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::RunLoc => {
+                    let loc = runtime.program.ops[runtime.pc() as usize].loc;
+
+                    loop {
+                        let ret = match runtime.run_op() {
+                            Ok(ret) => ret,
+                            Err(error) => {
+                                for event in runtime.memory.events() {
+                                    messages.push(event.into());
+                                }
+
+                                let rendered =
+                                    render_err(&error, &runtime.memory.callstack, &runtime.program);
+                                ret!(CommandResult::RuntimeError { rendered, error });
+                            }
+                        };
+
+                        for event in runtime.memory.events() {
+                            messages.push(event.into());
+                        }
+
+                        if runtime.program.ops[runtime.pc() as usize].loc != loc {
+                            break;
+                        }
+
+                        if let Some(ret) = ret {
+                            ret!(CommandResult::StatusRet {
+                                status: runtime.diagnostic(),
+                                ret,
+                            });
+                        }
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::RunLine => {
+                    let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                    let line = if let Some(line) = self.files.line_index(loc) {
+                        line
+                    } else {
+                        ret!(CommandResult::IOError("problem loading file".to_string()));
+                    };
+
+                    loop {
+                        let ret = match runtime.run_op() {
+                            Ok(ret) => ret,
+                            Err(error) => {
+                                for event in runtime.memory.events() {
+                                    messages.push(event.into());
+                                }
+
+                                let rendered =
+                                    render_err(&error, &runtime.memory.callstack, &runtime.program);
+                                ret!(CommandResult::RuntimeError { rendered, error });
+                            }
+                        };
+
+                        for event in runtime.memory.events() {
+                            messages.push(event.into());
+                        }
+
+                        let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        let current_line = if let Some(line) = self.files.line_index(current_loc) {
+                            line
+                        } else {
+                            ret!(CommandResult::IOError("problem loading file".to_string()));
+                        };
+
+                        if current_loc.file != loc.file || line != current_line {
+                            break;
+                        }
+
+                        if let Some(ret) = ret {
+                            ret!(CommandResult::StatusRet {
+                                status: runtime.diagnostic(),
+                                ret,
+                            });
+                        }
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
@@ -232,6 +322,46 @@ impl WSState {
                         while runtime.program.ops[runtime.pc() as usize].loc == loc
                             && runtime.prev()
                         {}
+                    }
+
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::BackLine(count) => {
+                    for _ in 0..count {
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        let line = if let Some(line) = self.files.line_index(loc) {
+                            line
+                        } else {
+                            ret!(CommandResult::IOError("problem loading file".to_string()));
+                        };
+
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        if !runtime.prev() {
+                            break;
+                        }
+
+                        loop {
+                            let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
+                            let current_line = if let Some(line) =
+                                self.files.line_index(current_loc)
+                            {
+                                line
+                            } else {
+                                ret!(CommandResult::IOError("problem loading file".to_string()));
+                            };
+
+                            if current_loc.file != loc.file || line != current_line {
+                                break;
+                            }
+
+                            if !runtime.prev() {
+                                break;
+                            }
+                        }
                     }
 
                     for event in runtime.memory.events() {

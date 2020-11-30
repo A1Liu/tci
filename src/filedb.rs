@@ -127,6 +127,12 @@ impl FileDbSlim {
         }
     }
 
+    pub fn line_index(&self, loc: CodeLoc) -> Option<usize> {
+        let file = loc.file - 1 - INIT_SYMS.files.len() as u32;
+        let file = self.files.get(file as usize)?.as_ref()?;
+        return file.line_index(loc.start as usize);
+    }
+
     pub fn file_db(&self) -> FileDb {
         let mut db = FileDb::with_capacity(self.size, false);
         for file in &self.files {
@@ -199,6 +205,17 @@ impl FileDbSlim {
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again. Replaces the original if the file already exists in the database.
     pub fn add_internal(&mut self, file_name: &str, source: &str) -> u32 {
+        let file_name_string = if file_name.as_bytes()[0] == b'/' {
+            file_name.to_string()
+        } else {
+            let mut string = String::new();
+            string.push('/');
+            string.push_str(file_name);
+            string
+        };
+
+        let file_name: &str = &file_name_string;
+
         let file = File::new(self.buckets_next, file_name, source);
         self.size += file.size();
 
@@ -568,7 +585,7 @@ pub fn parent_if_file<'a>(path: &'a str) -> &'a str {
         idx -= 1;
     }
 
-    unsafe { str::from_utf8_unchecked(&bytes[..idx]) }
+    unsafe { str::from_utf8_unchecked(&bytes[..(idx + 1)]) }
 }
 
 // https://github.com/danreeves/path-clean/blob/master/src/lib.rs
