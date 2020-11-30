@@ -6,14 +6,13 @@ import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
 
 function searchFileName(fileId, files) {
-  const result = Object.keys(files).filter((fileName) => {
-    return files[fileName].fileId === fileId;
-  });
-  if (result.length > 0) {
-    return result[0];
+  const file = Object.keys(files).find(
+    (fileName) => files[fileName].fileId === fileId
+  );
+  if (file === undefined || file === null) {
+    return "main.c";
   }
-  // default cases;
-  return "main.c";
+  return file;
 }
 
 export default function BasicEditor() {
@@ -69,10 +68,8 @@ export default function BasicEditor() {
         "ace_active-line",
         "fullLine"
       );
-      if (location.file !== files[currentFile].fileId) {
-        const fileName = searchFileName(location.file, files);
-        setCurrentFile(fileName);
-      }
+      const fileName = searchFileName(location.file, files);
+      setCurrentFile(fileName);
       setMarkerId(marker);
       setCurrentLocation({
         row,
