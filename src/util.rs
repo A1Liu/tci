@@ -10,6 +10,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
 pub use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::*;
 
 #[allow(unused_macros)]
 macro_rules! debug {
@@ -186,11 +187,17 @@ pub const NO_FILE: CodeLoc = CodeLoc {
     file: !0,
 };
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, serde::Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,
     pub file: u32,
+}
+
+impl fmt::Debug for CodeLoc {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(fmt, "{}:({},{})", self.file, self.start, self.end)
+    }
 }
 
 #[inline]
@@ -225,7 +232,8 @@ pub fn align_u32(size: u32, align: u32) -> u32 {
         return 0;
     }
 
-    ((size - 1) / align * align) + align
+    let result = ((size - 1) / align * align) + align;
+    return result;
 }
 
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
@@ -972,4 +980,29 @@ impl Serialize for n32 {
             serializer.serialize_u32(self.data)
         }
     }
+}
+
+pub static INDENT: LazyStatic<Mutex<String>> =
+    lazy_static!(indent_init, Mutex<String>, { Mutex::new("".to_string()) });
+
+#[allow(unused_macros)]
+macro_rules! indent {
+    ($format:literal) => {{
+        print!("{}", INDENT.lock().unwrap());
+        println!($format);
+    }};
+    ($format:literal,$($e:expr),* ) => {{
+        print!("{}", INDENT.lock().unwrap());
+        println!($format, $( $e ),*);
+    }};
+}
+
+pub fn indent_go_down() {
+    *INDENT.lock().unwrap() += "  ";
+}
+
+pub fn indent_return() {
+    let mut i = INDENT.lock().unwrap();
+    i.pop();
+    i.pop();
 }

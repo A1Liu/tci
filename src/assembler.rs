@@ -24,6 +24,7 @@ pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet
     m.insert(INIT_SYMS.translate["free"]);
     m.insert(INIT_SYMS.translate["realloc"]);
     m.insert(INIT_SYMS.translate["memcpy"]);
+    m.insert(INIT_SYMS.translate["strlen"]);
     m
 });
 
@@ -220,7 +221,7 @@ impl Assembler {
                     tagged.op = Opcode::SetLocal {
                         var: ret_idx,
                         offset: 0,
-                        bytes: expr.expr_type.size(),
+                        bytes: expr.expr_type.repr_size(),
                     };
                     ops.push(tagged);
                     tagged.op = Opcode::Ret;
@@ -234,7 +235,7 @@ impl Assembler {
                 TCStmtKind::Expr(expr) => {
                     ops.append(&mut self.translate_expr(expr));
                     tagged.op = Opcode::Pop {
-                        bytes: expr.expr_type.size(),
+                        bytes: expr.expr_type.repr_size(),
                     };
                     ops.push(tagged);
                 }
@@ -265,7 +266,7 @@ impl Assembler {
                     if_body: if_,
                     else_body: else_,
                 } => {
-                    let cond_bytes = cond.expr_type.size();
+                    let cond_bytes = cond.expr_type.repr_size();
                     ops.append(&mut self.translate_expr(cond));
 
                     // cb! + 1 because of conditional jump instruction
@@ -362,7 +363,7 @@ impl Assembler {
         match &expr.kind {
             TCExprKind::Uninit => {
                 tagged.op = Opcode::PushUndef {
-                    bytes: expr.expr_type.size(),
+                    bytes: expr.expr_type.repr_size(),
                 };
                 ops.push(tagged);
             }
@@ -392,23 +393,24 @@ impl Assembler {
                 ops.push(tagged);
             }
             TCExprKind::LocalIdent { var_offset } => {
-                tagged.op = Opcode::GetLocal {
-                    var: *var_offset,
-                    offset: 0,
-                    bytes: expr.expr_type.size(),
+                tagged.op = if expr.expr_type.is_array() {
+                    Opcode::MakeTempLocalStackPtr {
+                        var: *var_offset,
+                        offset: 0,
+                    }
+                } else {
+                    Opcode::GetLocal {
+                        var: *var_offset,
+                        offset: 0,
+                        bytes: expr.expr_type.repr_size(),
+                    }
                 };
-                ops.push(tagged);
-            }
-            TCExprKind::LocalArrayIdent { var_offset } => {
-                tagged.op = Opcode::MakeTempLocalStackPtr {
-                    var: *var_offset,
-                    offset: 0,
-                };
+
                 ops.push(tagged);
             }
 
-            TCExprKind::TypePun(array) => {
-                ops.append(&mut self.translate_expr(array));
+            TCExprKind::TypePun(expr) => {
+                ops.append(&mut self.translate_expr(expr));
             }
             TCExprKind::Array(exprs) => {
                 for expr in *exprs {
@@ -419,10 +421,10 @@ impl Assembler {
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
                     ops.append(&mut self.translate_expr(expr));
+                    let bytes = expr.expr_type.repr_size();
+
                     if idx + 1 < exprs.len() {
-                        tagged.op = Opcode::Pop {
-                            bytes: expr.expr_type.size(),
-                        };
+                        tagged.op = Opcode::Pop { bytes };
                         ops.push(tagged);
                     }
                 }
@@ -630,6 +632,26 @@ impl Assembler {
                 ops.push(tagged);
             }
 
+            TCExprKind::PostIncrU32(target) => {
+                ops.append(&mut self.translate_assign(target));
+                tagged.op = Opcode::PushDup { bytes: 8 };
+                ops.push(tagged);
+                let bytes = 4;
+                tagged.op = Opcode::Get { offset: 0, bytes };
+                ops.push(tagged);
+                tagged.op = Opcode::PushDup { bytes };
+                ops.push(tagged);
+                tagged.op = Opcode::MakeTempU32(1);
+                ops.push(tagged);
+                tagged.op = Opcode::AddU32;
+                ops.push(tagged);
+                let top = bytes * 2;
+                tagged.op = Opcode::Swap { top, bottom: 8 };
+                ops.push(tagged);
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                ops.push(tagged);
+            }
+
             TCExprKind::PostIncrU64(target) => {
                 ops.append(&mut self.translate_assign(target));
                 tagged.op = Opcode::PushDup { bytes: 8 };
@@ -652,7 +674,7 @@ impl Assembler {
 
             TCExprKind::Assign { target, value } => {
                 ops.append(&mut self.translate_expr(value));
-                let bytes = value.expr_type.size();
+                let bytes = value.expr_type.repr_size();
                 tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
                 ops.append(&mut self.translate_assign(target));
@@ -776,7 +798,7 @@ impl Assembler {
                 if_true,
                 if_false,
             } => {
-                let cond_bytes = condition.expr_type.size();
+                let cond_bytes = condition.expr_type.repr_size();
                 ops.append(&mut self.translate_expr(condition));
 
                 let mut if_ops = self.translate_expr(if_true);
@@ -802,9 +824,9 @@ impl Assembler {
             }
 
             TCExprKind::Member { base, offset } => {
-                let base_bytes = base.expr_type.size();
+                let base_bytes = base.expr_type.repr_size();
                 ops.append(&mut self.translate_expr(base));
-                let want_bytes = expr.expr_type.size();
+                let want_bytes = expr.expr_type.repr_size();
                 let top_bytes = base_bytes - want_bytes - offset;
                 tagged.op = Opcode::Pop { bytes: top_bytes };
                 ops.push(tagged);
@@ -814,21 +836,28 @@ impl Assembler {
                 };
                 ops.push(tagged);
             }
-            TCExprKind::PtrMember { base, offset } => {
-                let bytes = expr.expr_type.size();
+            &TCExprKind::PtrMember { base, offset } => {
+                let bytes = expr.expr_type.repr_size();
                 ops.append(&mut self.translate_expr(base));
-                tagged.op = Opcode::Get {
-                    offset: *offset,
-                    bytes,
-                };
-                ops.push(tagged);
+                if expr.expr_type.is_array() {
+                    tagged.op = Opcode::MakeTempU64(offset as u64);
+                    ops.push(tagged);
+                    tagged.op = Opcode::AddU64;
+                    ops.push(tagged);
+                } else {
+                    tagged.op = Opcode::Get {
+                        offset: offset,
+                        bytes,
+                    };
+                    ops.push(tagged);
+                }
             }
 
             TCExprKind::Deref(ptr) => {
                 ops.append(&mut self.translate_expr(ptr));
                 tagged.op = Opcode::Get {
                     offset: 0,
-                    bytes: expr.expr_type.size(),
+                    bytes: expr.expr_type.repr_size(),
                 };
                 ops.push(tagged);
             }
@@ -858,7 +887,7 @@ impl Assembler {
                 ops.push(tagged);
 
                 for param in *params {
-                    let bytes = param.expr_type.size();
+                    let bytes = param.expr_type.repr_size();
 
                     tagged.op = Opcode::StackAlloc {
                         bytes,

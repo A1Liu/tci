@@ -87,6 +87,7 @@ pub enum Opcode {
 
     MakeTempI8(i8),
     MakeTempI32(i32),
+    MakeTempU32(u32),
     MakeTempI64(i64),
     MakeTempU64(u64),
     MakeTempF64(f64),
@@ -244,15 +245,15 @@ impl Runtime {
         lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
         lib_funcs.insert(INIT_SYMS.translate["realloc"], realloc);
         lib_funcs.insert(INIT_SYMS.translate["memcpy"], memcpy);
+        lib_funcs.insert(INIT_SYMS.translate["strlen"], strlen);
 
         let memory = Memory::new_with_binary(program.data);
-        let s = Self {
+        return Self {
             args,
             memory,
             program,
             lib_funcs,
         };
-        return s;
     }
 
     pub fn diagnostic(&self) -> RuntimeDiagnostic {
@@ -308,12 +309,35 @@ impl Runtime {
         return Ok(None);
     }
 
+    #[inline]
+    pub fn pc(&self) -> u32 {
+        return self.memory.pc;
+    }
+
+    pub fn prev(&mut self) -> bool {
+        let tag = self.memory.current_tag();
+        if !self.memory.prev() {
+            return false;
+        }
+
+        while self.memory.current_tag() == tag && self.memory.prev() {}
+        return true;
+    }
+
     pub fn run_op(&mut self) -> Result<Option<i32>, IError> {
-        match self.run_op_internal() {
+        if let Some(code) = self.memory.exit_code {
+            return Ok(Some(code));
+        }
+        let tag = self.memory.pc;
+
+        let ret = self.run_op_internal();
+        let history: Vec<_> = self.memory.history.iter().map(|h| h.kind).collect();
+        match ret {
             Ok(opt) => return Ok(opt),
             Err(err) => {
+                while self.memory.current_tag() == tag && self.memory.prev() {}
                 self.memory
-                    .push_callstack(self.program.ops[self.memory.pc as usize].loc);
+                    .error_push_callstack(self.program.ops[self.memory.pc as usize].loc)?;
                 return Err(err);
             }
         }
@@ -330,11 +354,11 @@ impl Runtime {
             Opcode::Func(_) => {}
 
             Opcode::StackAlloc { bytes, symbol } => {
-                self.memory.add_stack_var(bytes, symbol);
+                self.memory.add_stack_var(bytes, symbol)?;
             }
             Opcode::StackAllocDyn { symbol } => {
                 let space = u32::from_be(self.memory.pop_stack()?);
-                self.memory.add_stack_var(space, symbol);
+                self.memory.add_stack_var(space, symbol)?;
             }
             Opcode::StackDealloc => {
                 self.memory.pop_stack_var()?;
@@ -343,35 +367,34 @@ impl Runtime {
                 self.memory.pop_stack_var_onto_stack()?;
             }
 
-            Opcode::MakeTempI8(value) => self.memory.push_stack(value),
-            Opcode::MakeTempI32(value) => self.memory.push_stack(value.to_be()),
-            Opcode::MakeTempI64(value) => self.memory.push_stack(value.to_be()),
-            Opcode::MakeTempU64(value) => self.memory.push_stack(value.to_be()),
-            Opcode::MakeTempF64(value) => self.memory.push_stack(value),
+            Opcode::MakeTempI8(value) => self.memory.push_stack(value)?,
+            Opcode::MakeTempI32(value) => self.memory.push_stack(value.to_be())?,
+            Opcode::MakeTempU32(value) => self.memory.push_stack(value.to_be())?,
+            Opcode::MakeTempI64(value) => self.memory.push_stack(value.to_be())?,
+            Opcode::MakeTempU64(value) => self.memory.push_stack(value.to_be())?,
+            Opcode::MakeTempF64(value) => self.memory.push_stack(value)?,
             Opcode::MakeTempBinaryPtr { var, offset } => {
                 let ptr = VarPointer::new_binary(var, offset);
-                self.memory.push_stack(ptr);
+                self.memory.push_stack(ptr)?;
             }
             Opcode::MakeTempLocalStackPtr { var, offset } => {
                 let ptr = VarPointer::new_stack(self.memory.fp_offset(var), offset);
-                self.memory.push_stack(ptr);
+                self.memory.push_stack(ptr)?;
             }
 
             Opcode::Pop { bytes } => self.memory.pop_bytes(bytes)?,
             Opcode::PopKeep { keep, drop } => self.memory.pop_keep_bytes(keep, drop)?,
             Opcode::PushUndef { bytes } => {
-                self.memory.add_stack_var(bytes, META_NO_SYMBOL);
+                self.memory.add_stack_var(bytes, META_NO_SYMBOL)?;
                 self.memory.pop_stack_var_onto_stack().unwrap();
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
-                println!("PUSHDUP {:?}", self.memory.stack);
             }
             Opcode::Swap { top, bottom } => {
                 self.memory.dup_top_stack_bytes(top + bottom)?;
                 self.memory.pop_bytes(top)?;
                 self.memory.pop_keep_bytes(top + bottom, bottom)?;
-                println!("SWAP    {:?}", self.memory.stack);
             }
             Opcode::PopIntoTopVar { offset, bytes } => {
                 let ptr = VarPointer::new_stack(self.memory.stack_length(), offset);
@@ -380,52 +403,52 @@ impl Runtime {
 
             Opcode::SExtend8To16 => {
                 let val = self.memory.pop_stack::<i8>()?;
-                self.memory.push_stack((val as i16).to_be());
+                self.memory.push_stack((val as i16).to_be())?;
             }
             Opcode::SExtend8To32 => {
                 let val = self.memory.pop_stack::<i8>()?;
-                self.memory.push_stack((val as i32).to_be());
+                self.memory.push_stack((val as i32).to_be())?;
             }
             Opcode::SExtend8To64 => {
                 let val = self.memory.pop_stack::<i8>()?;
-                self.memory.push_stack((val as i64).to_be());
+                self.memory.push_stack((val as i64).to_be())?;
             }
             Opcode::SExtend16To32 => {
                 let val = i16::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((val as i32).to_be());
+                self.memory.push_stack((val as i32).to_be())?;
             }
             Opcode::SExtend16To64 => {
                 let val = i16::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((val as i64).to_be());
+                self.memory.push_stack((val as i64).to_be())?;
             }
             Opcode::SExtend32To64 => {
                 let val = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((val as i64).to_be());
+                self.memory.push_stack((val as i64).to_be())?;
             }
 
             Opcode::ZExtend8To16 => {
                 let val = self.memory.pop_stack::<u8>()?;
-                self.memory.push_stack((val as u16).to_be());
+                self.memory.push_stack((val as u16).to_be())?;
             }
             Opcode::ZExtend8To32 => {
                 let val = self.memory.pop_stack::<u8>()?;
-                self.memory.push_stack((val as u32).to_be());
+                self.memory.push_stack((val as u32).to_be())?;
             }
             Opcode::ZExtend8To64 => {
                 let val = self.memory.pop_stack::<u8>()?;
-                self.memory.push_stack((val as u64).to_be());
+                self.memory.push_stack((val as u64).to_be())?;
             }
             Opcode::ZExtend16To32 => {
                 let val = u16::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((val as u32).to_be());
+                self.memory.push_stack((val as u32).to_be())?;
             }
             Opcode::ZExtend16To64 => {
                 let val = u16::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((val as u64).to_be());
+                self.memory.push_stack((val as u64).to_be())?;
             }
             Opcode::ZExtend32To64 => {
                 let val = u32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((val as u64).to_be());
+                self.memory.push_stack((val as u64).to_be())?;
             }
 
             Opcode::GetLocal { var, offset, bytes } => {
@@ -442,111 +465,108 @@ impl Runtime {
                 // TODO check for overflow
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.push_stack_bytes_from(ptr, bytes)?;
-                println!("GET     {:?}", self.memory.stack);
             }
             Opcode::Set { offset, bytes } => {
                 let ptr: VarPointer = self.memory.pop_stack()?;
                 // TODO check for overflow
                 let ptr = ptr.with_offset(ptr.offset().wrapping_add(offset as u32));
                 self.memory.pop_stack_bytes_into(ptr, bytes)?;
-                println!("SET     {:?}", self.memory.stack);
             }
 
             Opcode::AddU32 => {
                 let word2 = u32::from_be(self.memory.pop_stack()?);
                 let word1 = u32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_add(word2).to_be());
-                println!("ADD     {:?}", self.memory.stack);
+                self.memory.push_stack(word1.wrapping_add(word2).to_be())?;
             }
             Opcode::SubI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_sub(word2).to_be());
+                self.memory.push_stack(word1.wrapping_sub(word2).to_be())?;
             }
             Opcode::MulI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_mul(word2).to_be());
+                self.memory.push_stack(word1.wrapping_mul(word2).to_be())?;
             }
             Opcode::DivI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_div(word2).to_be());
+                self.memory.push_stack(word1.wrapping_div(word2).to_be())?;
             }
             Opcode::DivU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_div(word2).to_be());
+                self.memory.push_stack(word1.wrapping_div(word2).to_be())?;
             }
 
             Opcode::CompLeqI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 <= word2) as u8);
+                self.memory.push_stack((word1 <= word2) as u8)?;
             }
             Opcode::CompLtI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 < word2) as u8);
+                self.memory.push_stack((word1 < word2) as u8)?;
             }
 
             Opcode::CompLeqU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 <= word2) as u8);
+                self.memory.push_stack((word1 <= word2) as u8)?;
             }
             Opcode::CompLtU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 < word2) as u8);
+                self.memory.push_stack((word1 < word2) as u8)?;
             }
 
             Opcode::CompEq32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 == word2) as u8);
+                self.memory.push_stack((word1 == word2) as u8)?;
             }
             Opcode::CompNeq32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 != word2) as u8);
+                self.memory.push_stack((word1 != word2) as u8)?;
             }
             Opcode::CompEq64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 == word2) as u8);
+                self.memory.push_stack((word1 == word2) as u8)?;
             }
 
             Opcode::AddU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
 
-                self.memory.push_stack(word1.wrapping_add(word2).to_be());
+                self.memory.push_stack(word1.wrapping_add(word2).to_be())?;
             }
             Opcode::SubI64 => {
                 let word2 = i64::from_be(self.memory.pop_stack()?);
                 let word1 = i64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_sub(word2).to_be());
+                self.memory.push_stack(word1.wrapping_sub(word2).to_be())?;
             }
             Opcode::SubU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_sub(word2).to_be());
+                self.memory.push_stack(word1.wrapping_sub(word2).to_be())?;
             }
             Opcode::MulI64 => {
                 let word2 = i64::from_be(self.memory.pop_stack()?);
                 let word1 = i64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_mul(word2).to_be());
+                self.memory.push_stack(word1.wrapping_mul(word2).to_be())?;
             }
             Opcode::MulU64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_mul(word2).to_be());
+                self.memory.push_stack(word1.wrapping_mul(word2).to_be())?;
             }
             Opcode::DivI64 => {
                 let word2 = i64::from_be(self.memory.pop_stack()?);
                 let word1 = i64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_div(word2).to_be());
+                self.memory.push_stack(word1.wrapping_div(word2).to_be())?;
             }
             Opcode::ModI32 => {
                 let word2 = u32::from_be(self.memory.pop_stack()?);
@@ -556,7 +576,7 @@ impl Runtime {
             Opcode::ModI64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
                 let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 % word2).to_be());
+                self.memory.push_stack((word1 % word2).to_be())?;
             }
             Opcode::RShiftI32 => {
                 let word2 = u8::from_be(self.memory.pop_stack()?);
@@ -596,35 +616,35 @@ impl Runtime {
             }
 
             Opcode::Jump(target) => {
-                self.memory.jump(target);
+                self.memory.jump(target)?;
                 return Ok(None);
             }
 
             Opcode::JumpIfZero8(target) => {
                 let value: u8 = self.memory.pop_stack()?;
                 if value == 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
             Opcode::JumpIfZero16(target) => {
                 let value: u16 = self.memory.pop_stack()?;
                 if value == 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
             Opcode::JumpIfZero32(target) => {
                 let value: u32 = self.memory.pop_stack()?;
                 if value == 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
             Opcode::JumpIfZero64(target) => {
                 let value: u64 = self.memory.pop_stack()?;
                 if value == 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
@@ -632,34 +652,34 @@ impl Runtime {
             Opcode::JumpIfNotZero8(target) => {
                 let value: u8 = self.memory.pop_stack()?;
                 if value != 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
             Opcode::JumpIfNotZero16(target) => {
                 let value: u16 = self.memory.pop_stack()?;
                 if value != 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
             Opcode::JumpIfNotZero32(target) => {
                 let value: u32 = self.memory.pop_stack()?;
                 if value != 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
             Opcode::JumpIfNotZero64(target) => {
                 let value: u64 = self.memory.pop_stack()?;
                 if value != 0 {
-                    self.memory.jump(target);
+                    self.memory.jump(target)?;
                     return Ok(None);
                 }
             }
 
             Opcode::Ret => {
-                self.memory.ret();
+                self.memory.ret()?;
                 return Ok(None);
             }
 
@@ -668,7 +688,7 @@ impl Runtime {
                     Opcode::Func(name) => name,
                     op => panic!("found function header {:?} (this is an error in tci)", op),
                 };
-                self.memory.call(func + 1, func_name, op.loc);
+                self.memory.call(func + 1, func_name, op.loc)?;
                 return Ok(None);
             }
             Opcode::LibCall(func_name) => {
@@ -684,10 +704,12 @@ impl Runtime {
             }
 
             Opcode::Ecall(ECALL_EXIT) => {
-                return Ok(Some(i32::from_be(self.memory.pop_stack()?)));
+                let exit = i32::from_be(self.memory.pop_stack()?);
+                self.memory.exit(exit)?;
+                return Ok(Some(exit));
             }
             Opcode::Ecall(ECALL_ARGC) => {
-                self.memory.push_stack((self.args.len() as u32).to_be());
+                self.memory.push_stack((self.args.len() as u32).to_be())?;
             }
             Opcode::Ecall(ECALL_ARGV) => {
                 let arg_idx: u32 = self.memory.pop_stack()?;
@@ -700,18 +722,18 @@ impl Runtime {
                 }
 
                 let arg = &self.args[arg_idx].as_bytes();
-                let var_pointer = self.memory.add_heap_var(arg.len() as u32 + 1);
-                let str_bytes = self.memory.get_var_slice_mut(var_pointer).unwrap();
+                let var_pointer = self.memory.add_heap_var(arg.len() as u32 + 1)?;
+                let str_bytes = self.memory.get_var_slice_mut(var_pointer)?;
                 str_bytes[..arg.len()].copy_from_slice(arg);
                 str_bytes[arg.len()] = 0;
-                self.memory.push_stack(var_pointer);
+                self.memory.push_stack(var_pointer)?;
             }
             Opcode::Ecall(call) => {
                 return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
             }
         }
 
-        self.memory.increment_pc();
+        self.memory.increment_pc()?;
         return Ok(None);
     }
 
@@ -732,6 +754,18 @@ impl Runtime {
 
         return Ok(&str_bytes[0..idx]);
     }
+}
+
+pub fn strlen(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+    let stack_len = sel.memory.stack_length();
+    let char_param_ptr = VarPointer::new_stack(stack_len, 0);
+    let ret_ptr = VarPointer::new_stack(stack_len - 1, 0);
+    let char_ptr: VarPointer = sel.memory.get_var(char_param_ptr)?;
+    let cstring = sel.cstring_bytes(char_ptr)?;
+    let len: u64 = cstring.len() as u64;
+
+    sel.memory.set(ret_ptr, len.to_be())?;
+    return Ok(None);
 }
 
 pub fn memcpy(sel: &mut Runtime) -> Result<Option<i32>, IError> {
@@ -762,7 +796,7 @@ pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
-    let var_pointer = sel.memory.add_heap_var(size as u32); // TODO overflow
+    let var_pointer = sel.memory.add_heap_var(size as u32)?; // TODO overflow
     sel.memory.set(ret_ptr, var_pointer)?;
     return Ok(None);
 }
@@ -790,7 +824,7 @@ pub fn realloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     }
 
     let size = u64::from_be(sel.memory.get_var(size_ptr)?);
-    let new_alloc_ptr = sel.memory.add_heap_var(size as u32); // TODO overflow
+    let new_alloc_ptr = sel.memory.add_heap_var(size as u32)?; // TODO overflow
 
     let (mut src, mut dest) = (to_free, new_alloc_ptr);
     for _ in 0..size {
@@ -814,6 +848,7 @@ pub fn free(sel: &mut Runtime) -> Result<Option<i32>, IError> {
 pub fn exit(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
+    sel.memory.exit(exit_code)?;
     return Ok(Some(exit_code));
 }
 
@@ -832,7 +867,7 @@ pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let result = printf_internal(sel, format_ptr, current_offset, &mut out);
     let out = out.into_string();
     let len = out.len() as i32; // TODO overflow
-    write!(sel.memory.stdout(), "{}", out)?;
+    write!(sel.memory.stdout()?, "{}", out)?;
     result?;
 
     let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow

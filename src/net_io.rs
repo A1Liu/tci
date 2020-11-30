@@ -6,15 +6,15 @@ use std::net::{TcpListener, TcpStream};
 use std::str::Utf8Error;
 use std::thread;
 
-macro_rules! write_b {
-    ($dst:expr, $($arg:tt)*) => {{
-        let mut cursor = std::io::Cursor::new(&mut ($dst)[..]);
-        match std::io::Write::write_fmt(&mut cursor, std::format_args!($($arg)*)) {
-            Ok(()) => Ok(cursor.position() as usize),
-            Err(err) => Err(err),
-        }
-    }};
-}
+// macro_rules! write_b {
+//     ($dst:expr, $($arg:tt)*) => {{
+//         let mut cursor = std::io::Cursor::new(&mut ($dst)[..]);
+//         match std::io::Write::write_fmt(&mut cursor, std::format_args!($($arg)*)) {
+//             Ok(()) => Ok(cursor.position() as usize),
+//             Err(err) => Err(err),
+//         }
+//     }};
+// }
 
 #[cfg(debug)]
 const TCP_BUCKET_SIZE: usize = 1048576;

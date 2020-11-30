@@ -1,5 +1,6 @@
 import AceEditor from "react-ace";
-
+import { Range } from "ace-builds";
+import React, { useEffect, useRef, useState } from "react";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
@@ -7,31 +8,72 @@ import { useFileUpload } from "./fileUploadContext";
 export default function BasicEditor() {
   const {
     files,
-    addFile,
     currentFile,
+    location,
+    replay,
+    addFile,
     sockSend,
     setFiles,
     setCurrentFile,
   } = useFileUpload();
   const code = files[currentFile];
+  const aceEditor = useRef(null);
+  const [markerId, setMarkerId] = useState(null);
+  const [currentLocation, setCurrentLocation] = useState({
+    row: 0,
+    column: 0,
+  });
   // eslint-disable-next-line no-unused-vars
+
+  const annotations = [
+    {
+      row: currentLocation.row, // must be 0 based
+      column: currentLocation.column, // must be 0 based
+      text: "current execution", // text to show in tooltip
+      type: "info",
+    },
+  ];
 
   const onValueChange = (content) => {
     addFile(currentFile, content);
   };
 
-  const compile = () => {
-    sockSend("Compile", undefined);
+  const removeFile = (fileId) => {
+    sockSend("RemoveFile", fileId);
   };
+
+  useEffect(() => {
+    if (aceEditor !== null) {
+      if (markerId !== null) {
+        aceEditor.current.editor.session.removeMarker(markerId);
+      }
+      const {
+        row,
+        column,
+      } = aceEditor.current.editor.session
+        .getDocument()
+        .indexToPosition(location.start, 0);
+      const marker = aceEditor.current.editor.session.addMarker(
+        new Range(row, 0, row, column),
+        "ace_active-line",
+        "fullLine"
+      );
+      setMarkerId(marker);
+      setCurrentLocation({
+        row,
+        column,
+      });
+    }
+  }, [location]);
 
   return (
     <div>
       <div className="h-10 w-full flex">
         <div className="bg-gray-800 w-full text-white">
-          <nav className="flex flex-row">
+          <nav className="flex flex-row w-full overflow-auto">
             {Object.keys(files).map((name) => {
               return name === "main.c" ? (
-                <div className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-50">
+                <div key={name} className="flex flex-row bg-gray-700 h-10">
                   <button
                     type="button"
                     className="mt-1 py-1 px-4"
@@ -41,7 +83,10 @@ export default function BasicEditor() {
                   </button>
                 </div>
               ) : (
-                <div className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-50">
+                <div
+                  key={name}
+                  className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-500"
+                >
                   <button
                     type="button"
                     className="py-2 px-2"
@@ -62,6 +107,7 @@ export default function BasicEditor() {
                       const keys = Object.keys(newFiles);
                       setCurrentFile(keys[keys.length - 1]);
                       setFiles(newFiles);
+                      removeFile(files[name].fileId);
                     }}
                   >
                     <span>×</span>
@@ -71,25 +117,19 @@ export default function BasicEditor() {
             })}
           </nav>
         </div>
-        <div className="bg-gray-800 flex flex-end">
-          <button
-            className="bg-blue-600 hover:bg-blue-800 text-white py-1 px-6 ml-auto"
-            type="button"
-            onClick={compile}
-          >
-            Run
-          </button>
-        </div>
       </div>
+      <div className="neutral" />
       <AceEditor
+        ref={aceEditor}
         mode="csharp"
         theme="monokai"
         onChange={onValueChange}
-        value={code}
+        value={code.content}
+        annotations={annotations}
+        readOnly={replay}
         fontSize={12}
+        highlightActiveLine={false}
         setOptions={{
-          enableLiveAutocompletion: true,
-          enableSnippets: true,
           showLineNumbers: true,
           tabSize: 2,
         }}

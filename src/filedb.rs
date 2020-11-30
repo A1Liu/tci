@@ -88,7 +88,8 @@ pub struct FileDbSlim {
     pub file_names: HashMap<&'static str, u32>,
     pub size: usize,
     pub garbage_size: usize,
-    pub files: Vec<File<'static>>,
+    pub files: Vec<Option<File<'static>>>,
+    pub empty_slots: Vec<u32>,
 }
 
 impl Drop for FileDbSlim {
@@ -109,6 +110,7 @@ impl FileDbSlim {
             garbage_size: 0,
             file_names: HashMap::new(),
             files: Vec::new(),
+            empty_slots: Vec::new(),
         }
     }
 
@@ -121,21 +123,32 @@ impl FileDbSlim {
             size: 0,
             garbage_size: 0,
             files: Vec::new(),
+            empty_slots: Vec::new(),
         }
+    }
+
+    pub fn line_index(&self, loc: CodeLoc) -> Option<usize> {
+        let file = loc.file - 1 - INIT_SYMS.files.len() as u32;
+        let file = self.files.get(file as usize)?.as_ref()?;
+        return file.line_index(loc.start as usize);
     }
 
     pub fn file_db(&self) -> FileDb {
         let mut db = FileDb::with_capacity(self.size, false);
         for file in &self.files {
-            db.add(file._name, file._source).unwrap();
+            if let Some(file) = file {
+                db.add(file._name, file._source).unwrap();
+            } else {
+                db.files.push(None);
+                db._size += mem::size_of::<Option<File>>();
+            }
         }
         return db;
     }
 
     pub fn add(&mut self, file_name: &str, source: &str) -> u32 {
         if self.garbage_size > self.size * 4 {
-            let new = self.copy_gc();
-            *self = new;
+            *self = self.copy_gc();
         }
 
         return self.add_internal(file_name, source);
@@ -143,15 +156,66 @@ impl FileDbSlim {
 
     pub fn copy_gc(&self) -> Self {
         let mut new = Self::with_capacity(self.size);
-        for file in &self.files {
-            new.add_internal(file._name, file._source);
+        for (idx, file) in self.files.iter().enumerate() {
+            if let Some(file) = file {
+                new.add_internal(file._name, file._source);
+            } else {
+                new.empty_slots.push(idx as u32);
+                new.files.push(None);
+            }
         }
         return new;
+    }
+
+    pub fn remove_str(&mut self, file: &str) -> bool {
+        let file = if let Some(file) = self.file_names.remove(file) {
+            file
+        } else {
+            return false;
+        };
+        let file_slot = &mut self.files[file as usize];
+        let file_data = file_slot.take().unwrap();
+
+        self.garbage_size += file_data.size();
+        self.size -= file_data.size();
+        self.empty_slots.push(file);
+        return true;
+    }
+
+    pub fn remove_id(&mut self, file: u32) -> bool {
+        let file = file - 1 - INIT_SYMS.files.len() as u32;
+        let file_slot = self.files.get_mut(file as usize);
+        let file_slot = match file_slot {
+            Some(f) => f,
+            None => return false,
+        };
+
+        let file_data = match file_slot.take() {
+            Some(f) => f,
+            None => return false,
+        };
+
+        self.garbage_size += file_data.size();
+        self.size -= file_data.size();
+        self.file_names.remove(file_data._name);
+        self.empty_slots.push(file);
+        return true;
     }
 
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again. Replaces the original if the file already exists in the database.
     pub fn add_internal(&mut self, file_name: &str, source: &str) -> u32 {
+        let file_name_string = if file_name.as_bytes()[0] == b'/' {
+            file_name.to_string()
+        } else {
+            let mut string = String::new();
+            string.push('/');
+            string.push_str(file_name);
+            string
+        };
+
+        let file_name: &str = &file_name_string;
+
         let file = File::new(self.buckets_next, file_name, source);
         self.size += file.size();
 
@@ -161,15 +225,23 @@ impl FileDbSlim {
 
         if let Some(file_idx) = self.file_names.get(file_name) {
             let file_slot = &mut self.files[*file_idx as usize];
+            let file_slot = file_slot.as_mut().unwrap();
             self.garbage_size += file_slot.size();
             self.size -= file_slot.size();
             *file_slot = file;
             return *file_idx + 1 + INIT_SYMS.files.len() as u32;
         }
 
-        let file_idx = self.files.len() as u32;
+        let file_idx = if let Some(file_idx) = self.empty_slots.pop() {
+            file_idx
+        } else {
+            let file_idx = self.files.len() as u32;
+            self.files.push(None);
+            file_idx
+        };
+
         self.size += file.size();
-        self.files.push(file);
+        self.files[file_idx as usize] = Some(file);
         self.file_names.insert(file._name, file_idx);
         return file_idx + 1 + INIT_SYMS.files.len() as u32;
     }
@@ -180,7 +252,7 @@ pub struct FileDb {
     pub buckets_next: BucketListRef<'static>,
     pub _size: usize,
     pub file_names: HashMap<&'static str, u32>,
-    pub files: Vec<File<'static>>,
+    pub files: Vec<Option<File<'static>>>,
     pub translate: HashMap<&'static str, u32>,
     pub names: Vec<CodeLoc>,
     pub fs_read_access: bool,
@@ -230,6 +302,7 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     add_sym!("free");
     add_sym!("realloc");
     add_sym!("memcpy");
+    add_sym!("strlen");
 
     InitSyms {
         names,
@@ -264,10 +337,10 @@ impl FileDb {
         let mut files = Vec::new();
 
         for file in INIT_SYMS.files.iter() {
-            files.push(*file);
+            files.push(Some(*file));
             _size += file.size() + mem::size_of::<File>();
         }
-        files.push(file);
+        files.push(Some(file));
 
         let mut new_self = Self {
             buckets,
@@ -298,10 +371,12 @@ impl FileDb {
     }
 
     pub fn vec(&self) -> Vec<u32> {
-        let iter = self.files.iter();
-        return (0..self.files.len() as u32)
-            .skip(INIT_SYMS.files.len() + 1) // +1 here is for the init syms initial file
-            .collect();
+        let iter = self.files.iter().enumerate();
+        let iter = iter.skip(INIT_SYMS.files.len() + 1);
+        // +1 here is for the init syms initial file
+        let filter_map = |(idx, value): (usize, &Option<File>)| value.as_ref().map(|_| idx as u32);
+
+        return iter.filter_map(filter_map).collect();
     }
 
     /// Add a file to the database, returning the handle that can be used to
@@ -313,8 +388,8 @@ impl FileDb {
 
         let file_id = self.files.len() as u32;
         let file = File::new(self.buckets_next, file_name, &source);
-        self._size += file.size() + mem::size_of::<File>();
-        self.files.push(file);
+        self._size += file.size() + mem::size_of::<Option<File>>();
+        self.files.push(Some(file));
         self.file_names.insert(file._name, file_id);
 
         while let Some(b) = self.buckets_next.next() {
@@ -339,8 +414,8 @@ impl FileDb {
         let file_id = self.files.len() as u32;
         let source = read_to_string(&file_name)?;
         let file = File::new(self.buckets_next, file_name, &source);
-        self._size += file.size() + mem::size_of::<File>();
-        self.files.push(file);
+        self._size += file.size() + mem::size_of::<Option<File>>();
+        self.files.push(Some(file));
         self.file_names.insert(file._name, file_id);
 
         while let Some(b) = self.buckets_next.next() {
@@ -357,18 +432,18 @@ impl FileDb {
 
     pub fn cloc_to_str(&self, cloc: CodeLoc) -> &str {
         let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize]._source;
+        let text = self.files[cloc.file as usize].unwrap()._source;
         return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
     }
 
     pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
         let cloc = self.names[symbol as usize];
         let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize]._source;
+        let text = self.files[cloc.file as usize].unwrap()._source;
         let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
 
         if Path::new(text).is_relative() {
-            let base_path = parent_if_file(self.files[base_file as usize]._name);
+            let base_path = parent_if_file(self.files[base_file as usize].unwrap()._name);
             let real_path = Path::new(base_path).join(text);
             let path_str = real_path.to_str().unwrap();
             return self.add_from_fs(&path_str);
@@ -386,7 +461,7 @@ impl FileDb {
     #[inline]
     pub fn translate_add_cloc(&mut self, cloc: CodeLoc) -> u32 {
         let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize]._source;
+        let text = self.files[cloc.file as usize].unwrap()._source;
         let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
 
         if let Some(id) = self.translate.get(text) {
@@ -411,27 +486,27 @@ impl<'a> Files<'a> for FileDb {
     type Source = &'a str;
 
     fn name(&self, file_id: u32) -> Option<&'a str> {
-        Some(self.files.get(file_id as usize)?._name)
+        Some(self.files.get(file_id as usize)?.as_ref()?._name)
     }
 
     fn source(&self, file_id: u32) -> Option<&'a str> {
-        Some(self.files.get(file_id as usize)?._source)
+        Some(self.files.get(file_id as usize)?.as_ref()?._source)
     }
 
     fn line_index(&self, file_id: u32, byte_index: usize) -> Option<usize> {
-        let file = self.files.get(file_id as usize)?;
+        let file = self.files.get(file_id as usize)?.as_ref()?;
         return file.line_index(byte_index);
     }
 
     fn line_range(&self, file_id: u32, line_index: usize) -> Option<core::ops::Range<usize>> {
-        let file = self.files.get(file_id as usize)?;
+        let file = self.files.get(file_id as usize)?.as_ref()?;
         return file.line_range(line_index);
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct FileDbRef<'a> {
-    pub files: &'a [File<'a>],
+    pub files: &'a [Option<File<'a>>],
     pub symbols: &'a [&'a str],
 }
 
@@ -441,14 +516,21 @@ impl<'a> FileDbRef<'a> {
         let mut file_sources = Vec::new();
 
         for file in db.files.iter() {
-            let file = File::new_frame(frame, file._name, file._source, file._line_starts);
+            let file = if let Some(file) = file {
+                let file = File::new_frame(frame, file._name, file._source, file._line_starts);
+                Some(file)
+            } else {
+                None
+            };
+
             file_sources.push(file);
         }
 
         let mut symbols = Vec::new();
         for symbol in db.names.iter() {
             let range: ops::Range<usize> = (*symbol).into();
-            let bytes = &file_sources[symbol.file as usize]._source.as_bytes()[range];
+            let file = file_sources[symbol.file as usize].as_ref().unwrap();
+            let bytes = &file._source.as_bytes()[range];
             symbols.push(unsafe { str::from_utf8_unchecked(bytes) });
         }
 
@@ -468,20 +550,20 @@ impl<'a> Files<'a> for FileDbRef<'a> {
     type Source = &'a str;
 
     fn name(&self, file_id: u32) -> Option<&'a str> {
-        Some(self.files.get(file_id as usize)?._name)
+        Some(self.files.get(file_id as usize)?.as_ref()?._name)
     }
 
     fn source(&self, file_id: u32) -> Option<&'a str> {
-        Some(self.files.get(file_id as usize)?._source)
+        Some(self.files.get(file_id as usize)?.as_ref()?._source)
     }
 
     fn line_index(&self, file_id: u32, byte_index: usize) -> Option<usize> {
-        let file = self.files.get(file_id as usize)?;
+        let file = self.files.get(file_id as usize)?.as_ref()?;
         return file.line_index(byte_index);
     }
 
     fn line_range(&self, file_id: u32, line_index: usize) -> Option<core::ops::Range<usize>> {
-        let file = self.files.get(file_id as usize)?;
+        let file = self.files.get(file_id as usize)?.as_ref()?;
         return file.line_range(line_index);
     }
 }
@@ -503,7 +585,7 @@ pub fn parent_if_file<'a>(path: &'a str) -> &'a str {
         idx -= 1;
     }
 
-    unsafe { str::from_utf8_unchecked(&bytes[..idx]) }
+    unsafe { str::from_utf8_unchecked(&bytes[..(idx + 1)]) }
 }
 
 // https://github.com/danreeves/path-clean/blob/master/src/lib.rs

@@ -1,5 +1,4 @@
 use crate::filedb::*;
-use crate::interpreter::Program;
 use crate::interpreter::*;
 use crate::runtime::*;
 use crate::*;
@@ -13,10 +12,13 @@ pub enum Command {
         path: String,
         data: String,
     },
+    RemoveFile(u32),
     Compile,
     RunUntilScopedPC(u32),
     RunOp,
     RunCount(u32),
+    RunLoc,
+    RunLine,
     RunCountOrUntil {
         count: u32,
         stack_size: u16,
@@ -24,18 +26,19 @@ pub enum Command {
     },
     Snapshot,
     Back(u32),
-    Forwards(u32),
+    BackLine(u32),
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "response", content = "data")]
 pub enum CommandResult {
     Confirm(&'static str),
-    Compiled(Program<'static>),
+    Compiled,
     InvalidCommand {
         state: &'static str,
         command: &'static str,
     },
+    DeserializationError(String),
     IOError(String),
     Stdout(String),
     Stderr(String),
@@ -70,9 +73,8 @@ impl From<WriteEvent> for CommandResult {
     }
 }
 
-#[derive(IntoStaticStr)]
+#[derive(IntoStaticStr)] // LMAO this name
 pub enum WSStateState {
-    // LMAO this name
     Running(Runtime),
     NotRunning,
 }
@@ -112,30 +114,38 @@ impl WSState {
             }};
         }
 
-        if let Command::AddFile { path, data } = &command {
-            let file_id = self.files.add(path, data);
-            messages.push(CommandResult::FileId {
-                path: path.to_string(),
-                file_id,
-            });
-            ret!(CommandResult::Confirm(command.into()));
-        } else if let Command::Compile = &command {
-            let mut db = self.files.file_db();
-            let program = match compile(&mut db) {
-                Ok(prog) => prog,
-                Err(err) => {
-                    let mut writer = StringWriter::new();
-                    emit_err(&err, &mut db, &mut writer);
-                    ret!(CommandResult::CompileError {
-                        rendered: writer.into_string(),
-                        error: err
-                    });
-                }
-            };
+        match &command {
+            Command::AddFile { path, data } => {
+                let file_id = self.files.add(path, data);
+                messages.push(CommandResult::FileId {
+                    path: path.to_string(),
+                    file_id,
+                });
+                ret!(CommandResult::Confirm(command.into()));
+            }
+            Command::RemoveFile(id) => {
+                self.files.remove_id(*id);
+                ret!(CommandResult::Confirm(command.into()));
+            }
+            Command::Compile => {
+                let mut db = self.files.file_db();
+                let program = match compile(&mut db) {
+                    Ok(prog) => prog,
+                    Err(err) => {
+                        let mut writer = StringWriter::new();
+                        emit_err(&err, &mut db, &mut writer);
+                        ret!(CommandResult::CompileError {
+                            rendered: writer.into_string(),
+                            error: err
+                        });
+                    }
+                };
 
-            self.state = WSStateState::Running(Runtime::new(program, StringArray::new()));
-            messages.push(CommandResult::Compiled(program));
-            ret!(CommandResult::Confirm(command.into()));
+                self.state = WSStateState::Running(Runtime::new(program, StringArray::new()));
+                messages.push(CommandResult::Compiled);
+                ret!(CommandResult::Confirm(command.into()));
+            }
+            _ => {}
         }
 
         if let WSStateState::Running(runtime) = &mut self.state {
@@ -144,6 +154,10 @@ impl WSState {
                     let ret = match runtime.run_op() {
                         Ok(ret) => ret,
                         Err(error) => {
+                            for event in runtime.memory.events() {
+                                messages.push(event.into());
+                            }
+
                             let rendered =
                                 render_err(&error, &runtime.memory.callstack, &runtime.program);
                             ret!(CommandResult::RuntimeError { rendered, error });
@@ -159,6 +173,88 @@ impl WSState {
                             status: runtime.diagnostic(),
                             ret,
                         });
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::RunLoc => {
+                    let loc = runtime.program.ops[runtime.pc() as usize].loc;
+
+                    loop {
+                        let ret = match runtime.run_op() {
+                            Ok(ret) => ret,
+                            Err(error) => {
+                                for event in runtime.memory.events() {
+                                    messages.push(event.into());
+                                }
+
+                                let rendered =
+                                    render_err(&error, &runtime.memory.callstack, &runtime.program);
+                                ret!(CommandResult::RuntimeError { rendered, error });
+                            }
+                        };
+
+                        for event in runtime.memory.events() {
+                            messages.push(event.into());
+                        }
+
+                        if runtime.program.ops[runtime.pc() as usize].loc != loc {
+                            break;
+                        }
+
+                        if let Some(ret) = ret {
+                            ret!(CommandResult::StatusRet {
+                                status: runtime.diagnostic(),
+                                ret,
+                            });
+                        }
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::RunLine => {
+                    let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                    let line = if let Some(line) = self.files.line_index(loc) {
+                        line
+                    } else {
+                        ret!(CommandResult::IOError("problem loading file".to_string()));
+                    };
+
+                    loop {
+                        let ret = match runtime.run_op() {
+                            Ok(ret) => ret,
+                            Err(error) => {
+                                for event in runtime.memory.events() {
+                                    messages.push(event.into());
+                                }
+
+                                let rendered =
+                                    render_err(&error, &runtime.memory.callstack, &runtime.program);
+                                ret!(CommandResult::RuntimeError { rendered, error });
+                            }
+                        };
+
+                        for event in runtime.memory.events() {
+                            messages.push(event.into());
+                        }
+
+                        let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        let current_line = if let Some(line) = self.files.line_index(current_loc) {
+                            line
+                        } else {
+                            ret!(CommandResult::IOError("problem loading file".to_string()));
+                        };
+
+                        if current_loc.file != loc.file || line != current_line {
+                            break;
+                        }
+
+                        if let Some(ret) = ret {
+                            ret!(CommandResult::StatusRet {
+                                status: runtime.diagnostic(),
+                                ret,
+                            });
+                        }
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
@@ -216,14 +312,16 @@ impl WSState {
                 Command::Snapshot => {
                     ret!(CommandResult::Snapshot(runtime.memory.snapshot()));
                 }
-                Command::Forwards(count) => {
+                Command::Back(count) => {
                     for _ in 0..count {
-                        let tag = runtime.memory.current_tag();
-                        while runtime.memory.current_tag() == tag && runtime.memory.next() {}
-
-                        if runtime.memory.current_tag() == tag {
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        if !runtime.prev() {
                             break;
                         }
+
+                        while runtime.program.ops[runtime.pc() as usize].loc == loc
+                            && runtime.prev()
+                        {}
                     }
 
                     for event in runtime.memory.events() {
@@ -232,13 +330,37 @@ impl WSState {
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
-                Command::Back(count) => {
+                Command::BackLine(count) => {
                     for _ in 0..count {
-                        let tag = runtime.memory.current_tag();
-                        while runtime.memory.current_tag() == tag && runtime.memory.prev() {}
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        let line = if let Some(line) = self.files.line_index(loc) {
+                            line
+                        } else {
+                            ret!(CommandResult::IOError("problem loading file".to_string()));
+                        };
 
-                        if runtime.memory.current_tag() == tag {
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        if !runtime.prev() {
                             break;
+                        }
+
+                        loop {
+                            let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
+                            let current_line = if let Some(line) =
+                                self.files.line_index(current_loc)
+                            {
+                                line
+                            } else {
+                                ret!(CommandResult::IOError("problem loading file".to_string()));
+                            };
+
+                            if current_loc.file != loc.file || line != current_line {
+                                break;
+                            }
+
+                            if !runtime.prev() {
+                                break;
+                            }
                         }
                     }
 

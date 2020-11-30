@@ -1,6 +1,8 @@
 import "./tailwind.css";
+import "./Split.css";
+import SplitPane from "react-split-pane";
 import { FileUploadProvider } from "./components/fileUploadContext";
-import FileUpload from "./components/FileUpload";
+import NavBar from "./components/NavBar";
 import Terminal from "./components/Terminal";
 import BasicEditor from "./components/Editor";
 
@@ -15,18 +17,30 @@ function App() {
             </a>
           </li>
         </ul>
-        <div className="flex min-h-screen flex-wrap">
-          <div className="w-full md:w-1/6 bg-gray-800 p-4 text-center text-white">
-            <FileUpload />
-          </div>
-          <div className="md:w-5/6 p-0 text-center text-gray-200">
+        <NavBar />
+        <div className="flex min-h-screen flex-wrap ">
+          <div className="md:w-full">
             <div className="flex md:flex-row flex-wrap">
-              <div className="w-full md:w-1/2 text-center border-r border-gray-800">
-                <BasicEditor />
-              </div>
-              <div className="w-full md:w-1/2 text-center border-solid">
-                <Terminal />
-              </div>
+              <SplitPane
+                split="vertical"
+                defaultSize="50%"
+                minSize={200}
+                maxSize={-200}
+                style={{ width: "100%", height: "100%" }}
+              >
+                <div
+                  style={{ width: "100%", height: "100%" }}
+                  className="w-full md:w-1/2 text-center border-r border-gray-800"
+                >
+                  <BasicEditor />
+                </div>
+                <div
+                  style={{ width: "100%", height: "100%" }}
+                  className="h-screen w-full md:w-1/2 text-center border-solid"
+                >
+                  <Terminal />
+                </div>
+              </SplitPane>
             </div>
           </div>
         </div>

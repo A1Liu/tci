@@ -167,7 +167,8 @@ gen_test_should_succeed!(
     bitwise_operators,
     bool_operators,
     assign_operators,
-    ("dyn_array_ptr/", dyn_array_ptr, main)
+    ("dyn_array_ptr/", dyn_array_ptr, main),
+    ("arrays/", arrays, main)
 );
 
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

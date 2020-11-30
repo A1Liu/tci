@@ -221,7 +221,7 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     }
 
     add_op_ol!(Add, Pointer, I32, |env, l, r| {
-        let result_type = l.expr_type;
+        let elem_type = env.deref(l.expr_type, l.loc)?;
 
         let r = TCExpr {
             loc: r.loc,
@@ -231,7 +231,7 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
 
         let size_of_elements = TCExpr {
             loc: l.loc,
-            kind: TCExprKind::I64Literal(env.deref(&result_type, l.loc)?.size() as i64),
+            kind: TCExprKind::I64Literal(elem_type.size() as i64),
             expr_type: TCType::new(TCTypeKind::I64, 0),
         };
 
@@ -249,11 +249,10 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     });
 
     add_op_ol!(Add, Pointer, U64, |env, l, r| {
-        let result_type = l.expr_type;
-
+        let elem_type = env.deref(l.expr_type, l.loc)?;
         let size_of_elements = TCExpr {
             loc: l.loc,
-            kind: TCExprKind::U64Literal(env.deref(&result_type, l.loc)?.size() as u64),
+            kind: TCExprKind::U64Literal(elem_type.size() as u64),
             expr_type: TCType::new(TCTypeKind::U64, 0),
         };
 
@@ -271,8 +270,8 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     });
 
     add_op_ol!(Sub, Pointer, Pointer, |env, l, r| {
-        let l_elem_type = env.deref(&l.expr_type, l.loc).unwrap();
-        let r_elem_type = env.deref(&r.expr_type, r.loc).unwrap();
+        let l_elem_type = env.deref(l.expr_type, l.loc).unwrap();
+        let r_elem_type = env.deref(r.expr_type, r.loc).unwrap();
         if l_elem_type != r_elem_type {
             // TODO implement actual type equality
             return Err(error!(
@@ -603,7 +602,8 @@ impl TypeEnv {
                 break;
             }
 
-            expr_type = self.typedefs.get(&ident).ok_or_else(map_err)?.typedef;
+            let defn = self.typedefs.get(&ident).ok_or_else(map_err)?;
+            expr_type = defn.typedef;
         }
         return Ok(expr_type);
     }
@@ -632,26 +632,6 @@ impl TypeEnv {
         match OVERLOADS.expr_to_type.get(&key) {
             Some(transform) => return Ok(transform(buckets, expr, assign_type)),
             None => {}
-        }
-
-        match expr.expr_type.array_kind {
-            TCArrayKind::None => {}
-            TCArrayKind::Fixed(n) => {
-                let array_ptr = TCExpr {
-                    expr_type: TCType::new(expr.expr_type.kind, expr.expr_type.pointer_count + 1),
-                    loc: expr.loc,
-                    kind: TCExprKind::TypePun(buckets.add(expr)),
-                };
-
-                return self.implicit_convert(
-                    buckets,
-                    files,
-                    &assign_type,
-                    assign_loc,
-                    assign_loc_is_defn,
-                    array_ptr,
-                );
-            }
         }
 
         if assign_loc_is_defn {
@@ -760,12 +740,20 @@ impl TypeEnv {
 
     pub fn check_struct_member(
         &self,
-        struct_ident: u32,
+        struct_type: TCType,
         decl_idx: u32,
         loc: CodeLoc,
         member_ident: u32,
     ) -> Result<TCStructMember, Error> {
-        let struct_info = self.structs.get(&struct_ident).unwrap();
+        let struct_type = self.resolve_typedef(struct_type, loc)?;
+        let struct_info = if let TCTypeKind::Struct { ident, .. } = struct_type.kind {
+            self.structs.get(&ident).unwrap()
+        } else if let TCTypeKind::AnonStruct { loc: defn_loc, sa } = struct_type.kind {
+            self.anon_structs.get(&defn_loc).unwrap()
+        } else {
+            return Err(member_of_non_struct(loc));
+        };
+
         let defn = if let Some(defn) = &struct_info.defn {
             defn
         } else {
@@ -838,12 +826,9 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
         return self.types.type_eq(l, r);
     }
 
-    pub fn deref(&self, tc_type: &TCType, value_loc: CodeLoc) -> Result<TCType, Error> {
+    pub fn deref(&self, tc_type: TCType, value_loc: CodeLoc) -> Result<TCType, Error> {
+        let tc_type = self.resolve_typedef(tc_type, value_loc)?;
         if tc_type.pointer_count == 0 && tc_type.array_kind == TCArrayKind::None {
-            if let TCTypeKind::Ident { ident, sa } = &tc_type.kind {
-                return self.deref(&self.types.typedefs[ident].typedef, value_loc);
-            }
-
             return Err(error!(
                 "cannot dereference values that aren't pointers",
                 value_loc,
@@ -880,16 +865,8 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
         return Ok(result_type);
     }
 
-    pub fn resolve_typedef(&self, mut expr_type: TCType, loc: CodeLoc) -> Result<TCType, Error> {
-        let map_err = || typedef_not_defined(loc);
-        while let TCTypeKind::Ident { ident, .. } = expr_type.kind {
-            if expr_type.pointer_count != 0 {
-                break;
-            }
-
-            expr_type = self.types.typedefs.get(&ident).ok_or_else(map_err)?.typedef;
-        }
-        return Ok(expr_type);
+    pub fn resolve_typedef(&self, expr_type: TCType, loc: CodeLoc) -> Result<TCType, Error> {
+        return self.types.resolve_typedef(expr_type, loc);
     }
 
     #[inline]
@@ -1032,12 +1009,12 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
     #[inline]
     pub fn check_struct_member(
         &self,
-        struct_ident: u32,
+        struct_type: TCType,
         loc: CodeLoc,
         member_ident: u32,
     ) -> Result<TCStructMember, Error> {
         self.types
-            .check_struct_member(struct_ident, self.decl_idx, loc, member_ident)
+            .check_struct_member(struct_type, self.decl_idx, loc, member_ident)
     }
 }
 
@@ -1161,7 +1138,7 @@ impl IType {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct UncheckedStructMember {
     pub ident: u32,
     pub member_type: IType,
@@ -1169,6 +1146,7 @@ pub struct UncheckedStructMember {
     pub decl_idx: u32,
 }
 
+#[derive(Debug)]
 pub struct UncheckedStructDefn {
     pub members: Vec<UncheckedStructMember>,
     pub defn_idx: u32,
@@ -1733,9 +1711,9 @@ fn check_struct_type<'b>(
     let mut typed_members = Vec::new();
 
     for member in defn.members.iter() {
-        let offset = size;
         if member.member_type.pointer_count != 0 {
-            size = align_u32(size, 8) + 8;
+            let offset = align_u32(size, 8);
+            size = offset + 8;
             align = u32::max(8, align);
 
             typed_members.push(TCStructMember {
@@ -1766,6 +1744,7 @@ fn check_struct_type<'b>(
                 let meta = check_unnamed_struct_type(types, visited, unchecked, loc, member.loc)?;
 
                 if meta.defn_idx > member.decl_idx {
+                    // TODO can this ever go off?
                     return Err(struct_defined_later(meta.loc, member.loc));
                 }
 
@@ -1787,7 +1766,8 @@ fn check_struct_type<'b>(
 
         // m prefix to mean member's size align (m_size)
         let (m_size, m_align) = (tc_type.size(), tc_type.align());
-        size = align_u32(size, m_align) + m_size;
+        let offset = align_u32(size, m_align);
+        size = offset + m_size;
         align = u32::max(m_align, align);
 
         typed_members.push(TCStructMember {
@@ -2364,26 +2344,13 @@ pub fn check_expr_allow_brace<'b>(
                 }
             };
 
-            match tc_var.decl_type.array_kind {
-                TCArrayKind::None => {
-                    return Ok(TCExpr {
-                        kind: TCExprKind::LocalIdent {
-                            var_offset: tc_var.var_offset,
-                        },
-                        expr_type: tc_var.decl_type,
-                        loc: expr.loc,
-                    });
-                }
-                TCArrayKind::Fixed(len) => {
-                    return Ok(TCExpr {
-                        kind: TCExprKind::LocalArrayIdent {
-                            var_offset: tc_var.var_offset,
-                        },
-                        expr_type: tc_var.decl_type,
-                        loc: expr.loc,
-                    });
-                }
-            }
+            return Ok(TCExpr {
+                kind: TCExprKind::LocalIdent {
+                    var_offset: tc_var.var_offset,
+                },
+                expr_type: tc_var.decl_type,
+                loc: expr.loc,
+            });
         }
 
         ExprKind::SizeofType {
@@ -2399,7 +2366,7 @@ pub fn check_expr_allow_brace<'b>(
             }
 
             return Ok(TCExpr {
-                kind: TCExprKind::U64Literal(tc_sizeof_type.size() as u64), // TODO change this to unsigned long
+                kind: TCExprKind::U64Literal(tc_sizeof_type.size() as u64),
                 expr_type: TCType::new(TCTypeKind::U64, 0),
                 loc: expr.loc,
             });
@@ -2408,7 +2375,7 @@ pub fn check_expr_allow_brace<'b>(
             let tc_expr = check_expr(env, local_env, sizeof_expr)?;
 
             return Ok(TCExpr {
-                kind: TCExprKind::U64Literal(tc_expr.expr_type.size() as u64), // TODO change this to unsigned long
+                kind: TCExprKind::U64Literal(tc_expr.expr_type.size() as u64),
                 expr_type: TCType::new(TCTypeKind::U64, 0),
                 loc: expr.loc,
             });
@@ -2448,6 +2415,13 @@ pub fn check_expr_allow_brace<'b>(
                         expr_type: target.target_type,
                         loc: expr.loc,
                         kind: TCExprKind::PostIncrU64(target),
+                    });
+                }
+                TCShallowType::U32 | TCShallowType::I32 => {
+                    return Ok(TCExpr {
+                        expr_type: target.target_type,
+                        loc: expr.loc,
+                        kind: TCExprKind::PostIncrU32(target),
                     });
                 }
                 TCShallowType::Struct | TCShallowType::Void => {
@@ -2528,7 +2502,7 @@ pub fn check_expr_allow_brace<'b>(
             let l = check_expr(env, local_env, l)?;
             let r = check_expr(env, local_env, r)?;
 
-            let result_type = env.deref(&l.expr_type, l.loc)?;
+            let result_type = env.deref(l.expr_type, l.loc)?;
 
             let bin_op = get_overload(env, BinOp::Add, &l, &r)?;
             let map_err = || invalid_operands_bin_expr(env, BinOp::Index, &l, &r);
@@ -2595,14 +2569,7 @@ pub fn check_expr_allow_brace<'b>(
 
         ExprKind::Member { base, member } => {
             let base = check_expr(env, local_env, base)?;
-
-            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
-                ident
-            } else {
-                return Err(member_of_non_struct(base.loc));
-            };
-
-            let member_info = env.check_struct_member(struct_id, base.loc, member)?;
+            let member_info = env.check_struct_member(base.expr_type, base.loc, member)?;
 
             return Ok(TCExpr {
                 expr_type: member_info.decl_type,
@@ -2616,18 +2583,12 @@ pub fn check_expr_allow_brace<'b>(
         ExprKind::PtrMember { base, member } => {
             let base = check_expr(env, local_env, base)?;
 
-            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
-                ident
-            } else {
-                return Err(member_of_non_struct(base.loc));
-            };
-
-            let deref_type = env.deref(&base.expr_type, base.loc)?;
+            let deref_type = env.deref(base.expr_type, base.loc)?;
             if deref_type.pointer_count != 0 {
                 return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(struct_id, base.loc, member)?;
+            let member_info = env.check_struct_member(deref_type, base.loc, member)?;
 
             return Ok(TCExpr {
                 expr_type: member_info.decl_type,
@@ -2642,7 +2603,7 @@ pub fn check_expr_allow_brace<'b>(
         ExprKind::Deref(ptr) => {
             let value = check_expr(env, local_env, ptr)?;
 
-            let expr_type = env.deref(&value.expr_type, value.loc)?;
+            let expr_type = env.deref(value.expr_type, value.loc)?;
             return Ok(TCExpr {
                 expr_type,
                 loc: expr.loc,
@@ -2760,13 +2721,8 @@ fn check_assign_target<'b>(
             let base_loc = base.loc;
             let base = check_assign_target(env, local_env, base)?;
 
-            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.target_type.kind {
-                ident
-            } else {
-                return Err(member_of_non_struct(base.target_loc));
-            };
-
-            let member_info = env.check_struct_member(struct_id, base.target_loc, *member)?;
+            let member_info =
+                env.check_struct_member(base.target_type, base.target_loc, *member)?;
 
             return Ok(TCAssignTarget {
                 kind: base.kind,
@@ -2780,18 +2736,12 @@ fn check_assign_target<'b>(
             let base_loc = base.loc;
             let base = check_expr(env, local_env, base)?;
 
-            let struct_id = if let TCTypeKind::Struct { ident, .. } = base.expr_type.kind {
-                ident
-            } else {
-                return Err(member_of_non_struct(base.loc));
-            };
-
-            let deref_type = env.deref(&base.expr_type, base.loc)?;
+            let deref_type = env.deref(base.expr_type, base.loc)?;
             if deref_type.pointer_count != 0 {
                 return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(struct_id, base.loc, *member)?;
+            let member_info = env.check_struct_member(base.expr_type, base.loc, *member)?;
 
             return Ok(TCAssignTarget {
                 kind: TCAssignTargetKind::Ptr(env.buckets.add(base)),
@@ -2805,7 +2755,7 @@ fn check_assign_target<'b>(
         ExprKind::Deref(ptr) => {
             let ptr = check_expr(env, local_env, ptr)?;
 
-            let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
+            let target_type = env.deref(ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
                 kind: TCAssignTargetKind::Ptr(env.buckets.add(ptr)),
                 target_loc: expr.loc,
@@ -2822,7 +2772,7 @@ fn check_assign_target<'b>(
             let map_err = || invalid_operands_bin_expr(env, BinOp::Index, &ptr, &offset);
             let sum = bin_op.ok_or_else(map_err)?(env, ptr, offset)?;
 
-            let target_type = env.deref(&ptr.expr_type, ptr.loc)?;
+            let target_type = env.deref(ptr.expr_type, ptr.loc)?;
             return Ok(TCAssignTarget {
                 kind: TCAssignTargetKind::Ptr(env.buckets.add(sum)),
                 target_loc: expr.loc,
