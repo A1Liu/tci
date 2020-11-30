@@ -529,10 +529,6 @@ pub enum MAKind {
         start: usize,
         end: usize,
     },
-    Unwrite {
-        start: usize,
-        block_size: u32,
-    },
     Exit {
         bk: usize,
     },
@@ -584,7 +580,6 @@ impl MemoryAction {
             MAKind::Jump { prev, val, bk } => return bk,
             MAKind::WriteStderr { start, end } => return start,
             MAKind::WriteStdout { start, end } => return start,
-            MAKind::Unwrite { start, block_size } => return start,
             MAKind::Exit { bk } => return bk,
         }
     }
@@ -602,6 +597,8 @@ pub struct Memory {
     pub current_func: u32,
     pub fp: u16,
     pub pc: u32,
+
+    pub errored: bool,
     pub exit_code: Option<i32>,
 
     pub historical_data: Vec<u8>,
@@ -624,6 +621,8 @@ impl Memory {
             current_func: INIT_SYMS.translate["main"],
             fp: 1,
             pc: 0,
+
+            errored: false,
             exit_code: None,
 
             historical_data: Vec::new(),
@@ -634,6 +633,10 @@ impl Memory {
     }
 
     pub fn current_tag(&self) -> u32 {
+        if self.history_index == 0 {
+            return 0; // We're at the beginning of history, i.e. at the first instruction
+        }
+
         return self.history[self.history_index - 1].tag;
     }
 
@@ -654,6 +657,8 @@ impl Memory {
             current_func: INIT_SYMS.translate["main"],
             fp: 1,
             pc: 0,
+
+            errored: false,
             exit_code: None,
 
             historical_data,
@@ -671,6 +676,7 @@ impl Memory {
             let event_len = event & !EVENT_RESERVED_BITS;
             if event_enum == 0 {
                 events.push(WriteEvent::Unwind(event_len));
+                continue;
             }
 
             let mut buf = Vec::new();
@@ -692,7 +698,8 @@ impl Memory {
         return events.into_iter();
     }
 
-    pub fn check_exited(&self) -> Result<(), IError> {
+    #[inline]
+    pub fn check_mutate(&mut self) -> Result<(), IError> {
         if self.exit_code.is_some() {
             return Err(error!(
                 "AlreadyExited",
@@ -700,18 +707,25 @@ impl Memory {
             ));
         }
 
+        if self.errored {
+            self.callstack.pop().unwrap();
+            self.errored = false;
+        }
+
         return Ok(());
     }
 
     pub fn exit(&mut self, code: i32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
+        let bk = self.historical_data.len();
+        self.push_history(MAKind::Exit { bk });
         self.exit_code = Some(code);
         return Ok(());
     }
 
     pub fn ret(&mut self) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let bk = self.historical_data.len();
 
@@ -722,19 +736,19 @@ impl Memory {
             self.pop_stack_var().unwrap();
         }
 
-        self.current_func = frame.name;
         self.push_history(MAKind::SetFunc {
             prev: self.current_func,
             val: frame.name,
             bk,
         });
+        self.current_func = frame.name;
 
-        self.fp = frame.fp;
         self.push_history(MAKind::SetFp {
             prev: self.fp,
             val: frame.fp,
             bk,
         });
+        self.fp = frame.fp;
 
         self.push_history(MAKind::Jump {
             prev: self.pc,
@@ -747,7 +761,7 @@ impl Memory {
     }
 
     pub fn call(&mut self, func: u32, func_name: u32, loc: CodeLoc) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let bk = self.historical_data.len();
 
@@ -755,19 +769,19 @@ impl Memory {
             .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
         self.push_history(MAKind::CallstackPush { loc, bk });
 
-        self.current_func = func_name;
         self.push_history(MAKind::SetFunc {
             prev: self.current_func,
             val: func_name,
             bk,
         });
+        self.current_func = func_name;
 
-        self.fp = self.stack_length() + 1;
         self.push_history(MAKind::SetFp {
             prev: self.fp,
             val: self.stack_length() + 1,
             bk,
         });
+        self.fp = self.stack_length() + 1;
 
         self.push_history(MAKind::Jump {
             prev: self.pc,
@@ -778,24 +792,15 @@ impl Memory {
         return Ok(());
     }
 
-    pub fn push_callstack(&mut self, loc: CodeLoc) -> Result<(), IError> {
-        self.check_exited()?;
+    pub fn error_push_callstack(&mut self, loc: CodeLoc) -> Result<(), IError> {
+        self.check_mutate().unwrap();
+        self.errored = true;
+
         let bk = self.historical_data.len();
 
         self.callstack
             .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
-        self.push_history(MAKind::CallstackPush { loc, bk });
         return Ok(());
-    }
-
-    pub fn pop_callstack(&mut self) -> Result<CallFrame, IError> {
-        self.check_exited()?;
-
-        let bk = self.historical_data.len();
-
-        let frame = self.callstack.pop().unwrap();
-        self.push_history(MAKind::CallstackPop { frame, bk });
-        return Ok(frame);
     }
 
     pub fn fp_offset(&self, var: i16) -> u16 {
@@ -809,7 +814,7 @@ impl Memory {
     }
 
     pub fn jump(&mut self, pc: u32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let bk = self.historical_data.len();
 
@@ -824,7 +829,7 @@ impl Memory {
     }
 
     pub fn increment_pc(&mut self) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let bk = self.historical_data.len();
 
@@ -895,7 +900,7 @@ impl Memory {
 
     #[inline]
     pub fn get_var_slice_mut(&mut self, ptr: VarPointer) -> Result<&mut [u8], IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let buffer = if ptr.is_stack() {
             &mut self.stack
@@ -967,7 +972,7 @@ impl Memory {
 
     #[inline]
     pub fn set<T: Copy>(&mut self, ptr: VarPointer, value: T) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let value_start = self.historical_data.len();
         self.historical_data
@@ -998,7 +1003,7 @@ impl Memory {
 
     #[inline]
     pub fn add_stack_var(&mut self, len: u32, meta: u32) -> Result<VarPointer, IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         // TODO check for overflow
         let ptr = VarPointer::new_stack(self.stack.add_var(len, meta) as u16, 0);
@@ -1009,7 +1014,7 @@ impl Memory {
 
     #[inline]
     pub fn add_heap_var(&mut self, len: u32) -> Result<VarPointer, IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let ptr = VarPointer::new_heap(self.heap.add_var(len, 0), 0);
         let bk = self.historical_data.len();
@@ -1018,7 +1023,7 @@ impl Memory {
     }
 
     pub fn write_bytes(&mut self, ptr: VarPointer, bytes: &[u8]) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(bytes);
@@ -1054,7 +1059,7 @@ impl Memory {
     }
 
     pub fn pop_stack_var(&mut self) -> Result<Var, IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let var = self.stack.vars.pop();
         let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
@@ -1078,7 +1083,7 @@ impl Memory {
     }
 
     pub fn pop_stack_var_onto_stack(&mut self) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let var = self.stack.vars.pop();
         let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
@@ -1108,7 +1113,7 @@ impl Memory {
 
     #[inline]
     pub fn push_stack<T: Copy>(&mut self, value: T) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let from_bytes = any_as_u8_slice(&value);
         let value_start = self.historical_data.len();
@@ -1125,7 +1130,7 @@ impl Memory {
     }
 
     pub fn push_stack_bytes(&mut self, from_bytes: &[u8]) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(from_bytes);
@@ -1141,7 +1146,7 @@ impl Memory {
     }
 
     pub fn pop_stack_bytes_into(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         if self.stack.data.len() < len as usize {
             return err!(
@@ -1209,7 +1214,7 @@ impl Memory {
     }
 
     pub fn push_stack_bytes_from(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let break_idx = if let Some(var) = self.stack.vars.last() {
             var.upper()
@@ -1217,19 +1222,27 @@ impl Memory {
             0
         };
 
-        let data = &mut self.stack.data;
-        data.resize(data.len() + len as usize, 0);
-
         let (from_bytes, stack) = if ptr.is_stack() {
-            let (start, end) = self.stack.get_var_range(ptr, len)?;
+            let (start, end) = match self.stack.get_var_range(ptr, len) {
+                Ok((start, end)) => {
+                    let data = &mut self.stack.data;
+                    data.resize(data.len() + len as usize, 0);
+                    (start, end)
+                }
+                Err(err) => return Err(err),
+            };
             let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
             (&stack_vars[start..end], stack)
         } else if ptr.is_heap() {
             let (start, end) = self.heap.get_var_range(ptr, len)?;
+            let data = &mut self.stack.data;
+            data.resize(data.len() + len as usize, 0);
             let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
             (&self.heap.data[start..end], stack)
         } else {
             let (start, end) = self.binary.get_var_range(ptr, len)?;
+            let data = &mut self.stack.data;
+            data.resize(data.len() + len as usize, 0);
             let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
             (&self.binary.data[start..end], stack)
         };
@@ -1250,7 +1263,7 @@ impl Memory {
     }
 
     pub fn pop_bytes(&mut self, len: u32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         if self.stack.data.len() < len as usize {
             return err!(
@@ -1288,7 +1301,7 @@ impl Memory {
     }
 
     pub fn pop_keep_bytes(&mut self, keep: u32, pop: u32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let len = keep + pop;
         if self.stack.data.len() < len as usize {
@@ -1338,7 +1351,7 @@ impl Memory {
     }
 
     pub fn dup_top_stack_bytes(&mut self, bytes: u32) -> Result<(), IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         if self.stack.data.len() < bytes as usize {
             return err!(
@@ -1381,7 +1394,7 @@ impl Memory {
     }
 
     pub fn pop_stack<T: Copy>(&mut self) -> Result<T, IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         let len = mem::size_of::<T>();
         if self.stack.data.len() < len {
@@ -1422,13 +1435,13 @@ impl Memory {
     }
 
     pub fn stdout(&mut self) -> Result<MemoryStdout, IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         Ok(MemoryStdout { memory: self })
     }
 
     pub fn stderr(&mut self) -> Result<MemoryStderr, IError> {
-        self.check_exited()?;
+        self.check_mutate()?;
 
         Ok(MemoryStderr { memory: self })
     }
@@ -1517,14 +1530,6 @@ impl Memory {
             MAKind::WriteStderr { start, end } => {
                 let block_size = (end - start) as u32;
                 self.io_events.push_back(block_size);
-            }
-            MAKind::Unwrite { start, block_size } => {
-                let block_enum = block_size & EVENT_RESERVED_BITS;
-                let block_size = block_size & !EVENT_RESERVED_BITS;
-                let end = start + block_size as usize;
-
-                self.io_buf.extend(&self.historical_data[start..end]);
-                self.io_events.push_back(block_enum | block_size);
             }
             MAKind::Exit { bk } => {
                 self.exit_code = None;

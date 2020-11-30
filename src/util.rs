@@ -187,11 +187,17 @@ pub const NO_FILE: CodeLoc = CodeLoc {
     file: !0,
 };
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, serde::Serialize)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,
     pub file: u32,
+}
+
+impl fmt::Debug for CodeLoc {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(fmt, "{}:({},{})", self.file, self.start, self.end)
+    }
 }
 
 #[inline]

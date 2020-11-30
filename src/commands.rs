@@ -225,10 +225,13 @@ impl WSState {
                 Command::Back(count) => {
                     for _ in 0..count {
                         let loc = runtime.program.ops[runtime.pc() as usize].loc;
-                        while runtime.prev()
-                            && runtime.program.ops[runtime.pc() as usize].loc == loc
-                        {
+                        if !runtime.prev() {
+                            break;
                         }
+
+                        while runtime.program.ops[runtime.pc() as usize].loc == loc
+                            && runtime.prev()
+                        {}
                     }
 
                     for event in runtime.memory.events() {

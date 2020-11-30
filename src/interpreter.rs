@@ -314,12 +314,16 @@ impl Runtime {
         if let Some(code) = self.memory.exit_code {
             return Ok(Some(code));
         }
+        let tag = self.memory.pc;
 
-        match self.run_op_internal() {
+        let ret = self.run_op_internal();
+        let history: Vec<_> = self.memory.history.iter().map(|h| h.kind).collect();
+        match ret {
             Ok(opt) => return Ok(opt),
             Err(err) => {
+                while self.memory.current_tag() == tag && self.memory.prev() {}
                 self.memory
-                    .push_callstack(self.program.ops[self.memory.pc as usize].loc)?;
+                    .error_push_callstack(self.program.ops[self.memory.pc as usize].loc)?;
                 return Err(err);
             }
         }
