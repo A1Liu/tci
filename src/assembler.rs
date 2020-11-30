@@ -533,12 +533,16 @@ impl Assembler {
             TCExprKind::RShiftI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::PopKeep { keep: 1, drop: 3 };
+                ops.push(tagged);
                 tagged.op = Opcode::RShiftI32;
                 ops.push(tagged);
             }
             TCExprKind::LShiftI32(l, r) => {
                 ops.append(&mut self.translate_expr(l));
                 ops.append(&mut self.translate_expr(r));
+                tagged.op = Opcode::PopKeep { keep: 1, drop: 3 };
+                ops.push(tagged);
                 tagged.op = Opcode::LShiftI32;
                 ops.push(tagged);
             }
@@ -617,6 +621,12 @@ impl Assembler {
             TCExprKind::Conv64To32(expr) => {
                 ops.append(&mut self.translate_expr(expr));
                 tagged.op = Opcode::PopKeep { keep: 4, drop: 4 };
+                ops.push(tagged);
+            }
+
+            TCExprKind::Conv32To8(expr) => {
+                ops.append(&mut self.translate_expr(expr));
+                tagged.op = Opcode::PopKeep { keep: 1, drop: 3 };
                 ops.push(tagged);
             }
 
