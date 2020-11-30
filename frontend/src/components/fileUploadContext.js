@@ -93,7 +93,6 @@ export const FileUploadProvider = ({ children }) => {
 
       sock.onmessage = (evt) => {
         const resp = JSON.parse(evt.data);
-        console.log(resp);
         globalListeners.current.forEach((gl) =>
           gl(sockSend, resp.response, resp.data)
         );
