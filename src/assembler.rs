@@ -734,6 +734,18 @@ impl Assembler {
                         }
                         _ => unimplemented!(),
                     },
+                    BinOp::LShift => match target.target_type.kind {
+                        TCTypeKind::I32 => {
+                            tagged.op = Opcode::LShiftI32
+                        }
+                        _ => unimplemented!(),
+                    }
+                    BinOp::RShift => match target.target_type.kind {
+                        TCTypeKind::I32 => {
+                            tagged.op = Opcode::RShiftI32
+                        }
+                        _ => unimplemented!(),
+                    }
                     _ => unimplemented!(),
                 }
                 ops.push(tagged);

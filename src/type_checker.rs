@@ -2478,9 +2478,14 @@ pub fn check_expr_allow_brace<'b>(
         ExprKind::MutAssign { target, value, op } => {
             let target = check_assign_target(env, local_env, target)?;
             let value = check_expr(env, local_env, value)?;
-            let value = env.assign_convert(&target.target_type, target.target_loc, value)?;
+
+            let target_type = match op {
+                BinOp::LShift | BinOp::RShift => TCType::new(TCTypeKind::U8, 0),
+                _ => target.target_type,
+            };
+            let value = env.assign_convert(&target_type, target.target_loc, value)?;
             let value = env.buckets.add(value);
-            
+
             return Ok(TCExpr {
                 expr_type: target.target_type,
                 loc: expr.loc,
