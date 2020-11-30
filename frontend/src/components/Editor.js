@@ -5,6 +5,17 @@ import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
 
+function searchFileName(fileId, files) {
+  const result = Object.keys(files).filter((fileName) => {
+    return files[fileName].fileId === fileId;
+  });
+  if (result.length > 0) {
+    return result[0];
+  }
+  // default cases;
+  return "main.c";
+}
+
 export default function BasicEditor() {
   const {
     files,
@@ -58,6 +69,10 @@ export default function BasicEditor() {
         "ace_active-line",
         "fullLine"
       );
+      if (location.file !== files[currentFile].fileId) {
+        const fileName = searchFileName(location.file, files);
+        setCurrentFile(fileName);
+      }
       setMarkerId(marker);
       setCurrentLocation({
         row,
