@@ -18,9 +18,9 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
         }
     };
     mem::drop(files);
-    for (idx, op) in program.ops.iter().enumerate() {
-        println!("op {}: {:?}", idx, op);
-    }
+    // for (idx, op) in program.ops.iter().enumerate() {
+    //     println!("op {}: {:?}", idx, op);
+    // }
 
     let mut runtime = Runtime::new(program, StringArray::new());
 

@@ -1,4 +1,6 @@
 import "./tailwind.css";
+import "./Split.css";
+import SplitPane from "react-split-pane";
 import { FileUploadProvider } from "./components/fileUploadContext";
 import NavBar from "./components/NavBar";
 import Terminal from "./components/Terminal";
@@ -16,15 +18,29 @@ function App() {
           </li>
         </ul>
         <NavBar />
-        <div className="flex min-h-screen">
-          <div className="w-screen">
-            <div className="flex md:flex-row">
-              <div className="w-full md:w-1/2 text-center border-r border-gray-800">
-                <BasicEditor />
-              </div>
-              <div className="h-screen w-full md:w-1/2 text-center border-solid">
-                <Terminal />
-              </div>
+        <div className="flex min-h-screen flex-wrap ">
+          <div className="md:w-full">
+            <div className="flex md:flex-row flex-wrap">
+              <SplitPane
+                split="vertical"
+                defaultSize="50%"
+                minSize={200}
+                maxSize={-200}
+                style={{ width: "100%", height: "100%" }}
+              >
+                <div
+                  style={{ width: "100%", height: "100%" }}
+                  className="w-full md:w-1/2 text-center border-r border-gray-800"
+                >
+                  <BasicEditor />
+                </div>
+                <div
+                  style={{ width: "100%", height: "100%" }}
+                  className="h-screen w-full md:w-1/2 text-center border-solid"
+                >
+                  <Terminal />
+                </div>
+              </SplitPane>
             </div>
           </div>
         </div>

@@ -24,7 +24,6 @@ pub enum Command {
     },
     Snapshot,
     Back(u32),
-    Forwards(u32),
 }
 
 #[derive(Debug, Serialize)]
@@ -223,29 +222,12 @@ impl WSState {
                 Command::Snapshot => {
                     ret!(CommandResult::Snapshot(runtime.memory.snapshot()));
                 }
-                Command::Forwards(count) => {
-                    for _ in 0..count {
-                        let tag = runtime.memory.current_tag();
-                        while runtime.memory.current_tag() == tag && runtime.memory.next() {}
-
-                        if runtime.memory.current_tag() == tag {
-                            break;
-                        }
-                    }
-
-                    for event in runtime.memory.events() {
-                        messages.push(event.into());
-                    }
-
-                    ret!(CommandResult::Status(runtime.diagnostic()));
-                }
                 Command::Back(count) => {
                     for _ in 0..count {
-                        let tag = runtime.memory.current_tag();
-                        while runtime.memory.current_tag() == tag && runtime.memory.prev() {}
-
-                        if runtime.memory.current_tag() == tag {
-                            break;
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        while runtime.prev()
+                            && runtime.program.ops[runtime.pc() as usize].loc == loc
+                        {
                         }
                     }
 
