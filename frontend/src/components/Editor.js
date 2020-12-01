@@ -5,6 +5,13 @@ import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
 
+function searchFileName(fileId, files) {
+  const file = Object.keys(files).find(
+    (fileName) => files[fileName].fileId === fileId
+  );
+  return file ?? "main.c";
+}
+
 export default function BasicEditor() {
   const {
     files,
@@ -58,6 +65,8 @@ export default function BasicEditor() {
         "ace_active-line",
         "fullLine"
       );
+      const fileName = searchFileName(location.file, files);
+      setCurrentFile(fileName);
       setMarkerId(marker);
       setCurrentLocation({
         row,
