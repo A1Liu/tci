@@ -699,7 +699,7 @@ impl Assembler {
                             tagged.op = Opcode::AddU32;
                         }
                         TCTypeKind::I64 | TCTypeKind::U64 => {
-                            tagged.op = Opcode::AddU32;
+                            tagged.op = Opcode::AddU64;
                         }
                         _ => unimplemented!(),
                     },

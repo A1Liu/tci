@@ -386,7 +386,7 @@ impl Runtime {
             Opcode::PopKeep { keep, drop } => self.memory.pop_keep_bytes(keep, drop)?,
             Opcode::PushUndef { bytes } => {
                 self.memory.add_stack_var(bytes, META_NO_SYMBOL)?;
-                self.memory.pop_stack_var_onto_stack().unwrap();
+                self.memory.pop_stack_var_onto_stack().unwrap()?;
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
@@ -571,7 +571,7 @@ impl Runtime {
             Opcode::ModI32 => {
                 let word2 = u32::from_be(self.memory.pop_stack()?);
                 let word1 = u32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 % word2).to_be());
+                self.memory.push_stack((word1 % word2).to_be())?;
             }
             Opcode::ModI64 => {
                 let word2 = u64::from_be(self.memory.pop_stack()?);
@@ -581,38 +581,38 @@ impl Runtime {
             Opcode::RShiftI32 => {
                 let word2 = u8::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be());
+                self.memory.push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be())?;
             }
             Opcode::LShiftI32 => {
                 let word2 = u8::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be());
+                self.memory.push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be())?;
             }
 
             Opcode::BitAndI8 => {
                 let word2 = i8::from_be(self.memory.pop_stack()?);
                 let word1 = i8::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.bitand(word2).to_be());
+                self.memory.push_stack(word1.bitand(word2).to_be())?;
             }
             Opcode::BitAndI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.bitand(word2).to_be());
+                self.memory.push_stack(word1.bitand(word2).to_be())?;
             }
             Opcode::BitOrI8 => {
                 let word2 = i8::from_be(self.memory.pop_stack()?);
                 let word1 = i8::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.bitor(word2).to_be());
+                self.memory.push_stack(word1.bitor(word2).to_be())?;
             }
             Opcode::BitOrI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.bitor(word2).to_be());
+                self.memory.push_stack(word1.bitor(word2).to_be())?;
             }
             Opcode::BitXorI32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.bitxor(word2).to_be());
+                self.memory.push_stack(word1.bitxor(word2).to_be())?;
             }
 
             Opcode::Jump(target) => {
