@@ -312,6 +312,31 @@ pub struct TCTypedef {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+pub enum TCPrimType {
+    I32, // int
+    U32, // unsigned int
+    U64, // unsigned long
+    I64, // long
+    I8,  // char
+    U8,  // unsigned char
+    Pointer { size: u32 },
+}
+
+impl TCPrimType {
+    pub fn idx(&self) -> u8 {
+        match self {
+            TCPrimType::I32 => 0,
+            TCPrimType::U32 => 1,
+            TCPrimType::U64 => 2,
+            TCPrimType::I64 => 3,
+            TCPrimType::I8 => 4,
+            TCPrimType::U8 => 5,
+            TCPrimType::Pointer { .. } => 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum TCTypeKind {
     I32, // int
