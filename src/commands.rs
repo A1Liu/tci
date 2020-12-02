@@ -3,7 +3,7 @@ use crate::interpreter::*;
 use crate::runtime::*;
 use crate::*;
 use serde::{Deserialize, Serialize};
-use strum_macros::IntoStaticStr;
+use strum::IntoStaticStr;
 
 #[derive(Debug, Deserialize, Serialize, IntoStaticStr)]
 #[serde(tag = "command", content = "data")]

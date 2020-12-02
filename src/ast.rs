@@ -311,7 +311,7 @@ pub struct TCTypedef {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize, strum::EnumDiscriminants)]
 pub enum TCPrimType {
     I32, // int
     U32, // unsigned int
@@ -320,20 +320,6 @@ pub enum TCPrimType {
     I8,  // char
     U8,  // unsigned char
     Pointer { size: u32 },
-}
-
-impl TCPrimType {
-    pub fn idx(&self) -> u8 {
-        match self {
-            TCPrimType::I32 => 0,
-            TCPrimType::U32 => 1,
-            TCPrimType::U64 => 2,
-            TCPrimType::I64 => 3,
-            TCPrimType::I8 => 4,
-            TCPrimType::U8 => 5,
-            TCPrimType::Pointer { .. } => 6,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]

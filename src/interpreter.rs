@@ -331,7 +331,6 @@ impl Runtime {
         let tag = self.memory.pc;
 
         let ret = self.run_op_internal();
-        let history: Vec<_> = self.memory.history.iter().map(|h| h.kind).collect();
         match ret {
             Ok(opt) => return Ok(opt),
             Err(err) => {
