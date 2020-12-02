@@ -21,6 +21,8 @@ pub enum BinOp {
     Geq,
     Eq,
     Neq,
+    LShift,
+    RShift,
     BitAnd,
     BitXor,
     BitOr,
@@ -50,6 +52,11 @@ pub enum ExprKind<'a> {
     UnaryOp(UnaryOp, &'a Expr<'a>),
     Not(&'a Expr<'a>),
     Assign(&'a Expr<'a>, &'a Expr<'a>),
+    MutAssign {
+        target: &'a Expr<'a>,
+        value: &'a Expr<'a>,
+        op: BinOp,
+    },
     Call {
         function: &'a Expr<'a>,
         params: &'a [Expr<'a>],
@@ -701,12 +708,23 @@ pub enum TCExprKind<'a> {
     MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
     MulU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
+    RShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    LShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    BitAndI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BitOrI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BitXorI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
+    BitAndI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BitOrI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
+
     SConv8To32(&'a TCExpr<'a>),
     SConv32To64(&'a TCExpr<'a>),
 
     ZConv8To32(&'a TCExpr<'a>),
     ZConv32To64(&'a TCExpr<'a>),
 
+    Conv32To8(&'a TCExpr<'a>),
     Conv64To32(&'a TCExpr<'a>),
 
     PostIncrU32(TCAssignTarget<'a>),
@@ -715,6 +733,12 @@ pub enum TCExprKind<'a> {
     Assign {
         target: TCAssignTarget<'a>,
         value: &'a TCExpr<'a>,
+    },
+
+    MutAssign {
+        target: TCAssignTarget<'a>,
+        value: &'a TCExpr<'a>,
+        op: BinOp,
     },
 
     Ternary {

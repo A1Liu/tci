@@ -125,8 +125,11 @@ impl<'b> Parser<'b> {
                 let (right, left) = buckets.add((right, left));
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::Add,
+                    },
                 });
             }
             TokenKind::DashEq => {
@@ -136,7 +139,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::Sub,
+                    },
                 });
             }
             TokenKind::StarEq => {
@@ -146,7 +153,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::Mul,
+                    },
                 });
             }
             TokenKind::SlashEq => {
@@ -156,7 +167,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::Div,
+                    },
                 });
             }
             TokenKind::PercentEq => {
@@ -166,7 +181,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::Mod,
+                    },
                 });
             }
             TokenKind::LtLtEq => {
@@ -176,7 +195,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::LShift,
+                    },
                 });
             }
             TokenKind::GtGtEq => {
@@ -186,7 +209,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::RShift,
+                    },
                 });
             }
             TokenKind::AmpEq => {
@@ -196,7 +223,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::BitAnd,
+                    },
                 });
             }
             TokenKind::CaretEq => {
@@ -206,7 +237,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::BitXor,
+                    },
                 });
             }
             TokenKind::LineEq => {
@@ -216,7 +251,11 @@ impl<'b> Parser<'b> {
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
                     //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::BitOr,
+                    },
                 });
             }
             _ => {
@@ -538,7 +577,7 @@ impl<'b> Parser<'b> {
                     let right = buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Add, left, right),
+                        kind: ExprKind::BinOp(BinOp::RShift, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }
@@ -550,7 +589,7 @@ impl<'b> Parser<'b> {
                     let right = buckets.add(right);
 
                     expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Add, left, right),
+                        kind: ExprKind::BinOp(BinOp::LShift, left, right),
                         loc: l_from(start_loc, end_loc),
                     };
                 }

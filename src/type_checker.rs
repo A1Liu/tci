@@ -4,6 +4,80 @@ use crate::filedb::*;
 use crate::util::*;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Hash, PartialEq, Eq)]
+pub struct TypeDeclSpec {
+    unsigned: u8,
+    long: u8,
+    short: u8,
+    char: u8,
+    int: u8,
+    float: u8,
+    signed: u8,
+    double: u8,
+}
+macro_rules! gen_type_decl_spec {
+    ($( $ident:ident )* ) => {{
+        let mut decl = TypeDeclSpec {
+            unsigned: 0,
+            long: 0,
+            short: 0,
+            char: 0,
+            int: 0,
+            float: 0,
+            signed: 0,
+            double: 0,
+        };
+        $(
+            gen_type_decl_spec!(@INCR_CORRECT, decl, $ident);
+        )*
+        decl
+    }};
+    (@INCR_CORRECT, $decl:expr,unsigned) => {
+        $decl.unsigned += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,long) => {
+        $decl.long += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,short) => {
+        $decl.short += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,char) => {
+        $decl.char += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,int) => {
+        $decl.int += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,float) => {
+        $decl.float += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,signed) => {
+        $decl.signed += 1;
+    };
+    (@INCR_CORRECT, $decl:expr,double) => {
+        $decl.double += 1;
+    };
+
+}
+pub static CORRECT_TYPES: LazyStatic<HashMap<TypeDeclSpec, ASTTypeKind<'static>>> = lazy_static!(type_decl_spec, HashMap<TypeDeclSpec, ASTTypeKind<'static>>, {
+    let mut map = HashMap::new();
+    map.insert(gen_type_decl_spec!(int), ASTTypeKind::Int);
+    map.insert(gen_type_decl_spec!(long), ASTTypeKind::Long);
+    map.insert(gen_type_decl_spec!(signed char), ASTTypeKind::Char);
+    map.insert(gen_type_decl_spec!(unsigned), ASTTypeKind::Unsigned);
+
+    map.insert(gen_type_decl_spec!(long int), ASTTypeKind::LongInt);
+    map.insert(gen_type_decl_spec!(long long int), ASTTypeKind::LongLongInt);
+    map.insert(gen_type_decl_spec!(long long), ASTTypeKind::LongLong);
+
+    map.insert(gen_type_decl_spec!(unsigned int), ASTTypeKind::Unsigned);
+    map.insert(gen_type_decl_spec!(unsigned long), ASTTypeKind::UnsignedLong);
+    map.insert(gen_type_decl_spec!(unsigned long int), ASTTypeKind::UnsignedLongInt);
+    map.insert(gen_type_decl_spec!(unsigned long long), ASTTypeKind::UnsignedLongLong);
+    map.insert(gen_type_decl_spec!(unsigned long long int), ASTTypeKind::UnsignedLongLongInt);
+    map.insert(gen_type_decl_spec!(unsigned char), ASTTypeKind::UnsignedChar);
+    map
+});
+
 pub fn unify<'a>(
     env: CheckEnv<'_, 'a>,
     mut l: TCExpr<'a>,
@@ -104,6 +178,16 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_unified_bin_op!(Eq, I32, Eq32, I8);
     add_unified_bin_op!(Eq, VoidPointer, Eq64, I8);
     add_unified_bin_op!(Eq, Pointer, Eq64, I8);
+
+    add_unified_bin_op!(RShift, I32, RShiftI32, I32);
+    add_unified_bin_op!(LShift, I32, LShiftI32, I32);
+
+    add_unified_bin_op!(BitAnd, I32, BitAndI32, I32);
+    add_unified_bin_op!(BitOr, I32, BitOrI32, I32);
+    add_unified_bin_op!(BitXor, I32, BitXorI32, I32);
+
+    add_unified_bin_op!(BoolAnd, I8, BitAndI8, I8);
+    add_unified_bin_op!(BoolOr, I8, BitOrI8, I8);
 
     macro_rules! add_un_op_ol {
         ($op:ident, $operand:ident, $func:expr) => {{
@@ -255,6 +339,7 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     add_assign_ol!(U32, U64, ZConv32To64);
     add_assign_ol!(U64, I32, Conv64To32);
     add_assign_ol!(U64, U32, Conv64To32);
+    add_assign_ol!(I32, U8, Conv32To8);
 
     Overloads {
         unary_op,
@@ -2362,6 +2447,25 @@ pub fn check_expr_allow_brace<'b>(
                 expr_type: target.target_type,
                 loc: expr.loc,
                 kind: TCExprKind::Assign { target, value },
+            });
+        }
+
+        ExprKind::MutAssign { target, value, op } => {
+            let target = check_assign_target(env, local_env, target)?;
+            let value = check_expr(env, local_env, value)?;
+
+            let target_type = match op {
+                BinOp::LShift | BinOp::RShift => TCType::new(TCTypeKind::U8, 0),
+                _ => target.target_type,
+            };
+
+            let value = env.assign_convert(&target_type, target.target_loc, value)?;
+            let value = env.buckets.add(value);
+
+            return Ok(TCExpr {
+                expr_type: target.target_type,
+                loc: expr.loc,
+                kind: TCExprKind::MutAssign { target, value, op },
             });
         }
 

@@ -164,6 +164,9 @@ gen_test_should_succeed!(
     control_flow,
     macros,
     binary_search,
+    bitwise_operators,
+    bool_operators,
+    assign_operators,
     ("dyn_array_ptr/", dyn_array_ptr, main),
     ("arrays/", arrays, main)
 );
