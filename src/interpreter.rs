@@ -6,8 +6,8 @@ use crate::util::*;
 use core::fmt;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::io::Write;
 use std::convert::TryInto;
+use std::io::Write;
 use std::ops::BitAnd;
 use std::ops::BitOr;
 use std::ops::BitXor;
@@ -386,7 +386,7 @@ impl Runtime {
             Opcode::PopKeep { keep, drop } => self.memory.pop_keep_bytes(keep, drop)?,
             Opcode::PushUndef { bytes } => {
                 self.memory.add_stack_var(bytes, META_NO_SYMBOL)?;
-                self.memory.pop_stack_var_onto_stack().unwrap()?;
+                self.memory.pop_stack_var_onto_stack()?;
             }
             Opcode::PushDup { bytes } => {
                 self.memory.dup_top_stack_bytes(bytes)?;
@@ -581,12 +581,14 @@ impl Runtime {
             Opcode::RShiftI32 => {
                 let word2 = u8::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be())?;
+                self.memory
+                    .push_stack(word1.wrapping_shr(word2.try_into().unwrap()).to_be())?;
             }
             Opcode::LShiftI32 => {
                 let word2 = u8::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be())?;
+                self.memory
+                    .push_stack(word1.wrapping_shl(word2.try_into().unwrap()).to_be())?;
             }
 
             Opcode::BitAndI8 => {
