@@ -7,6 +7,96 @@ use std::collections::HashMap;
 
 pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
 
+#[derive(Hash, PartialEq, Eq)]
+pub struct TypeDeclSpec {
+    unsigned: u8,
+    long: u8,
+    short: u8,
+    char: u8,
+    int: u8,
+    float: u8,
+    signed: u8,
+    double: u8,
+    void: u8,
+}
+
+impl TypeDeclSpec {
+    pub fn new() -> Self {
+        TypeDeclSpec {
+            unsigned: 0,
+            long: 0,
+            short: 0,
+            char: 0,
+            int: 0,
+            float: 0,
+            signed: 0,
+            double: 0,
+            void: 0,
+        }
+    }
+}
+
+macro_rules! gen_type_decl_spec {
+    ($( $ident:ident )* ) => {{
+        let mut decl = TypeDeclSpec::new();
+
+        $(
+            gen_type_decl_spec!(@INCR_CORRECT, decl, $ident);
+        )*
+        decl
+    }};
+    (@INCR_CORRECT, $decl:expr, void) => {
+        $decl.void += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, unsigned) => {
+        $decl.unsigned += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, long) => {
+        $decl.long += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, short) => {
+        $decl.short += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, char) => {
+        $decl.char += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, int) => {
+        $decl.int += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, float) => {
+        $decl.float += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, signed) => {
+        $decl.signed += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, double) => {
+        $decl.double += 1;
+    };
+}
+
+pub static CORRECT_TYPES: LazyStatic<HashMap<TypeDeclSpec, ASTTypeKind<'static>>> = lazy_static!(type_decl_spec, HashMap<TypeDeclSpec, ASTTypeKind<'static>>, {
+    let mut map = HashMap::new();
+    map.insert(gen_type_decl_spec!(int), ASTTypeKind::Int);
+    map.insert(gen_type_decl_spec!(long), ASTTypeKind::Long);
+    map.insert(gen_type_decl_spec!(char), ASTTypeKind::Char);
+    map.insert(gen_type_decl_spec!(void), ASTTypeKind::Void);
+    map.insert(gen_type_decl_spec!(signed char), ASTTypeKind::Char);
+    map.insert(gen_type_decl_spec!(unsigned), ASTTypeKind::Unsigned);
+
+    map.insert(gen_type_decl_spec!(unsigned char), ASTTypeKind::UnsignedChar);
+
+    map.insert(gen_type_decl_spec!(long int), ASTTypeKind::Long);
+    map.insert(gen_type_decl_spec!(long long int), ASTTypeKind::LongLong);
+    map.insert(gen_type_decl_spec!(long long), ASTTypeKind::LongLong);
+
+    map.insert(gen_type_decl_spec!(unsigned int), ASTTypeKind::Unsigned);
+    map.insert(gen_type_decl_spec!(unsigned long), ASTTypeKind::UnsignedLong);
+    map.insert(gen_type_decl_spec!(unsigned long int), ASTTypeKind::UnsignedLong);
+    map.insert(gen_type_decl_spec!(unsigned long long), ASTTypeKind::UnsignedLongLong);
+    map.insert(gen_type_decl_spec!(unsigned long long int), ASTTypeKind::UnsignedLongLong);
+    map
+});
+
 pub struct Parser<'b> {
     pub db: AstDb<'b>,
 }
@@ -1658,15 +1748,10 @@ impl<'b> Parser<'b> {
         tokens: &[Token],
         current: &mut usize,
     ) -> Result<ASTType<'b>, Error> {
-        let mut kind;
-
         let mut tok = peek(tokens, current)?;
         match tok.kind {
-            TokenKind::Int => kind = ASTTypeKind::Int,
-            TokenKind::Void => kind = ASTTypeKind::Void,
-            TokenKind::Char => kind = ASTTypeKind::Char,
-            TokenKind::Long => kind = ASTTypeKind::Long,
-            TokenKind::Unsigned => kind = ASTTypeKind::Unsigned,
+            TokenKind::Int | TokenKind::Void | TokenKind::Char => {}
+            TokenKind::Long | TokenKind::Unsigned => {}
             TokenKind::TypeIdent(ident) => {
                 pop(tokens, current).unwrap();
 
@@ -1724,159 +1809,36 @@ impl<'b> Parser<'b> {
             _ => return Err(unexpected_token("type", &tok)),
         }
 
-        let start_loc = pop(tokens, current).unwrap().loc;
+        let start_loc = tok.loc;
         let mut end_loc = start_loc;
+        let mut decl_spec = TypeDeclSpec::new();
 
-        macro_rules! reject {
-            ( $( $ident:ident),* ) => {{
-                $(
-                    if tok.kind == TokenKind::$ident {
-                        return Err(error!(
-                            "token not allowed in this context",
-                            tok.loc, "illegal token found here"
-                        ));
-                    }
-                )*
-            }};
-        }
-
-        // TODO how do you do this cleaner?
-        tok = peek(tokens, current)?;
         loop {
-            use ASTTypeKind as ATK;
-
-            match kind {
-                ATK::Int => {
-                    reject!(Char, Void, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedInt,
-                        TokenKind::Long => kind = ATK::LongInt,
-                        _ => break,
-                    }
-                }
-                ATK::Long => {
-                    reject!(Char, Void);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLong,
-                        TokenKind::Long => kind = ATK::LongLong,
-                        TokenKind::Int => kind = ATK::LongInt,
-                        _ => break,
-                    }
-                }
-                ATK::Char => {
-                    reject!(Long, Char, Void, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedChar,
-                        _ => break,
-                    }
-                }
-                ATK::Unsigned => {
-                    reject!(Void);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::Unsigned,
-                        TokenKind::Char => kind = ATK::UnsignedChar,
-                        TokenKind::Int => kind = ATK::UnsignedInt,
-                        TokenKind::Long => kind = ATK::UnsignedLong,
-                        _ => break,
-                    }
-                }
-                ATK::Void => {
-                    reject!(Char, Void, Int, Long, Unsigned);
-                    break;
-                }
-
-                ATK::LongInt => {
-                    reject!(Char, Void, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLongInt,
-                        TokenKind::Long => kind = ATK::LongLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::LongLongInt => {
-                    reject!(Char, Void, Int, Long);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLongLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::LongLong => {
-                    reject!(Char, Void, Long);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLongLongInt,
-                        TokenKind::Int => kind = ATK::LongLongInt,
-                        _ => break,
-                    }
-                }
-
-                ATK::UnsignedInt => {
-                    reject!(Char, Void, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedInt,
-                        TokenKind::Long => kind = ATK::UnsignedLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::UnsignedLong => {
-                    reject!(Char, Void);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLong,
-                        TokenKind::Long => kind = ATK::UnsignedLongLong,
-                        TokenKind::Int => kind = ATK::UnsignedLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::UnsignedLongInt => {
-                    reject!(Char, Void, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLongInt,
-                        TokenKind::Long => kind = ATK::UnsignedLongLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::UnsignedLongLong => {
-                    reject!(Char, Void, Long);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLongLong,
-                        TokenKind::Int => kind = ATK::UnsignedLongLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::UnsignedLongLongInt => {
-                    reject!(Char, Void, Long, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedLongLongInt,
-                        _ => break,
-                    }
-                }
-                ATK::UnsignedChar => {
-                    reject!(Char, Void, Long, Int);
-
-                    match tok.kind {
-                        TokenKind::Unsigned => kind = ATK::UnsignedChar,
-                        _ => break,
-                    }
-                }
-
-                ATK::Struct(_) | ATK::Ident(_) => unreachable!(),
+            match tok.kind {
+                TokenKind::Int => decl_spec.int += 1,
+                TokenKind::Void => decl_spec.void += 1,
+                TokenKind::Char => decl_spec.char += 1,
+                TokenKind::Long => decl_spec.long += 1,
+                TokenKind::Unsigned => decl_spec.unsigned += 1,
+                TokenKind::Signed => decl_spec.signed += 1,
+                TokenKind::Float => decl_spec.float += 1,
+                TokenKind::Double => decl_spec.double += 1,
+                _ => break,
             }
 
             end_loc = pop(tokens, current).unwrap().loc;
-
             tok = peek(tokens, current)?;
         }
+
+        let kind = if let Some(kind) = CORRECT_TYPES.get(&decl_spec) {
+            *kind
+        } else {
+            return Err(error!(
+                "Incorrect declaration specifier",
+                l_from(start_loc, end_loc),
+                format!("this is invalid")
+            ));
+        };
 
         return Ok(ASTType {
             kind,
