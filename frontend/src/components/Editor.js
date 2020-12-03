@@ -1,16 +1,10 @@
 import AceEditor from "react-ace";
 import { Range } from "ace-builds";
+import "../App.css";
 import React, { useEffect, useRef, useState } from "react";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useFileUpload } from "./fileUploadContext";
-
-function searchFileName(fileId, files) {
-  const file = Object.keys(files).find(
-    (fileName) => files[fileName].fileId === fileId
-  );
-  return file ?? "main.c";
-}
 
 export default function BasicEditor() {
   const {
@@ -26,20 +20,7 @@ export default function BasicEditor() {
   const code = files[currentFile];
   const aceEditor = useRef(null);
   const [markerId, setMarkerId] = useState(null);
-  const [currentLocation, setCurrentLocation] = useState({
-    row: 0,
-    column: 0,
-  });
   // eslint-disable-next-line no-unused-vars
-
-  const annotations = [
-    {
-      row: currentLocation.row, // must be 0 based
-      column: currentLocation.column, // must be 0 based
-      text: "current execution", // text to show in tooltip
-      type: "info",
-    },
-  ];
 
   const onValueChange = (content) => {
     addFile(currentFile, content);
@@ -50,7 +31,7 @@ export default function BasicEditor() {
   };
 
   useEffect(() => {
-    if (aceEditor !== null) {
+    if (aceEditor !== null && replay) {
       if (markerId !== null) {
         aceEditor.current.editor.session.removeMarker(markerId);
       }
@@ -62,16 +43,10 @@ export default function BasicEditor() {
         .indexToPosition(location.start, 0);
       const marker = aceEditor.current.editor.session.addMarker(
         new Range(row, 0, row, column),
-        "ace_active-line",
+        "current_line",
         "fullLine"
       );
-      const fileName = searchFileName(location.file, files);
-      setCurrentFile(fileName);
       setMarkerId(marker);
-      setCurrentLocation({
-        row,
-        column,
-      });
     }
   }, [location]);
 
@@ -134,7 +109,6 @@ export default function BasicEditor() {
         theme="monokai"
         onChange={onValueChange}
         value={code.content}
-        annotations={annotations}
         readOnly={replay}
         fontSize={12}
         highlightActiveLine={false}

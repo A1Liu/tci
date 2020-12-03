@@ -2,6 +2,13 @@
 /* eslint-disable react/prop-types */
 import React, { createContext, useEffect, useState, useRef } from "react";
 
+function searchFileName(fileId, files) {
+  const file = Object.keys(files).find(
+    (fileName) => files[fileName].fileId === fileId
+  );
+  return file ?? "main.c";
+}
+
 const FileUploadContext = createContext({
   files: {}, // array of files
   currentFile: "",
@@ -136,6 +143,11 @@ export const FileUploadProvider = ({ children }) => {
 
     sockSend("AddFile", { path: "main.c", data: starter });
   }, []);
+
+  useEffect(() => {
+    const fileName = searchFileName(location.file, files);
+    setCurrentFile(fileName);
+  }, [location]);
 
   const addFile = (path, contents) => {
     setFiles((f) => {
