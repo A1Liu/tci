@@ -130,7 +130,7 @@ const PlayButton = styled.button`
   box-sizing: border-box;
   border-width: 12px 0px 12px 18px;
   transition: 200ms all ease;
-  margin: 0 10px 0 10px;
+  margin: 0 10px;
   &:hover {
     border-color: transparent transparent transparent #808080;
   }
@@ -152,7 +152,7 @@ const Vertical = styled.span`
 const StepButton = styled.button`
   display: flex;
   flex-direction: row;
-  margin: 0 5px 0 5px;
+  margin: 0 5px;
   transition: 200ms all ease;
   &:hover ${Vertical} {
     border-color: ${({ left }) =>
