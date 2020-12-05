@@ -40,7 +40,7 @@ export default function Terminal() {
       <textarea
         value={content}
         readOnly
-        className="h-screen w-full"
+        className="h-screen w-full p-2"
         style={{
           backgroundColor: "#1E1E1E",
           color: "#00FF00",

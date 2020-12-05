@@ -90,13 +90,15 @@ export default function NavBar() {
         </button>
       </div>
       <div className="ml-5 pt-1">
-        <input
-          type="checkbox"
-          id="replay"
-          checked={replay}
-          onChange={handleCheckBox}
-        />
-        <span className="ml-1 text-white">Replay</span>
+        <button type="button" onClick={handleCheckBox}>
+          <input
+            type="checkbox"
+            id="replay"
+            checked={replay}
+            onChange={handleCheckBox}
+          />
+          <span className="ml-1 text-white">Replay</span>
+        </button>
       </div>
       {replay ? (
         <>
