@@ -11,7 +11,7 @@ export default function Terminal() {
     });
 
     addListener("Compiled", (send, _resp, _data) => {
-      send("RunCount", 50);
+      send("RunOp", undefined);
       setContent("");
     });
 
