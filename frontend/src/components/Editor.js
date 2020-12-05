@@ -50,6 +50,14 @@ export default function BasicEditor() {
     }
   }, [location]);
 
+  useEffect(() => {
+    if (aceEditor !== null) {
+      if (markerId !== null) {
+        aceEditor.current.editor.session.removeMarker(markerId);
+      }
+    }
+  }, [code]);
+
   return (
     <div>
       <div className="h-10 w-full flex">
