@@ -93,13 +93,15 @@ export default function NavBar() {
         )}
         <div className="flex">
           <div className="mr-2 pt-1">
-            <input
-              type="checkbox"
-              id="replay"
-              checked={replay}
-              onChange={handleCheckBox}
-            />
-            <span className="ml-1 text-white">Replay</span>
+            <button type="button" onClick={handleCheckBox}>
+              <input
+                type="checkbox"
+                id="replay"
+                checked={replay}
+                onChange={handleCheckBox}
+              />
+              <span className="ml-1 text-white">Replay</span>
+            </button>
           </div>
           <div className="pb-5 ml-2">
             <input

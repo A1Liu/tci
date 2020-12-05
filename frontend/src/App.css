@@ -1,0 +1,5 @@
+.current_line {
+  position: absolute;
+  background-color: #C0C0C0;
+  opacity: 0.3;
+}
