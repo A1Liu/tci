@@ -52,7 +52,6 @@ pub enum ExprKind<'a> {
     BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
     UnaryOp(UnaryOp, &'a Expr<'a>),
     Not(&'a Expr<'a>),
-    Assign(&'a Expr<'a>, &'a Expr<'a>),
     MutAssign {
         target: &'a Expr<'a>,
         value: &'a Expr<'a>,
@@ -730,11 +729,6 @@ pub enum TCExprKind<'a> {
 
     PostIncrU32(TCAssignTarget<'a>),
     PostIncrU64(TCAssignTarget<'a>),
-
-    Assign {
-        target: TCAssignTarget<'a>,
-        value: &'a TCExpr<'a>,
-    },
 
     MutAssign {
         target: TCAssignTarget<'a>,

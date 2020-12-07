@@ -672,16 +672,6 @@ impl Assembler {
                 ops.push(tagged);
             }
 
-            TCExprKind::Assign { target, value } => {
-                ops.append(&mut self.translate_expr(value));
-                let bytes = value.expr_type.repr_size();
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-                ops.append(&mut self.translate_assign(target));
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                ops.push(tagged);
-            }
-
             TCExprKind::MutAssign { target, value, op } => {
                 match op {
                     BinOp::None => {
