@@ -116,7 +116,11 @@ impl<'b> Parser<'b> {
                 let (right, left) = buckets.add((right, left));
                 return Ok(Expr {
                     loc: l_from(left.loc, right.loc),
-                    kind: ExprKind::Assign(left, right),
+                    kind: ExprKind::MutAssign {
+                        target: left,
+                        value: right,
+                        op: BinOp::None,
+                    },
                 });
             }
             TokenKind::PlusEq => {
