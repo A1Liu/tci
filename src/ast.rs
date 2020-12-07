@@ -28,6 +28,7 @@ pub enum BinOp {
     BitOr,
     BoolAnd,
     BoolOr,
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
