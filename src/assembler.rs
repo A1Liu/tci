@@ -598,38 +598,40 @@ impl Assembler {
                 tagged.op = Opcode::CompEq64;
                 ops.push(tagged);
             }
-            TCExprKind::SConv8To32(expr) => {
+            TCExprKind::Conv { from, to, expr } => {
                 ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::SExtend8To32;
-                ops.push(tagged);
-            }
-            TCExprKind::SConv32To64(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::SExtend32To64;
-                ops.push(tagged);
-            }
+                let opcode = match (from, to.size()) {
+                    (TCPrimType::U8, 1) => None,
+                    (TCPrimType::U8, 4) => Some(Opcode::ZExtend8To32),
+                    (TCPrimType::U8, 8) => Some(Opcode::ZExtend8To64),
+                    (TCPrimType::I8, 1) => None,
+                    (TCPrimType::I8, 4) => Some(Opcode::SExtend8To32),
+                    (TCPrimType::I8, 8) => Some(Opcode::SExtend8To64),
 
-            TCExprKind::ZConv8To32(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::ZExtend8To32;
-                ops.push(tagged);
-            }
-            TCExprKind::ZConv32To64(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::ZExtend32To64;
-                ops.push(tagged);
-            }
+                    (TCPrimType::U32, 1) => Some(Opcode::PopKeep { drop: 3, keep: 1 }),
+                    (TCPrimType::U32, 4) => None,
+                    (TCPrimType::U32, 8) => Some(Opcode::ZExtend8To64),
+                    (TCPrimType::I32, 1) => Some(Opcode::PopKeep { drop: 3, keep: 1 }),
+                    (TCPrimType::I32, 4) => None,
+                    (TCPrimType::I32, 8) => Some(Opcode::SExtend32To64),
 
-            TCExprKind::Conv64To32(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::PopKeep { keep: 4, drop: 4 };
-                ops.push(tagged);
-            }
+                    (TCPrimType::U64, 1) => Some(Opcode::PopKeep { drop: 7, keep: 1 }),
+                    (TCPrimType::U64, 4) => Some(Opcode::PopKeep { drop: 4, keep: 4 }),
+                    (TCPrimType::U64, 8) => None,
+                    (TCPrimType::I64, 1) => Some(Opcode::PopKeep { drop: 7, keep: 1 }),
+                    (TCPrimType::I64, 4) => Some(Opcode::PopKeep { drop: 4, keep: 4 }),
+                    (TCPrimType::I64, 8) => None,
 
-            TCExprKind::Conv32To8(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::PopKeep { keep: 1, drop: 3 };
-                ops.push(tagged);
+                    (TCPrimType::Pointer { .. }, 1) => Some(Opcode::PopKeep { drop: 7, keep: 1 }),
+                    (TCPrimType::Pointer { .. }, 4) => Some(Opcode::PopKeep { drop: 4, keep: 4 }),
+                    (TCPrimType::Pointer { .. }, 8) => None,
+                    (_, _) => unreachable!(),
+                };
+
+                if let Some(opcode) = opcode {
+                    tagged.op = opcode;
+                    ops.push(tagged);
+                }
             }
 
             TCExprKind::PostIncrU32(target) => {
@@ -767,17 +769,13 @@ impl Assembler {
                         _ => unimplemented!(),
                     },
                     BinOp::LShift => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::LShiftI32
-                        }
+                        TCTypeKind::I32 => tagged.op = Opcode::LShiftI32,
                         _ => unimplemented!(),
-                    }
+                    },
                     BinOp::RShift => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::RShiftI32
-                        }
+                        TCTypeKind::I32 => tagged.op = Opcode::RShiftI32,
                         _ => unimplemented!(),
-                    }
+                    },
                     _ => unimplemented!(),
                 }
                 ops.push(tagged);

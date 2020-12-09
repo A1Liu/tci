@@ -311,7 +311,7 @@ pub struct TCTypedef {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize, strum::EnumDiscriminants)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
 pub enum TCPrimType {
     I32, // int
     U32, // unsigned int
@@ -319,7 +319,28 @@ pub enum TCPrimType {
     I64, // long
     I8,  // char
     U8,  // unsigned char
-    Pointer { size: u32 },
+    Pointer { stride_length: u32 },
+}
+
+impl TCPrimType {
+    pub fn discriminant(&self) -> std::mem::Discriminant<TCPrimType> {
+        return std::mem::discriminant(self);
+    }
+
+    pub fn signed(self) -> bool {
+        match self {
+            TCPrimType::I8 | TCPrimType::I32 | TCPrimType::I64 => return true,
+            _ => return false,
+        }
+    }
+
+    pub fn size(self) -> u8 {
+        match self {
+            TCPrimType::I8 | TCPrimType::U8 => return 1,
+            TCPrimType::I32 | TCPrimType::U32 => return 4,
+            TCPrimType::I64 | TCPrimType::U64 | TCPrimType::Pointer { .. } => return 8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
@@ -373,38 +394,6 @@ impl TCType {
 
     pub fn is_array(&self) -> bool {
         return self.array_kind != TCArrayKind::None;
-    }
-
-    pub fn to_shallow(&self) -> TCShallowType {
-        match self.array_kind {
-            TCArrayKind::None => {}
-            TCArrayKind::Fixed(_) => return TCShallowType::Pointer,
-        }
-
-        if let TCTypeKind::Void = self.kind {
-            if self.pointer_count == 1 {
-                return TCShallowType::VoidPointer;
-            }
-        }
-
-        if self.pointer_count > 0 {
-            return TCShallowType::Pointer;
-        }
-
-        match self.kind {
-            TCTypeKind::I32 => TCShallowType::I32,
-            TCTypeKind::U32 => TCShallowType::U32,
-            TCTypeKind::I64 => TCShallowType::I64,
-            TCTypeKind::U64 => TCShallowType::U64,
-            TCTypeKind::I8 => TCShallowType::I8,
-            TCTypeKind::U8 => TCShallowType::U8,
-            TCTypeKind::Void => TCShallowType::Void,
-            TCTypeKind::Struct { .. } => TCShallowType::Struct,
-            TCTypeKind::AnonStruct { .. } => TCShallowType::Struct,
-            TCTypeKind::Ident { .. } => panic!("cannot make shallow of ident"),
-            TCTypeKind::Uninit { .. } => panic!("cannot make shallow of uninit"),
-            TCTypeKind::BraceList => panic!("cannot make shallow of brace list"),
-        }
     }
 
     pub fn is_pointer(&self) -> bool {
@@ -579,20 +568,6 @@ pub const BRACE_LIST: TCType = TCType {
     array_kind: TCArrayKind::None,
 };
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
-pub enum TCShallowType {
-    I32, // int
-    U32, // unsigned int
-    U64, // unsigned long
-    I64, // long
-    I8,  // char
-    U8,  // unsigned char
-    Void,
-    Struct,
-    Pointer,
-    VoidPointer,
-}
-
 // TODO TCVarKind with global and local
 #[derive(Debug, Clone)]
 pub struct TCVar {
@@ -729,14 +704,11 @@ pub enum TCExprKind<'a> {
     BitAndI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
     BitOrI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
 
-    SConv8To32(&'a TCExpr<'a>),
-    SConv32To64(&'a TCExpr<'a>),
-
-    ZConv8To32(&'a TCExpr<'a>),
-    ZConv32To64(&'a TCExpr<'a>),
-
-    Conv32To8(&'a TCExpr<'a>),
-    Conv64To32(&'a TCExpr<'a>),
+    Conv {
+        from: TCPrimType,
+        to: TCPrimType,
+        expr: &'a TCExpr<'a>,
+    },
 
     PostIncrU32(TCAssignTarget<'a>),
     PostIncrU64(TCAssignTarget<'a>),
