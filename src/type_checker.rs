@@ -657,14 +657,11 @@ impl TypeEnv {
         use ASTTypeKind as ATK;
         let kind = match &ast_type.kind {
             ATK::Int => TCTypeKind::I32,
-            ATK::UnsignedInt | ATK::Unsigned => TCTypeKind::U32,
+            ATK::Unsigned => TCTypeKind::U32,
             ATK::Char => TCTypeKind::I8,
             ATK::UnsignedChar => TCTypeKind::U8,
-            ATK::Long | ATK::LongInt | ATK::LongLongInt | ATK::LongLong => TCTypeKind::I64,
-            ATK::UnsignedLong
-            | ATK::UnsignedLongInt
-            | ATK::UnsignedLongLongInt
-            | ATK::UnsignedLongLong => TCTypeKind::U64,
+            ATK::Long | ATK::LongLong => TCTypeKind::I64,
+            ATK::UnsignedLong | ATK::UnsignedLongLong => TCTypeKind::U64,
             ATK::Void => TCTypeKind::Void,
             ATK::Struct(decl) => match decl {
                 StructDecl::Named(ident) => TCTypeKind::Struct {
@@ -1181,14 +1178,11 @@ impl IType {
         let mut found_rec = None;
         let kind = match &ast_type.kind {
             ATK::Int => ITypeKind::I32,
-            ATK::UnsignedInt | ATK::Unsigned => ITypeKind::U32,
+            ATK::Unsigned => ITypeKind::U32,
             ATK::Char => ITypeKind::I8,
             ATK::UnsignedChar => ITypeKind::U8,
-            ATK::Long | ATK::LongInt | ATK::LongLongInt | ATK::LongLong => ITypeKind::I64,
-            ATK::UnsignedLong
-            | ATK::UnsignedLongInt
-            | ATK::UnsignedLongLongInt
-            | ATK::UnsignedLongLong => ITypeKind::U64,
+            ATK::Long | ATK::LongLong => ITypeKind::I64,
+            ATK::UnsignedLong | ATK::UnsignedLongLong => ITypeKind::U64,
             ATK::Void => ITypeKind::Void,
             &ATK::Struct(decl) => {
                 found_rec = Some(decl);

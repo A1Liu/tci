@@ -189,16 +189,9 @@ pub enum ASTTypeKind<'a> {
     Char,
     Unsigned,
     Void,
-
-    LongInt,
-    LongLongInt,
     LongLong,
-
-    UnsignedInt,
     UnsignedLong,
-    UnsignedLongInt,
     UnsignedLongLong,
-    UnsignedLongLongInt,
     UnsignedChar,
 }
 
