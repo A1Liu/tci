@@ -74,17 +74,11 @@ pub type AssignOL = HashMap<(TCPrimDiscr, TCPrimDiscr), Transform>;
 pub struct Overloads {
     pub unary_op: UnOpOverloads,
     pub bin_op: BinOpOverloads,
-    pub unified_bin_op: UnifiedBinOpOL,
-    pub left_op: BinOpValids,
-    pub right_op: BinOpValids,
 }
 
 pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads, {
     let mut bin_op: BinOpOverloads = HashMap::new();
     let mut unary_op: UnOpOverloads = HashMap::new();
-    let mut unified_bin_op: UnifiedBinOpOL = HashMap::new();
-    let mut left_op: BinOpValids = HashSet::new();
-    let mut right_op: BinOpValids = HashSet::new();
 
     // primitive type discriminant (get discriminant of enum TCPrimType)
     macro_rules! pt_discr {
@@ -95,52 +89,6 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
             TCPrimType::$id.discriminant()
         }};
     }
-
-    macro_rules! add_unified_bin_op {
-        ($op:ident, $ty:ident, $expr_kind:ident, $type_kind:ident) => {{
-            unified_bin_op.insert((BinOp::$op, pt_discr!($ty)), |env, l, r| {
-                return Ok(TCExpr {
-                    kind: TCExprKind::$expr_kind(env.buckets.add(l), env.buckets.add(r)),
-                    expr_type: TCType::new(TCTypeKind::$type_kind, 0),
-                    loc: l_from(l.loc, r.loc),
-                });
-            });
-        }};
-    }
-
-    add_unified_bin_op!(Add, I32, AddU32, I32);
-    add_unified_bin_op!(Add, U32, AddU32, U32);
-    add_unified_bin_op!(Add, U64, AddU64, U64);
-    add_unified_bin_op!(Add, I64, AddU64, I64);
-
-    add_unified_bin_op!(Sub, I32, SubI32, I32);
-    add_unified_bin_op!(Sub, U64, SubU64, U64);
-
-    add_unified_bin_op!(Mul, U64, MulU64, U64);
-
-    add_unified_bin_op!(Div, I32, DivI32, I32);
-    add_unified_bin_op!(Div, U64, DivU64, U64);
-
-    add_unified_bin_op!(Lt, I32, LtI32, I8);
-    add_unified_bin_op!(Lt, U64, LtU64, I8);
-
-    add_unified_bin_op!(Geq, I32, GeqI32, I8);
-    add_unified_bin_op!(Geq, U64, GeqU64, I8);
-
-    add_unified_bin_op!(Gt, I32, GtI32, I8);
-
-    add_unified_bin_op!(Eq, I32, Eq32, I8);
-    add_unified_bin_op!(Eq, Pointer, Eq64, I8);
-
-    add_unified_bin_op!(RShift, I32, RShiftI32, I32);
-    add_unified_bin_op!(LShift, I32, LShiftI32, I32);
-
-    add_unified_bin_op!(BitAnd, I32, BitAndI32, I32);
-    add_unified_bin_op!(BitOr, I32, BitOrI32, I32);
-    add_unified_bin_op!(BitXor, I32, BitXorI32, I32);
-
-    add_unified_bin_op!(BoolAnd, I8, BitAndI8, I8);
-    add_unified_bin_op!(BoolOr, I8, BitOrI8, I8);
 
     macro_rules! add_un_op_ol {
         ($op:ident, $operand:ident, $func:expr) => {{
@@ -157,7 +105,12 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
         };
         return TCExpr {
             loc,
-            kind: TCExprKind::MulI32(buckets.add(negative_one), buckets.add(op)),
+            kind: TCExprKind::BinOp {
+                op: BinOp::Mul,
+                op_type: TCPrimType::I32,
+                left: buckets.add(negative_one),
+                right: buckets.add(op),
+            },
             expr_type: result_type,
         };
     });
@@ -165,13 +118,39 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     macro_rules! add_op_ol {
         ($op:ident, $left:ident, $right:ident, $func:expr) => {{
             bin_op.insert((BinOp::$op, pt_discr!($left), pt_discr!($right)), $func);
-            left_op.insert((BinOp::$op, pt_discr!($left)));
-            right_op.insert((BinOp::$op, pt_discr!($right)));
         }};
     }
 
+    add_op_ol!(RShift, I32, I32, |env, l, r| {
+        let r = env.assign_convert(&TCType::new(TCTypeKind::I8, 0), NO_FILE, r)?;
+        return Ok(TCExpr {
+            loc: l_from(l.loc, r.loc),
+            expr_type: l.expr_type,
+            kind: TCExprKind::BinOp {
+                op: BinOp::RShift,
+                op_type: TCPrimType::I32,
+                left: env.buckets.add(l),
+                right: env.buckets.add(r),
+            },
+        });
+    });
+
+    add_op_ol!(LShift, I32, I32, |env, l, r| {
+        let r = env.assign_convert(&TCType::new(TCTypeKind::I8, 0), NO_FILE, r)?;
+        return Ok(TCExpr {
+            loc: l_from(l.loc, r.loc),
+            expr_type: l.expr_type,
+            kind: TCExprKind::BinOp {
+                op: BinOp::LShift,
+                op_type: TCPrimType::I32,
+                left: env.buckets.add(l),
+                right: env.buckets.add(r),
+            },
+        });
+    });
+
     macro_rules! pointer_add_ol {
-        (@UNSIGNED, $op_simp:ident, $op:ident, $ty:ident) => {{
+        (@UNSIGNED, $op_simp:ident, $ty:ident) => {{
             add_op_ol!($op_simp, Pointer, $ty, |env, l, r| {
                 let elem_type = env.deref(l.expr_type, l.loc)?; // should this ever fail?
 
@@ -193,18 +172,30 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
 
                 let r = TCExpr {
                     loc: r.loc,
-                    kind: TCExprKind::MulU64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Mul,
+                        op_type: TCPrimType::U64,
+                        left: env.buckets.add(r),
+                        right: env.buckets.add(size_of_elements),
+                    },
                     expr_type: TCType::new(TCTypeKind::U64, 0),
                 };
 
                 return Ok(TCExpr {
                     loc: l_from(l.loc, r.loc),
                     expr_type: l.expr_type,
-                    kind: TCExprKind::$op(env.buckets.add(l), env.buckets.add(r)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::$op_simp,
+                        op_type: TCPrimType::Pointer {
+                            stride_length: elem_type.size(),
+                        },
+                        left: env.buckets.add(l),
+                        right: env.buckets.add(r),
+                    },
                 });
             });
         }};
-        (@SIGNED, $op_simp:ident, $op:ident, $ty:ident) => {{
+        (@SIGNED, $op_simp:ident, $ty:ident) => {{
             add_op_ol!($op_simp, Pointer, $ty, |env, l, r| {
                 let elem_type = env.deref(l.expr_type, l.loc)?; // should this ever fail?
 
@@ -226,23 +217,35 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
 
                 let r = TCExpr {
                     loc: r.loc,
-                    kind: TCExprKind::MulI64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Mul,
+                        op_type: TCPrimType::I64,
+                        left: env.buckets.add(r),
+                        right: env.buckets.add(size_of_elements),
+                    },
                     expr_type: TCType::new(TCTypeKind::I64, 0),
                 };
 
                 return Ok(TCExpr {
                     loc: l_from(l.loc, r.loc),
                     expr_type: l.expr_type,
-                    kind: TCExprKind::$op(env.buckets.add(l), env.buckets.add(r)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::$op_simp,
+                        op_type: TCPrimType::Pointer {
+                            stride_length: elem_type.size(),
+                        },
+                        left: env.buckets.add(l),
+                        right: env.buckets.add(r),
+                    },
                 });
             });
         }};
     }
 
-    pointer_add_ol!(@SIGNED, Add, AddU64, I32);
-    pointer_add_ol!(@SIGNED, Add, AddU64, I64);
-    pointer_add_ol!(@UNSIGNED, Add, AddU64, U64);
-    pointer_add_ol!(@UNSIGNED, Sub, SubU64, U64);
+    pointer_add_ol!(@SIGNED, Add, I32);
+    pointer_add_ol!(@SIGNED, Add, I64);
+    pointer_add_ol!(@UNSIGNED, Add, U64);
+    pointer_add_ol!(@UNSIGNED, Sub, U64);
 
     macro_rules! pointer_add_index_ol {
         (@UNSIGNED, $ty:ident) => {{
@@ -267,14 +270,26 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
 
                 let r = TCExpr {
                     loc: r.loc,
-                    kind: TCExprKind::MulU64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Mul,
+                        op_type: TCPrimType::U64,
+                        left: env.buckets.add(r),
+                        right: env.buckets.add(size_of_elements),
+                    },
                     expr_type: TCType::new(TCTypeKind::U64, 0),
                 };
 
                 let ptr = TCExpr {
                     loc: l_from(l.loc, r.loc),
                     expr_type: l.expr_type,
-                    kind: TCExprKind::AddU64(env.buckets.add(l), env.buckets.add(r)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Add,
+                        op_type: TCPrimType::Pointer {
+                            stride_length: elem_type.size(),
+                        },
+                        left: env.buckets.add(l),
+                        right: env.buckets.add(r),
+                    },
                 };
 
                 return Ok(TCExpr {
@@ -306,14 +321,26 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
 
                 let r = TCExpr {
                     loc: r.loc,
-                    kind: TCExprKind::MulI64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Mul,
+                        op_type: TCPrimType::I64,
+                        left: env.buckets.add(r),
+                        right: env.buckets.add(size_of_elements),
+                    },
                     expr_type: TCType::new(TCTypeKind::I64, 0),
                 };
 
                 let ptr = TCExpr {
                     loc: l_from(l.loc, r.loc),
                     expr_type: l.expr_type,
-                    kind: TCExprKind::AddU64(env.buckets.add(l), env.buckets.add(r)),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Add,
+                        op_type: TCPrimType::Pointer {
+                            stride_length: elem_type.size(),
+                        },
+                        left: env.buckets.add(l),
+                        right: env.buckets.add(r),
+                    },
                 };
 
                 return Ok(TCExpr {
@@ -347,7 +374,12 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
         let expr_type = TCType::new(TCTypeKind::U64, 0);
         let loc = l_from(l.loc, r.loc);
         let diff = TCExpr {
-            kind: TCExprKind::SubU64(env.buckets.add(l), env.buckets.add(r)),
+            kind: TCExprKind::BinOp {
+                op: BinOp::Sub,
+                op_type: TCPrimType::U64,
+                left: env.buckets.add(l),
+                right: env.buckets.add(r),
+            },
             loc,
             expr_type,
         };
@@ -359,19 +391,18 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
         };
 
         return Ok(TCExpr {
-            kind: TCExprKind::SubU64(env.buckets.add(diff), env.buckets.add(divisor)),
+            kind: TCExprKind::BinOp {
+                op: BinOp::Div,
+                op_type: TCPrimType::U64,
+                left: env.buckets.add(diff),
+                right: env.buckets.add(divisor),
+            },
             loc,
             expr_type,
         });
     });
 
-    Overloads {
-        unary_op,
-        bin_op,
-        unified_bin_op,
-        left_op,
-        right_op,
-    }
+    Overloads { unary_op, bin_op }
 });
 
 fn get_overload(
@@ -603,9 +634,13 @@ impl TypeEnv {
 
         match self.deref(files, tc_type, expr_loc) {
             Ok(tc_type) => {
-                return Ok(TCPrimType::Pointer {
-                    stride_length: tc_type.size(),
-                })
+                if tc_type == VOID {
+                    return Ok(TCPrimType::Pointer { stride_length: 1 });
+                } else {
+                    return Ok(TCPrimType::Pointer {
+                        stride_length: tc_type.size(),
+                    });
+                }
             }
             Err(_) => {}
         }
@@ -2560,27 +2595,23 @@ pub fn check_expr_allow_brace<'b>(
                 return transform(env, l, r);
             }
 
-            let (l, r, prim) = unify(env, l, r)?;
-            let key = (op, prim.discriminant());
-            let map_err = || {
-                error!(
-                    "invalid operands to binary expression",
-                    l.loc,
-                    format!(
-                        "this has type {} (invalid for {:?})",
-                        l.expr_type.display(env.files),
-                        op
-                    ),
-                    r.loc,
-                    format!(
-                        "this has type {} (invalid for {:?})",
-                        r.expr_type.display(env.files),
-                        op
-                    )
-                )
+            let (left, right, op_type) = unify(env, l, r)?;
+            let expr_type = match op {
+                BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => TCType::new(TCTypeKind::I8, 0),
+                BinOp::Eq | BinOp::Neq => TCType::new(TCTypeKind::I8, 0),
+                _ => left.expr_type,
             };
 
-            return OVERLOADS.unified_bin_op.get(&key).ok_or_else(map_err)?(env, l, r);
+            return Ok(TCExpr {
+                kind: TCExprKind::BinOp {
+                    op,
+                    op_type,
+                    left: env.buckets.add(left),
+                    right: env.buckets.add(right),
+                },
+                loc: l_from(left.loc, right.loc),
+                expr_type,
+            });
         }
 
         ExprKind::UnaryOp(op, operand) => {

@@ -409,9 +409,6 @@ impl Assembler {
                 ops.push(tagged);
             }
 
-            TCExprKind::TypePun(expr) => {
-                ops.append(&mut self.translate_expr(expr));
-            }
             TCExprKind::Array(exprs) => {
                 for expr in *exprs {
                     ops.append(&mut self.translate_expr(expr));
@@ -430,174 +427,81 @@ impl Assembler {
                 }
             }
 
-            TCExprKind::AddU32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::AddU32;
-                ops.push(tagged);
-            }
-            TCExprKind::AddU64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::AddU64;
+            TCExprKind::BinOp {
+                op,
+                op_type,
+                left,
+                right,
+            } => {
+                ops.append(&mut self.translate_expr(left));
+                ops.append(&mut self.translate_expr(right));
+                tagged.op = match (op, op_type) {
+                    (BinOp::Add, TCPrimType::U32) => Opcode::AddU32,
+                    (BinOp::Add, TCPrimType::I32) => Opcode::AddU32,
+                    (BinOp::Add, TCPrimType::U64) => Opcode::AddU64,
+                    (BinOp::Add, TCPrimType::I64) => Opcode::AddU64,
+                    (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::AddU64,
 
-                ops.push(tagged);
-            }
+                    (BinOp::Sub, TCPrimType::I32) => Opcode::SubI32,
+                    (BinOp::Sub, TCPrimType::I64) => Opcode::SubI64,
+                    (BinOp::Sub, TCPrimType::U64) => Opcode::SubU64,
+                    (BinOp::Sub, TCPrimType::Pointer { .. }) => Opcode::SubU64,
 
-            TCExprKind::SubI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::SubI32;
-                ops.push(tagged);
-            }
-            TCExprKind::SubU64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::SubU64;
-                ops.push(tagged);
-            }
+                    (BinOp::Mul, TCPrimType::I32) => Opcode::MulI32,
+                    (BinOp::Mul, TCPrimType::I64) => Opcode::MulI64,
+                    (BinOp::Mul, TCPrimType::U64) => Opcode::MulU64,
 
-            TCExprKind::MulI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::MulI32;
-                ops.push(tagged);
-            }
-            TCExprKind::MulI64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::MulI64;
-                ops.push(tagged);
-            }
-            TCExprKind::MulU64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::MulU64;
-                ops.push(tagged);
-            }
+                    (BinOp::Div, TCPrimType::I32) => Opcode::DivI32,
+                    (BinOp::Div, TCPrimType::U64) => Opcode::DivU64,
 
-            TCExprKind::DivI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::DivI32;
-                ops.push(tagged);
-            }
-            TCExprKind::DivU64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::DivU64;
-                ops.push(tagged);
-            }
+                    (BinOp::Eq, TCPrimType::I32) => Opcode::CompEq32,
+                    (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
+                    (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
 
-            TCExprKind::GtI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                ops.push(tagged);
-                tagged.op = Opcode::CompLtI32;
-                ops.push(tagged);
-            }
-            TCExprKind::LtI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompLtI32;
-                ops.push(tagged);
-            }
-            TCExprKind::GeqU64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                ops.push(tagged);
-                tagged.op = Opcode::CompLeqU64;
-                ops.push(tagged);
-            }
-            TCExprKind::LtU64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompLtU64;
-                ops.push(tagged);
-            }
-            TCExprKind::LeqI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompLeqI32;
-                ops.push(tagged);
-            }
-            TCExprKind::GeqI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                ops.push(tagged);
-                tagged.op = Opcode::CompLeqI32;
+                    (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
+
+                    (BinOp::Gt, TCPrimType::I32) => {
+                        tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                        ops.push(tagged);
+                        Opcode::CompLtI32
+                    }
+
+                    (BinOp::Lt, TCPrimType::I32) => Opcode::CompLtI32,
+                    (BinOp::Lt, TCPrimType::U64) => Opcode::CompLtU64,
+
+                    (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
+
+                    (BinOp::Geq, TCPrimType::I32) => {
+                        tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                        ops.push(tagged);
+                        Opcode::CompLeqI32
+                    }
+                    (BinOp::Geq, TCPrimType::U64) => {
+                        tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                        ops.push(tagged);
+                        Opcode::CompLeqU64
+                    }
+
+                    (BinOp::LShift, TCPrimType::I32) => Opcode::LShiftI32,
+
+                    (BinOp::RShift, TCPrimType::I32) => Opcode::RShiftI32,
+
+                    (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAndI8,
+                    (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAndI32,
+
+                    (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOrI8,
+                    (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOrI32,
+
+                    (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXorI32,
+
+                    (BinOp::BoolAnd, TCPrimType::I8) => Opcode::BitAndI8,
+                    (BinOp::BoolOr, TCPrimType::I8) => Opcode::BitOrI8,
+
+                    (op, ptype) => unreachable!("op={:?} type={:?}", op, ptype),
+                };
                 ops.push(tagged);
             }
 
-            TCExprKind::RShiftI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::PopKeep { keep: 1, drop: 3 };
-                ops.push(tagged);
-                tagged.op = Opcode::RShiftI32;
-                ops.push(tagged);
-            }
-            TCExprKind::LShiftI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::PopKeep { keep: 1, drop: 3 };
-                ops.push(tagged);
-                tagged.op = Opcode::LShiftI32;
-                ops.push(tagged);
-            }
-
-            TCExprKind::BitAndI8(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::BitAndI8;
-                ops.push(tagged);
-            }
-            TCExprKind::BitAndI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::BitAndI32;
-                ops.push(tagged);
-            }
-            TCExprKind::BitOrI8(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::BitOrI8;
-                ops.push(tagged);
-            }
-            TCExprKind::BitOrI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::BitOrI32;
-                ops.push(tagged);
-            }
-            TCExprKind::BitXorI32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::BitXorI32;
-                ops.push(tagged);
-            }
-
-            TCExprKind::Eq32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompEq32;
-                ops.push(tagged);
-            }
-            TCExprKind::Neq32(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompNeq32;
-                ops.push(tagged);
-            }
-            TCExprKind::Eq64(l, r) => {
-                ops.append(&mut self.translate_expr(l));
-                ops.append(&mut self.translate_expr(r));
-                tagged.op = Opcode::CompEq64;
-                ops.push(tagged);
-            }
             TCExprKind::Conv { from, to, expr } => {
                 ops.append(&mut self.translate_expr(expr));
                 let opcode = match (from, to.size()) {

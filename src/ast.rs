@@ -659,43 +659,16 @@ pub enum TCExprKind<'a> {
     },
 
     Array(&'a [TCExpr<'a>]),
-    TypePun(&'a TCExpr<'a>),
 
     BraceList(&'a [TCExpr<'a>]),
     ParenList(&'a [TCExpr<'a>]),
 
-    SubI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    MulI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    DivI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    LtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    GtI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    LeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    GeqI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    Eq32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    Neq32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    Eq64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    AddU32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    AddU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    SubU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    DivU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    GeqU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    LtU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    MulI64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    MulU64(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    RShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    LShiftI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    BitAndI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    BitOrI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    BitXorI32(&'a TCExpr<'a>, &'a TCExpr<'a>),
-
-    BitAndI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
-    BitOrI8(&'a TCExpr<'a>, &'a TCExpr<'a>),
+    BinOp {
+        op: BinOp,
+        op_type: TCPrimType,
+        left: &'a TCExpr<'a>,
+        right: &'a TCExpr<'a>,
+    },
 
     Conv {
         from: TCPrimType,
