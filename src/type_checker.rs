@@ -182,19 +182,19 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
                         to: TCPrimType::U64,
                         expr: env.buckets.add(r),
                     },
-                    expr_type: TCType::new(TCTypeKind::I64, 0),
+                    expr_type: TCType::new(TCTypeKind::U64, 0),
                 };
 
                 let size_of_elements = TCExpr {
                     loc: l.loc,
-                    kind: TCExprKind::I64Literal(elem_type.size() as i64),
-                    expr_type: TCType::new(TCTypeKind::I64, 0),
+                    kind: TCExprKind::U64Literal(elem_type.size() as u64),
+                    expr_type: TCType::new(TCTypeKind::U64, 0),
                 };
 
                 let r = TCExpr {
                     loc: r.loc,
-                    kind: TCExprKind::MulI64(env.buckets.add(r), env.buckets.add(size_of_elements)),
-                    expr_type: TCType::new(TCTypeKind::I64, 0),
+                    kind: TCExprKind::MulU64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    expr_type: TCType::new(TCTypeKind::U64, 0),
                 };
 
                 return Ok(TCExpr {
@@ -243,6 +243,92 @@ pub static OVERLOADS: LazyStatic<Overloads> = lazy_static!(overloads, Overloads,
     pointer_add_ol!(@SIGNED, Add, AddU64, I64);
     pointer_add_ol!(@UNSIGNED, Add, AddU64, U64);
     pointer_add_ol!(@UNSIGNED, Sub, SubU64, U64);
+
+    macro_rules! pointer_add_index_ol {
+        (@UNSIGNED, $ty:ident) => {{
+            add_op_ol!(Index, Pointer, $ty, |env, l, r| {
+                let elem_type = env.deref(l.expr_type, l.loc)?; // should this ever fail?
+
+                let r = TCExpr {
+                    loc: r.loc,
+                    kind: TCExprKind::Conv {
+                        from: TCPrimType::$ty,
+                        to: TCPrimType::U64,
+                        expr: env.buckets.add(r),
+                    },
+                    expr_type: TCType::new(TCTypeKind::U64, 0),
+                };
+
+                let size_of_elements = TCExpr {
+                    loc: l.loc,
+                    kind: TCExprKind::U64Literal(elem_type.size() as u64),
+                    expr_type: TCType::new(TCTypeKind::U64, 0),
+                };
+
+                let r = TCExpr {
+                    loc: r.loc,
+                    kind: TCExprKind::MulU64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    expr_type: TCType::new(TCTypeKind::U64, 0),
+                };
+
+                let ptr = TCExpr {
+                    loc: l_from(l.loc, r.loc),
+                    expr_type: l.expr_type,
+                    kind: TCExprKind::AddU64(env.buckets.add(l), env.buckets.add(r)),
+                };
+
+                return Ok(TCExpr {
+                    kind: TCExprKind::Deref(env.buckets.add(ptr)),
+                    loc: ptr.loc,
+                    expr_type: elem_type,
+                });
+            });
+        }};
+        (@SIGNED, $ty:ident) => {{
+            add_op_ol!(Index, Pointer, $ty, |env, l, r| {
+                let elem_type = env.deref(l.expr_type, l.loc)?; // should this ever fail?
+
+                let r = TCExpr {
+                    loc: r.loc,
+                    kind: TCExprKind::Conv {
+                        from: TCPrimType::$ty,
+                        to: TCPrimType::I64,
+                        expr: env.buckets.add(r),
+                    },
+                    expr_type: TCType::new(TCTypeKind::I64, 0),
+                };
+
+                let size_of_elements = TCExpr {
+                    loc: l.loc,
+                    kind: TCExprKind::I64Literal(elem_type.size() as i64),
+                    expr_type: TCType::new(TCTypeKind::I64, 0),
+                };
+
+                let r = TCExpr {
+                    loc: r.loc,
+                    kind: TCExprKind::MulI64(env.buckets.add(r), env.buckets.add(size_of_elements)),
+                    expr_type: TCType::new(TCTypeKind::I64, 0),
+                };
+
+                let ptr = TCExpr {
+                    loc: l_from(l.loc, r.loc),
+                    expr_type: l.expr_type,
+                    kind: TCExprKind::AddU64(env.buckets.add(l), env.buckets.add(r)),
+                };
+
+                return Ok(TCExpr {
+                    kind: TCExprKind::Deref(env.buckets.add(ptr)),
+                    loc: ptr.loc,
+                    expr_type: elem_type,
+                });
+            });
+        }};
+    }
+
+    pointer_add_index_ol!(@SIGNED, I32);
+    pointer_add_index_ol!(@SIGNED, I64);
+    pointer_add_index_ol!(@UNSIGNED, U32);
+    pointer_add_index_ol!(@UNSIGNED, U64);
 
     add_op_ol!(Sub, Pointer, Pointer, |env, l, r| {
         let l_elem_type = env.deref(l.expr_type, l.loc).unwrap();
@@ -2722,6 +2808,32 @@ fn check_assign_target<'b>(
                 offset: 0,
             });
         }
+        ExprKind::BinOp(BinOp::Index, ptr, offset) => {
+            let ptr = check_expr(env, local_env, ptr)?;
+            let offset = check_expr(env, local_env, offset)?;
+
+            let bin_op = get_overload(env, BinOp::Add, &ptr, &offset)?;
+            let map_err = || {
+                error!(
+                    "invalid operands to index assignment expression",
+                    ptr.loc,
+                    format!("this has type {}", ptr.expr_type.display(env.files)),
+                    offset.loc,
+                    format!("this has type {}", offset.expr_type.display(env.files))
+                )
+            };
+            let sum = bin_op.ok_or_else(map_err)?(env, ptr, offset)?;
+
+            let target_type = env.deref(ptr.expr_type, ptr.loc)?;
+            return Ok(TCAssignTarget {
+                kind: TCAssignTargetKind::Ptr(env.buckets.add(sum)),
+                target_loc: expr.loc,
+                defn_loc: None,
+                target_type,
+                offset: 0,
+            });
+        }
+
         _ => {
             return Err(error!(
                 "expression is not assignable",
