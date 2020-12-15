@@ -1,36 +1,7 @@
-import React, { useEffect, useState } from "react";
-import { useFileUpload } from "./fileUploadContext";
+import { useSelector } from "react-redux";
 
 export default function Terminal() {
-  const { addListener } = useFileUpload();
-  const [content, setContent] = useState("");
-
-  useEffect(() => {
-    addListener("Stdout", (send, resp, data) => {
-      setContent((c) => c + data);
-    });
-
-    addListener("Compiled", (send, _resp, _data) => {
-      send("RunOp", undefined);
-      setContent("");
-    });
-
-    addListener("Status", (send, _resp, _data) => {
-      send("RunCount", 50);
-    });
-
-    addListener("CompileError", (send, _resp, data) => {
-      setContent(data.rendered);
-    });
-
-    addListener("RuntimeError", (send, _resp, data) => {
-      setContent(data.rendered);
-    });
-
-    addListener("Unwind", (_send, _resp, data) => {
-      setContent((c) => c.substring(0, c.length - data));
-    });
-  }, []);
+  const content = useSelector((state) => state.terminal);
 
   return (
     <div>

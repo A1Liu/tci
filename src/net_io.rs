@@ -136,7 +136,12 @@ impl<State: Default + 'static> WebServer<State> {
         struct BucketDealloc<'a>(BucketListRef<'a>);
         impl<'a> Drop for BucketDealloc<'a> {
             fn drop(&mut self) {
-                unsafe { self.0.dealloc() };
+                let mut buckets = self.0;
+                unsafe {
+                    while let Some(b) = buckets.dealloc() {
+                        buckets = b;
+                    }
+                };
             }
         }
         let dealloc_buckets = BucketDealloc(buckets);

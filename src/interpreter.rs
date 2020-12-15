@@ -24,31 +24,6 @@ macro_rules! err {
     };
 }
 
-pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, program: &Program) -> String {
-    use codespan_reporting::diagnostic::*;
-    use codespan_reporting::term::*;
-
-    let mut out = StringWriter::new();
-    let config = Config {
-        display_style: DisplayStyle::Rich,
-        tab_width: 4,
-        styles: Styles::default(),
-        chars: Chars::default(),
-        start_context_lines: 3,
-        end_context_lines: 1,
-    };
-
-    write!(out, "{}: {}\n", error.short_name, error.message).unwrap();
-
-    for frame in stack_trace.iter().skip(1) {
-        let diagnostic = Diagnostic::new(Severity::Void)
-            .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
-        codespan_reporting::term::emit(&mut out, &config, &program.files, &diagnostic).unwrap();
-    }
-
-    return out.to_string();
-}
-
 /// Exit the program with an error code
 pub const ECALL_EXIT: u32 = 0;
 
@@ -324,6 +299,16 @@ impl Runtime {
         return true;
     }
 
+    pub fn next(&mut self) -> bool {
+        let tag = self.memory.current_tag();
+        if !self.memory.next() {
+            return false;
+        }
+
+        while self.memory.current_tag() == tag && self.memory.next() {}
+        return true;
+    }
+
     pub fn run_op(&mut self) -> Result<Option<i32>, IError> {
         if let Some(code) = self.memory.exit_code {
             return Ok(Some(code));
@@ -334,9 +319,11 @@ impl Runtime {
         match ret {
             Ok(opt) => return Ok(opt),
             Err(err) => {
-                while self.memory.current_tag() == tag && self.memory.prev() {}
-                self.memory
-                    .error_push_callstack(self.program.ops[self.memory.pc as usize].loc)?;
+                self.memory.error_push_callstack(
+                    &err,
+                    &self.program.files,
+                    self.program.ops[self.memory.pc as usize].loc,
+                )?;
                 return Err(err);
             }
         }

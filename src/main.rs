@@ -182,7 +182,7 @@ fn run_from_args(args: Vec<String>) -> ! {
     match runtime.run(std::io::stdout()) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
-            let print = interpreter::render_err(&err, &runtime.memory.callstack, &program);
+            let print = runtime::render_err(&err, &runtime.memory.callstack, &program.files);
             print!("{}", print);
 
             std::process::exit(1);

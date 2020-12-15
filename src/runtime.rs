@@ -1,11 +1,36 @@
 use crate::buckets::*;
-use crate::filedb::INIT_SYMS;
+use crate::filedb::*;
 use crate::util::*;
 use core::{fmt, mem, str};
 use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
 use std::collections::VecDeque;
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
+
+pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, files: &FileDbRef) -> String {
+    use codespan_reporting::diagnostic::*;
+    use codespan_reporting::term::*;
+
+    let mut out = StringWriter::new();
+    let config = Config {
+        display_style: DisplayStyle::Rich,
+        tab_width: 4,
+        styles: Styles::default(),
+        chars: Chars::default(),
+        start_context_lines: 3,
+        end_context_lines: 1,
+    };
+
+    write!(out, "{}: {}\n", error.short_name, error.message).unwrap();
+
+    for frame in stack_trace.iter().skip(1) {
+        let diagnostic = Diagnostic::new(Severity::Void)
+            .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
+        codespan_reporting::term::emit(&mut out, &config, files, &diagnostic).unwrap();
+    }
+
+    return out.to_string();
+}
 
 #[derive(Debug, serde::Serialize)]
 pub struct IError {
@@ -506,6 +531,10 @@ pub enum MAKind {
         frame: CallFrame,
         bk: usize,
     },
+    ErrorCallstackPush {
+        loc: CodeLoc,
+        bk: usize,
+    },
     SetFp {
         prev: u16,
         val: u16,
@@ -524,12 +553,15 @@ pub enum MAKind {
     WriteStdout {
         start: usize,
         end: usize,
+        chars: u32,
     },
     WriteStderr {
         start: usize,
         end: usize,
+        chars: u32,
     },
     Exit {
+        code: i32,
         bk: usize,
     },
 }
@@ -575,12 +607,13 @@ impl MemoryAction {
             MAKind::AllocHeapVar { len, bk } => return bk,
             MAKind::CallstackPush { loc, bk } => return bk,
             MAKind::CallstackPop { frame, bk } => return bk,
+            MAKind::ErrorCallstackPush { loc, bk } => return bk,
             MAKind::SetFp { prev, val, bk } => return bk,
             MAKind::SetFunc { prev, val, bk } => return bk,
             MAKind::Jump { prev, val, bk } => return bk,
-            MAKind::WriteStderr { start, end } => return start,
-            MAKind::WriteStdout { start, end } => return start,
-            MAKind::Exit { bk } => return bk,
+            MAKind::WriteStderr { start, end, chars } => return start,
+            MAKind::WriteStdout { start, end, chars } => return start,
+            MAKind::Exit { code, bk } => return bk,
         }
     }
 }
@@ -598,7 +631,6 @@ pub struct Memory {
     pub fp: u16,
     pub pc: u32,
 
-    pub errored: bool,
     pub exit_code: Option<i32>,
 
     pub historical_data: Vec<u8>,
@@ -622,7 +654,6 @@ impl Memory {
             fp: 1,
             pc: 0,
 
-            errored: false,
             exit_code: None,
 
             historical_data: Vec::new(),
@@ -658,7 +689,6 @@ impl Memory {
             fp: 1,
             pc: 0,
 
-            errored: false,
             exit_code: None,
 
             historical_data,
@@ -707,11 +737,6 @@ impl Memory {
             ));
         }
 
-        if self.errored {
-            self.callstack.pop().unwrap();
-            self.errored = false;
-        }
-
         return Ok(());
     }
 
@@ -719,7 +744,7 @@ impl Memory {
         self.check_mutate()?;
 
         let bk = self.historical_data.len();
-        self.push_history(MAKind::Exit { bk });
+        self.push_history(MAKind::Exit { code, bk });
         self.exit_code = Some(code);
         return Ok(());
     }
@@ -792,14 +817,24 @@ impl Memory {
         return Ok(());
     }
 
-    pub fn error_push_callstack(&mut self, loc: CodeLoc) -> Result<(), IError> {
-        self.check_mutate().unwrap();
-        self.errored = true;
-
+    pub fn error_push_callstack(
+        &mut self,
+        error: &IError,
+        files: &FileDbRef,
+        loc: CodeLoc,
+    ) -> Result<(), IError> {
+        self.check_mutate()?;
         let bk = self.historical_data.len();
-
+        self.push_history(MAKind::ErrorCallstackPush { loc, bk });
         self.callstack
             .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+
+        let rendered_error = render_err(error, &self.callstack, files);
+        write!(MemoryStderr { memory: self }, "{}", rendered_error).unwrap();
+
+        let bk = self.historical_data.len();
+        self.push_history(MAKind::Exit { code: 1, bk });
+        self.exit_code = Some(1);
         return Ok(());
     }
 
@@ -1446,6 +1481,101 @@ impl Memory {
         Ok(MemoryStderr { memory: self })
     }
 
+    pub fn next(&mut self) -> bool {
+        if self.history_index == self.history.len() {
+            return false;
+        }
+
+        match self.history[self.history_index].kind {
+            MAKind::SetValue {
+                ptr,
+                value_start,
+                value_end_overwrite_start: mid,
+                overwrite_end,
+            } => {
+                let value_bytes = &self.historical_data[value_start..mid];
+                let buffer = if ptr.is_stack() {
+                    &mut self.stack
+                } else if ptr.is_heap() {
+                    &mut self.heap
+                } else {
+                    &mut self.binary
+                };
+
+                let result = buffer.get_var_range(ptr, value_bytes.len() as u32);
+                let (start, end) = result.expect("this should never error");
+                buffer.data[start..end].copy_from_slice(value_bytes);
+            }
+            MAKind::PopStack {
+                value_start,
+                value_end,
+            } => {
+                let popped_len = value_end - value_start;
+                let data = &mut self.stack.data;
+                data.resize(data.len() - popped_len, 0);
+            }
+            MAKind::PushStack {
+                value_start,
+                value_end,
+            } => {
+                let popped_len = value_end - value_start;
+                let data = &mut self.stack.data;
+                data.extend_from_slice(&self.historical_data[value_start..value_end]);
+            }
+            MAKind::PopStackVar {
+                meta,
+                var_start,
+                var_end_stack_start,
+                stack_end,
+            } => {
+                let var = self.stack.vars.pop().unwrap();
+                self.stack.data.resize(var.idx, 0);
+            }
+            MAKind::AllocHeapVar { len, bk } => {
+                self.heap.add_var(len, 0);
+            }
+            MAKind::AllocStackVar { meta, len, bk } => {
+                self.stack.add_var(len, meta);
+            }
+            MAKind::CallstackPush { loc, bk } => {
+                self.callstack
+                    .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+            }
+            MAKind::CallstackPop { frame, bk } => {
+                self.callstack.pop().unwrap();
+            }
+            MAKind::ErrorCallstackPush { loc, bk } => {
+                self.callstack
+                    .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+            }
+            MAKind::SetFp { prev, val, bk } => {
+                self.fp = val;
+            }
+            MAKind::SetFunc { prev, val, bk } => {
+                self.current_func = val;
+            }
+            MAKind::Jump { prev, val, bk } => {
+                self.pc = val;
+            }
+            MAKind::WriteStdout { start, end, chars } => {
+                self.io_buf.extend(&self.historical_data[start..end]);
+                let block_size = EVENT_STDOUT_WRITE | ((end - start) as u32);
+                self.io_events.push_back(block_size);
+            }
+            MAKind::WriteStderr { start, end, chars } => {
+                self.io_buf.extend(&self.historical_data[start..end]);
+                let block_size = EVENT_STDERR_WRITE | ((end - start) as u32);
+                self.io_events.push_back(block_size);
+            }
+            MAKind::Exit { code, bk } => {
+                self.exit_code = Some(code);
+            }
+        }
+
+        self.history_index += 1;
+        return true;
+    }
+
     pub fn prev(&mut self) -> bool {
         if self.history_index == 0 {
             return false;
@@ -1514,6 +1644,9 @@ impl Memory {
             MAKind::CallstackPop { frame, bk } => {
                 self.callstack.push(frame);
             }
+            MAKind::ErrorCallstackPush { loc, bk } => {
+                self.callstack.pop().unwrap();
+            }
             MAKind::SetFp { prev, val, bk } => {
                 self.fp = prev;
             }
@@ -1523,15 +1656,13 @@ impl Memory {
             MAKind::Jump { prev, val, bk } => {
                 self.pc = prev;
             }
-            MAKind::WriteStdout { start, end } => {
-                let block_size = (end - start) as u32;
-                self.io_events.push_back(block_size);
+            MAKind::WriteStdout { start, end, chars } => {
+                self.io_events.push_back(chars);
             }
-            MAKind::WriteStderr { start, end } => {
-                let block_size = (end - start) as u32;
-                self.io_events.push_back(block_size);
+            MAKind::WriteStderr { start, end, chars } => {
+                self.io_events.push_back(chars);
             }
-            MAKind::Exit { bk } => {
+            MAKind::Exit { code, bk } => {
                 self.exit_code = None;
             }
         }
@@ -1556,30 +1687,47 @@ pub struct MemoryStdout<'a> {
 pub struct MemoryStderr<'a> {
     pub memory: &'a mut Memory,
 }
+
 impl<'a> io::Write for MemoryStderr<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        use std::cmp::min;
         let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
-        core::str::from_utf8(buf).map_err(map_err)?;
-        self.memory.io_buf.extend(buf);
+        let buf = core::str::from_utf8(buf).map_err(map_err)?;
+        self.memory.io_buf.extend(buf.as_bytes());
 
-        let (mut start, mut end) = (0, min(EVENT_SIZE, buf.len()));
-        while start < buf.len() {
+        let mut force_flush = |start: usize, end: usize, chars: u32| {
             let block_size = end - start;
-            self.memory
-                .io_events
-                .push_back(EVENT_STDERR_WRITE | (block_size as u32));
+            let hist_start = self.memory.historical_data.len();
+            let memory = &mut self.memory;
+            #[rustfmt::skip]
+            memory.io_events.push_back(EVENT_STDOUT_WRITE | (block_size as u32));
+            memory.historical_data.extend(buf[start..end].as_bytes());
+            let (start, end) = (hist_start, memory.historical_data.len());
+            memory.push_history(MAKind::WriteStderr { start, end, chars });
+        };
 
-            {
-                let start = self.memory.historical_data.len();
-                self.memory.historical_data.extend(&buf[start..end]);
-                let end = self.memory.historical_data.len();
-                self.memory.push_history(MAKind::WriteStderr { start, end });
+        let mut try_flush = |start: usize, end: usize, chars: u32| -> bool {
+            if end - start < EVENT_SIZE {
+                return false;
             }
 
-            start = end;
-            end = min(end + EVENT_SIZE, buf.len());
+            force_flush(start, end, chars);
+            return true;
+        };
+
+        let (mut start, mut end, mut chars) = (0, 0, 0);
+        for c in buf.chars() {
+            let block_size = end - start;
+            if try_flush(start, end, chars) {
+                start = end;
+                chars = 0;
+                continue;
+            }
+
+            end += c.len_utf8();
+            chars += 1;
         }
+
+        force_flush(start, end, chars);
 
         return Ok(buf.len());
     }
@@ -1588,30 +1736,47 @@ impl<'a> io::Write for MemoryStderr<'a> {
         Ok(())
     }
 }
+
 impl<'a> io::Write for MemoryStdout<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        use std::cmp::min;
         let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
-        core::str::from_utf8(buf).map_err(map_err)?;
-        self.memory.io_buf.extend(buf);
+        let buf = core::str::from_utf8(buf).map_err(map_err)?;
+        self.memory.io_buf.extend(buf.as_bytes());
 
-        let (mut start, mut end) = (0, min(EVENT_SIZE, buf.len()));
-        while start < buf.len() {
+        let mut force_flush = |start: usize, end: usize, chars: u32| {
             let block_size = end - start;
-            self.memory
-                .io_events
-                .push_back(EVENT_STDOUT_WRITE | (block_size as u32));
+            let hist_start = self.memory.historical_data.len();
+            let memory = &mut self.memory;
+            #[rustfmt::skip]
+            memory.io_events.push_back(EVENT_STDOUT_WRITE | (block_size as u32));
+            memory.historical_data.extend(buf[start..end].as_bytes());
+            let (start, end) = (hist_start, memory.historical_data.len());
+            memory.push_history(MAKind::WriteStderr { start, end, chars });
+        };
 
-            {
-                let hist_start = self.memory.historical_data.len();
-                self.memory.historical_data.extend(&buf[start..end]);
-                let (start, end) = (hist_start, self.memory.historical_data.len());
-                self.memory.push_history(MAKind::WriteStderr { start, end });
+        let mut try_flush = |start: usize, end: usize, chars: u32| -> bool {
+            if end - start < EVENT_SIZE {
+                return false;
             }
 
-            start = end;
-            end = min(end + EVENT_SIZE, buf.len());
+            force_flush(start, end, chars);
+            return true;
+        };
+
+        let (mut start, mut end, mut chars) = (0, 0, 0);
+        for c in buf.chars() {
+            let block_size = end - start;
+            if try_flush(start, end, chars) {
+                start = end;
+                chars = 0;
+                continue;
+            }
+
+            end += c.len_utf8();
+            chars += 1;
         }
+
+        force_flush(start, end, chars);
 
         return Ok(buf.len());
     }

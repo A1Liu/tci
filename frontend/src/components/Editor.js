@@ -1,62 +1,91 @@
 import AceEditor from "react-ace";
 import { Range } from "ace-builds";
 import "../App.css";
-import React, { useEffect, useRef, useState } from "react";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
-import { useFileUpload } from "./fileUploadContext";
+import { useRef } from "react";
+import { useDispatch, useSelector } from "react-redux";
+
+const EditorTab = ({ dispatch, file }) => {
+  return (
+    <div className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-500">
+      <button
+        type="button"
+        className="py-2 px-2"
+        onClick={() => dispatch({ type: "SetCurrentFile", payload: file })}
+      >
+        {file}
+      </button>
+      <button
+        type="button"
+        className="bg-transparent text-2xl font-semibold leading-none px-2 outline-none focus:outline-none"
+        onClick={() => {
+          dispatch({ type: "RemoveFile", payload: file });
+        }}
+      >
+        <span>×</span>
+      </button>
+    </div>
+  );
+};
 
 export default function BasicEditor() {
-  const {
-    files,
-    currentFile,
-    location,
-    replay,
-    addFile,
-    sockSend,
-    setFiles,
-    setCurrentFile,
-  } = useFileUpload();
-  const code = files[currentFile];
-  const aceEditor = useRef(null);
-  const [markerId, setMarkerId] = useState(null);
-  // eslint-disable-next-line no-unused-vars
+  const dispatch = useDispatch();
+  const files = useSelector((state) => state.files);
+  const currentFile = useSelector((state) => state.currentFile);
+  const debugging = useSelector((state) => state.debugging);
+  const currentCodeLoc = useSelector((state) => state.currentCodeLoc);
+  const fileNames = useSelector((state) => state.fileNames);
+
+  const marker = useRef(undefined);
+  const editor = useRef(undefined);
+  const currentFileRef = useRef(currentFile);
 
   const onValueChange = (content) => {
-    addFile(currentFile, content);
+    if (currentFile !== undefined)
+      dispatch({
+        type: "EditFile",
+        payload: { path: currentFile, data: content },
+      });
   };
 
-  const removeFile = (fileId) => {
-    sockSend("RemoveFile", fileId);
+  const setupEditor = () => {
+    if (!debugging) {
+      currentFileRef.current = currentFile;
+      return;
+    }
+
+    const { session } = editor.current.editor;
+    if (marker.current !== undefined) session.removeMarker(marker.current);
+
+    if (currentCodeLoc === undefined) {
+      marker.current = undefined;
+      return;
+    }
+
+    const nextFile = fileNames[currentCodeLoc.file];
+
+    if (nextFile !== currentFile) {
+      dispatch({ type: "SetCurrentFile", payload: nextFile });
+      currentFileRef.current = nextFile;
+      return;
+    }
+
+    const doc = session.getDocument();
+    const { row, column } = doc.indexToPosition(currentCodeLoc.start, 0);
+    marker.current = session.addMarker(
+      new Range(row, 0, row, column),
+      "current_line",
+      "fullLine"
+    );
   };
 
-  useEffect(() => {
-    if (aceEditor !== null && replay) {
-      if (markerId !== null) {
-        aceEditor.current.editor.session.removeMarker(markerId);
-      }
-      const {
-        row,
-        column,
-      } = aceEditor.current.editor.session
-        .getDocument()
-        .indexToPosition(location.start, 0);
-      const marker = aceEditor.current.editor.session.addMarker(
-        new Range(row, 0, row, column),
-        "current_line",
-        "fullLine"
-      );
-      setMarkerId(marker);
-    }
-  }, [location]);
+  setupEditor();
 
-  useEffect(() => {
-    if (aceEditor !== null) {
-      if (markerId !== null) {
-        aceEditor.current.editor.session.removeMarker(markerId);
-      }
-    }
-  }, [code]);
+  const [code, readOnly] =
+    currentFileRef.current === undefined
+      ? ["", true]
+      : [files[currentFileRef.current], false];
 
   return (
     <div>
@@ -64,66 +93,23 @@ export default function BasicEditor() {
         <div className="bg-gray-800 w-full text-white">
           <nav className="flex flex-row w-full overflow-auto">
             {Object.keys(files).map((name) => {
-              return name === "main.c" ? (
-                <div key={name} className="flex flex-row bg-gray-700 h-10">
-                  <button
-                    type="button"
-                    className="mt-1 py-1 px-4"
-                    onClick={() => setCurrentFile(name)}
-                  >
-                    {name}
-                  </button>
-                </div>
-              ) : (
-                <div
-                  key={name}
-                  className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-500"
-                >
-                  <button
-                    type="button"
-                    className="py-2 px-2"
-                    onClick={() => setCurrentFile(name)}
-                  >
-                    {name}
-                  </button>
-                  <button
-                    type="button"
-                    className="bg-transparent text-2xl font-semibold leading-none px-2 outline-none focus:outline-none"
-                    onClick={() => {
-                      const newFiles = Object.keys(files)
-                        .filter((file) => file !== name)
-                        .reduce((obj, key) => {
-                          obj[key] = files[key];
-                          return obj;
-                        }, {});
-                      const keys = Object.keys(newFiles);
-                      setCurrentFile(keys[keys.length - 1]);
-                      setFiles(newFiles);
-                      removeFile(files[name].fileId);
-                    }}
-                  >
-                    <span>×</span>
-                  </button>
-                </div>
-              );
+              return <EditorTab key={name} dispatch={dispatch} file={name} />;
             })}
           </nav>
         </div>
       </div>
+
       <div className="neutral" />
       <AceEditor
-        ref={aceEditor}
+        ref={editor}
         mode="csharp"
         theme="monokai"
         onChange={onValueChange}
-        value={code.content}
-        readOnly={replay}
+        readOnly={readOnly}
+        value={code}
         fontSize={12}
         highlightActiveLine={false}
-        setOptions={{
-          showLineNumbers: true,
-          tabSize: 2,
-        }}
+        setOptions={{ showLineNumbers: true, tabSize: 2 }}
         style={{ height: "100vh", width: "full" }}
       />
     </div>

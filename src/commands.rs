@@ -8,25 +8,16 @@ use strum::IntoStaticStr;
 #[derive(Debug, Deserialize, Serialize, IntoStaticStr)]
 #[serde(tag = "command", content = "data")]
 pub enum Command {
-    AddFile {
-        path: String,
-        data: String,
-    },
+    AddFile { path: String, data: String },
     RemoveFile(u32),
     Compile,
-    RunUntilScopedPC(u32),
-    RunOp,
     RunCount(u32),
-    RunLoc,
     RunLine,
-    RunCountOrUntil {
-        count: u32,
-        stack_size: u16,
-        pc: u32,
-    },
     Snapshot,
     Back(u32),
+    Forwards(u32),
     BackLine(u32),
+    ForwardsLine(u32),
 }
 
 #[derive(Debug, Serialize)]
@@ -48,10 +39,7 @@ pub enum CommandResult {
         rendered: String,
         error: Vec<Error>,
     },
-    RuntimeError {
-        rendered: String,
-        error: IError,
-    },
+    RuntimeError(IError),
     Status(RuntimeDiagnostic),
     FileId {
         path: String,
@@ -70,6 +58,12 @@ impl From<WriteEvent> for CommandResult {
             WriteEvent::StdoutWrite(value) => return CommandResult::Stdout(value),
             WriteEvent::Unwind(len) => return CommandResult::Unwind(len),
         }
+    }
+}
+
+impl From<IError> for CommandResult {
+    fn from(err: IError) -> CommandResult {
+        return CommandResult::RuntimeError(err);
     }
 }
 
@@ -150,68 +144,6 @@ impl WSState {
 
         if let WSStateState::Running(runtime) = &mut self.state {
             match command {
-                Command::RunOp => {
-                    let ret = match runtime.run_op() {
-                        Ok(ret) => ret,
-                        Err(error) => {
-                            for event in runtime.memory.events() {
-                                messages.push(event.into());
-                            }
-
-                            let rendered =
-                                render_err(&error, &runtime.memory.callstack, &runtime.program);
-                            ret!(CommandResult::RuntimeError { rendered, error });
-                        }
-                    };
-
-                    for event in runtime.memory.events() {
-                        messages.push(event.into());
-                    }
-
-                    if let Some(ret) = ret {
-                        ret!(CommandResult::StatusRet {
-                            status: runtime.diagnostic(),
-                            ret,
-                        });
-                    }
-
-                    ret!(CommandResult::Status(runtime.diagnostic()));
-                }
-                Command::RunLoc => {
-                    let loc = runtime.program.ops[runtime.pc() as usize].loc;
-
-                    loop {
-                        let ret = match runtime.run_op() {
-                            Ok(ret) => ret,
-                            Err(error) => {
-                                for event in runtime.memory.events() {
-                                    messages.push(event.into());
-                                }
-
-                                let rendered =
-                                    render_err(&error, &runtime.memory.callstack, &runtime.program);
-                                ret!(CommandResult::RuntimeError { rendered, error });
-                            }
-                        };
-
-                        for event in runtime.memory.events() {
-                            messages.push(event.into());
-                        }
-
-                        if runtime.program.ops[runtime.pc() as usize].loc != loc {
-                            break;
-                        }
-
-                        if let Some(ret) = ret {
-                            ret!(CommandResult::StatusRet {
-                                status: runtime.diagnostic(),
-                                ret,
-                            });
-                        }
-                    }
-
-                    ret!(CommandResult::Status(runtime.diagnostic()));
-                }
                 Command::RunLine => {
                     let loc = runtime.program.ops[runtime.pc() as usize].loc;
                     let line = if let Some(line) = self.files.line_index(loc) {
@@ -221,22 +153,16 @@ impl WSState {
                     };
 
                     loop {
-                        let ret = match runtime.run_op() {
-                            Ok(ret) => ret,
-                            Err(error) => {
-                                for event in runtime.memory.events() {
-                                    messages.push(event.into());
-                                }
-
-                                let rendered =
-                                    render_err(&error, &runtime.memory.callstack, &runtime.program);
-                                ret!(CommandResult::RuntimeError { rendered, error });
-                            }
-                        };
+                        let ret = runtime.run_op();
 
                         for event in runtime.memory.events() {
                             messages.push(event.into());
                         }
+
+                        let ret = match ret {
+                            Ok(ret) => ret,
+                            Err(err) => ret!(err.into()),
+                        };
 
                         let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
                         let current_line = if let Some(line) = self.files.line_index(current_loc) {
@@ -260,45 +186,16 @@ impl WSState {
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::RunCount(count) => {
-                    let ret = match runtime.run_op_count(count) {
-                        Ok(prog) => prog,
-                        Err(error) => {
-                            let rendered =
-                                render_err(&error, &runtime.memory.callstack, &runtime.program);
-                            ret!(CommandResult::RuntimeError { rendered, error });
-                        }
-                    };
+                    let ret = runtime.run_op_count(count);
 
                     for event in runtime.memory.events() {
                         messages.push(event.into());
                     }
 
-                    if let Some(ret) = ret {
-                        ret!(CommandResult::StatusRet {
-                            status: runtime.diagnostic(),
-                            ret,
-                        });
-                    }
-
-                    ret!(CommandResult::Status(runtime.diagnostic()));
-                }
-                Command::RunCountOrUntil {
-                    count,
-                    pc,
-                    stack_size,
-                } => {
-                    let ret = match runtime.run_count_or_until(count, pc, stack_size) {
+                    let ret = match ret {
                         Ok(ret) => ret,
-                        Err(error) => {
-                            let rendered =
-                                render_err(&error, &runtime.memory.callstack, &runtime.program);
-                            ret!(CommandResult::RuntimeError { error, rendered });
-                        }
+                        Err(error) => ret!(error.into()),
                     };
-
-                    for event in runtime.memory.events() {
-                        messages.push(event.into());
-                    }
 
                     if let Some(ret) = ret {
                         ret!(CommandResult::StatusRet {
@@ -311,6 +208,64 @@ impl WSState {
                 }
                 Command::Snapshot => {
                     ret!(CommandResult::Snapshot(runtime.memory.snapshot()));
+                }
+                Command::Forwards(count) => {
+                    for _ in 0..count {
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        if !runtime.next() {
+                            break;
+                        }
+
+                        while runtime.program.ops[runtime.pc() as usize].loc == loc
+                            && runtime.next()
+                        {}
+                    }
+
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
+                }
+                Command::ForwardsLine(count) => {
+                    for _ in 0..count {
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        let line = if let Some(line) = self.files.line_index(loc) {
+                            line
+                        } else {
+                            ret!(CommandResult::IOError("problem loading file".to_string()));
+                        };
+
+                        let loc = runtime.program.ops[runtime.pc() as usize].loc;
+                        if !runtime.next() {
+                            break;
+                        }
+
+                        loop {
+                            let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
+                            let current_line = if let Some(line) =
+                                self.files.line_index(current_loc)
+                            {
+                                line
+                            } else {
+                                ret!(CommandResult::IOError("problem loading file".to_string()));
+                            };
+
+                            if current_loc.file != loc.file || line != current_line {
+                                break;
+                            }
+
+                            if !runtime.next() {
+                                break;
+                            }
+                        }
+                    }
+
+                    for event in runtime.memory.events() {
+                        messages.push(event.into());
+                    }
+
+                    ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::Back(count) => {
                     for _ in 0..count {
