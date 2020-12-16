@@ -4,7 +4,7 @@ use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
 use core::mem::MaybeUninit;
 use core::{fmt, marker, ops, slice, str};
-use serde::ser::{Serialize, SerializeMap, Serializer};
+use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
@@ -187,11 +187,28 @@ pub const NO_FILE: CodeLoc = CodeLoc {
     file: !0,
 };
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct CodeLoc {
     pub start: u32, // TODO Top 20 bits for start, bottom 12 bits for length?
     pub end: u32,
     pub file: u32,
+}
+
+impl Serialize for CodeLoc {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self == &NO_FILE {
+            return serializer.serialize_none();
+        }
+
+        let mut state = serializer.serialize_struct("CodeLoc", 3)?;
+        state.serialize_field("start", &self.start)?;
+        state.serialize_field("end", &self.end)?;
+        state.serialize_field("file", &self.file)?;
+        return state.end();
+    }
 }
 
 impl fmt::Debug for CodeLoc {

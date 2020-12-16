@@ -179,15 +179,13 @@ fn run_from_args(args: Vec<String>) -> ! {
     mem::drop(files);
 
     let mut runtime = interpreter::Runtime::new(program, StringArray::new());
-    match runtime.run(std::io::stdout()) {
-        Ok(code) => std::process::exit(code),
-        Err(err) => {
-            let print = runtime::render_err(&err, &runtime.memory.callstack, &program.files);
-            print!("{}", print);
+    let diag = runtime.run(std::io::stdout());
+    let code = match diag.status {
+        runtime::RuntimeStatus::Exited(code) => code,
+        _ => panic!(),
+    };
 
-            std::process::exit(1);
-        }
-    }
+    std::process::exit(code);
 }
 
 fn main() {

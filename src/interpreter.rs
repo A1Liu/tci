@@ -202,6 +202,7 @@ pub struct RuntimeDiagnostic {
     pub fp: u16,
     pub pc: u32,
     pub loc: CodeLoc,
+    pub status: RuntimeStatus,
 }
 
 pub struct Runtime {
@@ -237,33 +238,40 @@ impl Runtime {
             fp: self.memory.fp,
             pc: self.memory.pc,
             loc: self.program.ops[self.memory.pc as usize].loc,
+            status: self.memory.status.clone(),
         }
     }
 
-    pub fn run(&mut self, mut io: impl Write) -> Result<i32, IError> {
+    pub fn run(&mut self, mut io: impl Write) -> RuntimeDiagnostic {
         loop {
             let ret = self.run_op();
+
             for event in self.memory.events() {
                 let string = event.to_string();
-                write!(io, "{}", string)?;
+                write!(io, "{}", string).unwrap();
             }
 
-            if let Some(exit) = ret? {
-                return Ok(exit);
+            if let RuntimeStatus::Running = ret {
+                continue;
             }
+
+            return self.diagnostic();
         }
     }
 
-    pub fn run_op_count(&mut self, mut count: u32) -> Result<Option<i32>, IError> {
+    pub fn run_op_count(&mut self, mut count: u32) -> RuntimeDiagnostic {
         let callstack_len = self.memory.callstack.len();
         while count > 0 {
-            if let Some(exit) = self.run_op()? {
-                return Ok(Some(exit));
+            let ret = self.run_op();
+            if let RuntimeStatus::Running = ret {
+                count -= 1;
+                continue;
             }
-            count -= 1;
+
+            return self.diagnostic();
         }
 
-        return Ok(None);
+        return self.diagnostic();
     }
 
     pub fn run_count_or_until(
@@ -271,17 +279,19 @@ impl Runtime {
         mut count: u32,
         pc: u32,
         stack_size: u16,
-    ) -> Result<Option<i32>, IError> {
+    ) -> RuntimeDiagnostic {
         let stack_size = stack_size as usize;
         while stack_size <= self.memory.callstack.len() && count > 0 && self.memory.pc != pc {
-            if let Some(exit) = self.run_op()? {
-                return Ok(Some(exit));
+            let ret = self.run_op();
+            if let RuntimeStatus::Running = ret {
+                count -= 1;
+                continue;
             }
 
-            count -= 1;
+            return self.diagnostic();
         }
 
-        return Ok(None);
+        return self.diagnostic();
     }
 
     #[inline]
@@ -309,32 +319,31 @@ impl Runtime {
         return true;
     }
 
-    pub fn run_op(&mut self) -> Result<Option<i32>, IError> {
-        if let Some(code) = self.memory.exit_code {
-            return Ok(Some(code));
+    pub fn run_op(&mut self) -> RuntimeStatus {
+        match self.memory.status {
+            RuntimeStatus::Blocked => return self.memory.status.clone(),
+            RuntimeStatus::Exited(_) => return self.memory.status.clone(),
+            _ => {}
         }
+
         let tag = self.memory.pc;
 
         let ret = self.run_op_internal();
-        match ret {
-            Ok(opt) => return Ok(opt),
-            Err(err) => {
-                self.memory.error_push_callstack(
-                    &err,
-                    &self.program.files,
-                    self.program.ops[self.memory.pc as usize].loc,
-                )?;
-                return Err(err);
-            }
+        if let Err(err) = ret {
+            let loc = self.program.ops[self.memory.pc as usize].loc;
+            self.memory
+                .error_push_callstack(err, &self.program.files, loc)
+                .unwrap();
         }
+
+        return self.memory.status.clone();
     }
 
     #[inline]
-    pub fn run_op_internal(&mut self) -> Result<Option<i32>, IError> {
+    pub fn run_op_internal(&mut self) -> Result<(), IError> {
         let op = self.program.ops[self.memory.pc as usize];
         // write!(self.io.log(), "op: {:?}\n", op.op)
         // .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
-
         let opcode = op.op;
         match opcode {
             Opcode::Func(_) => {}
@@ -605,35 +614,35 @@ impl Runtime {
 
             Opcode::Jump(target) => {
                 self.memory.jump(target)?;
-                return Ok(None);
+                return Ok(());
             }
 
             Opcode::JumpIfZero8(target) => {
                 let value: u8 = self.memory.pop_stack()?;
                 if value == 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             Opcode::JumpIfZero16(target) => {
                 let value: u16 = self.memory.pop_stack()?;
                 if value == 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             Opcode::JumpIfZero32(target) => {
                 let value: u32 = self.memory.pop_stack()?;
                 if value == 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             Opcode::JumpIfZero64(target) => {
                 let value: u64 = self.memory.pop_stack()?;
                 if value == 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
 
@@ -641,34 +650,34 @@ impl Runtime {
                 let value: u8 = self.memory.pop_stack()?;
                 if value != 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             Opcode::JumpIfNotZero16(target) => {
                 let value: u16 = self.memory.pop_stack()?;
                 if value != 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             Opcode::JumpIfNotZero32(target) => {
                 let value: u32 = self.memory.pop_stack()?;
                 if value != 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
             Opcode::JumpIfNotZero64(target) => {
                 let value: u64 = self.memory.pop_stack()?;
                 if value != 0 {
                     self.memory.jump(target)?;
-                    return Ok(None);
+                    return Ok(());
                 }
             }
 
             Opcode::Ret => {
                 self.memory.ret()?;
-                return Ok(None);
+                return Ok(());
             }
 
             Opcode::Call(func) => {
@@ -677,7 +686,7 @@ impl Runtime {
                     op => panic!("found function header {:?} (this is an error in tci)", op),
                 };
                 self.memory.call(func + 1, func_name, op.loc)?;
-                return Ok(None);
+                return Ok(());
             }
             Opcode::LibCall(func_name) => {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
@@ -694,7 +703,7 @@ impl Runtime {
             Opcode::Ecall(ECALL_EXIT) => {
                 let exit = i32::from_be(self.memory.pop_stack()?);
                 self.memory.exit(exit)?;
-                return Ok(Some(exit));
+                return Ok(());
             }
             Opcode::Ecall(ECALL_ARGC) => {
                 self.memory.push_stack((self.args.len() as u32).to_be())?;
@@ -722,7 +731,7 @@ impl Runtime {
         }
 
         self.memory.increment_pc()?;
-        return Ok(None);
+        return Ok(());
     }
 
     pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {

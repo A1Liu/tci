@@ -1,5 +1,6 @@
 use crate::filedb::*;
-use crate::interpreter::{render_err, Runtime};
+use crate::interpreter::Runtime;
+use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
 use core::mem;
@@ -24,17 +25,10 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
-    let code = match runtime.run(&mut writer) {
-        Ok(c) => c,
-        Err(err) => {
-            println!("{}", writer.into_string());
-            println!("");
-
-            println!("pc: {}", runtime.memory.pc);
-            let print = render_err(&err, &runtime.memory.callstack, &program);
-
-            panic!("{}", print);
-        }
+    let diag = runtime.run(&mut writer);
+    let code = match diag.status {
+        RuntimeStatus::Exited(code) => code,
+        _ => panic!(),
     };
 
     println!("return code: {}", code);
@@ -97,23 +91,17 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
     mem::drop(files);
 
     let mut runtime = Runtime::new(program, StringArray::new());
-    let code = match runtime.run(&mut writer) {
-        Ok(code) => {
-            for (idx, op) in program.ops.iter().enumerate() {
-                println!("op {}: {:?}", idx, op);
-            }
+    let diag = runtime.run(&mut writer);
+    for (idx, op) in program.ops.iter().enumerate() {
+        println!("op {}: {:?}", idx, op);
+    }
 
-            panic!();
-        }
-        Err(err) => {
-            for (idx, op) in program.ops.iter().enumerate() {
-                println!("op {}: {:?}", idx, op);
-            }
-
-            println!("{:?}\n", err);
-            assert_eq!(err.short_name, expected_err);
-        }
+    let err = match diag.status {
+        RuntimeStatus::ErrorExited(err) => err,
+        x => panic!("{:?}", x),
     };
+
+    assert_eq!(err.short_name, expected_err);
 }
 
 macro_rules! gen_test_should_succeed {

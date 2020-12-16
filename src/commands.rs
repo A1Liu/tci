@@ -33,6 +33,7 @@ pub enum CommandResult {
     IOError(String),
     Stdout(String),
     Stderr(String),
+    Stdin(String),
     Unwind(u32),
     Snapshot(MemorySnapshot),
     CompileError {
@@ -45,10 +46,6 @@ pub enum CommandResult {
         path: String,
         file_id: u32,
     },
-    StatusRet {
-        status: RuntimeDiagnostic,
-        ret: i32,
-    },
 }
 
 impl From<WriteEvent> for CommandResult {
@@ -56,6 +53,7 @@ impl From<WriteEvent> for CommandResult {
         match event {
             WriteEvent::StderrWrite(value) => return CommandResult::Stderr(value),
             WriteEvent::StdoutWrite(value) => return CommandResult::Stdout(value),
+            WriteEvent::StdinWrite(value) => return CommandResult::Stdin(value),
             WriteEvent::Unwind(len) => return CommandResult::Unwind(len),
         }
     }
@@ -159,11 +157,6 @@ impl WSState {
                             messages.push(event.into());
                         }
 
-                        let ret = match ret {
-                            Ok(ret) => ret,
-                            Err(err) => ret!(err.into()),
-                        };
-
                         let current_loc = runtime.program.ops[runtime.pc() as usize].loc;
                         let current_line = if let Some(line) = self.files.line_index(current_loc) {
                             line
@@ -175,12 +168,11 @@ impl WSState {
                             break;
                         }
 
-                        if let Some(ret) = ret {
-                            ret!(CommandResult::StatusRet {
-                                status: runtime.diagnostic(),
-                                ret,
-                            });
+                        if let RuntimeStatus::Running = ret {
+                            continue;
                         }
+
+                        ret!(CommandResult::Status(runtime.diagnostic()));
                     }
 
                     ret!(CommandResult::Status(runtime.diagnostic()));
@@ -192,19 +184,7 @@ impl WSState {
                         messages.push(event.into());
                     }
 
-                    let ret = match ret {
-                        Ok(ret) => ret,
-                        Err(error) => ret!(error.into()),
-                    };
-
-                    if let Some(ret) = ret {
-                        ret!(CommandResult::StatusRet {
-                            status: runtime.diagnostic(),
-                            ret,
-                        });
-                    }
-
-                    ret!(CommandResult::Status(runtime.diagnostic()));
+                    ret!(CommandResult::Status(ret));
                 }
                 Command::Snapshot => {
                     ret!(CommandResult::Snapshot(runtime.memory.snapshot()));
