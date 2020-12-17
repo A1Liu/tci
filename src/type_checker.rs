@@ -2495,6 +2495,14 @@ pub fn check_expr_allow_brace<'b>(
                 tc_exprs.push(check_expr(env, local_env, expr)?);
             }
 
+            if tc_exprs.len() == 0 {
+                return Ok(TCExpr {
+                    expr_type: TCType::new(TCTypeKind::Uninit { size: 0 }, 0),
+                    kind: TCExprKind::ParenList(&[]),
+                    loc: expr.loc,
+                });
+            }
+
             return Ok(TCExpr {
                 expr_type: tc_exprs[tc_exprs.len() - 1].expr_type,
                 kind: TCExprKind::ParenList(env.buckets.add_array(tc_exprs)),
