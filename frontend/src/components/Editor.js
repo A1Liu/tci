@@ -57,49 +57,49 @@ const BasicEditor = () => {
 
   const editor = useRef(undefined);
   const marker = useRef(undefined);
-  const [currentFile, setCurrentFile] = useState(undefined);
-  const [rerender, setRerender] = useState(false);
+  const currentFile = useRef(undefined);
+  const [rerender, setRerender] = useState(0);
 
   const onValueChange = (content) => {
-    if (currentFile !== undefined)
+    if (currentFile.current !== undefined)
       dispatch({
         type: "EditFile",
-        payload: { path: currentFile, data: content },
+        payload: { path: currentFile.current, data: content },
       });
   };
 
   const setupEditor = () => {
-    if (currentFile === undefined) {
+    if (currentFile.current === undefined) {
       const keys = Object.keys(files);
       if (keys.length === 0) return;
 
-      setCurrentFile(keys[0]);
+      [currentFile.current] = keys;
       return;
     }
 
-    if (files[currentFile] === undefined) {
+    if (files[currentFile.current] === undefined) {
       const keys = Object.keys(files);
       const f = keys.length === 0 ? undefined : keys[keys.length - 1];
-      setCurrentFile(f);
+      currentFile.current = f;
       return;
     }
 
     if (editor.current === undefined) return;
 
-    const { session } = editor.current.editor;
+    const ace = editor.current.editor;
     if (!debugging) {
       if (marker.current !== undefined) {
-        session.removeMarker(marker.current);
+        ace.session.removeMarker(marker.current);
         marker.current = undefined;
       }
 
       return;
     }
-    if (!codeLocChanged && !rerender) return;
 
+    if (!codeLocChanged) return;
     if (currentCodeLoc === undefined) {
       if (marker.current !== undefined) {
-        session.removeMarker(marker.current);
+        ace.session.removeMarker(marker.current);
         marker.current = undefined;
       }
 
@@ -107,17 +107,16 @@ const BasicEditor = () => {
     }
 
     const nextFile = fileNames[currentCodeLoc.file];
-    if (nextFile !== currentFile) {
-      setCurrentFile(nextFile);
-      setRerender(true);
-      return;
+    if (nextFile !== currentFile.current) {
+      currentFile.current = undefined;
+      ace.setValue(files[nextFile], -1);
+      currentFile.current = nextFile;
     }
 
-    setRerender(false);
-    const doc = session.getDocument();
+    const doc = ace.session.getDocument();
     const { row, column } = doc.indexToPosition(currentCodeLoc.start, 0);
-    if (marker.current !== undefined) session.removeMarker(marker.current);
-    marker.current = session.addMarker(
+    if (marker.current !== undefined) ace.session.removeMarker(marker.current);
+    marker.current = ace.session.addMarker(
       new Range(row, 0, row, column),
       "current_line",
       "fullLine"
@@ -127,9 +126,9 @@ const BasicEditor = () => {
   setupEditor();
 
   const [code, readOnly] =
-    currentFile === undefined ? ["", true] : [files[currentFile], false];
-
-  console.log(code);
+    currentFile.current === undefined
+      ? ["", true]
+      : [files[currentFile.current], false];
 
   return (
     <div style={{ height: "100%" }}>
@@ -138,14 +137,15 @@ const BasicEditor = () => {
           <nav className="flex flex-row w-full overflow-auto">
             {Object.keys(files).map((name) => {
               const changeTab = () => {
-                if (name !== currentFile) {
+                if (name !== currentFile.current) {
                   const { session } = editor.current.editor;
                   if (marker.current !== undefined) {
                     session.removeMarker(marker.current);
                     marker.current = undefined;
                   }
 
-                  setCurrentFile(name);
+                  currentFile.current = name;
+                  setRerender(rerender + 1);
                 }
               };
 
@@ -154,7 +154,7 @@ const BasicEditor = () => {
                   key={name}
                   dispatch={dispatch}
                   file={name}
-                  currentFile={currentFile}
+                  currentFile={currentFile.current}
                   setCurrentFile={changeTab}
                 />
               );
