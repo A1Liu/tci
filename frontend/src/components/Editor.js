@@ -1,46 +1,29 @@
 import AceEditor from "react-ace";
 import { Range } from "ace-builds";
+import styled from "styled-components";
 import "../App.css";
 import "ace-builds/src-noconflict/mode-csharp";
 import "ace-builds/src-noconflict/theme-monokai";
 import { useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
-const EditorTab = ({ dispatch, file, currentFile, setCurrentFile }) => {
-  if (currentFile === file) {
-    return (
-      <div className="flex flex-row bg-gray-400 h-10 border-r border-l border-gray-500">
-        <button type="button" className="py-2 px-2" onClick={setCurrentFile}>
-          {file}
-        </button>
-        <button
-          type="button"
-          className="bg-transparent text-2xl font-semibold leading-none px-2 outline-none focus:outline-none"
-          onClick={() => {
-            dispatch({ type: "RemoveFile", payload: file });
-          }}
-        >
-          <span>×</span>
-        </button>
-      </div>
-    );
-  }
-
+const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
   return (
-    <div className="flex flex-row bg-gray-700 h-10 border-r border-l border-gray-500">
-      <button type="button" className="py-2 px-2" onClick={setCurrentFile}>
-        {file}
-      </button>
-      <button
+    <EditorTabDiv
+      role="button"
+      tabIndex={index + 1}
+      onClick={setCurrentFile}
+      onKeyDown={setCurrentFile}
+      focused={file === currentFile}
+    >
+      <p style={{ border: "10px" }}>{file}</p>
+      <EditorTabClose
         type="button"
-        className="bg-transparent text-2xl font-semibold leading-none px-2 outline-none focus:outline-none"
-        onClick={() => {
-          dispatch({ type: "RemoveFile", payload: file });
-        }}
+        onClick={() => dispatch({ type: "RemoveFile", payload: file })}
       >
         <span>×</span>
-      </button>
-    </div>
+      </EditorTabClose>
+    </EditorTabDiv>
   );
 };
 
@@ -81,7 +64,6 @@ const BasicEditor = () => {
       const keys = Object.keys(files);
       const f = keys.length === 0 ? undefined : keys[keys.length - 1];
       currentFile.current = f;
-      return;
     }
 
     if (editor.current === undefined) return;
@@ -135,7 +117,7 @@ const BasicEditor = () => {
       <div className="h-10 w-full flex">
         <div className="bg-gray-800 w-full text-white">
           <nav className="flex flex-row w-full overflow-auto">
-            {Object.keys(files).map((name) => {
+            {Object.keys(files).map((name, index) => {
               const changeTab = () => {
                 if (name !== currentFile.current) {
                   const { session } = editor.current.editor;
@@ -152,6 +134,7 @@ const BasicEditor = () => {
               return (
                 <EditorTab
                   key={name}
+                  index={index}
                   dispatch={dispatch}
                   file={name}
                   currentFile={currentFile.current}
@@ -179,5 +162,32 @@ const BasicEditor = () => {
     </div>
   );
 };
+
+const EditorTabDiv = styled.div`
+  display: flex;
+  flex-direction: row;
+  height: 2.5rem;
+  border-left-width: 1px;
+  border-right-width: 1px;
+  --border-opacity: 1;
+  border-color: #9e9e9e;
+  border-color: rgba(158, 158, 158, var(--border-opacity));
+  background-color: ${({ focused }) => (focused ? "gray" : "light-gray")};
+`;
+
+const EditorTabClose = styled.button`
+  background-color: transparent;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  &:focus {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+`;
 
 export default BasicEditor;

@@ -33,7 +33,7 @@ export default function NavBar() {
   };
 
   return (
-    <nav className="h-12 w-full bg-gray-800 flex p-2 border-b border-gray-600">
+    <NavBarDiv>
       <div className="pb-5 ml-2">
         <input
           style={{ display: "none" }}
@@ -43,13 +43,13 @@ export default function NavBar() {
           onChange={handleOnChange}
         />
 
-        <button
+        <UploadButton
           className="bg-blue-600 hover:bg-blue-800 text-white py-1 px-2 rounded"
           type="button"
           onClick={handleOnClick}
         >
           Upload a File
-        </button>
+        </UploadButton>
       </div>
 
       <StepButton left onClick={prev}>
@@ -63,9 +63,43 @@ export default function NavBar() {
         <Arrow />
         <Vertical />
       </StepButton>
-    </nav>
+    </NavBarDiv>
   );
 }
+
+const NavBarDiv = styled.nav`
+  height: 3rem;
+  width: 100%;
+  display: flex;
+  padding: 0.5rem;
+  --bg-opacity: 1;
+  background-color: #424242;
+  background-color: rgba(66, 66, 66, var(--bg-opacity));
+  border-bottom-width: 1px;
+  --border-opacity: 1;
+  border-color: #757575;
+  border-color: rgba(117, 117, 117, var(--border-opacity));
+`;
+
+const UploadButton = styled.button`
+  --text-opacity: 1;
+  color: #fff;
+  color: rgba(255, 255, 255, var(--text-opacity));
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  border-radius: 0.25rem;
+
+  --bg-opacity: 1;
+  background-color: #3182ce;
+  background-color: rgba(49, 130, 206, var(--bg-opacity));
+  &:hover {
+    --bg-opacity: 1;
+    background-color: #2c5282;
+    background-color: rgba(44, 82, 130, var(--bg-opacity));
+  }
+`;
 
 const PlayButton = styled.button`
   width: 0;
