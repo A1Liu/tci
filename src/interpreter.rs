@@ -4,13 +4,13 @@ use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
 use core::fmt;
+use core::future::Future;
+use core::pin::Pin;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::Write;
-use std::ops::BitAnd;
-use std::ops::BitOr;
-use std::ops::BitXor;
+use std::ops::{BitAnd, BitOr, BitXor};
 
 macro_rules! error {
     ($arg1:tt,$($arg:tt)*) => {
@@ -194,7 +194,8 @@ impl<'a> fmt::Debug for Program<'a> {
     }
 }
 
-type LibFunc = for<'a> fn(&'a mut Runtime) -> Result<(), IError>;
+type LibFuncRet<'a> = Pin<Box<dyn Future<Output = Result<(), IError>> + 'a>>;
+type LibFunc = for<'a> fn(&'a mut Runtime) -> LibFuncRet<'a>;
 
 #[derive(Debug, Serialize)]
 pub struct RuntimeDiagnostic {
@@ -216,12 +217,26 @@ impl Runtime {
     pub fn new(program: Program<'static>, args: StringArray) -> Self {
         let mut lib_funcs: HashMap<u32, LibFunc> = HashMap::new();
 
-        lib_funcs.insert(INIT_SYMS.translate["printf"], printf);
-        lib_funcs.insert(INIT_SYMS.translate["exit"], exit);
-        lib_funcs.insert(INIT_SYMS.translate["malloc"], malloc);
-        lib_funcs.insert(INIT_SYMS.translate["realloc"], realloc);
-        lib_funcs.insert(INIT_SYMS.translate["memcpy"], memcpy);
-        lib_funcs.insert(INIT_SYMS.translate["strlen"], strlen);
+        macro_rules! add_lib_func {
+            ($id:ident) => {{
+                lib_funcs.insert(INIT_SYMS.translate[stringify!($id)], |sel| {
+                    Box::pin(smol::future::ready($id(sel)))
+                });
+            }};
+            (@ASYNC, $id:ident) => {{
+                lib_funcs.insert(INIT_SYMS.translate[stringify!($id)], |sel| {
+                    Box::pin($id(sel))
+                });
+            }};
+        }
+
+        add_lib_func!(printf);
+        add_lib_func!(exit);
+        add_lib_func!(malloc);
+        add_lib_func!(realloc);
+        add_lib_func!(memcpy);
+        add_lib_func!(strlen);
+        add_lib_func!(@ASYNC, scanf);
 
         let memory = Memory::new_with_binary(program.data);
         return Self {
@@ -687,8 +702,8 @@ impl Runtime {
                 return Ok(());
             }
             Opcode::LibCall(func_name) => {
-                if let Some(lib_func) = self.lib_funcs.get(&func_name) {
-                    lib_func(self)?;
+                if let Some(&lib_func) = self.lib_funcs.get(&func_name) {
+                    smol::block_on(async { lib_func(self).await })?;
                     match self.memory.status {
                         RuntimeStatus::Running => {}
                         _ => return Ok(()),
@@ -851,7 +866,7 @@ pub fn exit(sel: &mut Runtime) -> Result<(), IError> {
     return Ok(());
 }
 
-pub fn scanf(sel: &mut Runtime) -> Result<(), IError> {
+pub async fn scanf(sel: &mut Runtime) -> Result<(), IError> {
     return Ok(());
 }
 

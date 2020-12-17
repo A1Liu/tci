@@ -3,6 +3,7 @@ use crate::filedb::*;
 use crate::util::*;
 use core::{fmt, mem, str};
 use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
+use smol::io::AsyncReadExt;
 use std::collections::VecDeque;
 use std::io;
 use std::io::{stderr, stdout, Stderr, Stdout, Write};
@@ -642,7 +643,6 @@ impl MemoryAction {
 #[serde(tag = "status", content = "data")]
 pub enum RuntimeStatus {
     Running,
-    Blocked,
     Exited(i32),
     ErrorExited(IError),
 }
@@ -771,12 +771,6 @@ impl Memory {
                 return Err(error!(
                 "AlreadyExited",
                 "tried to change memory when error exit had already occurred (This is an error in TCI)"
-                ))
-            }
-            RuntimeStatus::Blocked => {
-                return Err(error!(
-                    "Blocked",
-                    "tried to change memory while reading data (This is an error in TCI)"
                 ))
             }
             _ => return Ok(()),
@@ -939,16 +933,18 @@ impl Memory {
         self.history_index += 1;
     }
 
-    pub fn read_stdin(&mut self, limit: usize) -> Result<Vec<u8>, IError> {
+    pub async fn read_stdin(
+        &mut self,
+        limit: usize,
+        stdin: impl AsyncReadExt + Unpin,
+    ) -> Result<Vec<u8>, IError> {
         self.check_mutate()?;
 
-        let len = self.in_io_buf.len();
-        if len == 0 {
-            self.status = RuntimeStatus::Blocked;
-            return Ok(Vec::new());
+        if self.in_io_buf.len() == 0 {
+            smol::io::copy(stdin.take(limit as u64), MemoryStdin { memory: self }).await?;
         }
 
-        let limit = std::cmp::min(limit, len);
+        let limit = std::cmp::min(limit, self.in_io_buf.len());
         return Ok(self.in_io_buf.drain(..limit).collect());
     }
 
@@ -1792,7 +1788,7 @@ pub struct MemoryStdin<'a> {
     pub memory: &'a mut Memory,
 }
 
-impl<'a> io::Write for MemoryStdin<'a> {
+impl<'a> Write for MemoryStdin<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
         let buf = core::str::from_utf8(buf).map_err(map_err)?;
@@ -1836,6 +1832,25 @@ impl<'a> io::Write for MemoryStdin<'a> {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+use core::pin::Pin;
+use core::task::{Context, Poll};
+use smol::io::AsyncWrite;
+impl<'a> AsyncWrite for MemoryStdin<'a> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        return Poll::Ready(self.write(buf));
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        return Poll::Ready(Ok(()));
+    }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        return Poll::Ready(Ok(()));
     }
 }
 

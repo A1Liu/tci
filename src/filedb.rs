@@ -303,6 +303,7 @@ pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static,
     add_sym!("realloc");
     add_sym!("memcpy");
     add_sym!("strlen");
+    add_sym!("scanf");
 
     InitSyms {
         names,
