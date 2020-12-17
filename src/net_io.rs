@@ -1,10 +1,10 @@
 use crate::buckets::*;
 use embedded_websocket as ws;
 use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType};
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use smol::io::{AsyncReadExt, AsyncWriteExt};
+use std::future::Future;
 use std::str::Utf8Error;
-use std::thread;
+use tokio::runtime::Runtime;
 
 // macro_rules! write_b {
 //     ($dst:expr, $($arg:tt)*) => {{
@@ -71,6 +71,140 @@ pub enum WSResponse<'a> {
     Close,
 }
 
+impl<'a> WSResponse<'a> {
+    pub fn text(message: &'a [u8]) -> Self {
+        Self::Response {
+            message_type: WebSocketSendMessageType::Text,
+            message,
+        }
+    }
+}
+
+pub struct WSStream {
+    pub buckets: BucketListRef<'static>,
+    pub tcp_stream: smol::net::TcpStream,
+    pub web_socket: ws::WebSocketServer,
+    pub num_bytes: usize,
+    pub tcp_bytes: usize,
+    pub ws_bytes: usize,
+    pub tcp_buf: &'static mut [u8],
+    pub ws_buf: &'static mut [u8],
+    pub out: Vec<u8>,
+}
+
+impl Drop for WSStream {
+    fn drop(&mut self) {
+        let mut buckets = self.buckets;
+        while let Some(b) = unsafe { buckets.dealloc() } {
+            buckets = b;
+        }
+    }
+}
+
+impl WSStream {
+    pub async fn new(
+        mut tcp_stream: smol::net::TcpStream,
+        ws_key: &ws::WebSocketKey,
+        buckets: BucketListRef<'static>,
+        num_bytes: usize,
+        tcp_buf: &'static mut [u8],
+        ws_buf: &'static mut [u8],
+    ) -> Result<WSStream, WebServerError> {
+        let mut web_socket = ws::WebSocketServer::new_server();
+        let to_send = web_socket.server_accept(ws_key, None, ws_buf)?;
+        tcp_stream.write_all(&ws_buf[..to_send]).await?;
+
+        Ok(WSStream {
+            tcp_stream,
+            web_socket,
+            buckets,
+            num_bytes,
+            tcp_bytes: 0,
+            ws_bytes: 0,
+            tcp_buf,
+            ws_buf,
+            out: Vec::new(),
+        })
+    }
+
+    pub async fn write_frames<'resp>(
+        &mut self,
+        responses: impl Iterator<Item = WSResponse<'resp>>,
+    ) -> Result<(), WebServerError> {
+        for resp in responses {
+            match resp {
+                WSResponse::Response {
+                    message_type,
+                    message,
+                } => {
+                    let to_send =
+                        self.web_socket
+                            .write(message_type, true, message, self.ws_buf)?;
+                    for &byte in &self.ws_buf[0..to_send] {
+                        self.out.push(byte);
+                    }
+                }
+                WSResponse::None => break,
+                WSResponse::Close => return Ok(()),
+            }
+        }
+
+        self.tcp_stream.write_all(&self.out).await?;
+        self.out.clear();
+        return Ok(());
+    }
+
+    pub async fn read_frame(
+        &mut self,
+    ) -> Result<(Option<WebSocketReceiveMessageType>, &[u8]), WebServerError> {
+        macro_rules! stream_read {
+            () => {{
+                let buf = &mut self.tcp_buf[self.num_bytes..];
+                let read_bytes = self.tcp_stream.read(buf).await?;
+                if read_bytes == 0 {
+                    return Ok((None, &[]));
+                }
+
+                self.num_bytes += read_bytes;
+            }};
+        }
+
+        if self.num_bytes == 0 {
+            stream_read!();
+        }
+
+        loop {
+            if self.num_bytes >= self.tcp_buf.len() {
+                return Err(WebServerError::PayloadTooLarge(self.num_bytes));
+            }
+
+            let tcp_buf = &self.tcp_buf[self.tcp_bytes..self.num_bytes];
+            let ws_buf = &mut self.ws_buf[self.ws_bytes..];
+            let ws_result = self.web_socket.read(tcp_buf, ws_buf)?;
+            self.tcp_bytes += ws_result.len_from;
+            self.ws_bytes += ws_result.len_to;
+            if self.ws_bytes >= ws_buf.len() {
+                return Err(WebServerError::RequestTooLarge(self.ws_bytes));
+            }
+
+            if !ws_result.end_of_message {
+                stream_read!();
+                continue;
+            }
+
+            self.num_bytes -= self.tcp_bytes;
+            for i in 0..self.num_bytes {
+                self.tcp_buf[i] = self.tcp_buf[i + self.tcp_bytes];
+            }
+            self.tcp_bytes = 0;
+            let ws_buf = &self.ws_buf[..self.ws_bytes];
+            self.ws_bytes = 0;
+
+            return Ok((Some(ws_result.message_type), ws_buf));
+        }
+    }
+}
+
 pub struct HttpResponse<'a> {
     pub status: u16,
     pub content_type: &'a str,
@@ -81,172 +215,100 @@ pub const CT_TEXT_HTML: &'static str = "text; html; charset=UTF-8";
 
 pub type HttpHandler =
     for<'a> fn(HttpHeader, &'a mut [u8]) -> Result<HttpResponse<'a>, WebServerError>;
-pub type WSHandler<State> = for<'a> fn(
-    WebSocketReceiveMessageType,
-    &mut State,
-    &[u8],
-    &'a mut [u8],
-) -> Result<WSResponse<'a>, WebServerError>;
 
-pub struct WebServer<State: Default + 'static> {
-    pub http_handler: HttpHandler,
-    pub ws_handler: WSHandler<State>,
-}
-
-impl<State: Default + 'static> Clone for WebServer<State> {
-    fn clone(&self) -> Self {
-        Self {
-            http_handler: self.http_handler,
-            ws_handler: self.ws_handler,
-        }
-    }
-}
-
-impl<State: Default + 'static> Copy for WebServer<State> {}
-
-impl<State: Default + 'static> WebServer<State> {
-    pub fn serve(&self, addr: &str) -> Result<(), WebServerError> {
-        let listener = TcpListener::bind(addr)?;
+pub fn run_server<F, Out>(
+    addr: &str,
+    http_handler: HttpHandler,
+    ws_handler: F,
+) -> Result<(), WebServerError>
+where
+    Out: Future<Output = Result<(), WebServerError>> + Send + 'static,
+    F: Fn(WSStream) -> Out + Copy + Send + 'static,
+{
+    let runtime = Runtime::new()?;
+    smol::block_on(async {
+        let listener = smol::net::TcpListener::bind(addr).await?;
         println!("listening on: {}", addr);
 
-        // accept connections and process them serially
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    let s = *self;
-                    thread::spawn(move || match s.handle(stream) {
-                        Ok(()) => {}
-                        Err(error) => debug!(error),
-                    });
-                }
-                Err(e) => println!("failed to establish a connection: {}", e),
-            }
-        }
-
-        return Ok(());
-    }
-
-    pub fn handle(&self, mut stream: TcpStream) -> Result<(), WebServerError> {
-        let http_handler = self.http_handler;
-        let ws_handler = self.ws_handler;
-
-        let buckets = BucketList::with_capacity(TOTAL_BUCKET_SIZE);
-
-        // In lieu of defer
-        struct BucketDealloc<'a>(BucketListRef<'a>);
-        impl<'a> Drop for BucketDealloc<'a> {
-            fn drop(&mut self) {
-                let mut buckets = self.0;
-                unsafe {
-                    while let Some(b) = buckets.dealloc() {
-                        buckets = b;
-                    }
-                };
-            }
-        }
-        let dealloc_buckets = BucketDealloc(buckets);
-        let tcp_recv = buckets.uninit(TCP_BUCKET_SIZE).unwrap();
-        let ws_buf = buckets.uninit(WS_BUCKET_SIZE).unwrap();
-        let scratch_buf = buckets.uninit(SCRATCH_BUCKET_SIZE).unwrap();
-
-        let mut web_socket = ws::WebSocketServer::new_server();
-        let mut num_bytes = 0;
-
-        macro_rules! stream_read {
-            () => {{
-                let read_bytes = stream.read(&mut tcp_recv[num_bytes..])?;
-                if read_bytes == 0 {
-                    return Ok(());
-                }
-
-                num_bytes += read_bytes;
-            }};
-        }
-
         loop {
-            let mut headers = [ws::httparse::EMPTY_HEADER; 32];
-
-            if num_bytes >= tcp_recv.len() {
-                return Err(WebServerError::RequestTooLarge(num_bytes));
-            }
-
-            stream_read!();
-
-            // assume that the client has sent us an http request. Since we may not read the
-            // header all in one go we need to check for HttpHeaderIncomplete and continue reading
-            let http_header = match ws::read_http_header(&mut headers, &tcp_recv[..num_bytes]) {
-                Ok(header) => header,
-                Err(ws::Error::HttpHeaderIncomplete) => continue,
-                Err(e) => return Err(WebServerError::WebSocket(e)),
-            };
-
-            if let Some(ws_context) = &http_header.websocket_context {
-                let to_send =
-                    web_socket.server_accept(&ws_context.sec_websocket_key, None, ws_buf)?;
-                write_to_stream(&mut stream, &ws_buf[..to_send])?;
-
-                let bytes_read = http_header.bytes_read;
-                num_bytes -= bytes_read;
-                for i in 0..num_bytes {
-                    tcp_recv[i] = tcp_recv[i + bytes_read];
+            let (stream, _) = listener.accept().await?;
+            runtime.spawn(async move {
+                if let Err(e) = handle_connection(stream, http_handler, ws_handler).await {
+                    debug!(e);
                 }
+            });
+        }
+    })
+}
 
-                break;
-            } else {
-                let resp = http_handler(http_header, ws_buf)?;
-                let bytes = serialize_http_response(resp, scratch_buf)?;
-                write_to_stream(&mut stream, bytes)?;
+pub async fn handle_connection<F, Out>(
+    mut stream: smol::net::TcpStream,
+    http_handler: HttpHandler,
+    ws_handler: F,
+) -> Result<(), WebServerError>
+where
+    Out: Future<Output = Result<(), WebServerError>>,
+    F: Fn(WSStream) -> Out,
+{
+    let buckets = BucketList::with_capacity(TOTAL_BUCKET_SIZE);
+
+    let tcp_buf = buckets.uninit(TCP_BUCKET_SIZE).unwrap();
+    let scratch_buf = buckets.uninit(SCRATCH_BUCKET_SIZE).unwrap();
+
+    let mut num_bytes = 0;
+    macro_rules! stream_read {
+        () => {{
+            let read_bytes = stream.read(&mut tcp_buf[num_bytes..]).await?;
+            if read_bytes == 0 {
                 return Ok(());
             }
+
+            num_bytes += read_bytes;
+        }};
+    }
+
+    loop {
+        let mut headers = [ws::httparse::EMPTY_HEADER; 32];
+
+        if num_bytes >= tcp_buf.len() {
+            return Err(WebServerError::RequestTooLarge(num_bytes));
         }
 
-        let mut state = State::default();
-        let mut tcp_bytes = 0;
-        let mut ws_bytes = 0;
-        loop {
-            if num_bytes >= tcp_recv.len() {
-                return Err(WebServerError::PayloadTooLarge(num_bytes));
-            }
+        stream_read!();
 
-            if num_bytes == 0 {
-                stream_read!();
-            }
+        // assume that the client has sent us an http request. Since we may not read the
+        // header all in one go we need to check for HttpHeaderIncomplete and continue reading
+        let http_header = match ws::read_http_header(&mut headers, &tcp_buf[..num_bytes]) {
+            Ok(header) => header,
+            Err(ws::Error::HttpHeaderIncomplete) => continue,
+            Err(e) => return Err(WebServerError::WebSocket(e)),
+        };
 
-            let ws_result =
-                web_socket.read(&tcp_recv[tcp_bytes..num_bytes], &mut ws_buf[ws_bytes..])?;
-            tcp_bytes += ws_result.len_from;
-            ws_bytes += ws_result.len_to;
-            if !ws_result.end_of_message {
-                stream_read!();
-                continue;
-            }
-
-            if ws_bytes >= ws_buf.len() {
-                return Err(WebServerError::RequestTooLarge(ws_bytes));
-            }
-
-            num_bytes -= tcp_bytes;
+        if let Some(ws_context) = &http_header.websocket_context {
+            let bytes_read = http_header.bytes_read;
+            num_bytes -= bytes_read;
             for i in 0..num_bytes {
-                tcp_recv[i] = tcp_recv[i + tcp_bytes];
+                tcp_buf[i] = tcp_buf[i + bytes_read];
             }
-            tcp_bytes = 0;
 
-            let (ws_in, ws_out) = ws_buf.split_at_mut(ws_bytes);
-            ws_bytes = 0;
-            loop {
-                let response = ws_handler(ws_result.message_type, &mut state, ws_in, scratch_buf)?;
-                match response {
-                    WSResponse::Response {
-                        message_type,
-                        message,
-                    } => {
-                        let to_send = web_socket.write(message_type, true, message, ws_out)?;
-                        write_to_stream(&mut stream, &ws_out[..to_send])?;
-                    }
-                    WSResponse::None => break,
-                    WSResponse::Close => return Ok(()),
-                }
-            }
+            let ws_stream = WSStream::new(
+                stream,
+                &ws_context.sec_websocket_key,
+                buckets,
+                num_bytes,
+                tcp_buf,
+                scratch_buf,
+            )
+            .await?;
+
+            let future = ws_handler(ws_stream);
+            let result = future.await;
+            return result;
+        } else {
+            let resp = http_handler(http_header, scratch_buf)?;
+            let bytes = serialize_http_response(resp, tcp_buf)?;
+            stream.write_all(bytes).await?;
+            return Ok(());
         }
     }
 }
@@ -285,19 +347,4 @@ pub fn serialize_http_response<'a>(
     num_bytes += resp.body.len();
 
     return Ok(&bytes[..num_bytes]);
-}
-
-// Below is licensed via the MIT License (MIT)
-// Below is Copyright (c) 2019 David Haig
-
-pub fn write_to_stream(stream: &mut TcpStream, buffer: &[u8]) -> Result<(), WebServerError> {
-    let mut start = 0;
-    loop {
-        let bytes_sent = stream.write(&buffer[start..])?;
-        start += bytes_sent;
-
-        if start == buffer.len() {
-            return Ok(());
-        }
-    }
 }

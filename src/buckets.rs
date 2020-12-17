@@ -51,6 +51,8 @@ impl<'a> BucketListRef<'a> {
     }
 }
 
+unsafe impl<'a> Send for BucketListRef<'a> {}
+
 impl BucketListInner {
     unsafe fn bump_size_align(bump: *const u8, end: *const u8, layout: Layout) -> Option<Bump> {
         let required_offset = bump.align_offset(layout.align());
