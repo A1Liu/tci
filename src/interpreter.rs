@@ -194,7 +194,7 @@ impl<'a> fmt::Debug for Program<'a> {
     }
 }
 
-type LibFunc = for<'a> fn(&'a mut Runtime) -> Result<Option<i32>, IError>;
+type LibFunc = for<'a> fn(&'a mut Runtime) -> Result<(), IError>;
 
 #[derive(Debug, Serialize)]
 pub struct RuntimeDiagnostic {
@@ -689,6 +689,10 @@ impl Runtime {
             Opcode::LibCall(func_name) => {
                 if let Some(lib_func) = self.lib_funcs.get(&func_name) {
                     lib_func(self)?;
+                    match self.memory.status {
+                        RuntimeStatus::Running => {}
+                        _ => return Ok(()),
+                    }
                 } else {
                     return Err(error!(
                         "InvalidLibraryFunction",
@@ -751,7 +755,7 @@ impl Runtime {
     }
 }
 
-pub fn strlen(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn strlen(sel: &mut Runtime) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
     let char_param_ptr = VarPointer::new_stack(stack_len, 0);
     let ret_ptr = VarPointer::new_stack(stack_len - 1, 0);
@@ -760,10 +764,10 @@ pub fn strlen(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let len: u64 = cstring.len() as u64;
 
     sel.memory.set(ret_ptr, len.to_be())?;
-    return Ok(None);
+    return Ok(());
 }
 
-pub fn memcpy(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn memcpy(sel: &mut Runtime) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
     let size_param_ptr = VarPointer::new_stack(stack_len, 0);
     let src_param_ptr = VarPointer::new_stack(stack_len - 1, 0);
@@ -784,19 +788,19 @@ pub fn memcpy(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     }
 
     sel.memory.set(ret_ptr, to_ret)?;
-    return Ok(None);
+    return Ok(());
 }
 
-pub fn malloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn malloc(sel: &mut Runtime) -> Result<(), IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
     let var_pointer = sel.memory.add_heap_var(size as u32)?; // TODO overflow
     sel.memory.set(ret_ptr, var_pointer)?;
-    return Ok(None);
+    return Ok(());
 }
 
-pub fn realloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn realloc(sel: &mut Runtime) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
     let size_ptr = VarPointer::new_stack(stack_len, 0);
     let to_free_ptr = VarPointer::new_stack(stack_len - 1, 0);
@@ -831,23 +835,27 @@ pub fn realloc(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     }
 
     sel.memory.set(ret_ptr, new_alloc_ptr)?;
-    return Ok(None);
+    return Ok(());
 }
 
-pub fn free(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn free(sel: &mut Runtime) -> Result<(), IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
-    return Ok(None);
+    return Ok(());
 }
 
-pub fn exit(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn exit(sel: &mut Runtime) -> Result<(), IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     sel.memory.exit(exit_code)?;
-    return Ok(Some(exit_code));
+    return Ok(());
 }
 
-pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
+pub fn scanf(sel: &mut Runtime) -> Result<(), IError> {
+    return Ok(());
+}
+
+pub fn printf(sel: &mut Runtime) -> Result<(), IError> {
     let top_ptr_offset = sel.memory.stack_length();
     let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
     let param_len = i32::from_be(sel.memory.get_var(top_ptr)?);
@@ -868,7 +876,7 @@ pub fn printf(sel: &mut Runtime) -> Result<Option<i32>, IError> {
     let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
     sel.memory.set(return_ptr, len.to_be())?;
 
-    return Ok(None);
+    return Ok(());
 }
 
 #[allow(unused_assignments)] // TODO remove this when we make this fully standard compliant
