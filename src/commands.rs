@@ -59,19 +59,23 @@ impl From<WriteEvent> for CommandResult {
 }
 
 #[derive(IntoStaticStr)] // LMAO this name
-pub enum WSStateState {
-    Running(Runtime<smol::io::Repeat>),
+pub enum CommandEngineState<Stdin: IStdin> {
+    Blocked {
+        runtime: Runtime<Stdin>,
+        continuation: IFuture,
+    },
+    Running(Runtime<Stdin>),
     NotRunning,
 }
 
-pub struct WSState {
-    state: WSStateState,
+pub struct CommandEngine<Stdin: IStdin> {
+    state: CommandEngineState<Stdin>,
     files: FileDbSlim,
 }
 
-impl Drop for WSState {
+impl<Stdin: IStdin> Drop for CommandEngine<Stdin> {
     fn drop(&mut self) {
-        if let WSStateState::Running(runtime) = &self.state {
+        if let CommandEngineState::Running(runtime) = &self.state {
             let mut buckets = runtime.program.buckets;
             while let Some(b) = unsafe { buckets.dealloc() } {
                 buckets = b;
@@ -80,17 +84,15 @@ impl Drop for WSState {
     }
 }
 
-impl Default for WSState {
-    fn default() -> Self {
+impl<Stdin: IStdin> CommandEngine<Stdin> {
+    pub fn new() -> Self {
         Self {
-            state: WSStateState::NotRunning,
+            state: CommandEngineState::NotRunning,
             files: FileDbSlim::new(),
         }
     }
-}
 
-impl WSState {
-    pub fn run_command(&mut self, command: Command) -> Vec<CommandResult> {
+    pub async fn run_command(&mut self, command: Command, stdin: &mut Stdin) -> Vec<CommandResult> {
         let mut messages = Vec::new();
         macro_rules! ret {
             ($expr:expr) => {{
@@ -126,17 +128,18 @@ impl WSState {
                     }
                 };
 
-                let runtime = Runtime::new(program, StringArray::new(), smol::io::repeat(0));
-                self.state = WSStateState::Running(runtime);
+                let runtime = Runtime::new(program, StringArray::new());
+                self.state = CommandEngineState::Running(runtime);
                 messages.push(CommandResult::Compiled);
                 ret!(CommandResult::Confirm(command.into()));
             }
             _ => {}
         }
 
-        if let WSStateState::Running(runtime) = &mut self.state {
+        if let CommandEngineState::Running(runtime) = &mut self.state {
             match command {
                 Command::RunLine => {
+                    let mut count: u8 = 0;
                     let loc = runtime.program.ops[runtime.pc() as usize].loc;
                     let line = if let Some(line) = self.files.line_index(loc) {
                         line
@@ -145,7 +148,12 @@ impl WSState {
                     };
 
                     loop {
-                        let ret = runtime.run_op();
+                        count += 1;
+                        if count > 100 {
+                            break;
+                        }
+
+                        let ret = runtime.run_op(stdin).await;
 
                         for event in runtime.memory.events() {
                             messages.push(event.into());
@@ -172,7 +180,7 @@ impl WSState {
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::RunCount(count) => {
-                    let ret = runtime.run_op_count(count);
+                    let ret = runtime.run_op_count(count, stdin).await;
 
                     for event in runtime.memory.events() {
                         messages.push(event.into());

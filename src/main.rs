@@ -26,7 +26,7 @@ mod test;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
 use core::ops::Deref;
-use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType};
+use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType};
 use filedb::FileDb;
 use interpreter::Program;
 use net_io::WebServerError;
@@ -178,8 +178,8 @@ fn run_from_args(args: Vec<String>) -> ! {
 
     mem::drop(files);
 
-    let mut runtime = interpreter::Runtime::new(program, StringArray::new(), smol::io::repeat(0));
-    let diag = runtime.run(std::io::stdout());
+    let mut runtime = interpreter::Runtime::new(program, StringArray::new());
+    let diag = runtime.run(std::io::stdout(), &mut smol::io::repeat(0));
     let code = match diag.status {
         runtime::RuntimeStatus::Exited(code) => code,
         _ => panic!(),
@@ -279,26 +279,12 @@ fn respond_to_http_request<'a>(
     });
 }
 
-pub struct WSRuntime {
-    pub state: commands::WSState,
-    pub results: Vec<commands::CommandResult>,
-    pub results_idx: usize,
-}
-
-impl Default for WSRuntime {
-    fn default() -> Self {
-        Self {
-            state: commands::WSState::default(),
-            results: Vec::new(),
-            results_idx: 0,
-        }
-    }
-}
-
 pub async fn ws_handle(mut stream: net_io::WSStream) -> Result<(), WebServerError> {
     use net_io::WSResponse as Resp;
+    // use std::collections::VecDeque;
 
-    let mut state = commands::WSState::default();
+    // let mut backlog = VecDeque::new();
+    let mut engine = commands::CommandEngine::new();
     let mut out_buffer = Vec::new();
     let mut out_idx = Vec::new();
 
@@ -325,7 +311,7 @@ pub async fn ws_handle(mut stream: net_io::WSStream) -> Result<(), WebServerErro
             }
         };
 
-        for result in state.run_command(command) {
+        for result in engine.run_command(command, &mut smol::io::repeat(0)).await {
             let start = out_buffer.len();
             serde_json::to_writer(&mut out_buffer, &result).unwrap();
             let end = out_buffer.len();
