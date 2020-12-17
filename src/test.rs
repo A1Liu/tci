@@ -23,7 +23,7 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     //     println!("op {}: {:?}", idx, op);
     // }
 
-    let mut runtime = Runtime::new(program, StringArray::new());
+    let mut runtime = Runtime::new(program, StringArray::new(), smol::io::repeat(0));
 
     let diag = runtime.run(&mut writer);
     let code = match diag.status {
@@ -90,7 +90,7 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
     };
     mem::drop(files);
 
-    let mut runtime = Runtime::new(program, StringArray::new());
+    let mut runtime = Runtime::new(program, StringArray::new(), smol::io::repeat(0));
     let diag = runtime.run(&mut writer);
     for (idx, op) in program.ops.iter().enumerate() {
         println!("op {}: {:?}", idx, op);

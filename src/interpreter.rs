@@ -7,6 +7,7 @@ use core::fmt;
 use core::future::Future;
 use core::pin::Pin;
 use serde::Serialize;
+use smol::io::AsyncReadExt;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::Write;
@@ -195,7 +196,7 @@ impl<'a> fmt::Debug for Program<'a> {
 }
 
 type LibFuncRet<'a> = Pin<Box<dyn Future<Output = Result<(), IError>> + 'a>>;
-type LibFunc = for<'a> fn(&'a mut Runtime) -> LibFuncRet<'a>;
+type LibFunc<Stdin> = for<'a> fn(&'a mut Runtime<Stdin>) -> LibFuncRet<'a>;
 
 #[derive(Debug, Serialize)]
 pub struct RuntimeDiagnostic {
@@ -206,16 +207,17 @@ pub struct RuntimeDiagnostic {
     pub status: RuntimeStatus,
 }
 
-pub struct Runtime {
+pub struct Runtime<Stdin: AsyncReadExt + Unpin> {
     pub memory: Memory,
     pub args: StringArray,
-    pub lib_funcs: HashMap<u32, LibFunc>,
+    pub lib_funcs: HashMap<u32, LibFunc<Stdin>>,
     pub program: Program<'static>,
+    pub stdin: Stdin,
 }
 
-impl Runtime {
-    pub fn new(program: Program<'static>, args: StringArray) -> Self {
-        let mut lib_funcs: HashMap<u32, LibFunc> = HashMap::new();
+impl<Stdin: AsyncReadExt + Unpin> Runtime<Stdin> {
+    pub fn new(program: Program<'static>, args: StringArray, stdin: Stdin) -> Self {
+        let mut lib_funcs: HashMap<u32, LibFunc<Stdin>> = HashMap::new();
 
         macro_rules! add_lib_func {
             ($id:ident) => {{
@@ -244,6 +246,7 @@ impl Runtime {
             memory,
             program,
             lib_funcs,
+            stdin,
         };
     }
 
@@ -770,7 +773,7 @@ impl Runtime {
     }
 }
 
-pub fn strlen(sel: &mut Runtime) -> Result<(), IError> {
+pub fn strlen<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
     let char_param_ptr = VarPointer::new_stack(stack_len, 0);
     let ret_ptr = VarPointer::new_stack(stack_len - 1, 0);
@@ -782,7 +785,7 @@ pub fn strlen(sel: &mut Runtime) -> Result<(), IError> {
     return Ok(());
 }
 
-pub fn memcpy(sel: &mut Runtime) -> Result<(), IError> {
+pub fn memcpy<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
     let size_param_ptr = VarPointer::new_stack(stack_len, 0);
     let src_param_ptr = VarPointer::new_stack(stack_len - 1, 0);
@@ -806,7 +809,7 @@ pub fn memcpy(sel: &mut Runtime) -> Result<(), IError> {
     return Ok(());
 }
 
-pub fn malloc(sel: &mut Runtime) -> Result<(), IError> {
+pub fn malloc<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let size = u64::from_be(sel.memory.get_var(top_ptr)?);
@@ -815,7 +818,7 @@ pub fn malloc(sel: &mut Runtime) -> Result<(), IError> {
     return Ok(());
 }
 
-pub fn realloc(sel: &mut Runtime) -> Result<(), IError> {
+pub fn realloc<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
     let size_ptr = VarPointer::new_stack(stack_len, 0);
     let to_free_ptr = VarPointer::new_stack(stack_len - 1, 0);
@@ -853,24 +856,25 @@ pub fn realloc(sel: &mut Runtime) -> Result<(), IError> {
     return Ok(());
 }
 
-pub fn free(sel: &mut Runtime) -> Result<(), IError> {
+pub fn free<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
     return Ok(());
 }
 
-pub fn exit(sel: &mut Runtime) -> Result<(), IError> {
+pub fn exit<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     sel.memory.exit(exit_code)?;
     return Ok(());
 }
 
-pub async fn scanf(sel: &mut Runtime) -> Result<(), IError> {
+pub async fn scanf<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
+    sel.memory.read_stdin(12, &mut sel.stdin).await?;
     return Ok(());
 }
 
-pub fn printf(sel: &mut Runtime) -> Result<(), IError> {
+pub fn printf<Stdin: AsyncReadExt + Unpin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let top_ptr_offset = sel.memory.stack_length();
     let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
     let param_len = i32::from_be(sel.memory.get_var(top_ptr)?);
@@ -895,8 +899,8 @@ pub fn printf(sel: &mut Runtime) -> Result<(), IError> {
 }
 
 #[allow(unused_assignments)] // TODO remove this when we make this fully standard compliant
-pub fn printf_internal(
-    sel: &mut Runtime,
+pub fn printf_internal<Stdin: AsyncReadExt + Unpin>(
+    sel: &mut Runtime<Stdin>,
     format_ptr: VarPointer,
     mut current_offset: u16,
     mut out: &mut StringWriter,

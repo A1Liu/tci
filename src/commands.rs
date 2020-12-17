@@ -60,7 +60,7 @@ impl From<WriteEvent> for CommandResult {
 
 #[derive(IntoStaticStr)] // LMAO this name
 pub enum WSStateState {
-    Running(Runtime),
+    Running(Runtime<smol::io::Repeat>),
     NotRunning,
 }
 
@@ -126,7 +126,8 @@ impl WSState {
                     }
                 };
 
-                self.state = WSStateState::Running(Runtime::new(program, StringArray::new()));
+                let runtime = Runtime::new(program, StringArray::new(), smol::io::repeat(0));
+                self.state = WSStateState::Running(runtime);
                 messages.push(CommandResult::Compiled);
                 ret!(CommandResult::Confirm(command.into()));
             }

@@ -178,7 +178,7 @@ fn run_from_args(args: Vec<String>) -> ! {
 
     mem::drop(files);
 
-    let mut runtime = interpreter::Runtime::new(program, StringArray::new());
+    let mut runtime = interpreter::Runtime::new(program, StringArray::new(), smol::io::repeat(0));
     let diag = runtime.run(std::io::stdout());
     let code = match diag.status {
         runtime::RuntimeStatus::Exited(code) => code,
