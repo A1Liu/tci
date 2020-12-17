@@ -188,7 +188,7 @@ const store = createStore(
   applyMiddleware(reduxWebsocketMiddleware, tciMiddleware)
 );
 
-// store.dispatch(connect("wss://tci.a1liu.com"));
-store.dispatch(connect("ws://localhost:4000"));
+store.dispatch(connect("wss://tci.a1liu.com"));
+// store.dispatch(connect("ws://localhost:4000"));
 
 export default store;
