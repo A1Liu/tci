@@ -321,13 +321,11 @@ impl Runtime {
 
     pub fn run_op(&mut self) -> RuntimeStatus {
         match self.memory.status {
-            RuntimeStatus::Blocked => return self.memory.status.clone(),
-            RuntimeStatus::Exited(_) => return self.memory.status.clone(),
-            _ => {}
+            RuntimeStatus::Running => {}
+            _ => return self.memory.status.clone(),
         }
 
         let tag = self.memory.pc;
-
         let ret = self.run_op_internal();
         if let Err(err) = ret {
             let loc = self.program.ops[self.memory.pc as usize].loc;

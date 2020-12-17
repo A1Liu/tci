@@ -11,15 +11,13 @@ int main() {
 `;
 
 const initialState = {
-  files: {
-    "main.c": initialFile,
-  },
+  files: { "main.c": initialFile },
   fileNames: {},
   fileIds: {},
-  currentFile: "main.c",
   terminal: "",
   currentCodeLoc: undefined,
   debugging: false,
+  blocked: false,
   running: false, // if true, the program should continue running after receiving a status
   paused: false, // only true if running is false.
 };
@@ -32,6 +30,28 @@ const appReducer = (state = initialState, action) => {
 
   console.log(action);
   const { type, payload } = action;
+
+  if (type === "Status") {
+    const { status, loc } = payload;
+    const newState = { ...state, currentCodeLoc: loc };
+    switch (status.status) {
+      case "ErrorExited":
+        newState.running = false;
+        newState.debugging = true;
+        break;
+      case "Exited":
+        newState.running = false;
+        break;
+      case "Blocked":
+        newState.running = false;
+        newState.blocked = true;
+        break;
+      default:
+        break;
+    }
+
+    return newState;
+  }
 
   switch (type) {
     case "Reset":
@@ -59,9 +79,7 @@ const appReducer = (state = initialState, action) => {
     case "AddFile": {
       const files = { ...state.files };
       files[payload.path] = payload.data;
-      const currentFile =
-        state.currentFile === undefined ? payload.path : state.currentFile;
-      return { ...state, files, currentFile };
+      return { ...state, files };
     }
     case "FileId": {
       const fileNames = { ...state.fileNames };
@@ -74,25 +92,13 @@ const appReducer = (state = initialState, action) => {
       const fileIds = { ...state.fileIds };
       const fileNames = { ...state.fileNames };
       const files = { ...state.files };
-      let { currentFile } = state;
 
       const fileId = fileIds[payload];
       delete files[payload];
       delete fileIds[payload];
       delete fileNames[fileId];
-      if (payload === currentFile) {
-        const keys = Object.keys(files);
-        if (keys.length === 0) {
-          currentFile = undefined;
-        } else {
-          currentFile = keys[keys.length - 1];
-        }
-      }
-
-      return { ...state, fileIds, fileNames, files, currentFile };
+      return { ...state, fileIds, fileNames, files };
     }
-    case "SetCurrentFile":
-      return { ...state, currentFile: action.payload };
     case "ClearFileNames":
       return { ...state, fileNames: {}, fileIds: {} };
     case "Stdout":
@@ -116,12 +122,6 @@ const appReducer = (state = initialState, action) => {
       };
     case "CompileError":
       return { ...state, terminal: payload.rendered };
-    case "RuntimeError":
-      return { ...state, running: false, debugging: true };
-    case "Status":
-      return { ...state, currentCodeLoc: payload.loc };
-    case "StatusRet":
-      return { ...state, running: false };
     default:
       return state;
   }
@@ -150,10 +150,10 @@ const tciMiddleware = (store) => (next) => (action) => {
       store.dispatch(send({ command: type, data: payload }));
       return next(action);
     case "Compiled":
-      store.dispatch(send({ command: "RunCount", data: 50 }));
+      store.dispatch(send({ command: "RunCount", data: 500 }));
       return next(action);
     case "Status":
-      if (running) store.dispatch(send({ command: "RunCount", data: 50 }));
+      if (running) store.dispatch(send({ command: "RunCount", data: 500 }));
       return next(action);
     case "DebugNext":
       if (!debugging) return undefined;
@@ -188,7 +188,7 @@ const store = createStore(
   applyMiddleware(reduxWebsocketMiddleware, tciMiddleware)
 );
 
-store.dispatch(connect("wss://tci.a1liu.com"));
-// store.dispatch(connect("ws://localhost:4000"));
+// store.dispatch(connect("wss://tci.a1liu.com"));
+store.dispatch(connect("ws://localhost:4000"));
 
 export default store;

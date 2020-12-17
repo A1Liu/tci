@@ -40,7 +40,6 @@ pub enum CommandResult {
         rendered: String,
         error: Vec<Error>,
     },
-    RuntimeError(IError),
     Status(RuntimeDiagnostic),
     FileId {
         path: String,
@@ -56,12 +55,6 @@ impl From<WriteEvent> for CommandResult {
             WriteEvent::StdinWrite(value) => return CommandResult::Stdin(value),
             WriteEvent::Unwind(len) => return CommandResult::Unwind(len),
         }
-    }
-}
-
-impl From<IError> for CommandResult {
-    fn from(err: IError) -> CommandResult {
-        return CommandResult::RuntimeError(err);
     }
 }
 

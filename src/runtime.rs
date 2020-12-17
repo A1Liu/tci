@@ -639,7 +639,7 @@ impl MemoryAction {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "type", content = "data")]
+#[serde(tag = "status", content = "data")]
 pub enum RuntimeStatus {
     Running,
     Blocked,
@@ -867,6 +867,7 @@ impl Memory {
         loc: CodeLoc,
     ) -> Result<(), IError> {
         self.check_mutate()?;
+
         let bk = self.historical_data.len();
         self.push_history(MAKind::ErrorCallstackPush { loc, bk });
         self.callstack

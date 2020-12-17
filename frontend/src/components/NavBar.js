@@ -16,19 +16,20 @@ export default function NavBar() {
 
   const compile = () => dispatch({ type: "Compile" });
 
+  const readFile = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (error) => reject(error);
+      reader.readAsText(file);
+    });
+  };
+
   const handleOnChange = async (event) => {
-    const file = event.target.files[0];
-    const convertFileToString = (uploadedFile) =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = (error) => reject(error);
-
-        if (uploadedFile) reader.readAsText(uploadedFile);
-      });
-
-    const result = await convertFileToString(file);
-    dispatch({ type: "AddFile", payload: { path: file.name, data: result } });
+    Object.values(event.target.files).forEach(async (file) => {
+      const data = await readFile(file);
+      dispatch({ type: "AddFile", payload: { path: file.name, data } });
+    });
   };
 
   return (
@@ -37,6 +38,7 @@ export default function NavBar() {
         <input
           style={{ display: "none" }}
           type="file"
+          multiple
           ref={hiddenFileInput}
           onChange={handleOnChange}
         />
