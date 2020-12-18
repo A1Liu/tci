@@ -279,48 +279,98 @@ fn respond_to_http_request<'a>(
     });
 }
 
-pub async fn ws_handle(mut stream: net_io::WSStream) -> Result<(), WebServerError> {
-    use net_io::WSResponse as Resp;
-    // use std::collections::VecDeque;
+async fn read_stream(
+    stream: &mut net_io::WSStream,
+    stdin: &mut smol::channel::Sender<String>,
+    commands: &mut smol::channel::Sender<commands::Command>,
+) -> Result<(), WebServerError> {
+    let (message_type, bytes) = stream.read_frame().await?;
+    match message_type {
+        Some(WebSocketReceiveMessageType::Text) => {}
+        Some(_) => return Ok(()),
+        None => return Ok(()),
+    }
 
-    // let mut backlog = VecDeque::new();
-    let mut engine = commands::CommandEngine::new();
     let mut out_buffer = Vec::new();
-    let mut out_idx = Vec::new();
+
+    let command = match serde_json::from_slice(bytes) {
+        Ok(c) => c,
+        Err(err) => {
+            let mut string = String::new();
+            string_append_utf8_lossy(&mut string, bytes);
+            let error = commands::CommandResult::DeserializationError(string);
+            serde_json::to_writer(&mut out_buffer, &error).unwrap();
+
+            let out_bytes = net_io::WSResponse::text(&out_buffer[..]);
+            stream.write_frames(vec![out_bytes].into_iter()).await?;
+            out_buffer.clear();
+            return Ok(());
+        }
+    };
+
+    if let commands::Command::WriteStdin(string) = command {
+        stdin.send(string).await?;
+    } else {
+        commands.send(command).await?;
+    }
+
+    return Ok(());
+}
+
+async fn send_result(
+    stream: &mut net_io::WSStream,
+    result: commands::CommandResult,
+) -> Result<(), WebServerError> {
+    use net_io::WSResponse as Resp;
+
+    let mut out_buffer = Vec::new();
+    serde_json::to_writer(&mut out_buffer, &result).unwrap();
+
+    return stream.write_frame(Resp::text(&out_buffer)).await;
+}
+
+pub async fn ws_handle(mut stream: net_io::WSStream) -> Result<(), WebServerError> {
+    use commands::{Command, CommandResult};
+    use smol::channel::bounded;
+    use smol::future::FutureExt;
+    use smol::stream::StreamExt;
+
+    async fn timeout<T>(time: u64) -> Option<T> {
+        smol::Timer::after(core::time::Duration::from_millis(time)).await;
+        return None;
+    }
+
+    let (mut stdin_sender, stdin_receiver) = bounded::<String>(50);
+    let (mut command_sender, mut command_receiver) = bounded::<Command>(50);
+    let (result_sender, mut result_receiver) = bounded::<CommandResult>(100);
+
+    tokio::spawn(async move {
+        loop {
+            while let Some(value) = result_receiver.next().or(timeout(10)).await {
+                if let Err(err) = send_result(&mut stream, value).await {
+                    println!("{:?}", err);
+                }
+            }
+
+            if let Err(err) = read_stream(&mut stream, &mut stdin_sender, &mut command_sender).await
+            {
+                println!("{:?}", err);
+            }
+        }
+    });
+
+    let mut engine = commands::CommandEngine::new();
+    let transform = |s: String| Ok(s.into_bytes().into_iter());
+    let mut stdin = net_io::StreamToBytes::new(stdin_receiver, transform);
 
     loop {
-        let (message_type, bytes) = stream.read_frame().await?;
-        match message_type {
-            Some(WebSocketReceiveMessageType::Text) => {}
-            Some(_) => continue,
+        let command = match command_receiver.next().await {
+            Some(c) => c,
             None => return Ok(()),
-        }
-
-        let command = match serde_json::from_slice(bytes) {
-            Ok(c) => c,
-            Err(err) => {
-                let mut string = String::new();
-                string_append_utf8_lossy(&mut string, bytes);
-                let error = commands::CommandResult::DeserializationError(string);
-                serde_json::to_writer(&mut out_buffer, &error).unwrap();
-
-                let out_bytes = Resp::text(&out_buffer[..]);
-                stream.write_frames(vec![out_bytes].into_iter()).await?;
-                out_buffer.clear();
-                continue;
-            }
         };
 
-        for result in engine.run_command(command, &mut smol::io::repeat(0)).await {
-            let start = out_buffer.len();
-            serde_json::to_writer(&mut out_buffer, &result).unwrap();
-            let end = out_buffer.len();
-            out_idx.push(start..end);
+        for result in engine.run_command(command, &mut stdin).await {
+            result_sender.send(result).await?;
         }
-
-        let event_iter = out_idx.iter().map(|r| Resp::text(&out_buffer[r.clone()]));
-        stream.write_frames(event_iter).await?;
-        out_buffer.clear();
-        out_idx.clear();
     }
 }

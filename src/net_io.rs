@@ -1,7 +1,12 @@
 use crate::buckets::*;
+use crate::commands::{Command, CommandResult};
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use embedded_websocket as ws;
 use embedded_websocket::{HttpHeader, WebSocketReceiveMessageType, WebSocketSendMessageType};
-use smol::io::{AsyncReadExt, AsyncWriteExt};
+use smol::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use smol::stream::Stream;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::str::Utf8Error;
 use tokio::runtime::Runtime;
@@ -37,10 +42,31 @@ const TOTAL_BUCKET_SIZE: usize = TCP_BUCKET_SIZE + WS_BUCKET_SIZE + SCRATCH_BUCK
 pub enum WebServerError {
     Io(std::io::Error),
     WebSocket(ws::Error),
+    StdinChannel(smol::channel::SendError<String>),
+    CommandChannel(smol::channel::SendError<Command>),
+    ResultChannel(smol::channel::SendError<CommandResult>),
     RequestTooLarge(usize),
     PayloadTooLarge(usize),
     ResponseTooLarge(usize),
     Utf8Error,
+}
+
+impl From<smol::channel::SendError<Command>> for WebServerError {
+    fn from(err: smol::channel::SendError<Command>) -> WebServerError {
+        WebServerError::CommandChannel(err)
+    }
+}
+
+impl From<smol::channel::SendError<CommandResult>> for WebServerError {
+    fn from(err: smol::channel::SendError<CommandResult>) -> WebServerError {
+        WebServerError::ResultChannel(err)
+    }
+}
+
+impl From<smol::channel::SendError<String>> for WebServerError {
+    fn from(err: smol::channel::SendError<String>) -> WebServerError {
+        WebServerError::StdinChannel(err)
+    }
 }
 
 impl From<std::io::Error> for WebServerError {
@@ -127,6 +153,31 @@ impl WSStream {
         })
     }
 
+    pub async fn write_frame<'resp>(
+        &mut self,
+        resp: WSResponse<'resp>,
+    ) -> Result<(), WebServerError> {
+        match resp {
+            WSResponse::Response {
+                message_type,
+                message,
+            } => {
+                let to_send = self
+                    .web_socket
+                    .write(message_type, true, message, self.ws_buf)?;
+                for &byte in &self.ws_buf[0..to_send] {
+                    self.out.push(byte);
+                }
+            }
+            WSResponse::None => return Ok(()),
+            WSResponse::Close => return Ok(()),
+        }
+
+        self.tcp_stream.write_all(&self.out).await?;
+        self.out.clear();
+        return Ok(());
+    }
+
     pub async fn write_frames<'resp>(
         &mut self,
         responses: impl Iterator<Item = WSResponse<'resp>>,
@@ -202,6 +253,84 @@ impl WSStream {
 
             return Ok((Some(ws_result.message_type), ws_buf));
         }
+    }
+}
+pub struct StreamToBytes<S, I, F, Iter>
+where
+    S: Stream<Item = I>,
+    Iter: Iterator<Item = u8>,
+    F: Fn(I) -> Result<Iter, std::io::Error>,
+{
+    pub bytes: VecDeque<u8>,
+    pub stream: S,
+    pub transform: F,
+}
+
+impl<S, I, F, Iter> StreamToBytes<S, I, F, Iter>
+where
+    S: Stream<Item = I>,
+    Iter: Iterator<Item = u8>,
+    F: Fn(I) -> Result<Iter, std::io::Error>,
+{
+    pub fn new(stream: S, transform: F) -> Self {
+        Self {
+            bytes: VecDeque::new(),
+            stream,
+            transform,
+        }
+    }
+}
+
+impl<S, I, F, Iter> AsyncRead for StreamToBytes<S, I, F, Iter>
+where
+    S: Stream<Item = I>,
+    Iter: Iterator<Item = u8>,
+    F: Fn(I) -> Result<Iter, std::io::Error>,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let mut counter = 0;
+        let sel = unsafe { self.get_unchecked_mut() };
+        while counter < buf.len() {
+            if let Some(byte) = sel.bytes.pop_front() {
+                buf[counter] = byte;
+                counter += 1;
+            } else {
+                break;
+            }
+        }
+
+        if counter > 0 {
+            return Poll::Ready(Ok(counter));
+        }
+
+        let poll = unsafe { Pin::new_unchecked(&mut sel.stream) }.poll_next(cx);
+        let value = match poll {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(None) => return Poll::Ready(Ok(counter)),
+            Poll::Ready(Some(value)) => value,
+        };
+
+        let transform = &sel.transform;
+        let iter = match transform(value) {
+            Ok(iter) => iter,
+            Err(err) => return Poll::Ready(Err(err)),
+        };
+
+        for byte in iter {
+            if counter == buf.len() {
+                sel.bytes.push_back(byte);
+                continue;
+            }
+
+            buf[counter] = byte;
+            counter += 1;
+        }
+
+        return Poll::Ready(Ok(counter));
     }
 }
 

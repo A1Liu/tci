@@ -18,6 +18,7 @@ pub enum Command {
     Forwards(u32),
     BackLine(u32),
     ForwardsLine(u32),
+    WriteStdin(String),
 }
 
 #[derive(Debug, Serialize)]
