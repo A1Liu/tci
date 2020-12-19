@@ -96,7 +96,7 @@ lazy_static! {
         macro_rules! sys_lib {
             ($file:literal) => {{
                 let header: &[u8] = include_bytes!(concat!("../includes/", $file));
-                let lib: &[u8] = include_bytes!(concat!("../includes/", $file));
+                let lib: &[u8] = include_bytes!(concat!("../libs/", $file));
                 m.insert($file, SysLib { header, lib });
             }};
         }
@@ -396,6 +396,36 @@ impl FileDb {
         Ok(file_id)
     }
 
+    pub fn add_from_include(&mut self, include: &str, file: u32) -> Result<u32, io::Error> {
+        if Path::new(include).is_relative() {
+            let base_path = parent_if_file(self.files[file as usize].unwrap()._name);
+            let real_path = Path::new(base_path).join(include);
+            let path_str = real_path.to_str().unwrap();
+
+            if let Some(id) = self.file_names.get(&path_str) {
+                return Ok(*id);
+            }
+
+            if !self.fs_read_access {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+
+            let source = read_to_string(&path_str)?;
+            return self.add(&path_str, &source);
+        }
+
+        if let Some(id) = self.file_names.get(include) {
+            return Ok(*id);
+        }
+
+        if !self.fs_read_access {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+
+        let source = read_to_string(include)?;
+        return self.add(include, &source);
+    }
+
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again. Returns existing file handle if file already exists in
     /// the database
@@ -408,18 +438,8 @@ impl FileDb {
             return Err(io::ErrorKind::PermissionDenied.into());
         }
 
-        let file_id = self.files.len() as u32;
         let source = read_to_string(&file_name)?;
-        let file = File::new(self.buckets_next, file_name, &source);
-        self._size += file.size() + mem::size_of::<Option<File>>();
-        self.files.push(Some(file));
-        self.file_names.insert(file._name, file_id);
-
-        while let Some(b) = self.buckets_next.next() {
-            self.buckets_next = b;
-        }
-
-        Ok(file_id)
+        return self.add(file_name, &source);
     }
 
     pub fn symbol_to_str(&self, symbol: u32) -> &str {
@@ -431,22 +451,6 @@ impl FileDb {
         let range: ops::Range<usize> = cloc.into();
         let text = self.files[cloc.file as usize].unwrap()._source;
         return unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
-    }
-
-    pub fn add_from_symbols(&mut self, base_file: u32, symbol: u32) -> Result<u32, io::Error> {
-        let cloc = self.names[symbol as usize];
-        let range: ops::Range<usize> = cloc.into();
-        let text = self.files[cloc.file as usize].unwrap()._source;
-        let text = unsafe { str::from_utf8_unchecked(&text.as_bytes()[range]) };
-
-        if Path::new(text).is_relative() {
-            let base_path = parent_if_file(self.files[base_file as usize].unwrap()._name);
-            let real_path = Path::new(base_path).join(text);
-            let path_str = real_path.to_str().unwrap();
-            return self.add_from_fs(&path_str);
-        }
-
-        return self.add_from_fs(&text);
     }
 
     #[inline]

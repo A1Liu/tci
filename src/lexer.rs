@@ -388,7 +388,7 @@ impl<'b> Lexer<'b> {
                         self.current += 1;
                     }
 
-                    let id = symbols.translate_add(name_begin..self.current, self.file);
+                    let name_end = self.current;
                     self.current += 1;
                     if !self.peek_eq(data, b'\n') && !self.peek_eq_series(data, &CRLF) {
                         return Err(expected_newline("include", begin, self.current, self.file));
@@ -401,7 +401,11 @@ impl<'b> Lexer<'b> {
                             format!("got error '{}'", err)
                         )
                     };
-                    let include_id = symbols.add_from_symbols(self.file, id).map_err(map_err)?;
+                    let include_name =
+                        unsafe { core::str::from_utf8_unchecked(&data[name_begin..name_end]) };
+                    let include_id = symbols
+                        .add_from_include(include_name, self.file)
+                        .map_err(map_err)?;
                     self.output.push(Token::new(
                         TokenKind::Include(include_id),
                         begin..self.current,
@@ -416,7 +420,7 @@ impl<'b> Lexer<'b> {
                         ));
                     }
 
-                    if let Some(_) = token_db.get(&include_id) {
+                    if token_db.contains_key(&include_id) {
                         return Ok(());
                     }
 
@@ -461,11 +465,23 @@ impl<'b> Lexer<'b> {
                         );
                     })?;
                     let sys_header = unsafe { core::str::from_utf8_unchecked(sys_lib.header) };
+                    let sys_impl = unsafe { core::str::from_utf8_unchecked(sys_lib.lib) };
                     let id = id_opt.unwrap_or_else(|| {
-                        let id = symbols.add(sys_file, sys_header).unwrap();
+                        let id = symbols.add(&sys_file, sys_header).unwrap();
                         let toks =
                             Lexer::new(id).lex_file(buckets, incomplete, token_db, symbols)?;
                         token_db.insert(id, toks);
+
+                        let sys_lib = "libs/".to_string() + sys_file + ".c";
+                        let lib_id = symbols.add(&sys_lib, sys_impl).unwrap();
+                        let lib_toks = Lexer::new(lib_id).lex_file(
+                            buckets,
+                            &mut HashSet::new(),
+                            token_db,
+                            symbols,
+                        )?;
+                        token_db.insert(lib_id, lib_toks);
+
                         return Ok(id);
                     })?;
 
@@ -476,6 +492,12 @@ impl<'b> Lexer<'b> {
                     ));
 
                     return Ok(());
+                } else {
+                    return Err(error!(
+                        "expected a '<' or '\"' here",
+                        l(begin as u32, self.current as u32, self.file),
+                        "directive found here"
+                    ));
                 }
             }
             _ => {
@@ -486,8 +508,6 @@ impl<'b> Lexer<'b> {
                 ));
             }
         }
-
-        return Ok(());
     }
 
     pub fn lex_token(

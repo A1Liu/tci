@@ -3,6 +3,7 @@ use crate::interpreter::*;
 use crate::runtime::*;
 use crate::*;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use strum::IntoStaticStr;
 
 #[derive(Debug, Deserialize, Serialize, IntoStaticStr)]
@@ -104,7 +105,14 @@ impl<Stdin: IStdin> CommandEngine<Stdin> {
 
         match &command {
             Command::AddFile { path, data } => {
-                let file_id = self.files.add(path, data);
+                let file_id = if Path::new(path).is_relative() {
+                    let real_path = Path::new("/").join(path);
+                    let path = real_path.to_str().unwrap();
+                    self.files.add(&path, data)
+                } else {
+                    self.files.add(path, data)
+                };
+
                 messages.push(CommandResult::FileId {
                     path: path.to_string(),
                     file_id,

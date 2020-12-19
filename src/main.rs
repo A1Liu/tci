@@ -64,17 +64,17 @@ fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     tokens = tokens
         .keys()
         .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
-            Ok(toks) => Some((file, toks)),
+            Ok(toks) => {
+                if let Some(n) = buckets.next() {
+                    buckets = n;
+                }
+
+                Some((file, &*buckets.add_array(toks)))
+            }
             Err(err) => {
                 errors.push(err);
                 None
             }
-        })
-        .map(|(file, toks)| {
-            if let Some(n) = buckets.next() {
-                buckets = n;
-            }
-            (file, &*buckets.add_array(toks))
         })
         .collect();
 
@@ -83,7 +83,7 @@ fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     }
 
     let mut parser = parser::Parser::new();
-    let iter = files_list.into_iter().filter_map(|file| {
+    let iter = tokens.keys().filter_map(|&file| {
         while let Some(n) = buckets.next() {
             buckets = n;
         }

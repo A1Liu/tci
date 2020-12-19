@@ -23,7 +23,6 @@ lazy_static! {
         m.insert(INIT_SYMS.translate["malloc"]);
         m.insert(INIT_SYMS.translate["free"]);
         m.insert(INIT_SYMS.translate["realloc"]);
-        m.insert(INIT_SYMS.translate["memcpy"]);
         m.insert(INIT_SYMS.translate["strlen"]);
         m
     };

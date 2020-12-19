@@ -245,7 +245,6 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         add_lib_func!(exit);
         add_lib_func!(malloc);
         add_lib_func!(realloc);
-        add_lib_func!(memcpy);
         add_lib_func!(strlen);
         add_lib_func!(@ASYNC, scanf);
 
@@ -793,30 +792,6 @@ pub fn strlen<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let len: u64 = cstring.len() as u64;
 
     sel.memory.set(ret_ptr, len.to_be())?;
-    return Ok(());
-}
-
-pub fn memcpy<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let stack_len = sel.memory.stack_length();
-    let size_param_ptr = VarPointer::new_stack(stack_len, 0);
-    let src_param_ptr = VarPointer::new_stack(stack_len - 1, 0);
-    let dest_param_ptr = VarPointer::new_stack(stack_len - 2, 0);
-    let ret_ptr = VarPointer::new_stack(stack_len - 3, 0);
-
-    let size = u64::from_be(sel.memory.get_var(size_param_ptr)?);
-    let mut src: VarPointer = sel.memory.get_var(src_param_ptr)?;
-    let mut dest: VarPointer = sel.memory.get_var(dest_param_ptr)?;
-    let to_ret = dest;
-
-    for _ in 0..size {
-        // PERFORMANCE this is so slow lmao
-        let byte: u8 = sel.memory.get_var(src)?;
-        sel.memory.set(dest, byte)?;
-        src = src.add(1);
-        dest = dest.add(1);
-    }
-
-    sel.memory.set(ret_ptr, to_ret)?;
     return Ok(());
 }
 
