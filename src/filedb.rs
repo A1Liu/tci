@@ -80,6 +80,63 @@ impl<'a> File<'a> {
     }
 }
 
+pub struct InitSyms {
+    pub names: Vec<&'static str>,
+    pub translate: HashMap<&'static str, u32>,
+}
+
+pub struct SysLib {
+    pub header: &'static [u8],
+    pub lib: &'static [u8],
+}
+
+lazy_static! {
+    pub static ref SYS_LIBS: HashMap<&'static str, SysLib> = {
+        let mut m = HashMap::new();
+        macro_rules! sys_lib {
+            ($file:literal) => {{
+                let header: &[u8] = include_bytes!(concat!("../includes/", $file));
+                let lib: &[u8] = include_bytes!(concat!("../includes/", $file));
+                m.insert($file, SysLib { header, lib });
+            }};
+        }
+
+        sys_lib!("tci.h");
+        sys_lib!("stdio.h");
+        sys_lib!("stdlib.h");
+        sys_lib!("string.h");
+        sys_lib!("stddef.h");
+        sys_lib!("stdint.h");
+
+        m
+    };
+    pub static ref INIT_SYMS: InitSyms = {
+        let mut names = Vec::new();
+        let mut translate = HashMap::new();
+
+        macro_rules! add_sym {
+            ($arg:expr) => {
+                let begin = names.len() as u32;
+                names.push($arg);
+                translate.insert($arg, begin);
+            };
+        }
+
+        add_sym!("main");
+        add_sym!("va_list");
+        add_sym!("printf");
+        add_sym!("exit");
+        add_sym!("malloc");
+        add_sym!("free");
+        add_sym!("realloc");
+        add_sym!("memcpy");
+        add_sym!("strlen");
+        add_sym!("scanf");
+
+        InitSyms { names, translate }
+    };
+}
+
 pub const NO_SYMBOL: u32 = !0;
 
 pub struct FileDbSlim {
@@ -128,7 +185,7 @@ impl FileDbSlim {
     }
 
     pub fn line_index(&self, loc: CodeLoc) -> Option<usize> {
-        let file = loc.file - 1 - INIT_SYMS.files.len() as u32;
+        let file = loc.file - 1;
         let file = self.files.get(file as usize)?.as_ref()?;
         return file.line_index(loc.start as usize);
     }
@@ -183,7 +240,7 @@ impl FileDbSlim {
     }
 
     pub fn remove_id(&mut self, file: u32) -> bool {
-        let file = file - 1 - INIT_SYMS.files.len() as u32;
+        let file = file - 1;
         let file_slot = self.files.get_mut(file as usize);
         let file_slot = match file_slot {
             Some(f) => f,
@@ -229,7 +286,7 @@ impl FileDbSlim {
             self.garbage_size += file_slot.size();
             self.size -= file_slot.size();
             *file_slot = file;
-            return *file_idx + 1 + INIT_SYMS.files.len() as u32;
+            return *file_idx + 1;
         }
 
         let file_idx = if let Some(file_idx) = self.empty_slots.pop() {
@@ -243,7 +300,7 @@ impl FileDbSlim {
         self.size += file.size();
         self.files[file_idx as usize] = Some(file);
         self.file_names.insert(file._name, file_idx);
-        return file_idx + 1 + INIT_SYMS.files.len() as u32;
+        return file_idx + 1;
     }
 }
 
@@ -256,63 +313,6 @@ pub struct FileDb {
     pub translate: HashMap<&'static str, u32>,
     pub names: Vec<CodeLoc>,
     pub fs_read_access: bool,
-}
-
-pub struct InitSyms {
-    pub names: Vec<&'static str>,
-    pub translate: HashMap<&'static str, u32>,
-    pub files: Vec<File<'static>>,
-}
-
-lazy_static! {
-    pub static ref INIT_SYMS: InitSyms = {
-        let mut names = Vec::new();
-        let mut translate = HashMap::new();
-        let mut files = Vec::new();
-        macro_rules! add_sym {
-            ($arg:expr) => {
-                let begin = names.len() as u32;
-                names.push($arg);
-                translate.insert($arg, begin);
-            };
-        }
-
-        macro_rules! add_syslib_sym {
-            ($arg:expr) => {
-                let begin = names.len() as u32;
-                names.push($arg);
-                translate.insert($arg, begin);
-                let source = include_bytes!(concat!("../includes/", $arg));
-                let source = unsafe { str::from_utf8_unchecked(source) };
-                files.push(File::new_static($arg, source));
-            };
-        }
-
-        // System files have the same symbol id as their file id. These lines need to come first.
-        add_syslib_sym!("tci.h");
-        add_syslib_sym!("stdio.h");
-        add_syslib_sym!("stdlib.h");
-        add_syslib_sym!("string.h");
-        add_syslib_sym!("stddef.h");
-        add_syslib_sym!("stdint.h");
-
-        add_sym!("main");
-        add_sym!("va_list");
-        add_sym!("printf");
-        add_sym!("exit");
-        add_sym!("malloc");
-        add_sym!("free");
-        add_sym!("realloc");
-        add_sym!("memcpy");
-        add_sym!("strlen");
-        add_sym!("scanf");
-
-        InitSyms {
-            names,
-            translate,
-            files,
-        }
-    };
 }
 
 impl Drop for FileDb {
@@ -339,11 +339,6 @@ impl FileDb {
         let mut _size = file.size() + mem::size_of::<File>();
 
         let mut files = Vec::new();
-
-        for file in INIT_SYMS.files.iter() {
-            files.push(Some(*file));
-            _size += file.size() + mem::size_of::<File>();
-        }
         files.push(Some(file));
 
         let mut new_self = Self {
@@ -358,7 +353,7 @@ impl FileDb {
         };
 
         for symbol in symbols {
-            new_self.translate_add(symbol, INIT_SYMS.files.len() as u32);
+            new_self.translate_add(symbol, 0);
         }
 
         new_self
@@ -375,9 +370,7 @@ impl FileDb {
     }
 
     pub fn vec(&self) -> Vec<u32> {
-        let iter = self.files.iter().enumerate();
-        let iter = iter.skip(INIT_SYMS.files.len() + 1);
-        // +1 here is for the init syms initial file
+        let iter = self.files.iter().enumerate().skip(1); // +1 here is for the init syms initial file
         let filter_map = |(idx, value): (usize, &Option<File>)| value.as_ref().map(|_| idx as u32);
 
         return iter.filter_map(filter_map).collect();

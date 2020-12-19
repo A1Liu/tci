@@ -396,7 +396,7 @@ impl<'b> Lexer<'b> {
 
                     let map_err = |err| {
                         error!(
-                            "Error finding file",
+                            "error finding file",
                             l(begin as u32, self.current as u32, self.file),
                             format!("got error '{}'", err)
                         )
@@ -430,27 +430,51 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                     let name_begin = self.current;
 
-                    while self.peek_neq(data, b'>') {
+                    while self.peek_neqs(data, &[b'>', b'\n']) && self.peek_neq_series(data, &CRLF)
+                    {
                         self.current += 1;
                     }
 
-                    let id = symbols.translate_add(name_begin..self.current, self.file);
-                    self.current += 1;
+                    let name_end = self.current;
+
+                    if b'>' != self.expect(data)? {
+                        return Err(error!(
+                            "expected a '>'",
+                            l((self.current - 1) as u32, self.current as u32, self.file),
+                            "this should be a '>'"
+                        ));
+                    }
+
+                    let sys_file =
+                        unsafe { core::str::from_utf8_unchecked(&data[name_begin..name_end]) };
+
                     if !self.peek_eq(data, b'\n') && !self.peek_eq_series(data, &CRLF) {
                         return Err(expected_newline("include", begin, self.current, self.file));
                     }
+
+                    let id_opt = symbols.file_names.get(sys_file).map(|i| Ok(*i));
+                    let sys_lib = SYS_LIBS.get(sys_file).ok_or_else(|| {
+                        return error!(
+                            "library header file not found",
+                            l(begin as u32, self.current as u32, self.file),
+                            "include found here"
+                        );
+                    })?;
+                    let sys_header = unsafe { core::str::from_utf8_unchecked(sys_lib.header) };
+                    let id = id_opt.unwrap_or_else(|| {
+                        let id = symbols.add(sys_file, sys_header).unwrap();
+                        let toks =
+                            Lexer::new(id).lex_file(buckets, incomplete, token_db, symbols)?;
+                        token_db.insert(id, toks);
+                        return Ok(id);
+                    })?;
+
                     self.output.push(Token::new(
                         TokenKind::IncludeSys(id),
                         begin..self.current,
                         self.file,
                     ));
 
-                    if let Some(_) = token_db.get(&id) {
-                        return Ok(());
-                    }
-
-                    let toks = Lexer::new(id).lex_file(buckets, incomplete, token_db, symbols)?;
-                    token_db.insert(id, toks);
                     return Ok(());
                 }
             }
