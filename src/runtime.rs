@@ -104,9 +104,9 @@ impl Var {
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct VarPointerFields {
-    _tid: u16,
-    _idx: u16,
     _offset: u32,
+    _idx: u16,
+    _tid: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -122,9 +122,9 @@ impl fmt::Display for VarPointer {
         return write!(
             formatter,
             "0x{:x}{:0>4x}{:0>8x}",
-            u16::from_be(fields._tid),
-            u16::from_be(fields._idx),
-            u32::from_be(fields._offset)
+            u16::from_le(fields._tid),
+            u16::from_le(fields._idx),
+            u32::from_le(fields._offset)
         );
     }
 }
@@ -136,9 +136,9 @@ impl fmt::Debug for VarPointer {
         return write!(
             formatter,
             "0x{:x}{:0>4x}{:0>8x}",
-            u16::from_be(fields._tid),
-            u16::from_be(fields._idx),
-            u32::from_be(fields._offset)
+            u16::from_le(fields._tid),
+            u16::from_le(fields._idx),
+            u32::from_le(fields._offset)
         );
     }
 }
@@ -160,9 +160,9 @@ impl VarPointer {
     pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
         Self {
             fields: VarPointerFields {
-                _tid: Self::STACK_BIT.to_be(),
-                _idx: idx.to_be(),
-                _offset: offset.to_be(),
+                _tid: Self::STACK_BIT.to_le(),
+                _idx: idx.to_le(),
+                _offset: offset.to_le(),
             },
         }
     }
@@ -175,9 +175,9 @@ impl VarPointer {
 
         Self {
             fields: VarPointerFields {
-                _tid: tid.to_be(),
-                _idx: (idx as u16).to_be(),
-                _offset: offset.to_be(),
+                _tid: tid.to_le(),
+                _idx: (idx as u16).to_le(),
+                _offset: offset.to_le(),
             },
         }
     }
@@ -192,29 +192,29 @@ impl VarPointer {
 
         Self {
             fields: VarPointerFields {
-                _tid: tid.to_be(),
-                _idx: (idx as u16).to_be(),
-                _offset: offset.to_be(),
+                _tid: tid.to_le(),
+                _idx: (idx as u16).to_le(),
+                _offset: offset.to_le(),
             },
         }
     }
 
     pub fn is_stack(&self) -> bool {
-        return (u16::from_be(self.fields()._tid) & Self::STACK_BIT) != 0;
+        return (u16::from_le(self.fields()._tid) & Self::STACK_BIT) != 0;
     }
 
     pub fn is_binary(&self) -> bool {
-        return (u16::from_be(self.fields()._tid) & Self::BINARY_BIT) != 0;
+        return (u16::from_le(self.fields()._tid) & Self::BINARY_BIT) != 0;
     }
 
     pub fn is_heap(&self) -> bool {
-        return (u16::from_be(self.fields()._tid) & Self::RESERVED_BITS) == 0;
+        return (u16::from_le(self.fields()._tid) & Self::RESERVED_BITS) == 0;
     }
 
     // returns u16::MAX if not attached to a thread
     pub fn tid(&self) -> u16 {
         if self.is_stack() {
-            return u16::from_be(self.fields()._tid) & !Self::RESERVED_BITS;
+            return u16::from_le(self.fields()._tid) & !Self::RESERVED_BITS;
         }
 
         return u16::MAX;
@@ -222,36 +222,36 @@ impl VarPointer {
 
     pub fn var_idx(self) -> usize {
         if self.is_stack() {
-            return u16::from_be(self.fields()._idx) as usize;
+            return u16::from_le(self.fields()._idx) as usize;
         }
 
-        let top = ((u16::from_be(self.fields()._tid) & !Self::RESERVED_BITS) as u32) << 16;
-        return (top | u16::from_be(self.fields()._idx) as u32) as usize;
+        let top = ((u16::from_le(self.fields()._tid) & !Self::RESERVED_BITS) as u32) << 16;
+        return (top | u16::from_le(self.fields()._idx) as u32) as usize;
     }
 
     pub fn with_offset(self, offset: u32) -> Self {
         let mut ptr = self;
-        ptr.fields_mut()._offset = offset.to_be();
+        ptr.fields_mut()._offset = offset.to_le();
         return ptr;
     }
 
     pub fn offset(self) -> u32 {
-        u32::from_be(self.fields()._offset)
+        u32::from_le(self.fields()._offset)
     }
 
     pub fn set_offset(&mut self, offset: u32) {
-        self.fields_mut()._offset = offset.to_be();
+        self.fields_mut()._offset = offset.to_le();
     }
 
     pub fn add(self, add: u64) -> Self {
         Self {
-            value: (u64::from_be(unsafe { self.value }).wrapping_add(1)).to_be(),
+            value: (u64::from_le(unsafe { self.value }).wrapping_add(1)).to_le(),
         }
     }
 
     pub fn sub(self, add: u64) -> Self {
         Self {
-            value: (u64::from_be(unsafe { self.value }).wrapping_sub(1)).to_be(),
+            value: (u64::from_le(unsafe { self.value }).wrapping_sub(1)).to_le(),
         }
     }
 }
@@ -2013,8 +2013,8 @@ impl Serialize for MemorySnapshot {
 fn test_memory_walker() {
     let mut memory = Memory::new();
     memory.add_stack_var(12, 0).unwrap();
-    memory.push_stack(12u64.to_be()).unwrap();
-    memory.push_stack(4u32.to_be()).unwrap();
+    memory.push_stack(12u64.to_le()).unwrap();
+    memory.push_stack(4u32.to_le()).unwrap();
     memory
         .pop_stack_bytes_into(VarPointer::new_stack(1, 0), 12)
         .expect("should not fail");
@@ -2022,7 +2022,7 @@ fn test_memory_walker() {
     println!("history: {:?}", memory.history);
 
     let stack_expected = VarBuffer::new_from(
-        vec![0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 4],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0],
         vec![Var {
             idx: 0,
             len: 12,
@@ -2037,7 +2037,7 @@ fn test_memory_walker() {
 
     let stack_expected_2 = VarBuffer::new_from(
         vec![
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 4,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
         ],
         vec![Var {
             idx: 0,
