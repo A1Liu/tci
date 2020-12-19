@@ -1,1 +1,2 @@
-int printf(char* format, ...);
+int printf(char *format, ...);
+int scanf(char *format, ...);

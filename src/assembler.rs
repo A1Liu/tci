@@ -19,8 +19,6 @@ lazy_static! {
     pub static ref LIB_FUNCS: HashSet<u32> = {
         let mut m = HashSet::new();
         m.insert(INIT_SYMS.translate["printf"]);
-        m.insert(INIT_SYMS.translate["exit"]);
-        m.insert(INIT_SYMS.translate["malloc"]);
         m.insert(INIT_SYMS.translate["free"]);
         m.insert(INIT_SYMS.translate["realloc"]);
         m
@@ -49,7 +47,8 @@ pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
             offset: 0,
             bytes: 4,
         },
-        Opcode::Ecall(ECALL_EXIT),
+        Opcode::MakeTempU32(ECALL_EXIT),
+        Opcode::EcallDyn,
     ];
 }
 
@@ -472,11 +471,17 @@ impl Assembler {
                     (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
 
                     (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
+                    (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
 
                     (BinOp::Gt, TCPrimType::I32) => {
                         tagged.op = Opcode::Swap { top: 4, bottom: 4 };
                         ops.push(tagged);
                         Opcode::CompLtI32
+                    }
+                    (BinOp::Gt, TCPrimType::U64) => {
+                        tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                        ops.push(tagged);
+                        Opcode::CompLtU64
                     }
 
                     (BinOp::Lt, TCPrimType::I32) => Opcode::CompLtI32,
@@ -527,7 +532,7 @@ impl Assembler {
 
                     (TCPrimType::U32, 1) => Some(Opcode::PopKeep { drop: 3, keep: 1 }),
                     (TCPrimType::U32, 4) => None,
-                    (TCPrimType::U32, 8) => Some(Opcode::ZExtend8To64),
+                    (TCPrimType::U32, 8) => Some(Opcode::ZExtend32To64),
                     (TCPrimType::I32, 1) => Some(Opcode::PopKeep { drop: 3, keep: 1 }),
                     (TCPrimType::I32, 4) => None,
                     (TCPrimType::I32, 8) => Some(Opcode::SExtend32To64),
@@ -860,6 +865,20 @@ impl Assembler {
                     ops.push(tagged);
                 }
             }
+
+            // TODO
+            TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
+                ops.append(&mut self.translate_expr(ecall));
+                tagged.op = Opcode::EcallDyn;
+                ops.push(tagged);
+            }
+            TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
+                ops.append(&mut self.translate_expr(size));
+                ops.append(&mut self.translate_expr(ptr));
+
+                tagged.op = Opcode::PushDyn;
+                ops.push(tagged);
+            }
         }
 
         return ops;
@@ -875,10 +894,12 @@ impl Assembler {
         match assign.kind {
             TCAssignTargetKind::Ptr(expr) => {
                 ops.append(&mut self.translate_expr(expr));
-                tagged.op = Opcode::MakeTempU64(assign.offset as u64);
-                ops.push(tagged);
-                tagged.op = Opcode::AddU64;
-                ops.push(tagged);
+                if assign.offset != 0 {
+                    tagged.op = Opcode::MakeTempU64(assign.offset as u64);
+                    ops.push(tagged);
+                    tagged.op = Opcode::AddU64;
+                    ops.push(tagged);
+                }
             }
             TCAssignTargetKind::LocalIdent { var_offset } => {
                 tagged.op = Opcode::MakeTempStackFpPtr {

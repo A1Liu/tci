@@ -154,6 +154,7 @@ gen_test_should_succeed!(
     bitwise_operators,
     bool_operators,
     assign_operators,
+    exit,
     ("dyn_array_ptr/", dyn_array_ptr, main),
     ("arrays/", arrays, main)
 );

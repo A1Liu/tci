@@ -13,18 +13,6 @@ use std::convert::TryInto;
 use std::io::Write;
 use std::ops::{BitAnd, BitOr, BitXor};
 
-macro_rules! error {
-    ($arg1:tt,$($arg:tt)*) => {
-        IError::new($arg1, format!($($arg)*))
-    };
-}
-
-macro_rules! err {
-    ($arg1:tt,$($arg:tt)*) => {
-        Err(IError::new($arg1, format!($($arg)*)))
-    };
-}
-
 /// Exit the program with an error code
 pub const ECALL_EXIT: u32 = 0;
 
@@ -34,6 +22,15 @@ pub const ECALL_ARGC: u32 = 1;
 /// Get zero-indexed command line argument. Takes in a single int as a parameter,
 /// and pushes a pointer to the string on the heap as the result.
 pub const ECALL_ARGV: u32 = 2;
+
+/// Returns whether or not the given pointer is safe
+pub const ECALL_IS_SAFE: u32 = 3;
+
+/// Returns a pointer to a buffer on the heap of the specified size.
+pub const ECALL_HEAP_ALLOC: u32 = 4;
+
+/// Throws an IError object up the callstack
+pub const ECALL_THROW_ERROR: u32 = 5;
 
 /// No symbol associated with this stack/binary var
 pub const META_NO_SYMBOL: u32 = u32::MAX;
@@ -84,6 +81,10 @@ pub enum Opcode {
     Swap { top: u32, bottom: u32 }, // Swap some number of top bytes with some number of bytes below
     PopIntoTopVar { offset: u32, bytes: u32 },
 
+    // Pops ptr (VarPointer), then size (u64), off of the temp stack, then pushes size
+    // bytes starting at ptr onto the stack
+    PushDyn,
+
     SExtend8To16,
     SExtend8To32,
     SExtend8To64,
@@ -125,8 +126,9 @@ pub enum Opcode {
     CompLeqU64,
 
     CompEq32,
-    CompNeq32,
     CompEq64,
+    CompNeq32,
+    CompNeq64,
 
     ModI32,
     ModI64,
@@ -156,7 +158,7 @@ pub enum Opcode {
 
     Call(u32),
     LibCall(u32),
-    Ecall(u32),
+    EcallDyn,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -249,10 +251,6 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         }
 
         add_lib_func!(printf);
-        add_lib_func!(exit);
-        add_lib_func!(malloc);
-        add_lib_func!(realloc);
-        add_lib_func!(@ASYNC, scanf);
 
         let memory = Memory::new_with_binary(program.data);
         return Self {
@@ -432,6 +430,13 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                 self.memory.pop_stack_bytes_into(ptr, bytes)?;
             }
 
+            Opcode::PushDyn => {
+                let ptr: VarPointer = self.memory.pop_stack()?;
+                let size = u32::from_be(self.memory.pop_stack()?);
+
+                self.memory.push_stack_bytes_from(ptr, size)?;
+            }
+
             Opcode::SExtend8To16 => {
                 let val = self.memory.pop_stack::<i8>()?;
                 self.memory.push_stack((val as i16).to_be())?;
@@ -557,15 +562,21 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 == word2) as u8)?;
             }
+            Opcode::CompEq64 => {
+                let word2 = u64::from_be(self.memory.pop_stack()?);
+                let word1 = u64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 == word2) as u8)?;
+            }
+
             Opcode::CompNeq32 => {
                 let word2 = i32::from_be(self.memory.pop_stack()?);
                 let word1 = i32::from_be(self.memory.pop_stack()?);
                 self.memory.push_stack((word1 != word2) as u8)?;
             }
-            Opcode::CompEq64 => {
-                let word2 = u64::from_be(self.memory.pop_stack()?);
-                let word1 = u64::from_be(self.memory.pop_stack()?);
-                self.memory.push_stack((word1 == word2) as u8)?;
+            Opcode::CompNeq64 => {
+                let word2 = i64::from_be(self.memory.pop_stack()?);
+                let word1 = i64::from_be(self.memory.pop_stack()?);
+                self.memory.push_stack((word1 != word2) as u8)?;
             }
 
             Opcode::AddU64 => {
@@ -732,7 +743,7 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                         _ => return Ok(()),
                     }
                 } else {
-                    return Err(error!(
+                    return Err(ierror!(
                         "InvalidLibraryFunction",
                         "library function symbol '{}' is invalid (this is a problem with tci)",
                         self.program.files.symbols[func_name as usize]
@@ -740,33 +751,54 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                 }
             }
 
-            Opcode::Ecall(ECALL_EXIT) => {
-                let exit = i32::from_be(self.memory.pop_stack()?);
-                self.memory.exit(exit)?;
-                return Ok(());
-            }
-            Opcode::Ecall(ECALL_ARGC) => {
-                self.memory.push_stack((self.args.len() as u32).to_be())?;
-            }
-            Opcode::Ecall(ECALL_ARGV) => {
-                let arg_idx: u32 = self.memory.pop_stack()?;
-                let arg_idx = arg_idx as usize;
-                if arg_idx >= self.args.len() {
-                    return Err(error!(
-                        "InvalidArgumentIndex",
-                        "Argument index {} is invalid (this is a problem with tci)", arg_idx
-                    ));
-                }
+            Opcode::EcallDyn => {
+                let ecall = u32::from_be(self.memory.pop_stack()?);
+                match ecall {
+                    ECALL_EXIT => {
+                        let exit = i32::from_be(self.memory.pop_stack()?);
+                        self.memory.exit(exit)?;
+                        return Ok(());
+                    }
 
-                let arg = &self.args[arg_idx].as_bytes();
-                let var_pointer = self.memory.add_heap_var(arg.len() as u32 + 1)?;
-                let str_bytes = self.memory.get_var_slice_mut(var_pointer)?;
-                str_bytes[..arg.len()].copy_from_slice(arg);
-                str_bytes[arg.len()] = 0;
-                self.memory.push_stack(var_pointer)?;
-            }
-            Opcode::Ecall(call) => {
-                return err!("InvalidEnviromentCall", "invalid ecall value of {}", call);
+                    ECALL_ARGC => {
+                        self.memory.push_stack((self.args.len() as u64).to_be())?;
+                    }
+                    ECALL_ARGV => {
+                        let arg_idx = u32::from_be(self.memory.pop_stack()?);
+                        let arg_idx = arg_idx as usize;
+                        if arg_idx >= self.args.len() {
+                            return Err(ierror!(
+                                "InvalidArgumentIndex",
+                                "Argument index {} is invalid (this is a problem with tci)",
+                                arg_idx
+                            ));
+                        }
+
+                        let arg = &self.args[arg_idx].as_bytes();
+                        let var_pointer = self.memory.add_heap_var(arg.len() as u32 + 1)?;
+                        let str_bytes = self.memory.get_var_slice_mut(var_pointer)?;
+                        str_bytes[..arg.len()].copy_from_slice(arg);
+                        str_bytes[arg.len()] = 0;
+                        self.memory.push_stack(var_pointer)?;
+                    }
+
+                    ECALL_IS_SAFE => {
+                        let var_pointer: VarPointer = self.memory.pop_stack()?;
+                        let result = self.memory.get_var::<u8>(var_pointer).is_ok();
+                        self.memory.push_stack((result as u64).to_be())?;
+                    }
+                    ECALL_THROW_ERROR => {}
+
+                    ECALL_HEAP_ALLOC => {
+                        let size = u64::from_be(self.memory.pop_stack()?);
+                        let ptr = self.memory.add_heap_var(size as u32)?;
+                        self.memory.push_stack(ptr)?;
+                    }
+
+                    call => {
+                        return ierr!("InvalidEnviromentCall", "invalid ecall value of {}", call)
+                    }
+                }
             }
         }
 
@@ -786,84 +818,11 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         }
 
         if idx == str_bytes.len() {
-            return err!("MissingNullTerminator", "string missing null terminator");
+            return ierr!("MissingNullTerminator", "string missing null terminator");
         }
 
         return Ok(&str_bytes[0..idx]);
     }
-}
-
-pub fn malloc<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let stack_len = sel.memory.stack_length();
-    let top_ptr = VarPointer::new_stack(stack_len, 0);
-    let ret_addr: VarPointer = sel.memory.get_var(top_ptr)?;
-
-    let size_ptr = VarPointer::new_stack(stack_len - 1, 0);
-    let size = u64::from_be(sel.memory.get_var(size_ptr)?);
-    let var_pointer = sel.memory.add_heap_var(size as u32)?; // TODO overflow
-    sel.memory.set(ret_addr, var_pointer)?;
-    return Ok(());
-}
-
-pub fn realloc<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let stack_len = sel.memory.stack_length();
-    let top_ptr = VarPointer::new_stack(stack_len, 0);
-    let ret_addr: VarPointer = sel.memory.get_var(top_ptr)?;
-
-    let size_ptr = VarPointer::new_stack(stack_len - 1, 0);
-    let to_free_ptr = VarPointer::new_stack(stack_len - 2, 0);
-
-    let to_free: VarPointer = sel.memory.get_var(to_free_ptr)?;
-    if !to_free.is_heap() {
-        return Err(error!(
-            "InvalidPointer",
-            "called realloc on a pointer that was not from the heap"
-        ));
-    }
-
-    if to_free.offset() != 0 {
-        return Err(error!(
-            "InvalidPointer",
-            "called realloc on a pointer that was {} bytes off of its allocation",
-            to_free.offset()
-        ));
-    }
-
-    let size = u64::from_be(sel.memory.get_var(size_ptr)?);
-    let new_alloc_ptr = sel.memory.add_heap_var(size as u32)?; // TODO overflow
-
-    let (mut src, mut dest) = (to_free, new_alloc_ptr);
-    for _ in 0..size {
-        // PERFORMANCE this is so slow; it will be even slower in the pure C version lmao
-        let byte: u8 = sel.memory.get_var(src)?;
-        sel.memory.set(dest, byte)?;
-        src = src.add(1);
-        dest = dest.add(1);
-    }
-
-    sel.memory.set(ret_addr, new_alloc_ptr)?;
-    return Ok(());
-}
-
-pub fn free<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let top_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
-    let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
-    return Ok(());
-}
-
-pub fn exit<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let top_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
-    let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
-    sel.memory.exit(exit_code)?;
-    return Ok(());
-}
-
-pub async fn scanf<Stdin: IStdin>(
-    sel: &mut Runtime<Stdin>,
-    stdin: &mut Stdin,
-) -> Result<(), IError> {
-    sel.memory.read_stdin(12, stdin).await?;
-    return Ok(());
 }
 
 pub fn printf<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
@@ -897,7 +856,7 @@ pub fn printf_internal<Stdin: IStdin>(
 ) -> Result<(), IError> {
     // OPTIMIZE This does an unnecessary linear scan
     let format_str = sel.cstring_bytes(format_ptr)?;
-    let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
+    let map_err = |err| ierror!("WriteFailed", "failed to write to stdout ({})", err);
 
     // CREDIT heavily inspired by https://github.com/mpaland/printf/blob/master/printf.c
 
@@ -953,7 +912,7 @@ pub fn printf_internal<Stdin: IStdin>(
 
         idx2 += 1;
         if idx2 == format_str.len() {
-            return Err(error!(
+            return Err(ierror!(
                 "InvalidFormatString",
                 "format string ends with a single '%'; to print out a '%' use '%%'"
             ));
@@ -1067,7 +1026,7 @@ pub fn printf_internal<Stdin: IStdin>(
                 write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?).map_err(map_err)?;
             }
             byte => {
-                return Err(error!(
+                return Err(ierror!(
                     "InvalidFormatString",
                     "got byte '{}' after '%'",
                     char::from(byte)

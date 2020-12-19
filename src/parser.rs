@@ -138,8 +138,8 @@ pub fn pop<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<Token<'a>, E
 }
 
 /// True if the parse is about to see a type, false otherwise
-pub fn peek_type_or_expr<'a>(tokens: &'a [Token<'a>], current: &usize) -> Result<bool, Error> {
-    let tok = peek(tokens, current)?;
+pub fn peek_type_or_expr<'a>(tokens: &'a [Token<'a>], current: usize) -> Result<bool, Error> {
+    let tok = peek(tokens, &current)?;
     match tok.kind {
         TokenKind::TypeIdent(_) => return Ok(true),
         TokenKind::Int | TokenKind::Long => return Ok(true),
@@ -810,7 +810,7 @@ impl<'b> Parser<'b> {
                 if lparen_tok.kind == TokenKind::LParen {
                     pop(tokens, current).unwrap();
 
-                    if peek_type_or_expr(tokens, current)? {
+                    if peek_type_or_expr(tokens, *current)? {
                         let sizeof_type = self.parse_type_prefix(buckets, tokens, current)?;
                         let mut pointer_count = 0;
                         while peek(tokens, current)?.kind == TokenKind::Star {
@@ -893,18 +893,8 @@ impl<'b> Parser<'b> {
             }
 
             TokenKind::LParen => {
-                let type_tok = if let Some(tok) = peek2_o(tokens, current) {
-                    tok
-                } else {
-                    return self.parse_postfix(buckets, tokens, current);
-                };
-
-                let (lparen, cast_to) = match type_tok.kind {
-                    TokenKind::TypeIdent(_)
-                    | TokenKind::Struct
-                    | TokenKind::Char
-                    | TokenKind::Void
-                    | TokenKind::Int => {
+                let (lparen, cast_to) = match peek_type_or_expr(tokens, *current + 1) {
+                    Ok(true) => {
                         let lparen = pop(tokens, current).unwrap();
                         let ast_type = self.parse_type_prefix(buckets, tokens, current)?;
                         (lparen, ast_type)
@@ -1371,6 +1361,16 @@ impl<'b> Parser<'b> {
                     loc: l_from(typedef_tok.loc, recv.loc)
                 });
             }
+            TokenKind::Pragma(value) => {
+                let loc = pop(tokens, current).unwrap().loc;
+                let kind = self.parse_pragma(value);
+
+                if let Some(kind) = kind {
+                    ret_stmt!(GlobalStmt { kind, loc });
+                }
+
+                return Ok(());
+            }
             _ => self.parse_type_prefix(buckets, tokens, current)?,
         };
 
@@ -1545,7 +1545,7 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Stmt<'b>, Error> {
-        if peek_type_or_expr(tokens, current)? {
+        if peek_type_or_expr(tokens, *current)? {
             let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
             let start_loc = decl_type.loc;
             let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
@@ -1569,7 +1569,7 @@ impl<'b> Parser<'b> {
 
                 let lparen_tok = expect_lparen(tokens, current)?;
 
-                let (first_part, semi_tok) = if peek_type_or_expr(tokens, current)? {
+                let (first_part, semi_tok) = if peek_type_or_expr(tokens, *current)? {
                     let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
                     let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
                     decls.push(decl);
@@ -1861,6 +1861,13 @@ impl<'b> Parser<'b> {
             kind,
             loc: l_from(start_loc, end_loc),
         });
+    }
+
+    pub fn parse_pragma<'a>(&self, pragma: &str) -> Option<GlobalStmtKind<'a>> {
+        match pragma {
+            "tci enable_builtins" => return Some(GlobalStmtKind::PragmaEnableBuiltins),
+            _ => return None,
+        }
     }
 }
 

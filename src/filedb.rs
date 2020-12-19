@@ -107,6 +107,7 @@ lazy_static! {
         sys_lib!("string.h");
         sys_lib!("stddef.h");
         sys_lib!("stdint.h");
+        sys_lib!("stdarg.h");
 
         m
     };

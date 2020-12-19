@@ -1,7 +1,7 @@
 use crate::buckets::*;
 use crate::filedb::*;
 use crate::util::*;
-use core::{fmt, mem, str};
+use core::{fmt, mem};
 use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
 use smol::io::AsyncReadExt;
 use std::collections::VecDeque;
@@ -35,34 +35,34 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, files: &FileDbRe
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IError {
-    pub short_name: &'static str,
+    pub short_name: String,
     pub message: String,
 }
 
 impl IError {
-    pub fn new(short_name: &'static str, message: String) -> Self {
+    pub fn new(short_name: String, message: String) -> Self {
         Self {
-            short_name: short_name,
+            short_name,
             message,
         }
     }
 }
 
-macro_rules! error {
+macro_rules! ierror {
     ($arg1:tt,$($arg:tt)*) => {
-        IError::new($arg1, format!($($arg)*))
+        IError::new($arg1.to_string(), format!($($arg)*))
     };
 }
 
-macro_rules! err {
+macro_rules! ierr {
     ($arg1:tt,$($arg:tt)*) => {
-        Err(IError::new($arg1, format!($($arg)*)))
+        Err(IError::new($arg1.to_string(), format!($($arg)*)))
     };
 }
 
 impl From<io::Error> for IError {
     fn from(err: io::Error) -> Self {
-        error!("WriteFailed", "failed to write to output ({})", err)
+        ierror!("WriteFailed", "failed to write to output ({})", err)
     }
 }
 
@@ -258,18 +258,18 @@ impl VarPointer {
 
 pub fn invalid_ptr(ptr: VarPointer) -> IError {
     if ptr.is_stack() {
-        return error!("InvalidPointer", "the stack pointer {} is invalid", ptr);
+        return ierror!("InvalidPointer", "the stack pointer {} is invalid", ptr);
     } else if ptr.is_heap() {
-        return error!("InvalidPointer", "the heap pointer {} is invalid", ptr);
+        return ierror!("InvalidPointer", "the heap pointer {} is invalid", ptr);
     } else {
-        return error!("InvalidPointer", "the binary pointer {} is invalid", ptr);
+        return ierror!("InvalidPointer", "the binary pointer {} is invalid", ptr);
     }
 }
 
 pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
     let (start, end) = (ptr.with_offset(0), ptr.with_offset(var.len));
     if ptr.is_stack() {
-        return error!(
+        return ierror!(
             "InvalidPointer",
             "the stack pointer {} is invalid; the nearest object is in the range {}..{}",
             ptr,
@@ -277,12 +277,15 @@ pub fn invalid_offset(var: Var, ptr: VarPointer) -> IError {
             end
         );
     } else if ptr.is_heap() {
-        return error!(
+        return ierror!(
             "InvalidPointer",
-            "the pointer {} is invalid; the nearest object is in the range {}..{}", ptr, start, end
+            "the pointer {} is invalid; the nearest object is in the range {}..{}",
+            ptr,
+            start,
+            end
         );
     } else {
-        return error!(
+        return ierror!(
             "InvalidPointer",
             "the binary pointer {} is invalid; the nearest object is in the range {}..{}",
             ptr,
@@ -374,9 +377,9 @@ impl VarBuffer {
 
         let begin = var.idx + ptr.offset() as usize;
         let var_slice = &self.data[begin..(begin + len as usize)];
-        let mut value = unsafe { mem::MaybeUninit::uninit().assume_init() };
-        unsafe { any_as_u8_slice_mut(&mut value).copy_from_slice(var_slice) };
-        return Ok(value);
+        let mut value: mem::MaybeUninit<T> = mem::MaybeUninit::uninit();
+        unsafe { any_as_u8_slice_mut(&mut *value.as_mut_ptr()) }.copy_from_slice(var_slice);
+        return Ok(unsafe { value.assume_init() });
     }
 
     pub fn add_var(&mut self, len: u32, meta: u32) -> u32 {
@@ -574,9 +577,9 @@ pub enum MAKind {
         end: usize,
     },
     ErrorExit {
-        short: &'static str,
-        start: usize,
-        end: usize,
+        name_start: usize,
+        mid: usize,
+        message_end: usize,
     },
     Exit {
         code: i32,
@@ -633,7 +636,11 @@ impl MemoryAction {
             MAKind::WriteStdout { start, end, chars } => return start,
             MAKind::WriteStdin { start, end, chars } => return start,
             MAKind::ConsumeStdin { start, end } => return start,
-            MAKind::ErrorExit { short, start, end } => return start,
+            MAKind::ErrorExit {
+                name_start,
+                mid,
+                message_end,
+            } => return name_start,
             MAKind::Exit { code, bk } => return bk,
         }
     }
@@ -764,13 +771,13 @@ impl Memory {
     pub fn check_mutate(&mut self) -> Result<(), IError> {
         match &self.status {
             RuntimeStatus::Exited(_) => {
-                return Err(error!(
+                return Err(ierror!(
                 "AlreadyExited",
                 "tried to change memory when exit had already occurred (This is an error in TCI)"
                 ))
             }
             RuntimeStatus::ErrorExited(err) => {
-                return Err(error!(
+                return Err(ierror!(
                 "AlreadyExited",
                 "tried to change memory when error exit had already occurred (This is an error in TCI)"
                 ))
@@ -872,11 +879,17 @@ impl Memory {
         let rendered_error = render_err(&error, &self.callstack, files);
         write!(MemoryStderr { memory: self }, "{}", rendered_error).unwrap();
 
-        let start = self.historical_data.len();
+        let name_start = self.historical_data.len();
+        write!(self.historical_data, "{}", error.short_name).unwrap();
+        let mid = self.historical_data.len();
         write!(self.historical_data, "{}", error.message).unwrap();
-        let end = self.historical_data.len();
-        let short = error.short_name;
-        self.push_history(MAKind::ErrorExit { short, start, end });
+        let message_end = self.historical_data.len();
+
+        self.push_history(MAKind::ErrorExit {
+            name_start,
+            mid,
+            message_end,
+        });
         self.status = RuntimeStatus::ErrorExited(error);
         return Ok(());
     }
@@ -1165,7 +1178,7 @@ impl Memory {
         self.check_mutate()?;
 
         let var = self.stack.vars.pop();
-        let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
+        let map_err = || ierror!("StackIsEmpty", "tried to pop from stack when it is empty");
         let var = var.ok_or_else(map_err)?;
 
         let var_start = self.historical_data.len();
@@ -1189,7 +1202,7 @@ impl Memory {
         self.check_mutate()?;
 
         let var = self.stack.vars.pop();
-        let map_err = || error!("StackIsEmpty", "tried to pop from stack when it is empty");
+        let map_err = || ierror!("StackIsEmpty", "tried to pop from stack when it is empty");
         let var = var.ok_or_else(map_err)?;
 
         let var_start = self.historical_data.len();
@@ -1252,7 +1265,7 @@ impl Memory {
         self.check_mutate()?;
 
         if self.stack.data.len() < len as usize {
-            return err!(
+            return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
@@ -1262,7 +1275,7 @@ impl Memory {
 
         let break_idx = if let Some(var) = self.stack.vars.last() {
             if self.stack.data.len() - var.upper() < len as usize {
-                return err!(
+                return ierr!(
                     "StackPopInvalidatesVariable",
                     "popping from the stack would invalidate a variable"
                 );
@@ -1369,7 +1382,7 @@ impl Memory {
         self.check_mutate()?;
 
         if self.stack.data.len() < len as usize {
-            return err!(
+            return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
@@ -1379,7 +1392,7 @@ impl Memory {
 
         if let Some(var) = self.stack.vars.last() {
             if self.stack.data.len() - var.upper() < len as usize {
-                return err!(
+                return ierr!(
                     "StackPopInvalidatesVariable",
                     "popping from the stack would invalidate a variable"
                 );
@@ -1408,7 +1421,7 @@ impl Memory {
 
         let len = keep + pop;
         if self.stack.data.len() < len as usize {
-            return err!(
+            return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
@@ -1418,7 +1431,7 @@ impl Memory {
 
         if let Some(var) = self.stack.vars.last() {
             if self.stack.data.len() - var.upper() < len as usize {
-                return err!(
+                return ierr!(
                     "StackPopInvalidatesVariable",
                     "popping from the stack would invalidate a variable"
                 );
@@ -1457,7 +1470,7 @@ impl Memory {
         self.check_mutate()?;
 
         if self.stack.data.len() < bytes as usize {
-            return err!(
+            return ierr!(
                 "StackTooShort",
                 "tried to read {} bytes from stack when stack is only {} bytes long",
                 bytes,
@@ -1467,7 +1480,7 @@ impl Memory {
 
         if let Some(var) = self.stack.vars.last() {
             if self.stack.data.len() - var.upper() < bytes as usize {
-                return err!(
+                return ierr!(
                     "StackDupReadsVar",
                     "Duplicating stack data would read from a stack variable"
                 );
@@ -1501,7 +1514,7 @@ impl Memory {
 
         let len = mem::size_of::<T>();
         if self.stack.data.len() < len {
-            return err!(
+            return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
@@ -1511,7 +1524,7 @@ impl Memory {
 
         if let Some(var) = self.stack.vars.last() {
             if self.stack.data.len() - var.upper() < len {
-                return err!(
+                return ierr!(
                     "StackPopInvalidatesVariable",
                     "popping from the stack would invalidate a variable"
                 );
@@ -1653,11 +1666,18 @@ impl Memory {
                     self.in_io_buf.pop_front().unwrap();
                 }
             }
-            MAKind::ErrorExit { short, start, end } => {
+            MAKind::ErrorExit {
+                name_start,
+                mid,
+                message_end,
+            } => {
                 #[rustfmt::skip]
-                let bytes = self.historical_data[start..end].iter().map(|i| *i).collect();
-                let string = unsafe { String::from_utf8_unchecked(bytes) };
-                self.status = RuntimeStatus::ErrorExited(IError::new(short, string));
+                let name_bytes = self.historical_data[name_start..mid].iter().map(|i| *i).collect();
+                let name = unsafe { String::from_utf8_unchecked(name_bytes) };
+                #[rustfmt::skip]
+                let message_bytes = self.historical_data[mid..message_end].iter().map(|i| *i).collect();
+                let message = unsafe { String::from_utf8_unchecked(message_bytes) };
+                self.status = RuntimeStatus::ErrorExited(IError::new(name, message));
             }
             MAKind::Exit { code, bk } => {
                 self.status = RuntimeStatus::Exited(code);
@@ -1767,7 +1787,7 @@ impl Memory {
                     self.in_io_buf.push_front(*byte);
                 }
             }
-            MAKind::ErrorExit { short, start, end } => {
+            MAKind::ErrorExit { .. } => {
                 self.status = RuntimeStatus::Running;
             }
             MAKind::Exit { code, bk } => {

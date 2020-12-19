@@ -5,6 +5,62 @@ use crate::util::*;
 use std::collections::{HashMap, HashSet};
 use std::mem::Discriminant;
 
+type BuiltinTransform = for<'a, 'b, 'c, 'd, 'e> fn(
+    CheckEnv<'a, 'b>,
+    &'c LocalTypeEnv,
+    CodeLoc,
+    &'d [Expr<'e>],
+) -> Result<(TCBuiltin<'b>, TCType), Error>;
+
+lazy_static! {
+    pub static ref BUILTINS: HashMap<&'static str, BuiltinTransform> = {
+        let mut m: HashMap<&'static str, BuiltinTransform> = HashMap::new();
+
+        m.insert(
+            "__tci_builtin_push_temp_stack",
+            |env, local_env, call_loc, args| {
+                if args.len() != 2 {
+                    return Err(error!(
+                        "wrong number of arguments to builtin function",
+                        call_loc, "called here"
+                    ));
+                }
+
+                let ptr = check_expr(env, local_env, &args[0])?;
+                let ptr = env.assign_convert(&TCType::new(TCTypeKind::Void, 1), call_loc, ptr)?;
+
+                let size = check_expr(env, local_env, &args[1])?;
+                let size = env.assign_convert(&TCType::new(TCTypeKind::U32, 0), call_loc, size)?;
+
+                return Ok((
+                    TCBuiltin::PushTempStack {
+                        ptr: &*env.buckets.add(ptr),
+                        size: &*env.buckets.add(size),
+                    },
+                    TCType::new(TCTypeKind::Void, 0),
+                ));
+            },
+        );
+
+        m.insert("__tci_builtin_ecall", |env, local_env, call_loc, args| {
+            if args.len() != 1 {
+                return Err(error!(
+                    "wrong number of arguments to builtin function",
+                    call_loc, "called here"
+                ));
+            }
+
+            let ecall = check_expr(env, local_env, &args[0])?;
+            let ecall = env.assign_convert(&TCType::new(TCTypeKind::U32, 0), call_loc, ecall)?;
+
+            let size_t = TCType::new(TCTypeKind::U64, 0);
+            return Ok((TCBuiltin::Ecall(&*env.buckets.add(ecall)), size_t));
+        });
+
+        m
+    };
+}
+
 pub fn unify<'a>(
     env: CheckEnv<'_, 'a>,
     mut l: TCExpr<'a>,
@@ -509,14 +565,16 @@ pub struct TypeEnv {
     pub structs: HashMap<u32, TCStruct>,
     pub anon_structs: HashMap<CodeLoc, TCStruct>,
     pub typedefs: HashMap<u32, TCTypedef>,
+    pub builtins_enabled: Option<u32>,
 }
 
 impl TypeEnv {
-    pub fn new() -> Self {
+    pub fn new(builtins_enabled: Option<u32>) -> Self {
         Self {
             structs: HashMap::new(),
             anon_structs: HashMap::new(),
             typedefs: HashMap::new(),
+            builtins_enabled,
         }
     }
 
@@ -1297,6 +1355,7 @@ pub struct UncheckedEnv<'b> {
     pub struct_types: HashMap<u32, UncheckedStruct>,
     pub anon_struct_types: HashMap<CodeLoc, UncheckedStruct>,
     pub typedefs: HashMap<u32, ITypedef>, // TODO what if someone redefines a typedef?
+    pub builtins_enabled: Option<u32>,
 }
 
 pub fn sequentialize<'a, 'b>(
@@ -1309,7 +1368,9 @@ pub fn sequentialize<'a, 'b>(
         struct_types: HashMap::new(),
         anon_struct_types: HashMap::new(),
         typedefs: HashMap::new(),
+        builtins_enabled: None,
     };
+
     let mut decl_idx = 0;
 
     for stmt in program.stmts {
@@ -1505,6 +1566,13 @@ pub fn sequentialize_rec<'a, 'b>(
                 },
             );
 
+            return Ok(());
+        }
+        GlobalStmtKind::PragmaEnableBuiltins => {
+            let defn_idx = *g_decl_idx;
+            *g_decl_idx += 1;
+
+            env.builtins_enabled = Some(env.builtins_enabled.unwrap_or(defn_idx));
             return Ok(());
         }
     };
@@ -1897,8 +1965,8 @@ pub fn check_file<'a>(
     program: ASTProgram,
     files: &FileDb,
 ) -> Result<TypedFuncs<'a>, Error> {
-    let mut types = TypeEnv::new();
     let unchecked_env = sequentialize(buckets, program, files)?;
+    let mut types = TypeEnv::new(unchecked_env.builtins_enabled);
 
     let mut visited = Visited {
         structs: HashSet::new(),
@@ -2708,6 +2776,17 @@ pub fn check_expr_allow_brace<'b>(
             let func_type = if let Some(func_type) = env.func_types.get(&func_id) {
                 func_type
             } else {
+                if env.types.builtins_enabled.map(|idx| idx < env.decl_idx) == Some(true) {
+                    if let Some(trans) = BUILTINS.get(env.files.symbol_to_str(func_id)) {
+                        let (builtin, expr_type) = trans(env, local_env, expr.loc, params)?;
+                        return Ok(TCExpr {
+                            kind: TCExprKind::Builtin(builtin),
+                            loc: expr.loc,
+                            expr_type,
+                        });
+                    }
+                }
+
                 return Err(error!("function doesn't exist", expr.loc, "called here"));
             };
 

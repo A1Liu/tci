@@ -173,6 +173,7 @@ pub enum GlobalStmtKind<'a> {
         decl_type: ASTType<'a>,
         decls: &'a [Decl<'a>],
     },
+    PragmaEnableBuiltins,
 }
 
 #[derive(Debug, Clone)]
@@ -616,6 +617,15 @@ pub struct TCAssignTarget<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum TCBuiltin<'a> {
+    PushTempStack {
+        ptr: &'a TCExpr<'a>,  // always of type void*
+        size: &'a TCExpr<'a>, // always of type size_t
+    },
+    Ecall(&'a TCExpr<'a>), // always of type `int`
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum TCStmtKind<'a> {
     RetVal(TCExpr<'a>),
     Ret,
@@ -714,6 +724,7 @@ pub enum TCExprKind<'a> {
         params: &'a [TCExpr<'a>],
         named_count: u32,
     },
+    Builtin(TCBuiltin<'a>),
 }
 
 #[derive(Debug, Clone, Copy)]

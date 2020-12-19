@@ -8,6 +8,9 @@ mod util;
 #[macro_use]
 mod net_io;
 
+#[macro_use]
+mod runtime;
+
 mod assembler;
 mod ast;
 mod buckets;
@@ -17,7 +20,6 @@ mod interpreter;
 mod lexer;
 mod parser;
 mod preprocessor;
-mod runtime;
 mod type_checker;
 
 #[cfg(test)]
