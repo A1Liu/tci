@@ -23,7 +23,6 @@ lazy_static! {
         m.insert(INIT_SYMS.translate["malloc"]);
         m.insert(INIT_SYMS.translate["free"]);
         m.insert(INIT_SYMS.translate["realloc"]);
-        m.insert(INIT_SYMS.translate["strlen"]);
         m
     };
 }
@@ -34,7 +33,17 @@ pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
             bytes: 4,
             symbol: META_NO_SYMBOL,
         },
+        Opcode::StackAlloc {
+            bytes: 8,
+            symbol: META_NO_SYMBOL,
+        },
+        Opcode::MakeTempStackFpPtr { var: 0, offset: 0 },
+        Opcode::PopIntoTopVar {
+            offset: 0,
+            bytes: 8,
+        },
         Opcode::Call(main_sym),
+        Opcode::StackDealloc,
         Opcode::GetLocal {
             var: 0,
             offset: 0,
@@ -217,9 +226,13 @@ impl Assembler {
                 TCStmtKind::RetVal(expr) => {
                     ops.append(&mut self.translate_expr(expr));
 
-                    let ret_idx = (param_count as i16 * -1) - 1;
-                    tagged.op = Opcode::SetLocal {
-                        var: ret_idx,
+                    tagged.op = Opcode::GetLocal {
+                        var: -1,
+                        offset: 0,
+                        bytes: 8,
+                    };
+                    ops.push(tagged);
+                    tagged.op = Opcode::Set {
                         offset: 0,
                         bytes: expr.expr_type.repr_size(),
                     };
@@ -394,7 +407,7 @@ impl Assembler {
             }
             TCExprKind::LocalIdent { var_offset } => {
                 tagged.op = if expr.expr_type.is_array() {
-                    Opcode::MakeTempLocalStackPtr {
+                    Opcode::MakeTempStackFpPtr {
                         var: *var_offset,
                         offset: 0,
                     }
@@ -765,7 +778,7 @@ impl Assembler {
             }
             TCExprKind::Ref(lvalue) => match lvalue.kind {
                 TCAssignTargetKind::LocalIdent { var_offset } => {
-                    tagged.op = Opcode::MakeTempLocalStackPtr {
+                    tagged.op = Opcode::MakeTempStackFpPtr {
                         var: var_offset,
                         offset: 0,
                     };
@@ -779,16 +792,24 @@ impl Assembler {
             TCExprKind::Call {
                 func,
                 params,
-                varargs,
+                named_count,
             } => {
-                let rtype_size = *self.func_types.get(&func).unwrap();
+                let rtype_size = expr.expr_type.repr_size();
+
                 tagged.op = Opcode::StackAlloc {
                     bytes: rtype_size,
                     symbol: META_NO_SYMBOL,
                 };
                 ops.push(tagged);
 
-                for param in *params {
+                // Safety allocation to make sure varargs don't run off the stack
+                tagged.op = Opcode::StackAlloc {
+                    bytes: 0,
+                    symbol: META_NO_SYMBOL,
+                };
+                ops.push(tagged);
+
+                for (idx, param) in params.iter().rev().enumerate() {
                     let bytes = param.expr_type.repr_size();
 
                     tagged.op = Opcode::StackAlloc {
@@ -801,20 +822,24 @@ impl Assembler {
                     ops.push(tagged);
                 }
 
-                if *varargs {
-                    tagged.op = Opcode::StackAlloc {
-                        bytes: 4,
-                        symbol: META_NO_SYMBOL,
-                    };
-                    ops.push(tagged);
-                    tagged.op = Opcode::MakeTempI32(params.len() as i32); // check overflow here
-                    ops.push(tagged);
-                    tagged.op = Opcode::PopIntoTopVar {
-                        offset: 0,
-                        bytes: 4,
-                    };
-                    ops.push(tagged);
-                }
+                // Create a pointer to the return location
+                // PERFORMANCE technically this isn't necessary when the function
+                // being called isn't a vararg function
+                tagged.op = Opcode::StackAlloc {
+                    bytes: 8,
+                    symbol: META_NO_SYMBOL,
+                };
+                ops.push(tagged);
+                tagged.op = Opcode::MakeTempStackSpPtr {
+                    var: params.len() as i16 * -1 - 3,
+                    offset: 0,
+                };
+                ops.push(tagged);
+                tagged.op = Opcode::PopIntoTopVar {
+                    offset: 0,
+                    bytes: 8,
+                };
+                ops.push(tagged);
 
                 tagged.op = Opcode::Call(*func);
                 ops.push(tagged);
@@ -823,12 +848,11 @@ impl Assembler {
                 for _ in 0..params.len() {
                     ops.push(tagged);
                 }
-
-                if *varargs {
-                    ops.push(tagged);
-                }
+                ops.push(tagged); // for the pointer to the return location
+                ops.push(tagged); // for the safety allocation
 
                 if rtype_size == 0 {
+                    //
                     tagged.op = Opcode::StackDealloc;
                     ops.push(tagged);
                 } else {
@@ -857,7 +881,7 @@ impl Assembler {
                 ops.push(tagged);
             }
             TCAssignTargetKind::LocalIdent { var_offset } => {
-                tagged.op = Opcode::MakeTempLocalStackPtr {
+                tagged.op = Opcode::MakeTempStackFpPtr {
                     var: var_offset,
                     offset: assign.offset,
                 };

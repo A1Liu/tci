@@ -19,36 +19,35 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
         }
     };
     mem::drop(files);
-    // for (idx, op) in program.ops.iter().enumerate() {
-    //     println!("op {}: {:?}", idx, op);
-    // }
+    for (idx, op) in program.ops.iter().enumerate() {
+        println!("op {}: {:?}", idx, op);
+    }
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
     let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
     let code = match diag.status {
         RuntimeStatus::Exited(code) => code,
-        _ => panic!(),
+        RuntimeStatus::ErrorExited(err) => {
+            println!("error is: {:?}", err);
+            1
+        }
+        x => panic!("runtime status is: {:?}", x),
     };
 
     println!("return code: {}", code);
-    if code != 0 {
-        for (idx, op) in program.ops.iter().enumerate() {
-            println!("op {}: {:?}", idx, op);
-        }
+    let output = writer.into_string();
 
+    if code != 0 {
+        println!("{}", output);
+        println!("pc: {}", runtime.pc());
         panic!();
     }
 
-    let output = writer.into_string();
     println!("{}", output);
     match read_to_string(output_file) {
         Ok(expected) => {
             if output != expected.replace("\r\n", "\n") {
-                // for (idx, op) in program.ops.iter().enumerate() {
-                //     println!("op {}: {:?}", idx, op);
-                // }
-
                 println!("left: {:?}\nright: {:?}", output, expected);
                 panic!();
             }

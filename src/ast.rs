@@ -712,7 +712,7 @@ pub enum TCExprKind<'a> {
     Call {
         func: u32,
         params: &'a [TCExpr<'a>],
-        varargs: bool,
+        named_count: u32,
     },
 }
 

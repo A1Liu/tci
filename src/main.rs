@@ -188,6 +188,9 @@ fn run_from_args(args: Vec<String>) -> ! {
     std::process::exit(code);
 }
 
+#[cfg(not(target_pointer_width = "64"))]
+std::compile_error!("can only compile TCI on a 64 bit platform");
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 1 {

@@ -647,6 +647,8 @@ pub enum RuntimeStatus {
     ErrorExited(IError),
 }
 
+/// Abstraction for the program's replayable state (i.e. its memory + read-in randomness).
+/// Note that the stack grows towards higher memory addresses in this memory implementation.
 pub struct Memory {
     pub stack: VarBuffer,
     pub heap: VarBuffer,
@@ -886,6 +888,16 @@ impl Memory {
             self.fp - var
         } else {
             self.fp + var as u16
+        }
+    }
+
+    pub fn sp_offset(&self, var: i16) -> u16 {
+        if var < 0 {
+            // TODO make sure there's no overflow happening here
+            let var = (var * -1) as u16;
+            self.stack_length() + 1 - var
+        } else {
+            self.stack_length() + 1 + var as u16
         }
     }
 

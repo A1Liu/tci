@@ -2007,23 +2007,18 @@ pub fn check_file<'a>(
         let func_type = &func_types[&func_name];
 
         let mut local_env = LocalTypeEnv::new(func_type.return_type, func_type.loc);
-        let param_count = if func_type.varargs {
-            func_type.params.len() + 1
-        } else {
-            func_type.params.len()
-        };
-
         let mut params = Vec::new();
+
         for (idx, &(param_type, param_type_loc)) in func_type.params.iter().enumerate() {
             let param = defn.params[idx];
-            let var_offset = idx as i16 - param_count as i16;
+            let var_offset = idx as i16 * -1 - 2;
             let tc_value = TCVar {
                 decl_type: param_type,
                 var_offset,
                 loc: param.loc,
             };
 
-            local_env.add_var(param.ident, tc_value).unwrap();
+            local_env.add_var(param.ident, tc_value).unwrap(); // this is handled in sequentialize
             params.push(TCFuncParam {
                 param_type,
                 loc: param.loc,
@@ -2747,7 +2742,7 @@ pub fn check_expr_allow_brace<'b>(
                 kind: TCExprKind::Call {
                     func: func_id,
                     params: env.buckets.add_array(tparams),
-                    varargs: func_type.varargs,
+                    named_count: params.len() as u32,
                 },
                 expr_type: func_type.return_type,
                 loc: expr.loc,

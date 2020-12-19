@@ -67,8 +67,15 @@ pub enum Opcode {
     MakeTempI64(i64),
     MakeTempU64(u64),
     MakeTempF64(f64),
+
+    // Pushes a pointer onto the temp stack relative to the binary
     MakeTempBinaryPtr { var: u32, offset: u32 },
-    MakeTempLocalStackPtr { var: i16, offset: u32 },
+
+    // Pushes a pointer onto the temp stack relative to the frame pointer
+    MakeTempStackFpPtr { var: i16, offset: u32 },
+
+    // Pushes a pointer onto the temp stack relative to the stack pointer
+    MakeTempStackSpPtr { var: i16, offset: u32 },
 
     Pop { bytes: u32 },
     PopKeep { keep: u32, drop: u32 },
@@ -245,7 +252,6 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         add_lib_func!(exit);
         add_lib_func!(malloc);
         add_lib_func!(realloc);
-        add_lib_func!(strlen);
         add_lib_func!(@ASYNC, scanf);
 
         let memory = Memory::new_with_binary(program.data);
@@ -398,8 +404,12 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                 let ptr = VarPointer::new_binary(var, offset);
                 self.memory.push_stack(ptr)?;
             }
-            Opcode::MakeTempLocalStackPtr { var, offset } => {
+            Opcode::MakeTempStackFpPtr { var, offset } => {
                 let ptr = VarPointer::new_stack(self.memory.fp_offset(var), offset);
+                self.memory.push_stack(ptr)?;
+            }
+            Opcode::MakeTempStackSpPtr { var, offset } => {
+                let ptr = VarPointer::new_stack(self.memory.sp_offset(var), offset);
                 self.memory.push_stack(ptr)?;
             }
 
@@ -783,32 +793,25 @@ impl<Stdin: IStdin> Runtime<Stdin> {
     }
 }
 
-pub fn strlen<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let stack_len = sel.memory.stack_length();
-    let char_param_ptr = VarPointer::new_stack(stack_len, 0);
-    let ret_ptr = VarPointer::new_stack(stack_len - 1, 0);
-    let char_ptr: VarPointer = sel.memory.get_var(char_param_ptr)?;
-    let cstring = sel.cstring_bytes(char_ptr)?;
-    let len: u64 = cstring.len() as u64;
-
-    sel.memory.set(ret_ptr, len.to_be())?;
-    return Ok(());
-}
-
 pub fn malloc<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
-    let ret_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
-    let size = u64::from_be(sel.memory.get_var(top_ptr)?);
+    let stack_len = sel.memory.stack_length();
+    let top_ptr = VarPointer::new_stack(stack_len, 0);
+    let ret_addr: VarPointer = sel.memory.get_var(top_ptr)?;
+
+    let size_ptr = VarPointer::new_stack(stack_len - 1, 0);
+    let size = u64::from_be(sel.memory.get_var(size_ptr)?);
     let var_pointer = sel.memory.add_heap_var(size as u32)?; // TODO overflow
-    sel.memory.set(ret_ptr, var_pointer)?;
+    sel.memory.set(ret_addr, var_pointer)?;
     return Ok(());
 }
 
 pub fn realloc<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
     let stack_len = sel.memory.stack_length();
-    let size_ptr = VarPointer::new_stack(stack_len, 0);
-    let to_free_ptr = VarPointer::new_stack(stack_len - 1, 0);
-    let ret_ptr = VarPointer::new_stack(stack_len - 2, 0);
+    let top_ptr = VarPointer::new_stack(stack_len, 0);
+    let ret_addr: VarPointer = sel.memory.get_var(top_ptr)?;
+
+    let size_ptr = VarPointer::new_stack(stack_len - 1, 0);
+    let to_free_ptr = VarPointer::new_stack(stack_len - 2, 0);
 
     let to_free: VarPointer = sel.memory.get_var(to_free_ptr)?;
     if !to_free.is_heap() {
@@ -831,25 +834,25 @@ pub fn realloc<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
 
     let (mut src, mut dest) = (to_free, new_alloc_ptr);
     for _ in 0..size {
-        // PERFORMANCE this is so slow lmao
+        // PERFORMANCE this is so slow; it will be even slower in the pure C version lmao
         let byte: u8 = sel.memory.get_var(src)?;
         sel.memory.set(dest, byte)?;
         src = src.add(1);
         dest = dest.add(1);
     }
 
-    sel.memory.set(ret_ptr, new_alloc_ptr)?;
+    sel.memory.set(ret_addr, new_alloc_ptr)?;
     return Ok(());
 }
 
 pub fn free<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
+    let top_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let to_free: VarPointer = sel.memory.get_var(top_ptr)?;
     return Ok(());
 }
 
 pub fn exit<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let top_ptr = VarPointer::new_stack(sel.memory.stack_length(), 0);
+    let top_ptr = VarPointer::new_stack(sel.memory.stack_length() - 1, 0);
     let exit_code = i32::from_be(sel.memory.get_var(top_ptr)?);
     sel.memory.exit(exit_code)?;
     return Ok(());
@@ -864,25 +867,23 @@ pub async fn scanf<Stdin: IStdin>(
 }
 
 pub fn printf<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let top_ptr_offset = sel.memory.stack_length();
-    let top_ptr = VarPointer::new_stack(top_ptr_offset, 0);
-    let param_len = i32::from_be(sel.memory.get_var(top_ptr)?);
+    let stack_length = sel.memory.stack_length();
+    let top_ptr = VarPointer::new_stack(stack_length, 0);
+    let ret_addr: VarPointer = sel.memory.get_var(top_ptr)?;
+    let mut current_offset = stack_length - 1;
 
-    let mut current_offset = top_ptr_offset - (param_len as u16);
-    let return_offset = current_offset - 1;
-    let format_ptr = VarPointer::new_stack(current_offset, 0); // TODO overflow
-    current_offset += 1;
+    let format_param_ptr = VarPointer::new_stack(current_offset, 0);
+    let format_ptr = sel.memory.get_var(format_param_ptr)?;
+    current_offset -= 1;
 
     let mut out = StringWriter::new();
-
     let result = printf_internal(sel, format_ptr, current_offset, &mut out);
     let out = out.into_string();
     let len = out.len() as i32; // TODO overflow
     write!(sel.memory.stdout()?, "{}", out)?;
     result?;
 
-    let return_ptr = VarPointer::new_stack(return_offset, 0); // TODO overflow
-    sel.memory.set(return_ptr, len.to_be())?;
+    sel.memory.set(ret_addr, len.to_be())?;
 
     return Ok(());
 }
@@ -895,7 +896,7 @@ pub fn printf_internal<Stdin: IStdin>(
     mut out: &mut StringWriter,
 ) -> Result<(), IError> {
     // OPTIMIZE This does an unnecessary linear scan
-    let format_str = sel.cstring_bytes(sel.memory.get_var(format_ptr)?)?;
+    let format_str = sel.cstring_bytes(format_ptr)?;
     let map_err = |err| error!("WriteFailed", "failed to write to stdout ({})", err);
 
     // CREDIT heavily inspired by https://github.com/mpaland/printf/blob/master/printf.c
@@ -911,7 +912,7 @@ pub fn printf_internal<Stdin: IStdin>(
 
     let mut next_ptr = || {
         let var_ptr = VarPointer::new_stack(current_offset, 0);
-        current_offset += 1;
+        current_offset -= 1;
         return var_ptr;
     };
 
