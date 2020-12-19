@@ -2,15 +2,14 @@ use crate::buckets::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
-use core::mem::MaybeUninit;
 use core::{fmt, marker, ops, slice, str};
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
-pub use std::io::Write;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::*;
+
+pub use lazy_static::lazy_static;
 
 #[allow(unused_macros)]
 macro_rules! debug {
@@ -56,90 +55,6 @@ macro_rules! error {
             ],
         )
     };
-}
-
-pub struct LazyStatic<Obj> {
-    pub init: AtomicU8,
-    pub constructor: fn() -> Obj,
-    pub data: MaybeUninit<Obj>,
-}
-
-macro_rules! lazy_static {
-    ($id:ident, $ret:ty, $fn_body:tt) => {{
-        fn $id() -> $ret $fn_body
-
-        LazyStatic {
-            init: core::sync::atomic::AtomicU8::new($crate::util::LS_UNINIT),
-            constructor: $id,
-            data: core::mem::MaybeUninit::<$ret>::uninit(),
-        }
-    }};
-}
-
-pub const LS_UNINIT: u8 = 0;
-pub const LS_INIT_RUN: u8 = 1;
-pub const LS_INIT: u8 = 2;
-pub const LS_KILL_RUN: u8 = 3;
-
-impl<Obj> LazyStatic<Obj> {
-    pub fn init(&self) -> bool {
-        let init_ref = &self.init;
-        loop {
-            let state = init_ref.compare_and_swap(LS_UNINIT, LS_INIT_RUN, Ordering::SeqCst);
-
-            match state {
-                LS_INIT_RUN => {
-                    while LS_INIT_RUN == init_ref.load(Ordering::SeqCst) {}
-                    continue;
-                }
-                LS_INIT => {
-                    return true;
-                }
-                LS_UNINIT => break,
-                LS_KILL_RUN => return false,
-                _ => unreachable!(),
-            }
-        }
-
-        let constructor = &self.constructor;
-        let data = constructor();
-        unsafe { (self.data.as_ptr() as *mut Obj).write(data) };
-
-        let state = init_ref.compare_and_swap(LS_INIT_RUN, LS_INIT, Ordering::SeqCst);
-        debug_assert!(state == LS_INIT_RUN);
-        return true;
-    }
-
-    pub unsafe fn kill(&self) {
-        let init_ref = &self.init;
-        loop {
-            let state = init_ref.compare_and_swap(LS_INIT, LS_KILL_RUN, Ordering::SeqCst);
-
-            match state {
-                LS_INIT_RUN => {
-                    while LS_INIT_RUN == init_ref.load(Ordering::SeqCst) {}
-                    continue;
-                }
-                LS_INIT => break,
-                LS_UNINIT | LS_KILL_RUN => return,
-                _ => unreachable!(),
-            }
-        }
-
-        let data = &mut *(self.data.as_ptr() as *mut Obj);
-
-        let state = init_ref.compare_and_swap(LS_KILL_RUN, LS_UNINIT, Ordering::SeqCst);
-        debug_assert!(state == LS_KILL_RUN);
-    }
-}
-
-impl<Obj> ops::Deref for LazyStatic<Obj> {
-    type Target = Obj;
-
-    fn deref(&self) -> &Obj {
-        assert!(self.init());
-        return unsafe { &*self.data.as_ptr() };
-    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -999,8 +914,9 @@ impl Serialize for n32 {
     }
 }
 
-pub static INDENT: LazyStatic<Mutex<String>> =
-    lazy_static!(indent_init, Mutex<String>, { Mutex::new("".to_string()) });
+lazy_static! {
+    pub static ref INDENT: Mutex<String> = Mutex::new("".to_string());
+}
 
 #[allow(unused_macros)]
 macro_rules! indent {

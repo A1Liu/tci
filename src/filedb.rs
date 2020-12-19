@@ -264,53 +264,56 @@ pub struct InitSyms {
     pub files: Vec<File<'static>>,
 }
 
-pub static INIT_SYMS: LazyStatic<InitSyms> = lazy_static!(init_syms_lazy_static, InitSyms, {
-    let mut names = Vec::new();
-    let mut translate = HashMap::new();
-    let mut files = Vec::new();
-    macro_rules! add_sym {
-        ($arg:expr) => {
-            let begin = names.len() as u32;
-            names.push($arg);
-            translate.insert($arg, begin);
-        };
-    }
+lazy_static! {
+    pub static ref INIT_SYMS: InitSyms = {
+        let mut names = Vec::new();
+        let mut translate = HashMap::new();
+        let mut files = Vec::new();
+        macro_rules! add_sym {
+            ($arg:expr) => {
+                let begin = names.len() as u32;
+                names.push($arg);
+                translate.insert($arg, begin);
+            };
+        }
 
-    macro_rules! add_syslib_sym {
-        ($arg:expr) => {
-            let begin = names.len() as u32;
-            names.push($arg);
-            translate.insert($arg, begin);
-            let source = include_bytes!(concat!("../includes/", $arg));
-            let source = unsafe { str::from_utf8_unchecked(source) };
-            files.push(File::new_static($arg, source));
-        };
-    }
+        macro_rules! add_syslib_sym {
+            ($arg:expr) => {
+                let begin = names.len() as u32;
+                names.push($arg);
+                translate.insert($arg, begin);
+                let source = include_bytes!(concat!("../includes/", $arg));
+                let source = unsafe { str::from_utf8_unchecked(source) };
+                files.push(File::new_static($arg, source));
+            };
+        }
 
-    // System files have the same symbol id as their file id. These lines need to come first.
-    add_syslib_sym!("stdio.h");
-    add_syslib_sym!("stdlib.h");
-    add_syslib_sym!("string.h");
-    add_syslib_sym!("stddef.h");
-    add_syslib_sym!("stdint.h");
+        // System files have the same symbol id as their file id. These lines need to come first.
+        add_syslib_sym!("tci.h");
+        add_syslib_sym!("stdio.h");
+        add_syslib_sym!("stdlib.h");
+        add_syslib_sym!("string.h");
+        add_syslib_sym!("stddef.h");
+        add_syslib_sym!("stdint.h");
 
-    add_sym!("main");
-    add_sym!("va_list");
-    add_sym!("printf");
-    add_sym!("exit");
-    add_sym!("malloc");
-    add_sym!("free");
-    add_sym!("realloc");
-    add_sym!("memcpy");
-    add_sym!("strlen");
-    add_sym!("scanf");
+        add_sym!("main");
+        add_sym!("va_list");
+        add_sym!("printf");
+        add_sym!("exit");
+        add_sym!("malloc");
+        add_sym!("free");
+        add_sym!("realloc");
+        add_sym!("memcpy");
+        add_sym!("strlen");
+        add_sym!("scanf");
 
-    InitSyms {
-        names,
-        translate,
-        files,
-    }
-});
+        InitSyms {
+            names,
+            translate,
+            files,
+        }
+    };
+}
 
 impl Drop for FileDb {
     fn drop(&mut self) {

@@ -74,28 +74,45 @@ macro_rules! gen_type_decl_spec {
     };
 }
 
-pub static CORRECT_TYPES: LazyStatic<HashMap<TypeDeclSpec, ASTTypeKind<'static>>> = lazy_static!(type_decl_spec, HashMap<TypeDeclSpec, ASTTypeKind<'static>>, {
-    let mut map = HashMap::new();
-    map.insert(gen_type_decl_spec!(int), ASTTypeKind::Int);
-    map.insert(gen_type_decl_spec!(long), ASTTypeKind::Long);
-    map.insert(gen_type_decl_spec!(char), ASTTypeKind::Char);
-    map.insert(gen_type_decl_spec!(void), ASTTypeKind::Void);
-    map.insert(gen_type_decl_spec!(signed char), ASTTypeKind::Char);
-    map.insert(gen_type_decl_spec!(unsigned), ASTTypeKind::Unsigned);
+lazy_static! {
+    pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, ASTTypeKind<'static>> = {
+        let mut map = HashMap::new();
+        map.insert(gen_type_decl_spec!(int), ASTTypeKind::Int);
+        map.insert(gen_type_decl_spec!(long), ASTTypeKind::Long);
+        map.insert(gen_type_decl_spec!(char), ASTTypeKind::Char);
+        map.insert(gen_type_decl_spec!(void), ASTTypeKind::Void);
+        map.insert(gen_type_decl_spec!(signed char), ASTTypeKind::Char);
+        map.insert(gen_type_decl_spec!(unsigned), ASTTypeKind::Unsigned);
 
-    map.insert(gen_type_decl_spec!(unsigned char), ASTTypeKind::UnsignedChar);
+        map.insert(
+            gen_type_decl_spec!(unsigned char),
+            ASTTypeKind::UnsignedChar,
+        );
 
-    map.insert(gen_type_decl_spec!(long int), ASTTypeKind::Long);
-    map.insert(gen_type_decl_spec!(long long int), ASTTypeKind::LongLong);
-    map.insert(gen_type_decl_spec!(long long), ASTTypeKind::LongLong);
+        map.insert(gen_type_decl_spec!(long int), ASTTypeKind::Long);
+        map.insert(gen_type_decl_spec!(long long int), ASTTypeKind::LongLong);
+        map.insert(gen_type_decl_spec!(long long), ASTTypeKind::LongLong);
 
-    map.insert(gen_type_decl_spec!(unsigned int), ASTTypeKind::Unsigned);
-    map.insert(gen_type_decl_spec!(unsigned long), ASTTypeKind::UnsignedLong);
-    map.insert(gen_type_decl_spec!(unsigned long int), ASTTypeKind::UnsignedLong);
-    map.insert(gen_type_decl_spec!(unsigned long long), ASTTypeKind::UnsignedLongLong);
-    map.insert(gen_type_decl_spec!(unsigned long long int), ASTTypeKind::UnsignedLongLong);
-    map
-});
+        map.insert(gen_type_decl_spec!(unsigned int), ASTTypeKind::Unsigned);
+        map.insert(
+            gen_type_decl_spec!(unsigned long),
+            ASTTypeKind::UnsignedLong,
+        );
+        map.insert(
+            gen_type_decl_spec!(unsigned long int),
+            ASTTypeKind::UnsignedLong,
+        );
+        map.insert(
+            gen_type_decl_spec!(unsigned long long),
+            ASTTypeKind::UnsignedLongLong,
+        );
+        map.insert(
+            gen_type_decl_spec!(unsigned long long int),
+            ASTTypeKind::UnsignedLongLong,
+        );
+        map
+    };
+}
 
 pub struct Parser<'b> {
     pub db: AstDb<'b>,

@@ -19,6 +19,7 @@ pub enum TokenKind<'a> {
     MacroDef(u32),
     FuncMacroDef(u32),
     MacroDefEnd,
+    Pragma(&'a str),
 
     Void,
     Char,
@@ -248,6 +249,23 @@ impl<'b> Lexer<'b> {
 
         let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
         match directive {
+            "pragma" => {
+                self.current += 1;
+                let begin = self.current;
+                while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                    self.current += 1;
+                }
+
+                let pragma = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
+                let pragma = buckets.add_str(pragma);
+
+                self.output.push(Token::new(
+                    TokenKind::Pragma(pragma),
+                    begin..self.current,
+                    self.file,
+                ));
+                return Ok(());
+            }
             "define" => {
                 while self.peek_eqs(data, &WHITESPACE) {
                     self.current += 1;

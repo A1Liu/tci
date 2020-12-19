@@ -5,9 +5,8 @@ use crate::interpreter::*;
 use crate::runtime::*;
 use crate::type_checker::*;
 use crate::util::*;
-use core::alloc;
-use core::mem;
 use core::mem::{align_of, size_of};
+use core::{alloc, mem};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
@@ -16,17 +15,19 @@ pub struct ASMFunc {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
-pub static LIB_FUNCS: LazyStatic<HashSet<u32>> = lazy_static!(lib_funcs, HashSet<u32>, {
-    let mut m = HashSet::new();
-    m.insert(INIT_SYMS.translate["printf"]);
-    m.insert(INIT_SYMS.translate["exit"]);
-    m.insert(INIT_SYMS.translate["malloc"]);
-    m.insert(INIT_SYMS.translate["free"]);
-    m.insert(INIT_SYMS.translate["realloc"]);
-    m.insert(INIT_SYMS.translate["memcpy"]);
-    m.insert(INIT_SYMS.translate["strlen"]);
-    m
-});
+lazy_static! {
+    pub static ref LIB_FUNCS: HashSet<u32> = {
+        let mut m = HashSet::new();
+        m.insert(INIT_SYMS.translate["printf"]);
+        m.insert(INIT_SYMS.translate["exit"]);
+        m.insert(INIT_SYMS.translate["malloc"]);
+        m.insert(INIT_SYMS.translate["free"]);
+        m.insert(INIT_SYMS.translate["realloc"]);
+        m.insert(INIT_SYMS.translate["memcpy"]);
+        m.insert(INIT_SYMS.translate["strlen"]);
+        m
+    };
+}
 
 pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
     return vec![

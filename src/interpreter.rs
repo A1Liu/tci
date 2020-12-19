@@ -158,6 +158,12 @@ pub struct TaggedOpcode {
     pub loc: CodeLoc,
 }
 
+impl TaggedOpcode {
+    pub fn new(op: Opcode, loc: CodeLoc) -> Self {
+        Self { op, loc }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct RuntimeVar {
     pub decl_type: TCType,
