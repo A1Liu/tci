@@ -787,7 +787,25 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                         let result = self.memory.get_var::<u8>(var_pointer).is_ok();
                         self.memory.push_stack((result as u64).to_be())?;
                     }
-                    ECALL_THROW_ERROR => {}
+                    ECALL_THROW_ERROR => {
+                        let skip_frames = u32::from_be(self.memory.pop_stack()?);
+                        let message_ptr: VarPointer = self.memory.pop_stack()?;
+                        let name_ptr: VarPointer = self.memory.pop_stack()?;
+
+                        let message_bytes = self.cstring_bytes(message_ptr)?;
+                        let name_bytes = self.cstring_bytes(name_ptr)?;
+
+                        let mut message = String::new();
+                        string_append_utf8_lossy(&mut message, message_bytes);
+                        let mut name = String::new();
+                        string_append_utf8_lossy(&mut name, name_bytes);
+
+                        for _ in 0..skip_frames {
+                            self.memory.ret()?;
+                        }
+
+                        return Err(IError::new(name, message));
+                    }
 
                     ECALL_HEAP_ALLOC => {
                         let size = u64::from_be(self.memory.pop_stack()?);

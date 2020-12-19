@@ -654,6 +654,11 @@ pub enum RuntimeStatus {
     ErrorExited(IError),
 }
 
+pub struct HeapValidity {
+    pub malloc_loc: CodeLoc,
+    pub free_loc: CodeLoc,
+}
+
 /// Abstraction for the program's replayable state (i.e. its memory + read-in randomness).
 /// Note that the stack grows towards higher memory addresses in this memory implementation.
 pub struct Memory {

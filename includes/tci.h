@@ -10,6 +10,6 @@
 size_t tci_var_size(void *var);
 
 #define tci_throw_error(name, message)                                         \
-  tci_ecall(TCI_ECALL_THROW_ERROR, name, message)
+  tci_ecall(TCI_ECALL_THROW_ERROR, name, message, 1)
 
 void *tci_ecall(int ecall_num, ...);
