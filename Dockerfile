@@ -15,6 +15,7 @@ RUN apt-get install -y curl build-essential
 WORKDIR /usr/src/app
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN apt-get install zlib1g-dev libtinfo-dev libxml2-dev -y
 
 ENV USER=tci
 RUN $HOME/.cargo/bin/cargo init
@@ -36,5 +37,5 @@ RUN $HOME/.cargo/bin/cargo build --release
 FROM silkeh/clang:11
 COPY --from=cargo-build /usr/src/app/target/release/tci /bin/tci
 
-EXPOSE 3000
+EXPOSE 4000
 ENTRYPOINT ["/bin/tci"]
