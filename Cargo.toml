@@ -17,4 +17,5 @@ strum = { version = "0.20", features = ["derive"] }
 smol = "1.2.5"
 tokio = { version = "0.3.6", features = ["rt", "rt-multi-thread"] }
 rand = "0.8.0"
-# llvm-ir = { version = "0.7.4", features = ["llvm-10"] }
+llvm-ir = { version = "0.7.4", features = ["llvm-11"] }
+
