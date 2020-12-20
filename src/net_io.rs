@@ -22,21 +22,16 @@ use tokio::runtime::Runtime;
 // }
 
 #[cfg(debug)]
-const TCP_BUCKET_SIZE: usize = 1048576;
+const TCP_BUCKET_SIZE: usize = 1048576 * 4;
 #[cfg(not(debug))]
-const TCP_BUCKET_SIZE: usize = 1048576;
-
-#[cfg(debug)]
-const WS_BUCKET_SIZE: usize = 1048576 * 4;
-#[cfg(not(debug))]
-const WS_BUCKET_SIZE: usize = 1048576 * 4;
+const TCP_BUCKET_SIZE: usize = 1048576 * 4;
 
 #[cfg(debug)]
 const SCRATCH_BUCKET_SIZE: usize = 1048576 * 4;
 #[cfg(not(debug))]
 const SCRATCH_BUCKET_SIZE: usize = 1048576 * 4;
 
-const TOTAL_BUCKET_SIZE: usize = TCP_BUCKET_SIZE + WS_BUCKET_SIZE + SCRATCH_BUCKET_SIZE;
+const TOTAL_BUCKET_SIZE: usize = TCP_BUCKET_SIZE + SCRATCH_BUCKET_SIZE;
 
 #[derive(Debug)]
 pub enum WebServerError {
@@ -469,7 +464,9 @@ pub fn serialize_http_response<'a>(
     write_to_bytes!("\r\nConnection: close\r\n\r\n");
 
     if resp.body.len() + num_bytes > bytes.len() {
-        return Err(WebServerError::ResponseTooLarge(num_bytes));
+        return Err(WebServerError::ResponseTooLarge(
+            num_bytes + resp.body.len(),
+        ));
     }
 
     bytes[num_bytes..(resp.body.len() + num_bytes)].copy_from_slice(resp.body);

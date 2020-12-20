@@ -14,6 +14,7 @@ mod runtime;
 mod assembler;
 mod ast;
 mod buckets;
+mod clang;
 mod commands;
 mod filedb;
 mod interpreter;

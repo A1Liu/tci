@@ -939,3 +939,18 @@ pub fn indent_return() {
     i.pop();
     i.pop();
 }
+
+pub struct Defer<F: FnOnce()> {
+    f: Option<F>,
+}
+
+impl<F: FnOnce()> Drop for Defer<F> {
+    fn drop(&mut self) {
+        let f = self.f.take().unwrap();
+        f();
+    }
+}
+
+pub fn defer<F: FnOnce()>(f: F) -> Defer<F> {
+    return Defer { f: Some(f) };
+}
