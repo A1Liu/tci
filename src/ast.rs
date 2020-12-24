@@ -699,6 +699,7 @@ pub enum TCExprKind<'a> {
         target: TCAssignTarget<'a>,
         value: &'a TCExpr<'a>,
         op: BinOp,
+        op_type: TCPrimType,
     },
 
     Ternary {

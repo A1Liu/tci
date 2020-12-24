@@ -2621,13 +2621,19 @@ pub fn check_expr_allow_brace<'b>(
                 _ => target.target_type,
             };
 
+            let op_type = env.to_prim_type(target.target_type, target.target_loc)?;
             let value = env.assign_convert(&target_type, target.target_loc, value)?;
             let value = env.buckets.add(value);
 
             return Ok(TCExpr {
                 expr_type: target.target_type,
                 loc: expr.loc,
-                kind: TCExprKind::MutAssign { target, value, op },
+                kind: TCExprKind::MutAssign {
+                    target,
+                    value,
+                    op,
+                    op_type,
+                },
             });
         }
 

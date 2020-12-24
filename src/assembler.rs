@@ -19,8 +19,6 @@ lazy_static! {
     pub static ref LIB_FUNCS: HashSet<u32> = {
         let mut m = HashSet::new();
         m.insert(INIT_SYMS.translate["printf"]);
-        m.insert(INIT_SYMS.translate["free"]);
-        m.insert(INIT_SYMS.translate["realloc"]);
         m
     };
 }
@@ -365,6 +363,91 @@ impl Assembler {
         return ops;
     }
 
+    pub fn translate_bin_op(
+        &self,
+        op: BinOp,
+        op_type: TCPrimType,
+        ops: &mut Vec<TaggedOpcode>,
+        loc: CodeLoc,
+    ) {
+        let mut tagged = TaggedOpcode {
+            op: Opcode::StackDealloc,
+            loc,
+        };
+
+        tagged.op = match (op, op_type) {
+            (BinOp::Add, TCPrimType::U32) => Opcode::AddU32,
+            (BinOp::Add, TCPrimType::I32) => Opcode::AddU32,
+            (BinOp::Add, TCPrimType::U64) => Opcode::AddU64,
+            (BinOp::Add, TCPrimType::I64) => Opcode::AddU64,
+            (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::AddU64,
+
+            (BinOp::Sub, TCPrimType::I32) => Opcode::SubI32,
+            (BinOp::Sub, TCPrimType::I64) => Opcode::SubI64,
+            (BinOp::Sub, TCPrimType::U64) => Opcode::SubU64,
+            (BinOp::Sub, TCPrimType::Pointer { .. }) => Opcode::SubU64,
+
+            (BinOp::Mul, TCPrimType::I32) => Opcode::MulI32,
+            (BinOp::Mul, TCPrimType::I64) => Opcode::MulI64,
+            (BinOp::Mul, TCPrimType::U64) => Opcode::MulU64,
+
+            (BinOp::Div, TCPrimType::I32) => Opcode::DivI32,
+            (BinOp::Div, TCPrimType::U64) => Opcode::DivU64,
+
+            (BinOp::Eq, TCPrimType::I32) => Opcode::CompEq32,
+            (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
+            (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
+
+            (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
+            (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
+
+            (BinOp::Gt, TCPrimType::I32) => {
+                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                ops.push(tagged);
+                Opcode::CompLtI32
+            }
+            (BinOp::Gt, TCPrimType::U64) => {
+                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                ops.push(tagged);
+                Opcode::CompLtU64
+            }
+
+            (BinOp::Lt, TCPrimType::I32) => Opcode::CompLtI32,
+            (BinOp::Lt, TCPrimType::U64) => Opcode::CompLtU64,
+
+            (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
+
+            (BinOp::Geq, TCPrimType::I32) => {
+                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                ops.push(tagged);
+                Opcode::CompLeqI32
+            }
+            (BinOp::Geq, TCPrimType::U64) => {
+                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                ops.push(tagged);
+                Opcode::CompLeqU64
+            }
+
+            (BinOp::LShift, TCPrimType::I32) => Opcode::LShiftI32,
+
+            (BinOp::RShift, TCPrimType::I32) => Opcode::RShiftI32,
+
+            (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAndI8,
+            (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAndI32,
+
+            (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOrI8,
+            (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOrI32,
+
+            (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXorI32,
+
+            (BinOp::BoolAnd, TCPrimType::I8) => Opcode::BitAndI8,
+            (BinOp::BoolOr, TCPrimType::I8) => Opcode::BitOrI8,
+
+            (op, ptype) => unreachable!("op={:?} type={:?}", op, ptype),
+        };
+        ops.push(tagged);
+    }
+
     pub fn translate_expr(&mut self, expr: &TCExpr) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
@@ -447,77 +530,7 @@ impl Assembler {
             } => {
                 ops.append(&mut self.translate_expr(left));
                 ops.append(&mut self.translate_expr(right));
-                tagged.op = match (op, op_type) {
-                    (BinOp::Add, TCPrimType::U32) => Opcode::AddU32,
-                    (BinOp::Add, TCPrimType::I32) => Opcode::AddU32,
-                    (BinOp::Add, TCPrimType::U64) => Opcode::AddU64,
-                    (BinOp::Add, TCPrimType::I64) => Opcode::AddU64,
-                    (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::AddU64,
-
-                    (BinOp::Sub, TCPrimType::I32) => Opcode::SubI32,
-                    (BinOp::Sub, TCPrimType::I64) => Opcode::SubI64,
-                    (BinOp::Sub, TCPrimType::U64) => Opcode::SubU64,
-                    (BinOp::Sub, TCPrimType::Pointer { .. }) => Opcode::SubU64,
-
-                    (BinOp::Mul, TCPrimType::I32) => Opcode::MulI32,
-                    (BinOp::Mul, TCPrimType::I64) => Opcode::MulI64,
-                    (BinOp::Mul, TCPrimType::U64) => Opcode::MulU64,
-
-                    (BinOp::Div, TCPrimType::I32) => Opcode::DivI32,
-                    (BinOp::Div, TCPrimType::U64) => Opcode::DivU64,
-
-                    (BinOp::Eq, TCPrimType::I32) => Opcode::CompEq32,
-                    (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
-                    (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
-
-                    (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
-                    (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
-
-                    (BinOp::Gt, TCPrimType::I32) => {
-                        tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                        ops.push(tagged);
-                        Opcode::CompLtI32
-                    }
-                    (BinOp::Gt, TCPrimType::U64) => {
-                        tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                        ops.push(tagged);
-                        Opcode::CompLtU64
-                    }
-
-                    (BinOp::Lt, TCPrimType::I32) => Opcode::CompLtI32,
-                    (BinOp::Lt, TCPrimType::U64) => Opcode::CompLtU64,
-
-                    (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
-
-                    (BinOp::Geq, TCPrimType::I32) => {
-                        tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                        ops.push(tagged);
-                        Opcode::CompLeqI32
-                    }
-                    (BinOp::Geq, TCPrimType::U64) => {
-                        tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                        ops.push(tagged);
-                        Opcode::CompLeqU64
-                    }
-
-                    (BinOp::LShift, TCPrimType::I32) => Opcode::LShiftI32,
-
-                    (BinOp::RShift, TCPrimType::I32) => Opcode::RShiftI32,
-
-                    (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAndI8,
-                    (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAndI32,
-
-                    (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOrI8,
-                    (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOrI32,
-
-                    (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXorI32,
-
-                    (BinOp::BoolAnd, TCPrimType::I8) => Opcode::BitAndI8,
-                    (BinOp::BoolOr, TCPrimType::I8) => Opcode::BitOrI8,
-
-                    (op, ptype) => unreachable!("op={:?} type={:?}", op, ptype),
-                };
-                ops.push(tagged);
+                self.translate_bin_op(*op, *op_type, &mut ops, tagged.loc);
             }
 
             TCExprKind::Conv { from, to, expr } => {
@@ -606,7 +619,12 @@ impl Assembler {
                 ops.push(tagged);
             }
 
-            TCExprKind::MutAssign { target, value, op } => {
+            TCExprKind::MutAssign {
+                target,
+                value,
+                op,
+                op_type,
+            } => {
                 ops.append(&mut self.translate_assign(target));
                 tagged.op = Opcode::PushDup { bytes: 8 };
                 ops.push(tagged);
@@ -617,90 +635,7 @@ impl Assembler {
 
                 ops.append(&mut self.translate_expr(value));
 
-                match op {
-                    BinOp::Add => match target.target_type.kind {
-                        TCTypeKind::I32 | TCTypeKind::U32 => {
-                            tagged.op = Opcode::AddU32;
-                        }
-                        TCTypeKind::I64 | TCTypeKind::U64 => {
-                            tagged.op = Opcode::AddU64;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::Sub => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::SubI32;
-                        }
-                        TCTypeKind::I64 => {
-                            tagged.op = Opcode::SubI64;
-                        }
-                        TCTypeKind::U64 => {
-                            tagged.op = Opcode::SubU64;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::Mul => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::MulI32;
-                        }
-                        TCTypeKind::I64 => {
-                            tagged.op = Opcode::MulI64;
-                        }
-                        TCTypeKind::U64 => {
-                            tagged.op = Opcode::MulU64;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::Div => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::DivI32;
-                        }
-                        TCTypeKind::I64 => {
-                            tagged.op = Opcode::DivI64;
-                        }
-                        TCTypeKind::U64 => {
-                            tagged.op = Opcode::DivU64;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::Mod => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::ModI32;
-                        }
-                        TCTypeKind::I64 => {
-                            tagged.op = Opcode::ModI64;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::BitAnd => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::BitAndI32;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::BitXor => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::BitXorI32;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::BitOr => match target.target_type.kind {
-                        TCTypeKind::I32 => {
-                            tagged.op = Opcode::BitOrI32;
-                        }
-                        _ => unimplemented!(),
-                    },
-                    BinOp::LShift => match target.target_type.kind {
-                        TCTypeKind::I32 => tagged.op = Opcode::LShiftI32,
-                        _ => unimplemented!(),
-                    },
-                    BinOp::RShift => match target.target_type.kind {
-                        TCTypeKind::I32 => tagged.op = Opcode::RShiftI32,
-                        _ => unimplemented!(),
-                    },
-                    _ => unimplemented!(),
-                }
-                ops.push(tagged);
+                self.translate_bin_op(*op, *op_type, &mut ops, tagged.loc);
 
                 tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
