@@ -18,6 +18,7 @@ pub struct TypeDeclSpec {
     signed: u8,
     double: u8,
     void: u8,
+    is_static: u8,
 }
 
 impl TypeDeclSpec {
@@ -32,18 +33,32 @@ impl TypeDeclSpec {
             signed: 0,
             double: 0,
             void: 0,
+            is_static: 0,
         }
     }
 }
 
 macro_rules! gen_type_decl_spec {
-    ($( $ident:ident )* ) => {{
+    ($map:expr, $ast:ident, $( $ident:ident )* ) => {{
         let mut decl = TypeDeclSpec::new();
+        let mut static_decl = TypeDeclSpec::new();
+        static_decl.is_static = 1;
 
         $(
             gen_type_decl_spec!(@INCR_CORRECT, decl, $ident);
+            gen_type_decl_spec!(@INCR_CORRECT, static_decl, $ident);
         )*
-        decl
+
+        $map.insert(static_decl, ASTType {
+            kind: ASTTypeKind::$ast,
+            is_static: true,
+            loc: NO_FILE,
+        });
+        $map.insert(decl, ASTType {
+            kind: ASTTypeKind::$ast,
+            is_static: false,
+            loc: NO_FILE,
+        });
     }};
     (@INCR_CORRECT, $decl:expr, void) => {
         $decl.void += 1;
@@ -72,44 +87,33 @@ macro_rules! gen_type_decl_spec {
     (@INCR_CORRECT, $decl:expr, double) => {
         $decl.double += 1;
     };
+    (@INCR_CORRECT, $decl:expr, ident) => {
+        $decl.is_ident = true;
+    };
 }
 
 lazy_static! {
-    pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, ASTTypeKind<'static>> = {
+    pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, ASTType<'static>> = {
         let mut map = HashMap::new();
-        map.insert(gen_type_decl_spec!(int), ASTTypeKind::Int);
-        map.insert(gen_type_decl_spec!(long), ASTTypeKind::Long);
-        map.insert(gen_type_decl_spec!(char), ASTTypeKind::Char);
-        map.insert(gen_type_decl_spec!(void), ASTTypeKind::Void);
-        map.insert(gen_type_decl_spec!(signed char), ASTTypeKind::Char);
-        map.insert(gen_type_decl_spec!(unsigned), ASTTypeKind::Unsigned);
+        gen_type_decl_spec!(map, Int, int);
+        gen_type_decl_spec!(map, Long, long);
+        gen_type_decl_spec!(map, Char, char);
+        gen_type_decl_spec!(map, Void, void);
+        gen_type_decl_spec!(map, Char, signed char);
+        gen_type_decl_spec!(map, Unsigned, unsigned);
+        gen_type_decl_spec!(map, UnsignedChar,unsigned char);
 
-        map.insert(
-            gen_type_decl_spec!(unsigned char),
-            ASTTypeKind::UnsignedChar,
-        );
+        gen_type_decl_spec!(map, Long,long int);
+        gen_type_decl_spec!(map, LongLong,long long int);
+        gen_type_decl_spec!(map, LongLong,long long);
 
-        map.insert(gen_type_decl_spec!(long int), ASTTypeKind::Long);
-        map.insert(gen_type_decl_spec!(long long int), ASTTypeKind::LongLong);
-        map.insert(gen_type_decl_spec!(long long), ASTTypeKind::LongLong);
+        gen_type_decl_spec!(map, Unsigned,unsigned int);
 
-        map.insert(gen_type_decl_spec!(unsigned int), ASTTypeKind::Unsigned);
-        map.insert(
-            gen_type_decl_spec!(unsigned long),
-            ASTTypeKind::UnsignedLong,
-        );
-        map.insert(
-            gen_type_decl_spec!(unsigned long int),
-            ASTTypeKind::UnsignedLong,
-        );
-        map.insert(
-            gen_type_decl_spec!(unsigned long long),
-            ASTTypeKind::UnsignedLongLong,
-        );
-        map.insert(
-            gen_type_decl_spec!(unsigned long long int),
-            ASTTypeKind::UnsignedLongLong,
-        );
+        gen_type_decl_spec!(map, UnsignedLong,unsigned long);
+        gen_type_decl_spec!(map, UnsignedLong,unsigned long int);
+        gen_type_decl_spec!(map, UnsignedLongLong,unsigned long long);
+        gen_type_decl_spec!(map, UnsignedLongLong,unsigned long long int);
+
         map
     };
 }
@@ -1774,6 +1778,7 @@ impl<'b> Parser<'b> {
 
                 return Ok(ASTType {
                     kind: ASTTypeKind::Ident(ident),
+                    is_static: false,
                     loc: tok.loc,
                 });
             }
@@ -1798,12 +1803,14 @@ impl<'b> Parser<'b> {
 
                         return Ok(ASTType {
                             kind: ASTTypeKind::Struct(StructDecl::NamedDef { ident, members }),
+                            is_static: false,
                             loc: l_from(start_loc, end_loc),
                         });
                     }
 
                     return Ok(ASTType {
                         kind: ASTTypeKind::Struct(StructDecl::Named(ident)),
+                        is_static: false,
                         loc: l_from(start_loc, end_loc),
                     });
                 } else {
@@ -1819,6 +1826,7 @@ impl<'b> Parser<'b> {
 
                     return Ok(ASTType {
                         kind: ASTTypeKind::Struct(StructDecl::Unnamed(members)),
+                        is_static: false,
                         loc: l_from(start_loc, end_loc),
                     });
                 }
@@ -1847,8 +1855,10 @@ impl<'b> Parser<'b> {
             tok = peek(tokens, current)?;
         }
 
-        let kind = if let Some(kind) = CORRECT_TYPES.get(&decl_spec) {
-            *kind
+        let ast_type = if let Some(ast_type) = CORRECT_TYPES.get(&decl_spec) {
+            let mut ast_type = *ast_type;
+            ast_type.loc = l_from(start_loc, end_loc);
+            ast_type
         } else {
             return Err(error!(
                 "Incorrect declaration specifier",
@@ -1857,10 +1867,7 @@ impl<'b> Parser<'b> {
             ));
         };
 
-        return Ok(ASTType {
-            kind,
-            loc: l_from(start_loc, end_loc),
-        });
+        return Ok(ast_type);
     }
 
     pub fn parse_pragma<'a>(&self, pragma: &str) -> Option<GlobalStmtKind<'a>> {

@@ -122,10 +122,7 @@ type Transform = for<'b> fn(BucketListRef<'b>, TCExpr<'b>, TCType) -> TCExpr<'b>
 // Implicit Transforms
 pub type TCPrimDiscr = Discriminant<TCPrimType>;
 pub type BinOpOverloads = HashMap<(BinOp, TCPrimDiscr, TCPrimDiscr), BinOpTransform>;
-pub type UnifiedBinOpOL = HashMap<(BinOp, TCPrimDiscr), BinOpTransform>;
 pub type UnOpOverloads = HashMap<(UnaryOp, TCPrimDiscr), UnOpTransform>;
-pub type BinOpValids = HashSet<(BinOp, TCPrimDiscr)>;
-pub type AssignOL = HashMap<(TCPrimDiscr, TCPrimDiscr), Transform>;
 
 pub struct Overloads {
     pub unary_op: UnOpOverloads,
@@ -418,7 +415,6 @@ lazy_static! {
             let l_elem_type = env.deref(l.expr_type, l.loc).unwrap();
             let r_elem_type = env.deref(r.expr_type, r.loc).unwrap();
             if !env.type_eq(l_elem_type, r_elem_type) {
-                // TODO implement actual type equality
                 return Err(error!(
                     "pointers aren't the same type",
                     l.loc,
@@ -1328,6 +1324,7 @@ pub struct IFuncType {
     pub loc: CodeLoc,
     pub params: Vec<(IType, CodeLoc)>,
     pub varargs: bool,
+    pub is_static: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1348,6 +1345,12 @@ pub struct UncheckedFuncDefn<'a> {
     pub loc: CodeLoc,
     pub params: Vec<IFuncParam>,
     pub body: &'a [Stmt<'a>],
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct LinkName {
+    name: u32,
+    file: n32,
 }
 
 pub struct UncheckedEnv<'b> {
@@ -1643,6 +1646,7 @@ pub fn sequentialize_rec<'a, 'b>(
         params: param_types,
         decl_idx,
         varargs: varargs.is_some(),
+        is_static: false,
     };
 
     let defn = if let Some(body) = func_body {

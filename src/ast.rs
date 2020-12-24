@@ -200,6 +200,7 @@ pub enum ASTTypeKind<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct ASTType<'a> {
     pub kind: ASTTypeKind<'a>,
+    pub is_static: bool,
     pub loc: CodeLoc,
 }
 
@@ -563,11 +564,17 @@ pub const BRACE_LIST: TCType = TCType {
     array_kind: TCArrayKind::None,
 };
 
-// TODO TCVarKind with global and local
 #[derive(Debug, Clone)]
 pub struct TCVar {
     pub decl_type: TCType,
     pub var_offset: i16, // The offset from the frame pointer for this variable
+    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+}
+
+#[derive(Debug, Clone)]
+pub struct TCGlobalVar {
+    pub decl_type: TCType,
+    pub var_offset: u32, // The offset from the binary data beginning
     pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
 }
 

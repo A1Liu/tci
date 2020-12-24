@@ -846,7 +846,7 @@ where
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct n32 {
     pub data: u32,
 }
