@@ -2904,7 +2904,7 @@ fn check_assign_target<'b>(
                 return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
             }
 
-            let member_info = env.check_struct_member(base.expr_type, base.loc, *member)?;
+            let member_info = env.check_struct_member(deref_type, base.loc, *member)?;
 
             return Ok(TCAssignTarget {
                 kind: TCAssignTargetKind::Ptr(env.buckets.add(base)),

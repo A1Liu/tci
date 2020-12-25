@@ -19,6 +19,8 @@ pub struct TypeDeclSpec {
     double: u8,
     void: u8,
     is_static: u8,
+    ident: u8,
+    struct_ident: u8,
 }
 
 impl TypeDeclSpec {
@@ -34,6 +36,8 @@ impl TypeDeclSpec {
             double: 0,
             void: 0,
             is_static: 0,
+            ident: 0,
+            struct_ident: 0,
         }
     }
 }
@@ -88,13 +92,20 @@ macro_rules! gen_type_decl_spec {
         $decl.double += 1;
     };
     (@INCR_CORRECT, $decl:expr, ident) => {
-        $decl.is_ident = true;
+        $decl.ident += 1;
+    };
+    (@INCR_CORRECT, $decl:expr, struct_ident) => {
+        $decl.struct_ident = 1;
     };
 }
 
 lazy_static! {
     pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, ASTType<'static>> = {
         let mut map = HashMap::new();
+
+        gen_type_decl_spec!(map, Int, struct_ident);
+        gen_type_decl_spec!(map, Int, ident);
+
         gen_type_decl_spec!(map, Int, int);
         gen_type_decl_spec!(map, Long, long);
         gen_type_decl_spec!(map, Char, char);
@@ -169,9 +180,8 @@ impl<'b> Parser<'b> {
             return Ok(ASTProgram { stmts });
         }
 
-        let mut parser = Parser::new();
         let mut parse_result = Vec::new();
-        parser.parse_tokens_rec(buckets, token_db, file, &mut parse_result)?;
+        self.parse_tokens_rec(buckets, token_db, file, &mut parse_result)?;
         let stmts = buckets.add_array(parse_result);
         let prev = self.db.insert(file, stmts);
         debug_assert!(prev.is_none());
@@ -1770,75 +1780,17 @@ impl<'b> Parser<'b> {
         current: &mut usize,
     ) -> Result<ASTType<'b>, Error> {
         let mut tok = peek(tokens, current)?;
-        match tok.kind {
-            TokenKind::Int | TokenKind::Void | TokenKind::Char => {}
-            TokenKind::Long | TokenKind::Unsigned => {}
-            TokenKind::TypeIdent(ident) => {
-                pop(tokens, current).unwrap();
-
-                return Ok(ASTType {
-                    kind: ASTTypeKind::Ident(ident),
-                    is_static: false,
-                    loc: tok.loc,
-                });
-            }
-            TokenKind::Struct => {
-                pop(tokens, current).unwrap();
-
-                let start_loc = tok.loc;
-                if let Some((ident, ident_loc)) = any_ident_o(tokens, current) {
-                    let end_loc = ident_loc;
-
-                    if peek(tokens, current)?.kind == TokenKind::LBrace {
-                        pop(tokens, current).unwrap();
-
-                        let mut decls = Vec::new();
-                        while peek(tokens, current)?.kind != TokenKind::RBrace {
-                            decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
-                            eat_semicolon(tokens, current)?;
-                        }
-                        // parse as type definition
-                        let end_loc = pop(tokens, current).unwrap().loc;
-                        let members = &*buckets.add_array(decls);
-
-                        return Ok(ASTType {
-                            kind: ASTTypeKind::Struct(StructDecl::NamedDef { ident, members }),
-                            is_static: false,
-                            loc: l_from(start_loc, end_loc),
-                        });
-                    }
-
-                    return Ok(ASTType {
-                        kind: ASTTypeKind::Struct(StructDecl::Named(ident)),
-                        is_static: false,
-                        loc: l_from(start_loc, end_loc),
-                    });
-                } else {
-                    expect_lbrace(tokens, current)?;
-                    let mut decls = Vec::new();
-                    while peek(tokens, current)?.kind != TokenKind::RBrace {
-                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
-                        eat_semicolon(tokens, current)?;
-                    }
-
-                    let end_loc = pop(tokens, current).unwrap().loc;
-                    let members = &*buckets.add_array(decls);
-
-                    return Ok(ASTType {
-                        kind: ASTTypeKind::Struct(StructDecl::Unnamed(members)),
-                        is_static: false,
-                        loc: l_from(start_loc, end_loc),
-                    });
-                }
-            }
-            _ => return Err(unexpected_token("type", &tok)),
-        }
 
         let start_loc = tok.loc;
         let mut end_loc = start_loc;
+        let mut struct_type = None;
+        let mut type_ident = None;
+        let mut stop_flag = false;
         let mut decl_spec = TypeDeclSpec::new();
 
         loop {
+            tok = peek(tokens, current)?;
+
             match tok.kind {
                 TokenKind::Int => decl_spec.int += 1,
                 TokenKind::Void => decl_spec.void += 1,
@@ -1848,14 +1800,69 @@ impl<'b> Parser<'b> {
                 TokenKind::Signed => decl_spec.signed += 1,
                 TokenKind::Float => decl_spec.float += 1,
                 TokenKind::Double => decl_spec.double += 1,
+                TokenKind::Static => {
+                    decl_spec.is_static += 1;
+                    end_loc = pop(tokens, current).unwrap().loc;
+                    continue;
+                }
+                TokenKind::TypeIdent(ident) => {
+                    if stop_flag {
+                        break;
+                    }
+
+                    type_ident = Some(ident);
+                    decl_spec.ident += 1;
+                }
+                TokenKind::Struct => {
+                    pop(tokens, current).unwrap();
+                    decl_spec.struct_ident += 1;
+
+                    if let Some((ident, ident_loc)) = any_ident_o(tokens, current) {
+                        end_loc = ident_loc;
+
+                        if peek(tokens, current)?.kind == TokenKind::LBrace {
+                            pop(tokens, current).unwrap();
+
+                            let mut decls = Vec::new();
+                            while peek(tokens, current)?.kind != TokenKind::RBrace {
+                                decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
+                                eat_semicolon(tokens, current)?;
+                            }
+                            // parse as type definition
+                            end_loc = pop(tokens, current).unwrap().loc;
+                            let members = &*buckets.add_array(decls);
+
+                            struct_type = Some(StructDecl::NamedDef { ident, members });
+                            stop_flag = true;
+                            continue;
+                        }
+
+                        struct_type = Some(StructDecl::Named(ident));
+                        stop_flag = true;
+                        continue;
+                    }
+
+                    expect_lbrace(tokens, current)?;
+                    let mut decls = Vec::new();
+                    while peek(tokens, current)?.kind != TokenKind::RBrace {
+                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
+                        eat_semicolon(tokens, current)?;
+                    }
+
+                    end_loc = pop(tokens, current).unwrap().loc;
+                    let members = &*buckets.add_array(decls);
+                    struct_type = Some(StructDecl::Unnamed(members));
+                    stop_flag = true;
+                    continue;
+                }
                 _ => break,
             }
 
+            stop_flag = true;
             end_loc = pop(tokens, current).unwrap().loc;
-            tok = peek(tokens, current)?;
         }
 
-        let ast_type = if let Some(ast_type) = CORRECT_TYPES.get(&decl_spec) {
+        let mut ast_type = if let Some(ast_type) = CORRECT_TYPES.get(&decl_spec) {
             let mut ast_type = *ast_type;
             ast_type.loc = l_from(start_loc, end_loc);
             ast_type
@@ -1866,6 +1873,12 @@ impl<'b> Parser<'b> {
                 format!("this is invalid")
             ));
         };
+
+        if let Some(struct_type) = struct_type {
+            ast_type.kind = ASTTypeKind::Struct(struct_type);
+        } else if let Some(type_ident) = type_ident {
+            ast_type.kind = ASTTypeKind::Ident(type_ident);
+        }
 
         return Ok(ast_type);
     }

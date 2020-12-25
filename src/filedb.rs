@@ -431,6 +431,22 @@ impl FileDb {
     /// refer to it again. Returns existing file handle if file already exists in
     /// the database
     pub fn add_from_fs(&mut self, file_name: &str) -> Result<u32, io::Error> {
+        if Path::new(file_name).is_relative() {
+            let real_path = std::fs::canonicalize(file_name)?;
+            let path_str = real_path.to_str().unwrap();
+
+            if let Some(id) = self.file_names.get(&path_str) {
+                return Ok(*id);
+            }
+
+            if !self.fs_read_access {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+
+            let source = read_to_string(&path_str)?;
+            return self.add(&path_str, &source);
+        }
+
         if let Some(id) = self.file_names.get(file_name) {
             return Ok(*id);
         }

@@ -28,6 +28,7 @@ pub enum TokenKind<'a> {
     Float,
     Double,
     Unsigned,
+    Static,
     Signed,
     Struct,
     Union,
