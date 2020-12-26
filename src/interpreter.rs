@@ -1,7 +1,7 @@
-use crate::ast::*;
 use crate::buckets::*;
 use crate::filedb::*;
 use crate::runtime::*;
+use crate::tc_ast::*;
 use crate::util::*;
 use core::fmt;
 use core::future::Future;

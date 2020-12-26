@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::buckets::*;
 use crate::filedb::*;
+use crate::tc_ast::*;
 use crate::util::*;
 use std::collections::{HashMap, HashSet};
 use std::mem::Discriminant;

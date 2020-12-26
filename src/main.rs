@@ -21,6 +21,7 @@ mod interpreter;
 mod lexer;
 mod parser;
 mod preprocessor;
+mod tc_ast;
 mod type_checker;
 
 #[cfg(test)]

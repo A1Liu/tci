@@ -1,8 +1,8 @@
-use crate::ast::*;
 use crate::buckets::*;
 use crate::filedb::*;
 use crate::interpreter::*;
 use crate::runtime::*;
+use crate::tc_ast::*;
 use crate::type_checker::*;
 use crate::util::*;
 use core::mem::{align_of, size_of};
