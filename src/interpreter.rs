@@ -8,9 +8,9 @@ use core::future::Future;
 use core::pin::Pin;
 use serde::Serialize;
 use smol::io::AsyncReadExt;
-use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::Write;
+use std::marker::PhantomData;
 use std::ops::{BitAnd, BitOr, BitXor};
 
 /// Exit the program with an error code
@@ -31,6 +31,9 @@ pub const ECALL_HEAP_ALLOC: u32 = 4;
 
 /// Throws an IError object up the callstack
 pub const ECALL_THROW_ERROR: u32 = 5;
+
+/// Calls Printf
+pub const ECALL_PRINTF: u32 = 6;
 
 /// No symbol associated with this stack/binary var
 pub const META_NO_SYMBOL: u32 = u32::MAX;
@@ -157,7 +160,6 @@ pub enum Opcode {
     Ret, // Returns to caller
 
     Call(u32),
-    LibCall(u32),
     EcallDyn,
 }
 
@@ -211,8 +213,6 @@ impl<'a> fmt::Debug for Program<'a> {
 }
 
 pub type IFuture = Pin<Box<dyn Future<Output = RuntimeDiagnostic> + Send>>;
-pub type LibFuncRet<'a> = Pin<Box<dyn Future<Output = Result<(), IError>> + Send + 'a>>;
-pub type LibFunc<Stdin> = for<'a> fn(&'a mut Runtime<Stdin>, &'a mut Stdin) -> LibFuncRet<'a>;
 
 pub trait IStdin: AsyncReadExt + Unpin + Send {}
 impl<T> IStdin for T where T: AsyncReadExt + Unpin + Send {}
@@ -229,35 +229,18 @@ pub struct RuntimeDiagnostic {
 pub struct Runtime<Stdin: IStdin> {
     pub memory: Memory,
     pub args: StringArray,
-    pub lib_funcs: HashMap<u32, LibFunc<Stdin>>,
     pub program: Program<'static>,
+    pub phantom: PhantomData<Stdin>,
 }
 
 impl<Stdin: IStdin> Runtime<Stdin> {
     pub fn new(program: Program<'static>, args: StringArray) -> Self {
-        let mut lib_funcs: HashMap<u32, LibFunc<Stdin>> = HashMap::new();
-
-        macro_rules! add_lib_func {
-            ($id:ident) => {{
-                lib_funcs.insert(INIT_SYMS.translate[stringify!($id)], |sel, stdin| {
-                    Box::pin(smol::future::ready($id(sel)))
-                });
-            }};
-            (@ASYNC, $id:ident) => {{
-                lib_funcs.insert(INIT_SYMS.translate[stringify!($id)], |sel, stdin| {
-                    Box::pin($id(sel, stdin))
-                });
-            }};
-        }
-
-        add_lib_func!(printf);
-
         let memory = Memory::new_with_binary(program.data);
         return Self {
             args,
             memory,
             program,
-            lib_funcs,
+            phantom: PhantomData,
         };
     }
 
@@ -735,21 +718,6 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                 self.memory.call(func + 1, func_name, op.loc)?;
                 return Ok(());
             }
-            Opcode::LibCall(func_name) => {
-                if let Some(&lib_func) = self.lib_funcs.get(&func_name) {
-                    lib_func(self, stdin).await?;
-                    match self.memory.status {
-                        RuntimeStatus::Running => {}
-                        _ => return Ok(()),
-                    }
-                } else {
-                    return Err(ierror!(
-                        "InvalidLibraryFunction",
-                        "library function symbol '{}' is invalid (this is a problem with tci)",
-                        self.program.files.symbols[func_name as usize]
-                    ));
-                }
-            }
 
             Opcode::EcallDyn => {
                 let ecall = u32::from_le(self.memory.pop_stack()?);
@@ -813,6 +781,13 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                         self.memory.push_stack(ptr)?;
                     }
 
+                    ECALL_PRINTF => {
+                        let format_args: VarPointer = self.memory.pop_stack()?;
+                        let format_pointer: VarPointer = self.memory.pop_stack()?;
+                        let ret = printf(self, format_pointer, format_args.var_idx() - 1)?;
+                        self.memory.push_stack((ret as u64).to_le())?;
+                    }
+
                     call => {
                         return ierr!("InvalidEnviromentCall", "invalid ecall value of {}", call)
                     }
@@ -843,26 +818,20 @@ impl<Stdin: IStdin> Runtime<Stdin> {
     }
 }
 
-pub fn printf<Stdin: IStdin>(sel: &mut Runtime<Stdin>) -> Result<(), IError> {
-    let stack_length = sel.memory.stack_length();
-    let top_ptr = VarPointer::new_stack(stack_length, 0);
-    let ret_addr: VarPointer = sel.memory.get_var(top_ptr)?;
-    let mut current_offset = stack_length - 1;
-
-    let format_param_ptr = VarPointer::new_stack(current_offset, 0);
-    let format_ptr = sel.memory.get_var(format_param_ptr)?;
-    current_offset -= 1;
-
+pub fn printf<Stdin: IStdin>(
+    sel: &mut Runtime<Stdin>,
+    format_ptr: VarPointer,
+    args: usize,
+) -> Result<i32, IError> {
     let mut out = StringWriter::new();
-    let result = printf_internal(sel, format_ptr, current_offset, &mut out);
+    let args = args as u16;
+    let result = printf_internal(sel, format_ptr, args, &mut out);
     let out = out.into_string();
     let len = out.len() as i32; // TODO overflow
     write!(sel.memory.stdout()?, "{}", out)?;
     result?;
 
-    sel.memory.set(ret_addr, len.to_le())?;
-
-    return Ok(());
+    return Ok(len);
 }
 
 #[allow(unused_assignments)] // TODO remove this when we make this fully standard compliant

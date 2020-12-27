@@ -7,7 +7,7 @@ use crate::type_checker::*;
 use crate::util::*;
 use core::mem::{align_of, size_of};
 use core::{alloc, mem};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct ASMFunc {
@@ -15,15 +15,7 @@ pub struct ASMFunc {
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
 }
 
-lazy_static! {
-    pub static ref LIB_FUNCS: HashSet<u32> = {
-        let mut m = HashSet::new();
-        m.insert(INIT_SYMS.translate["printf"]);
-        m
-    };
-}
-
-pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
+pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
     return vec![
         Opcode::StackAlloc {
             bytes: 4,
@@ -38,7 +30,7 @@ pub fn init_main_no_args(main_sym: u32) -> Vec<Opcode> {
             offset: 0,
             bytes: 8,
         },
-        Opcode::Call(main_sym),
+        Opcode::Call(main_idx),
         Opcode::StackDealloc,
         Opcode::GetLocal {
             var: 0,
@@ -57,11 +49,17 @@ pub struct ASMRuntimeStruct {
     pub sa: SizeAlign,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LinkName {
+    name: u32,
+    file: n32,
+}
+
 pub struct Assembler {
     pub opcodes: Vec<TaggedOpcode>,
-    pub func_types: HashMap<u32, u32>,
+    pub func_linkage: HashMap<LinkName, u32>,
     pub data: VarBuffer,
-    pub functions: HashMap<u32, ASMFunc>, // keys are identifier symbols
+    pub functions: Vec<ASMFunc>, // keys are identifier symbols
     pub types: HashMap<u32, ASMRuntimeStruct>,
     pub symbols: Vec<RuntimeVar>,
     pub struct_member_count: usize,
@@ -72,8 +70,8 @@ impl Assembler {
         Self {
             opcodes: Vec::new(),
             data: VarBuffer::new(),
-            functions: HashMap::new(),
-            func_types: HashMap::new(),
+            functions: Vec::new(),
+            func_linkage: HashMap::new(),
             types: HashMap::new(),
             symbols: Vec::new(),
             struct_member_count: 0,
@@ -134,44 +132,60 @@ impl Assembler {
         }
 
         // Add function return sizes
-        for (ident, TCFunc { func_type, .. }) in typed_ast.functions.iter() {
-            self.func_types.insert(*ident, func_type.return_type.size());
+        let mut defns = Vec::new();
+        for (ident, tc_func) in typed_ast.functions.into_iter() {
+            let link_name = if tc_func.func_type.is_static {
+                LinkName {
+                    name: ident,
+                    file: typed_ast.file.into(),
+                }
+            } else {
+                LinkName {
+                    name: ident,
+                    file: n32::NULL,
+                }
+            };
+
+            let link_pos = if let Some(prev) = self.func_linkage.get(&link_name) {
+                let prev_func_type = &self.functions[*prev as usize].func_type;
+                if prev_func_type != &tc_func.func_type {
+                    let error = func_decl_mismatch(prev_func_type.loc, tc_func.func_type.loc);
+                    return Err(error);
+                }
+
+                *prev
+            } else {
+                let pos = self.functions.len() as u32;
+                self.func_linkage.insert(link_name, pos);
+                self.functions.push(ASMFunc {
+                    func_type: tc_func.func_type,
+                    func_header: None,
+                });
+
+                pos
+            };
+
+            if let Some(defn) = tc_func.defn {
+                defns.push((ident, link_pos, defn));
+            }
         }
 
-        // Add functions
-        for (ident, func) in typed_ast.functions.into_iter() {
-            self.add_function(ident, func)?;
+        // Add function definitions
+        for (ident, link_pos, defn) in defns.into_iter() {
+            self.add_function(typed_ast.file, ident, link_pos, defn)?;
         }
 
         return Ok(());
     }
 
-    pub fn add_function(&mut self, ident: u32, func: TCFunc) -> Result<(), Error> {
-        let asm_func = match self.functions.get_mut(&ident) {
-            Some(asm_func) => {
-                if asm_func.func_type != func.func_type {
-                    let error = func_decl_mismatch(asm_func.func_type.loc, func.func_type.loc);
-                    return Err(error);
-                }
-                asm_func
-            }
-            None => {
-                self.functions.insert(
-                    ident,
-                    ASMFunc {
-                        func_type: func.func_type,
-                        func_header: None,
-                    },
-                );
-
-                self.functions.get_mut(&ident).unwrap()
-            }
-        };
-
-        let defn = match func.defn {
-            Some(defn) => defn,
-            None => return Ok(()),
-        };
+    pub fn add_function(
+        &mut self,
+        file: u32,
+        ident: u32,
+        link_pos: u32,
+        defn: TCFuncDefn,
+    ) -> Result<(), Error> {
+        let asm_func = &mut self.functions[link_pos as usize];
 
         if let Some((_func_header, defn_loc)) = &asm_func.func_header {
             return Err(func_redef(*defn_loc, defn.loc));
@@ -185,7 +199,7 @@ impl Assembler {
             loc: defn.loc,
         });
 
-        let mut ops = self.translate_block(param_count, defn.stmts, defn.loc, 0, 0);
+        let mut ops = self.translate_block(file, param_count, defn.stmts, defn.loc, 0, 0);
         self.opcodes.append(&mut ops);
 
         self.opcodes.push(TaggedOpcode {
@@ -198,6 +212,7 @@ impl Assembler {
 
     pub fn translate_block(
         &mut self,
+        file: u32,
         param_count: u32,
         block: &[TCStmt],
         block_loc: CodeLoc,
@@ -221,7 +236,7 @@ impl Assembler {
 
             match &stmt.kind {
                 TCStmtKind::RetVal(expr) => {
-                    ops.append(&mut self.translate_expr(expr));
+                    ops.append(&mut self.translate_expr(file, expr));
 
                     tagged.op = Opcode::GetLocal {
                         var: -1,
@@ -243,7 +258,7 @@ impl Assembler {
                 }
 
                 TCStmtKind::Expr(expr) => {
-                    ops.append(&mut self.translate_expr(expr));
+                    ops.append(&mut self.translate_expr(file, expr));
                     tagged.op = Opcode::Pop {
                         bytes: expr.expr_type.repr_size(),
                     };
@@ -266,7 +281,7 @@ impl Assembler {
                     });
 
                     ops.push(tagged);
-                    ops.append(&mut self.translate_expr(init));
+                    ops.append(&mut self.translate_expr(file, init));
                     tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
                     ops.push(tagged);
                 }
@@ -277,11 +292,13 @@ impl Assembler {
                     else_body: else_,
                 } => {
                     let cond_bytes = cond.expr_type.repr_size();
-                    ops.append(&mut self.translate_expr(cond));
+                    ops.append(&mut self.translate_expr(file, cond));
 
                     // cb! + 1 because of conditional jump instruction
-                    let mut if_ops =
-                        self.translate_block(param_count, if_.stmts, if_.loc, cb!() + 1, ld_count);
+                    #[rustfmt::skip]
+                    let mut if_ops = self.translate_block(
+                        file, param_count, if_.stmts, if_.loc, cb!() + 1, ld_count,
+                    );
                     let ifbr_len = if_ops.len() as u32 + 2;
 
                     tagged.op = match cond_bytes {
@@ -296,12 +313,9 @@ impl Assembler {
                     mem::drop(if_ops);
 
                     // cb! + 1 because of jump instruction
+                    #[rustfmt::skip]
                     let mut else_ops = self.translate_block(
-                        param_count,
-                        else_.stmts,
-                        else_.loc,
-                        cb!() + 1,
-                        ld_count,
+                        file, param_count, else_.stmts, else_.loc, cb!() + 1, ld_count,
                     );
                     let elsebr_len = else_ops.len() as u32 + 1;
 
@@ -311,8 +325,10 @@ impl Assembler {
                 }
 
                 TCStmtKind::Block(block) => {
-                    let mut block =
-                        self.translate_block(param_count, block.stmts, block.loc, cb!(), ld_count);
+                    #[rustfmt::skip]
+                    let mut block = self.translate_block(
+                        file, param_count, block.stmts, block.loc, cb!(), ld_count,
+                    );
                     ops.append(&mut block);
                 }
 
@@ -322,7 +338,8 @@ impl Assembler {
                     tagged.op = Opcode::Jump(2);
                     ops.push(tagged);
 
-                    let mut block = self.translate_block(param_count, block.stmts, block.loc, 0, 0);
+                    let mut block =
+                        self.translate_block(file, param_count, block.stmts, block.loc, 0, 0);
                     tagged.op = Opcode::Jump(block.len() as u32 + 2); // break out of loop
                     ops.push(tagged);
                     tagged.op = Opcode::Jump(0u32.wrapping_sub(block.len() as u32));
@@ -448,7 +465,7 @@ impl Assembler {
         ops.push(tagged);
     }
 
-    pub fn translate_expr(&mut self, expr: &TCExpr) -> Vec<TaggedOpcode> {
+    pub fn translate_expr(&mut self, file: u32, expr: &TCExpr) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
@@ -506,13 +523,13 @@ impl Assembler {
 
             TCExprKind::Array(exprs) => {
                 for expr in *exprs {
-                    ops.append(&mut self.translate_expr(expr));
+                    ops.append(&mut self.translate_expr(file, expr));
                 }
             }
             TCExprKind::BraceList(_) => unreachable!(),
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
-                    ops.append(&mut self.translate_expr(expr));
+                    ops.append(&mut self.translate_expr(file, expr));
                     let bytes = expr.expr_type.repr_size();
 
                     if idx + 1 < exprs.len() {
@@ -528,13 +545,13 @@ impl Assembler {
                 left,
                 right,
             } => {
-                ops.append(&mut self.translate_expr(left));
-                ops.append(&mut self.translate_expr(right));
+                ops.append(&mut self.translate_expr(file, left));
+                ops.append(&mut self.translate_expr(file, right));
                 self.translate_bin_op(*op, *op_type, &mut ops, tagged.loc);
             }
 
             TCExprKind::Conv { from, to, expr } => {
-                ops.append(&mut self.translate_expr(expr));
+                ops.append(&mut self.translate_expr(file, expr));
                 let opcode = match (from, to.size()) {
                     (TCPrimType::U8, 1) => None,
                     (TCPrimType::U8, 4) => Some(Opcode::ZExtend8To32),
@@ -570,7 +587,7 @@ impl Assembler {
             }
 
             TCExprKind::PostIncrU32(target) => {
-                ops.append(&mut self.translate_assign(target));
+                ops.append(&mut self.translate_assign(file, target));
                 tagged.op = Opcode::PushDup { bytes: 8 };
                 ops.push(tagged);
                 let bytes = 4;
@@ -590,7 +607,7 @@ impl Assembler {
             }
 
             TCExprKind::PostIncrU64(target) => {
-                ops.append(&mut self.translate_assign(target));
+                ops.append(&mut self.translate_assign(file, target));
                 tagged.op = Opcode::PushDup { bytes: 8 };
                 ops.push(tagged);
                 let bytes = 8;
@@ -610,11 +627,11 @@ impl Assembler {
             }
 
             TCExprKind::Assign { target, value } => {
-                ops.append(&mut self.translate_expr(value));
+                ops.append(&mut self.translate_expr(file, value));
                 let bytes = value.expr_type.repr_size();
                 tagged.op = Opcode::PushDup { bytes };
                 ops.push(tagged);
-                ops.append(&mut self.translate_assign(target));
+                ops.append(&mut self.translate_assign(file, target));
                 tagged.op = Opcode::Set { offset: 0, bytes };
                 ops.push(tagged);
             }
@@ -625,7 +642,7 @@ impl Assembler {
                 op,
                 op_type,
             } => {
-                ops.append(&mut self.translate_assign(target));
+                ops.append(&mut self.translate_assign(file, target));
                 tagged.op = Opcode::PushDup { bytes: 8 };
                 ops.push(tagged);
 
@@ -633,7 +650,7 @@ impl Assembler {
                 tagged.op = Opcode::Get { offset: 0, bytes };
                 ops.push(tagged);
 
-                ops.append(&mut self.translate_expr(value));
+                ops.append(&mut self.translate_expr(file, value));
 
                 self.translate_bin_op(*op, *op_type, &mut ops, tagged.loc);
 
@@ -654,9 +671,9 @@ impl Assembler {
                 if_false,
             } => {
                 let cond_bytes = condition.expr_type.repr_size();
-                ops.append(&mut self.translate_expr(condition));
+                ops.append(&mut self.translate_expr(file, condition));
 
-                let mut if_ops = self.translate_expr(if_true);
+                let mut if_ops = self.translate_expr(file, if_true);
                 let ifbr_len = if_ops.len() as u32 + 2;
 
                 tagged.op = match cond_bytes {
@@ -670,7 +687,7 @@ impl Assembler {
                 ops.append(&mut if_ops);
                 mem::drop(if_ops);
 
-                let mut else_ops = self.translate_expr(if_false);
+                let mut else_ops = self.translate_expr(file, if_false);
                 let elsebr_len = else_ops.len() as u32 + 1;
 
                 tagged.op = Opcode::Jump(elsebr_len);
@@ -680,7 +697,7 @@ impl Assembler {
 
             TCExprKind::Member { base, offset } => {
                 let base_bytes = base.expr_type.repr_size();
-                ops.append(&mut self.translate_expr(base));
+                ops.append(&mut self.translate_expr(file, base));
                 let want_bytes = expr.expr_type.repr_size();
                 let top_bytes = base_bytes - want_bytes - offset;
                 tagged.op = Opcode::Pop { bytes: top_bytes };
@@ -693,7 +710,7 @@ impl Assembler {
             }
             &TCExprKind::PtrMember { base, offset } => {
                 let bytes = expr.expr_type.repr_size();
-                ops.append(&mut self.translate_expr(base));
+                ops.append(&mut self.translate_expr(file, base));
                 if expr.expr_type.is_array() {
                     tagged.op = Opcode::MakeTempU64(offset as u64);
                     ops.push(tagged);
@@ -709,7 +726,7 @@ impl Assembler {
             }
 
             TCExprKind::Deref(ptr) => {
-                ops.append(&mut self.translate_expr(ptr));
+                ops.append(&mut self.translate_expr(file, ptr));
                 tagged.op = Opcode::Get {
                     offset: 0,
                     bytes: expr.expr_type.repr_size(),
@@ -725,7 +742,7 @@ impl Assembler {
                     ops.push(tagged);
                 }
                 TCAssignTargetKind::Ptr(expr) => {
-                    ops.append(&mut self.translate_expr(expr));
+                    ops.append(&mut self.translate_expr(file, expr));
                 }
             },
 
@@ -757,7 +774,7 @@ impl Assembler {
                         symbol: META_NO_SYMBOL, // TODO this should be the parameter symbol
                     };
                     ops.push(tagged);
-                    ops.append(&mut self.translate_expr(param));
+                    ops.append(&mut self.translate_expr(file, param));
                     tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
                     ops.push(tagged);
                 }
@@ -781,7 +798,16 @@ impl Assembler {
                 };
                 ops.push(tagged);
 
-                tagged.op = Opcode::Call(*func);
+                #[rustfmt::skip] let link_public = LinkName { name: *func, file: n32::NULL };
+                #[rustfmt::skip] let link_static = LinkName { name: *func, file: file.into() };
+
+                let link_pos = if let Some(&link_pos) = self.func_linkage.get(&link_public) {
+                    link_pos
+                } else {
+                    self.func_linkage[&link_static]
+                };
+
+                tagged.op = Opcode::Call(link_pos);
                 ops.push(tagged);
 
                 tagged.op = Opcode::StackDealloc;
@@ -803,13 +829,13 @@ impl Assembler {
 
             // TODO
             TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
-                ops.append(&mut self.translate_expr(ecall));
+                ops.append(&mut self.translate_expr(file, ecall));
                 tagged.op = Opcode::EcallDyn;
                 ops.push(tagged);
             }
             TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
-                ops.append(&mut self.translate_expr(size));
-                ops.append(&mut self.translate_expr(ptr));
+                ops.append(&mut self.translate_expr(file, size));
+                ops.append(&mut self.translate_expr(file, ptr));
 
                 tagged.op = Opcode::PushDyn;
                 ops.push(tagged);
@@ -819,7 +845,7 @@ impl Assembler {
         return ops;
     }
 
-    pub fn translate_assign(&mut self, assign: &TCAssignTarget) -> Vec<TaggedOpcode> {
+    pub fn translate_assign(&mut self, file: u32, assign: &TCAssignTarget) -> Vec<TaggedOpcode> {
         let mut ops = Vec::new();
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
@@ -828,7 +854,7 @@ impl Assembler {
 
         match assign.kind {
             TCAssignTargetKind::Ptr(expr) => {
-                ops.append(&mut self.translate_expr(expr));
+                ops.append(&mut self.translate_expr(file, expr));
                 if assign.offset != 0 {
                     tagged.op = Opcode::MakeTempU64(assign.offset as u64);
                     ops.push(tagged);
@@ -850,10 +876,15 @@ impl Assembler {
 
     pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
         let no_main = || error!("missing main function definition");
-        let main_sym = INIT_SYMS.translate["main"];
-        let main_func = self.functions.get(&main_sym).ok_or_else(no_main)?;
+        let main_link_name = LinkName {
+            name: INIT_SYMS.translate["main"],
+            file: n32::NULL,
+        };
+        let main_func_idx = self.func_linkage.get(&main_link_name).ok_or_else(no_main)?;
+
+        let main_func = &self.functions[*main_func_idx as usize];
         let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
-        let mut opcodes: Vec<TaggedOpcode> = init_main_no_args(main_sym)
+        let mut opcodes: Vec<TaggedOpcode> = init_main_no_args(*main_func_idx)
             .iter()
             .map(|&op| TaggedOpcode { op, loc: main_loc })
             .collect();
@@ -864,12 +895,9 @@ impl Assembler {
             let op_idx = op_idx as u32;
             match &mut op.op {
                 Opcode::Call(addr) => {
-                    let function = self.functions.get(addr).unwrap();
-                    if let Some(func_header) = function.func_header {
-                        let (fptr, _loc) = func_header;
+                    let function = &self.functions[*addr as usize];
+                    if let Some((fptr, _loc)) = function.func_header {
                         *addr = fptr + runtime_length;
-                    } else if LIB_FUNCS.contains(addr) {
-                        op.op = Opcode::LibCall(*addr);
                     } else {
                         let func_loc = function.func_type.loc;
                         return Err(error!(

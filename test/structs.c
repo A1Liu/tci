@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 struct FileId {
   int ident;
   struct Location {
@@ -6,7 +8,6 @@ struct FileId {
   } location;
 };
 
-int printf(char *format, ...);
 int ident_of(struct FileId file) { return file.ident; }
 struct Location location_of(struct FileId *file) {
   return file->location;

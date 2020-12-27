@@ -6,6 +6,7 @@
 #define TCI_ECALL_IS_SAFE 3
 #define TCI_ECALL_HEAP_ALLOC 4
 #define TCI_ECALL_THROW_ERROR 5
+#define TCI_ECALL_PRINTF 6
 
 size_t tci_var_size(void *var);
 

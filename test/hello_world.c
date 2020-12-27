@@ -1,5 +1,4 @@
-
-int printf(char *str, ...);
+#include <stdio.h>
 
 void goodbye() { return; }
 
