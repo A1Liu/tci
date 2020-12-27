@@ -5,6 +5,8 @@ use crate::util::*;
 use core::slice;
 use std::collections::HashMap;
 
+// TODO use https://github.com/vickenty/lang-c as inspiration for full parser rewrite
+
 pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
 
 #[derive(Hash, PartialEq, Eq)]

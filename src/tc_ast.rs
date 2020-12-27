@@ -342,6 +342,7 @@ pub struct TCFuncType {
     pub return_type: TCType,
     pub loc: CodeLoc,
     pub params: Vec<(TCType, CodeLoc)>,
+    pub is_static: bool,
     pub varargs: bool,
 }
 

@@ -555,6 +555,7 @@ impl<'b> Lexer<'b> {
                     "signed" => ret_tok!(TokenKind::Signed),
                     "float" => ret_tok!(TokenKind::Float),
                     "double" => ret_tok!(TokenKind::Double),
+                    "static" => ret_tok!(TokenKind::Static),
                     word => {
                         let id = symbols.translate_add(begin..self.current, self.file);
                         if word.ends_with("_t") || word == "va_list" {

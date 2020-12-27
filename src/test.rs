@@ -156,7 +156,8 @@ gen_test_should_succeed!(
     assign_operators,
     exit,
     ("dyn_array_ptr/", dyn_array_ptr, main),
-    ("arrays/", arrays, main)
+    ("arrays/", arrays, main),
+    ("statics/", statics, main)
 );
 
 gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

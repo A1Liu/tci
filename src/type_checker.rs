@@ -1126,7 +1126,11 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
 
         if let TCTypeKind::Uninit { .. } = expr.expr_type.kind {
             if asgn_type.array_kind == TCArrayKind::Fixed(0) {
-                return Err(error!("arrays need to be initialized with an initializer list or declared with an explicit size", asgn_loc, "variable declared here"));
+                return Err(
+                    error!(
+                    "arrays need to be initialized with an initializer list or declared with an explicit size",
+                    asgn_loc, "variable declared here"
+                ));
             }
 
             return Ok(TCExpr {
@@ -1177,6 +1181,7 @@ impl<'a, 'b> CheckEnv<'a, 'b> {
 pub struct TypedFuncs<'a> {
     pub types: TypeEnv,
     pub functions: HashMap<u32, TCFunc<'a>>,
+    pub file: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1647,7 +1652,7 @@ pub fn sequentialize_rec<'a, 'b>(
         params: param_types,
         decl_idx,
         varargs: varargs.is_some(),
-        is_static: false,
+        is_static: rtype.is_static,
     };
 
     let defn = if let Some(body) = func_body {
@@ -1968,6 +1973,7 @@ fn check_struct_type<'b>(
 pub fn check_file<'a>(
     buckets: BucketListRef<'a>,
     program: ASTProgram,
+    file: u32,
     files: &FileDb,
 ) -> Result<TypedFuncs<'a>, Error> {
     let unchecked_env = sequentialize(buckets, program, files)?;
@@ -2031,6 +2037,7 @@ pub fn check_file<'a>(
                 params,
                 loc: func_type.loc,
                 varargs: func_type.varargs,
+                is_static: func_type.is_static,
             });
         };
 
@@ -2119,7 +2126,11 @@ pub fn check_file<'a>(
         functions.insert(func_name, TCFunc { func_type, defn });
     }
 
-    return Ok(TypedFuncs { types, functions });
+    return Ok(TypedFuncs {
+        types,
+        functions,
+        file,
+    });
 }
 
 fn check_stmts<'b>(

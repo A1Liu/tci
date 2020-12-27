@@ -93,14 +93,14 @@ fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
         }
 
         match parser.parse_tokens(buckets, &tokens, file) {
-            Ok(x) => return Some(x),
+            Ok(x) => return Some((x, file)),
             Err(err) => {
                 errors.push(err);
                 return None;
             }
         }
     });
-    let asts: Vec<ast::ASTProgram> = iter.collect();
+    let asts: Vec<(ast::ASTProgram, u32)> = iter.collect();
 
     while let Some(n) = buckets.next() {
         buckets = n;
@@ -108,12 +108,12 @@ fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     buckets = buckets.force_next();
 
     let mut assembler = assembler::Assembler::new();
-    asts.into_iter().for_each(|ast| {
+    asts.into_iter().for_each(|(ast, file)| {
         while let Some(n) = buckets.next() {
             buckets = n;
         }
 
-        let tfuncs = match type_checker::check_file(buckets, ast, env) {
+        let tfuncs = match type_checker::check_file(buckets, ast, file, env) {
             Ok(x) => x,
             Err(err) => {
                 errors.push(err);
