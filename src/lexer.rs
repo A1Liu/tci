@@ -94,6 +94,80 @@ pub enum TokenKind<'a> {
     Semicolon,
     Colon,
     Comma,
+
+    Unimplemented,
+    Case,
+    Const,
+    Default,
+    Extern,
+    Switch,
+    Short,
+}
+
+lazy_static! {
+    pub static ref RESERVED_KEYWORDS: HashMap<&'static str, TokenKind<'static>> = {
+        let mut set = HashMap::new();
+        set.insert("auto", TokenKind::Unimplemented);
+        set.insert("break", TokenKind::Break);
+        set.insert("case", TokenKind::Case);
+        set.insert("char", TokenKind::Char);
+        set.insert("const", TokenKind::Const);
+        set.insert("continue", TokenKind::Continue);
+        set.insert("default", TokenKind::Default);
+        set.insert("do", TokenKind::Do);
+        set.insert("double", TokenKind::Double);
+        set.insert("else", TokenKind::Else);
+        set.insert("enum", TokenKind::Enum);
+        set.insert("extern", TokenKind::Extern);
+        set.insert("float", TokenKind::Float);
+        set.insert("for", TokenKind::For);
+        set.insert("goto", TokenKind::Unimplemented);
+        set.insert("if", TokenKind::If);
+        set.insert("inline", TokenKind::Unimplemented);
+        set.insert("int", TokenKind::Int);
+        set.insert("long", TokenKind::Long);
+        set.insert("register", TokenKind::Unimplemented);
+        set.insert("restrict", TokenKind::Unimplemented);
+        set.insert("return", TokenKind::Return);
+        set.insert("short", TokenKind::Short);
+        set.insert("signed", TokenKind::Signed);
+        set.insert("sizeof", TokenKind::Sizeof);
+        set.insert("static", TokenKind::Static);
+        set.insert("struct", TokenKind::Struct);
+        set.insert("switch", TokenKind::Switch);
+        set.insert("typedef", TokenKind::Typedef);
+        set.insert("union", TokenKind::Union);
+        set.insert("unsigned", TokenKind::Unsigned);
+        set.insert("void", TokenKind::Void);
+        set.insert("volatile", TokenKind::Unimplemented);
+        set.insert("while", TokenKind::While);
+        set.insert("_Alignas", TokenKind::Unimplemented);
+        set.insert("_Alignof", TokenKind::Unimplemented);
+        set.insert("_Atomic", TokenKind::Unimplemented);
+        set.insert("_Bool", TokenKind::Unimplemented);
+        set.insert("_Complex", TokenKind::Unimplemented);
+        set.insert("_Generic", TokenKind::Unimplemented);
+        set.insert("_Imaginary", TokenKind::Unimplemented);
+        set.insert("_Noreturn", TokenKind::Unimplemented);
+        set.insert("_Static_assert", TokenKind::Unimplemented);
+        set.insert("_Thread_local", TokenKind::Unimplemented);
+        set.insert("_Float16", TokenKind::Unimplemented);
+        set.insert("_Float16x", TokenKind::Unimplemented);
+        set.insert("_Float32", TokenKind::Unimplemented);
+        set.insert("_Float32x", TokenKind::Unimplemented);
+        set.insert("_Float64", TokenKind::Unimplemented);
+        set.insert("_Float64x", TokenKind::Unimplemented);
+        set.insert("_Float128", TokenKind::Unimplemented);
+        set.insert("_Float128x", TokenKind::Unimplemented);
+        set.insert("_Decimal32", TokenKind::Unimplemented);
+        set.insert("_Decimal32x", TokenKind::Unimplemented);
+        set.insert("_Decimal64", TokenKind::Unimplemented);
+        set.insert("_Decimal64x", TokenKind::Unimplemented);
+        set.insert("_Decimal128", TokenKind::Unimplemented);
+        set.insert("_Decimal128x", TokenKind::Unimplemented);
+
+        set
+    };
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -533,37 +607,15 @@ impl<'b> Lexer<'b> {
                 }
 
                 let word = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
-                match word {
-                    "if" => ret_tok!(TokenKind::If),
-                    "else" => ret_tok!(TokenKind::Else),
-                    "do" => ret_tok!(TokenKind::Do),
-                    "while" => ret_tok!(TokenKind::While),
-                    "for" => ret_tok!(TokenKind::For),
-                    "break" => ret_tok!(TokenKind::Break),
-                    "continue" => ret_tok!(TokenKind::Continue),
-                    "return" => ret_tok!(TokenKind::Return),
-                    "struct" => ret_tok!(TokenKind::Struct),
-                    "union" => ret_tok!(TokenKind::Union),
-                    "enum" => ret_tok!(TokenKind::Enum),
-                    "typedef" => ret_tok!(TokenKind::Typedef),
-                    "sizeof" => ret_tok!(TokenKind::Sizeof),
-                    "void" => ret_tok!(TokenKind::Void),
-                    "char" => ret_tok!(TokenKind::Char),
-                    "int" => ret_tok!(TokenKind::Int),
-                    "long" => ret_tok!(TokenKind::Long),
-                    "unsigned" => ret_tok!(TokenKind::Unsigned),
-                    "signed" => ret_tok!(TokenKind::Signed),
-                    "float" => ret_tok!(TokenKind::Float),
-                    "double" => ret_tok!(TokenKind::Double),
-                    "static" => ret_tok!(TokenKind::Static),
-                    word => {
-                        let id = symbols.translate_add(begin..self.current, self.file);
-                        if word.ends_with("_t") || word == "va_list" {
-                            ret_tok!(TokenKind::TypeIdent(id));
-                        } else {
-                            ret_tok!(TokenKind::Ident(id));
-                        }
-                    }
+                if let Some(kind) = RESERVED_KEYWORDS.get(word) {
+                    ret_tok!(*kind);
+                }
+
+                let id = symbols.translate_add(begin..self.current, self.file);
+                if word.ends_with("_t") || word == "va_list" {
+                    ret_tok!(TokenKind::TypeIdent(id));
+                } else {
+                    ret_tok!(TokenKind::Ident(id));
                 }
             }
 

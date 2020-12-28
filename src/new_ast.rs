@@ -189,6 +189,7 @@ pub struct StructDeclarator<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DeclaratorKind<'a> {
+    Abstract,
     Identifier(u32),
     Declarator(&'a Declarator<'a>),
 }
