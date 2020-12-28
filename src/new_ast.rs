@@ -47,6 +47,7 @@ pub enum ExprKind<'a> {
     IntLiteral(i32),
     CharLiteral(i8),
     StringLiteral(&'a str),
+    ParenList(&'a [Expr<'a>]),
     SizeofType(&'a TypeName<'a>),
     SizeofExpr(&'a Expr<'a>),
     Ident(u32),

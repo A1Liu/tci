@@ -139,6 +139,20 @@ impl<'a, 'b> Parser<'a, 'b> {
         return Ok(tok);
     }
 
+    pub fn expect_rparen(&mut self, matching_tok: CodeLoc) -> Result<CodeLoc, Error> {
+        let tok = self.pop()?;
+        if tok.kind != TokenKind::RParen {
+            return Err(error!(
+                "expected ')' token, got something else instead",
+                tok.loc,
+                format!("this was interpreted as {:?} when it should be a ')'", tok),
+                matching_tok,
+                "matching left paren here".to_string()
+            ));
+        }
+        return Ok(tok.loc);
+    }
+
     #[inline]
     pub fn parse_expr(&mut self) -> Result<Expr<'b>, Error> {
         return self.parse_assignment();
@@ -906,29 +920,28 @@ impl<'a, 'b> Parser<'a, 'b> {
             //         });
             //     }
             // }
+            TokenKind::LParen => {
+                let start_loc = tok.loc;
+                let mut expr = self.parse_expr()?;
+                let mut expr_list = Vec::new();
+                while self.peek()?.kind == TokenKind::Comma {
+                    expr_list.push(expr);
+                    self.pop().unwrap();
+                    expr = self.parse_expr()?;
+                }
 
-            // TokenKind::LParen => {
-            //     let start_loc = tok.loc;
-            //     let mut expr = self.parse_expr()?;
-            //     let mut expr_list = Vec::new();
-            //     while self.peek()?.kind == TokenKind::Comma {
-            //         expr_list.push(expr);
-            //         self.pop().unwrap();
-            //         expr = self.parse_expr()?;
-            //     }
+                let end_loc = self.expect_rparen(tok.loc)?;
 
-            //     let end_loc = expect_rparen(tokens, current, tok.loc)?;
-
-            //     if expr_list.len() == 0 {
-            //         return Ok(expr);
-            //     } else {
-            //         expr_list.push(expr);
-            //         return Ok(Expr {
-            //             kind: ExprKind::ParenList(buckets.add_array(expr_list)),
-            //             loc: l_from(start_loc, end_loc),
-            //         });
-            //     }
-            // }
+                if expr_list.len() == 0 {
+                    return Ok(expr);
+                } else {
+                    expr_list.push(expr);
+                    return Ok(Expr {
+                        kind: ExprKind::ParenList(self.buckets.add_array(expr_list)),
+                        loc: l_from(start_loc, end_loc),
+                    });
+                }
+            }
             _ => return Err(unexpected_token("expression", &tok)),
         }
     }
