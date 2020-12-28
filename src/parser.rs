@@ -135,28 +135,28 @@ pub struct Parser<'b> {
     pub db: AstDb<'b>,
 }
 
-pub fn peek_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
-    return Some(*tokens.get(*current)?);
+pub fn peek_o<'a>(tokens: &[Token<'a>], current: usize) -> Option<Token<'a>> {
+    return Some(*tokens.get(current)?);
 }
 
-pub fn peek2_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
-    return Some(*tokens.get(*current + 1)?);
+pub fn peek2_o<'a>(tokens: &[Token<'a>], current: usize) -> Option<Token<'a>> {
+    return Some(*tokens.get(current + 1)?);
 }
 
-pub fn peek<'a>(tokens: &[Token<'a>], current: &usize) -> Result<Token<'a>, Error> {
+pub fn peek<'a>(tokens: &[Token<'a>], current: usize) -> Result<Token<'a>, Error> {
     let map_err = || error!("expected token");
     peek_o(tokens, current).ok_or_else(map_err)
 }
 
 pub fn pop<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
-    let tok = peek(tokens, current)?;
+    let tok = peek(tokens, *current)?;
     *current += 1;
     Ok(tok)
 }
 
 /// True if the parse is about to see a type, false otherwise
 pub fn peek_type_or_expr<'a>(tokens: &'a [Token<'a>], current: usize) -> Result<bool, Error> {
-    let tok = peek(tokens, &current)?;
+    let tok = peek(tokens, current)?;
     match tok.kind {
         TokenKind::TypeIdent(_) => return Ok(true),
         TokenKind::Int | TokenKind::Long => return Ok(true),
@@ -201,7 +201,7 @@ impl<'b> Parser<'b> {
         let mut current = 0;
 
         loop {
-            if peek_o(tokens, &mut current).is_none() {
+            if peek_o(tokens, current).is_none() {
                 break;
             }
 
@@ -232,7 +232,7 @@ impl<'b> Parser<'b> {
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
         let left = self.parse_ternary(buckets, tokens, current)?;
-        match peek(tokens, current)?.kind {
+        match peek(tokens, *current)?.kind {
             TokenKind::Eq => {
                 pop(tokens, current).unwrap();
                 let right = self.parse_assignment(buckets, tokens, current)?;
@@ -395,7 +395,7 @@ impl<'b> Parser<'b> {
     ) -> Result<Expr<'b>, Error> {
         let condition = self.parse_bool_or(buckets, tokens, current)?;
 
-        let question_tok = peek(tokens, current)?;
+        let question_tok = peek(tokens, *current)?;
         if question_tok.kind != TokenKind::Question {
             return Ok(condition);
         }
@@ -443,7 +443,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_bool_and(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::LineLine => {
                     pop(tokens, current).unwrap();
 
@@ -471,7 +471,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_bit_or(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::AmpAmp => {
                     pop(tokens, current).unwrap();
 
@@ -499,7 +499,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_bit_xor(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::Line => {
                     pop(tokens, current).unwrap();
 
@@ -527,7 +527,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_bit_and(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::Caret => {
                     pop(tokens, current).unwrap();
 
@@ -555,7 +555,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_equality(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::Amp => {
                     pop(tokens, current).unwrap();
 
@@ -583,7 +583,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_comparison(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::EqEq => {
                     pop(tokens, current).unwrap();
 
@@ -624,7 +624,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_shift(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::Lt => {
                     pop(tokens, current).unwrap();
 
@@ -691,7 +691,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_add(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::GtGt => {
                     pop(tokens, current).unwrap();
                     let right = self.parse_add(buckets, tokens, current)?;
@@ -730,7 +730,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_multiply(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::Plus => {
                     pop(tokens, current).unwrap();
                     let right = self.parse_multiply(buckets, tokens, current)?;
@@ -769,7 +769,7 @@ impl<'b> Parser<'b> {
         let mut expr = self.parse_prefix(buckets, tokens, current)?;
         loop {
             let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::Slash => {
                     pop(tokens, current).unwrap();
                     let right = self.parse_prefix(buckets, tokens, current)?;
@@ -817,19 +817,19 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Expr<'b>, Error> {
-        let tok = peek(tokens, current)?;
+        let tok = peek(tokens, *current)?;
         match tok.kind {
             TokenKind::Sizeof => {
                 pop(tokens, current).unwrap();
 
-                let lparen_tok = peek(tokens, current)?;
+                let lparen_tok = peek(tokens, *current)?;
                 if lparen_tok.kind == TokenKind::LParen {
                     pop(tokens, current).unwrap();
 
                     if peek_type_or_expr(tokens, *current)? {
                         let sizeof_type = self.parse_type_prefix(buckets, tokens, current)?;
                         let mut pointer_count = 0;
-                        while peek(tokens, current)?.kind == TokenKind::Star {
+                        while peek(tokens, *current)?.kind == TokenKind::Star {
                             pointer_count += 1;
                             pop(tokens, current).unwrap();
                         }
@@ -919,7 +919,7 @@ impl<'b> Parser<'b> {
                 };
 
                 let mut pointer_count: u32 = 0;
-                while peek(tokens, current)?.kind == TokenKind::Star {
+                while peek(tokens, *current)?.kind == TokenKind::Star {
                     pop(tokens, current).unwrap();
                     pointer_count += 1;
                 }
@@ -953,21 +953,21 @@ impl<'b> Parser<'b> {
         let start_loc = operand.loc;
 
         loop {
-            match peek(tokens, current)?.kind {
+            match peek(tokens, *current)?.kind {
                 TokenKind::LParen => {
                     pop(tokens, current).unwrap();
                     let mut params = Vec::new();
-                    let rparen_tok = peek(tokens, current)?;
+                    let rparen_tok = peek(tokens, *current)?;
 
                     if rparen_tok.kind != TokenKind::RParen {
                         let param = self.parse_expr(buckets, tokens, current)?;
                         params.push(param);
-                        let mut comma_tok = peek(tokens, current)?;
+                        let mut comma_tok = peek(tokens, *current)?;
 
                         while comma_tok.kind == TokenKind::Comma {
                             pop(tokens, current).unwrap();
                             params.push(self.parse_expr(buckets, tokens, current)?);
-                            comma_tok = peek(tokens, current)?;
+                            comma_tok = peek(tokens, *current)?;
                         }
 
                         if comma_tok.kind != TokenKind::RParen {
@@ -1079,7 +1079,7 @@ impl<'b> Parser<'b> {
             TokenKind::StringLiteral(string) => {
                 let mut string = string.to_string();
                 let mut end_loc = tok.loc;
-                while let TokenKind::StringLiteral(tstr) = peek(tokens, current)?.kind {
+                while let TokenKind::StringLiteral(tstr) = peek(tokens, *current)?.kind {
                     string.push_str(tstr);
                     end_loc = l_from(end_loc, pop(tokens, current).unwrap().loc);
                 }
@@ -1093,7 +1093,7 @@ impl<'b> Parser<'b> {
                 let start_loc = tok.loc;
                 let mut expr = self.parse_expr(buckets, tokens, current)?;
                 let mut expr_list = Vec::new();
-                while peek(tokens, current)?.kind == TokenKind::Comma {
+                while peek(tokens, *current)?.kind == TokenKind::Comma {
                     expr_list.push(expr);
                     pop(tokens, current).unwrap();
                     expr = self.parse_expr(buckets, tokens, current)?;
@@ -1115,7 +1115,7 @@ impl<'b> Parser<'b> {
                 let start_loc = tok.loc;
                 let mut expr = self.parse_expr(buckets, tokens, current)?;
                 let mut expr_list = Vec::new();
-                while peek(tokens, current)?.kind == TokenKind::Comma {
+                while peek(tokens, *current)?.kind == TokenKind::Comma {
                     expr_list.push(expr);
                     pop(tokens, current).unwrap();
                     expr = self.parse_expr(buckets, tokens, current)?;
@@ -1143,12 +1143,12 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Option<(&'b [u32], CodeLoc)>, Error> {
-        let start_loc = peek(tokens, current)?.loc;
+        let start_loc = peek(tokens, *current)?.loc;
         let mut end_loc = start_loc;
         let mut array_dims = Vec::new();
-        while peek(tokens, current)?.kind == TokenKind::LBracket {
+        while peek(tokens, *current)?.kind == TokenKind::LBracket {
             let lbracket_tok = pop(tokens, current).unwrap();
-            let rbracket_tok = peek(tokens, current)?;
+            let rbracket_tok = peek(tokens, *current)?;
 
             if rbracket_tok.kind == TokenKind::RBracket {
                 pop(tokens, current).unwrap();
@@ -1195,8 +1195,8 @@ impl<'b> Parser<'b> {
         current: &mut usize,
     ) -> Result<DeclReceiver<'b>, Error> {
         let mut pointer_count = 0;
-        let loc = peek(tokens, current)?.loc;
-        while peek(tokens, current)?.kind == TokenKind::Star {
+        let loc = peek(tokens, *current)?.loc;
+        while peek(tokens, *current)?.kind == TokenKind::Star {
             pointer_count += 1;
             pop(tokens, current).unwrap();
         }
@@ -1228,7 +1228,7 @@ impl<'b> Parser<'b> {
     ) -> Result<Decl<'b>, Error> {
         let recv = self.parse_decl_receiver(buckets, tokens, current)?;
 
-        let tok = peek(tokens, current)?;
+        let tok = peek(tokens, *current)?;
         let expr = if tok.kind == TokenKind::Eq {
             pop(tokens, current).unwrap();
             self.parse_expr(buckets, tokens, current)?
@@ -1269,7 +1269,7 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<ParamDecl<'b>, Error> {
-        let vararg_tok = peek(tokens, current)?;
+        let vararg_tok = peek(tokens, *current)?;
         if vararg_tok.kind == TokenKind::DotDotDot {
             pop(tokens, current).unwrap();
             return Ok(ParamDecl {
@@ -1279,16 +1279,16 @@ impl<'b> Parser<'b> {
         }
 
         let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
-        let decl_recv_start_loc = peek(tokens, current)?.loc;
+        let decl_recv_start_loc = peek(tokens, *current)?.loc;
         let mut end_loc = decl_type.loc;
 
         let mut pointer_count = 0;
-        while peek(tokens, current)?.kind == TokenKind::Star {
+        while peek(tokens, *current)?.kind == TokenKind::Star {
             pointer_count += 1;
             end_loc = pop(tokens, current).unwrap().loc;
         }
 
-        let ident = if let TokenKind::Ident(ident) = peek(tokens, current)?.kind {
+        let ident = if let TokenKind::Ident(ident) = peek(tokens, *current)?.kind {
             end_loc = pop(tokens, current).unwrap().loc;
             Some(ident)
         } else {
@@ -1338,14 +1338,14 @@ impl<'b> Parser<'b> {
         current: &mut usize,
     ) -> Result<(Vec<Decl<'b>>, Decl<'b>), Error> {
         let mut decl = self.parse_simple_decl(buckets, tokens, current)?;
-        let mut tok = peek(tokens, current)?;
+        let mut tok = peek(tokens, *current)?;
         let mut decls = Vec::new();
 
         while tok.kind == TokenKind::Comma {
             pop(tokens, current).unwrap();
             decls.push(decl);
             decl = self.parse_simple_decl(buckets, tokens, current)?;
-            tok = peek(tokens, current)?;
+            tok = peek(tokens, *current)?;
         }
 
         return Ok((decls, decl));
@@ -1366,7 +1366,7 @@ impl<'b> Parser<'b> {
             };
         }
 
-        let decl_type = match peek(tokens, current)?.kind {
+        let decl_type = match peek(tokens, *current)?.kind {
             TokenKind::Typedef => {
                 let typedef_tok = pop(tokens, current).unwrap();
                 let ast_type = self.parse_type_prefix(buckets, tokens, current)?;
@@ -1390,7 +1390,7 @@ impl<'b> Parser<'b> {
             _ => self.parse_type_prefix(buckets, tokens, current)?,
         };
 
-        let semicolon_tok = peek(tokens, current)?;
+        let semicolon_tok = peek(tokens, *current)?;
         if semicolon_tok.kind == TokenKind::Semicolon {
             if let ASTTypeKind::Struct(decl) = decl_type.kind {
                 pop(tokens, current).unwrap();
@@ -1453,14 +1453,14 @@ impl<'b> Parser<'b> {
         }
 
         let mut params = Vec::new();
-        let rparen_tok = peek(tokens, current)?;
+        let rparen_tok = peek(tokens, *current)?;
         if rparen_tok.kind != TokenKind::RParen {
             params.push(self.parse_param_decl(buckets, tokens, current)?);
-            let mut comma_tok = peek(tokens, current)?;
+            let mut comma_tok = peek(tokens, *current)?;
             while comma_tok.kind == TokenKind::Comma {
                 pop(tokens, current).unwrap();
                 params.push(self.parse_param_decl(buckets, tokens, current)?);
-                comma_tok = peek(tokens, current)?;
+                comma_tok = peek(tokens, *current)?;
             }
 
             if comma_tok.kind != TokenKind::RParen {
@@ -1494,7 +1494,7 @@ impl<'b> Parser<'b> {
         }
 
         let mut body = Vec::new();
-        while peek(tokens, current)?.kind != TokenKind::RBrace {
+        while peek(tokens, *current)?.kind != TokenKind::RBrace {
             body.push(self.parse_stmt(buckets, tokens, current)?);
         }
         let _tok = pop(tokens, current).unwrap();
@@ -1519,12 +1519,12 @@ impl<'b> Parser<'b> {
         tokens: &'a [Token<'a>],
         current: &mut usize,
     ) -> Result<Block<'b>, Error> {
-        match peek(tokens, current)?.kind {
+        match peek(tokens, *current)?.kind {
             TokenKind::LBrace => {
                 let start_loc = pop(tokens, current)?.loc;
 
                 let mut stmts = Vec::new();
-                while peek(tokens, current)?.kind != TokenKind::RBrace {
+                while peek(tokens, *current)?.kind != TokenKind::RBrace {
                     stmts.push(self.parse_stmt(buckets, tokens, current)?);
                 }
                 let end_loc = pop(tokens, current)?.loc;
@@ -1578,7 +1578,7 @@ impl<'b> Parser<'b> {
             });
         }
 
-        let tok = peek(tokens, current)?;
+        let tok = peek(tokens, *current)?;
         match &tok.kind {
             TokenKind::For => {
                 let start_loc = pop(tokens, current).unwrap().loc;
@@ -1591,7 +1591,7 @@ impl<'b> Parser<'b> {
                     decls.push(decl);
                     let semi = eat_semicolon(tokens, current)?;
                     (Ok((decl_type, decls)), semi)
-                } else if peek(tokens, current)?.kind == TokenKind::Semicolon {
+                } else if peek(tokens, *current)?.kind == TokenKind::Semicolon {
                     let semi = eat_semicolon(tokens, current).unwrap();
                     let expr = Expr {
                         kind: ExprKind::Uninit,
@@ -1604,7 +1604,7 @@ impl<'b> Parser<'b> {
                     (Err(expr), semi)
                 };
 
-                let (condition, semi2) = match peek(tokens, current)?.kind {
+                let (condition, semi2) = match peek(tokens, *current)?.kind {
                     TokenKind::Semicolon => {
                         let semi2 = eat_semicolon(tokens, current).unwrap();
                         let expr = Expr {
@@ -1621,9 +1621,9 @@ impl<'b> Parser<'b> {
                 };
 
                 let mut post_exprs = Vec::new();
-                if TokenKind::RParen != peek(tokens, current)?.kind {
+                if TokenKind::RParen != peek(tokens, *current)?.kind {
                     post_exprs.push(self.parse_expr(buckets, tokens, current)?);
-                    while TokenKind::RParen != peek(tokens, current)?.kind {
+                    while TokenKind::RParen != peek(tokens, *current)?.kind {
                         expect_comma(tokens, current)?;
                         post_exprs.push(self.parse_expr(buckets, tokens, current)?);
                     }
@@ -1682,7 +1682,7 @@ impl<'b> Parser<'b> {
 
                 let if_body = self.parse_block(buckets, tokens, current)?;
 
-                if peek(tokens, current)?.kind != TokenKind::Else {
+                if peek(tokens, *current)?.kind != TokenKind::Else {
                     return Ok(Stmt {
                         loc: l_from(start_loc, if_body.loc),
                         kind: StmtKind::Branch {
@@ -1727,7 +1727,7 @@ impl<'b> Parser<'b> {
             TokenKind::Return => {
                 pop(tokens, current).unwrap();
 
-                if peek(tokens, current)?.kind == TokenKind::Semicolon {
+                if peek(tokens, *current)?.kind == TokenKind::Semicolon {
                     pop(tokens, current).unwrap();
                     return Ok(Stmt {
                         kind: StmtKind::Ret,
@@ -1781,7 +1781,7 @@ impl<'b> Parser<'b> {
         tokens: &[Token],
         current: &mut usize,
     ) -> Result<ASTType<'b>, Error> {
-        let mut tok = peek(tokens, current)?;
+        let mut tok = peek(tokens, *current)?;
 
         let start_loc = tok.loc;
         let mut end_loc = start_loc;
@@ -1791,7 +1791,7 @@ impl<'b> Parser<'b> {
         let mut decl_spec = TypeDeclSpec::new();
 
         loop {
-            tok = peek(tokens, current)?;
+            tok = peek(tokens, *current)?;
 
             match tok.kind {
                 TokenKind::Int => decl_spec.int += 1,
@@ -1822,11 +1822,11 @@ impl<'b> Parser<'b> {
                     if let Some((ident, ident_loc)) = any_ident_o(tokens, current) {
                         end_loc = ident_loc;
 
-                        if peek(tokens, current)?.kind == TokenKind::LBrace {
+                        if peek(tokens, *current)?.kind == TokenKind::LBrace {
                             pop(tokens, current).unwrap();
 
                             let mut decls = Vec::new();
-                            while peek(tokens, current)?.kind != TokenKind::RBrace {
+                            while peek(tokens, *current)?.kind != TokenKind::RBrace {
                                 decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
                                 eat_semicolon(tokens, current)?;
                             }
@@ -1846,7 +1846,7 @@ impl<'b> Parser<'b> {
 
                     expect_lbrace(tokens, current)?;
                     let mut decls = Vec::new();
-                    while peek(tokens, current)?.kind != TokenKind::RBrace {
+                    while peek(tokens, *current)?.kind != TokenKind::RBrace {
                         decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
                         eat_semicolon(tokens, current)?;
                     }
@@ -1902,7 +1902,7 @@ pub fn unexpected_token(parsing_what: &str, tok: &Token) -> Error {
 }
 
 pub fn any_ident_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<(u32, CodeLoc)> {
-    let tok = peek_o(tokens, current)?;
+    let tok = peek_o(tokens, *current)?;
     if let TokenKind::Ident(id) = tok.kind {
         pop(tokens, current).unwrap();
         return Some((id, tok.loc));
