@@ -19,6 +19,8 @@ mod commands;
 mod filedb;
 mod interpreter;
 mod lexer;
+mod new_ast;
+mod new_parser;
 mod parser;
 mod preprocessor;
 mod tc_ast;
