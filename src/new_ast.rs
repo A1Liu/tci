@@ -166,12 +166,19 @@ pub struct StructType<'a> {
 pub struct StructField<'a> {
     pub specifiers: &'a [SpecifierQualifier<'a>],
     pub declarators: &'a [StructDeclarator<'a>],
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum SpecifierQualifier<'a> {
+pub enum SpecifierQualifierKind<'a> {
     TypeSpecifier(TypeSpecifier<'a>),
     TypeQualifier(TypeQualifier),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SpecifierQualifier<'a> {
+    pub kind: SpecifierQualifierKind<'a>,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
