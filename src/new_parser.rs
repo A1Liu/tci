@@ -17,6 +17,7 @@ impl ParseEnv {
         let buckets = BucketList::new();
 
         Self {
+            // TODO This is a hack to work around stuff in rust-peg
             symbol_is_type: RefCell::new(vec![HashMap::new()]),
             locs: locs.iter().map(|tok| tok.loc).collect(),
             buckets_begin: buckets,
@@ -159,20 +160,12 @@ rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([TokenKind::Strin
     (env.buckets.add_str(&string), loc)
 }
 
-rule atom() -> Expr =
-    pos:position!() n:int() {
+rule constant_expr() -> Expr =
+    n:int() {
         let (n, loc) = n;
 
         Expr {
             kind: ExprKind::IntLiteral(n),
-            loc,
-        }
-    } /
-    n:ident() {
-        let (n, loc) = n;
-
-        Expr {
-            kind: ExprKind::Ident(n),
             loc,
         }
     } /
@@ -183,6 +176,17 @@ rule atom() -> Expr =
             kind: ExprKind::StringLiteral(n),
             loc,
         }
+    }
+
+rule atom() -> Expr =
+    constant_expr() /
+    n:ident() {
+        let (n, loc) = n;
+
+        Expr {
+            kind: ExprKind::Ident(n),
+            loc,
+        }
     } /
     pos:position!() [TokenKind::LParen] v:(expr() ** [TokenKind::Comma]) pos2:position!() [TokenKind::RParen] {
         Expr {
@@ -190,6 +194,7 @@ rule atom() -> Expr =
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     }
+
 
 rule expr() -> Expr = precedence! {
     x:(@) [TokenKind::Plus] y:@ {
@@ -697,6 +702,278 @@ rule initializer() -> Initializer =
     }
 
 rule initializer_list_item() -> Expr = expr()
+
+pub rule statement() -> Statement =
+    labeled_statement() /
+    b:scoped(<compound_statement()>) {
+        Statement {
+            kind: StatementKind::Block(b),
+            loc: b.loc,
+        }
+    } /
+    expression_statement() /
+    scoped(<selection_statement()>) /
+    scoped(<iteration_statement()>) /
+    jump_statement()
+
+////
+// 6.8.1 Labeled statements
+////
+
+rule labeled_statement() -> Statement =
+    i:ident() [TokenKind::Colon] s:statement() {
+        let (i, loc) = i;
+        Statement {
+            loc: l_from(loc, s.loc),
+            kind: StatementKind::Labeled {
+                label: i,
+                label_loc: loc,
+                stmt: env.buckets.add(s),
+            }
+        }
+    } /
+    pos:position!() [TokenKind::Case] i:constant_expr() s:statement() {
+        Statement {
+            loc: l_from(env.locs[pos], s.loc),
+            kind: StatementKind::CaseLabeled {
+                case_value: i,
+                stmt: env.buckets.add(s),
+            }
+        }
+    } /
+    pos:position!() [TokenKind::Default] [TokenKind::Colon] s:statement() {
+        Statement {
+            loc: l_from(env.locs[pos], s.loc),
+            kind: StatementKind::DefaultCaseLabeled(env.buckets.add(s))
+        }
+    }
+
+////
+// 6.8.2 Compound statement
+////
+
+rule compound_statement() -> Block =
+    pos:position!() [TokenKind::LBrace] b:list0(<block_item()>) pos2:position!() [TokenKind::RBrace]
+{
+    let (block, loc) = b;
+
+    Block{
+        stmts: env.buckets.add(block),
+        loc: l_from(env.locs[pos], env.locs[pos2]),
+    }
+}
+
+rule block_item() -> BlockItem =
+    d:declaration() {
+        BlockItem {
+            kind: BlockItemKind::Declaration(d),
+            loc: d.loc,
+        }
+    } /
+    s:statement() {
+        BlockItem {
+            kind: BlockItemKind::Statement(s),
+            loc: s.loc,
+        }
+    }
+
+////
+// 6.8.3 Expression and null statements
+////
+
+rule expression_statement() -> Statement = e:expr() [TokenKind::Semicolon] {
+    Statement {
+        loc: e.loc,
+        kind: StatementKind::Expr(e),
+    }
+}
+
+////
+// 6.8.4 Selection statement
+////
+
+rule selection_statement() -> Statement =
+    pos:position!() [TokenKind::If] [TokenKind::LParen] e:expr()
+    [TokenKind::RParen] a:statement() b:else_statement()?
+    {
+        let mut loc = l_from(env.locs[pos], a.loc);
+        if let Some(else_stmt) = b {
+            loc = l_from(loc, else_stmt.loc);
+        }
+
+        Statement {
+            kind: StatementKind::Branch {
+                if_cond: e,
+                if_body: env.buckets.add(a),
+                else_body: env.buckets.add(b).as_ref(),
+            },
+            loc,
+        }
+    } /
+    pos:position!() [TokenKind::Switch] [TokenKind::LParen] e:expr() [TokenKind::RParen] a:statement() {
+        let mut loc = l_from(env.locs[pos], a.loc);
+
+        Statement {
+            kind: StatementKind::Switch {
+                expr: e,
+                body: env.buckets.add(a),
+            },
+            loc,
+        }
+    }
+
+rule else_statement() -> Statement = [TokenKind::Else] s:statement() { s }
+
+////
+// 6.8.5 Iteration statement
+////
+
+rule iteration_statement() -> Statement =
+    s:while_statement() { s } /
+    s:do_while_statement() { s } /
+    s:for_statement() { s }
+
+rule while_statement() -> Statement =
+    pos:position!() [TokenKind::While] [TokenKind::LParen] e:expr() [TokenKind::RParen] s:statement() {
+        let loc = l_from(env.locs[pos], s.loc);
+
+        Statement {
+            kind: StatementKind::While {
+                condition: e,
+                body: env.buckets.add(s),
+            },
+            loc,
+        }
+    }
+
+rule do_while_statement() -> Statement =
+    pos:position!() [TokenKind::Do] s:statement() [TokenKind::While] [TokenKind::LParen]
+    e:expr() [TokenKind::RParen] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::DoWhile {
+                condition: e,
+                body: env.buckets.add(s),
+            },
+            loc,
+        }
+    }
+
+rule for_statement() -> Statement =
+    pos:position!() [TokenKind::For] [TokenKind::LParen] a:expr()? [TokenKind::Semicolon] b:expr()?
+    [TokenKind::Semicolon] c:expr()? [TokenKind::RParen] s:statement() {
+        let loc = l_from(env.locs[pos], s.loc);
+
+        Statement {
+            kind: StatementKind::For {
+                at_start: a,
+                condition: b,
+                post_expr: c,
+                body: env.buckets.add(s),
+            },
+            loc,
+        }
+    } /
+    pos:position!() [TokenKind::For] [TokenKind::LParen] a:declaration() b:expr()?
+    [TokenKind::Semicolon] c:expr()? [TokenKind::RParen] s:statement() {
+        let loc = l_from(env.locs[pos], s.loc);
+
+        Statement {
+            kind: StatementKind::ForDecl {
+                decl: a,
+                condition: b,
+                post_expr: c,
+                body: env.buckets.add(s),
+            },
+            loc,
+        }
+    }
+
+
+////
+// 6.8.6 Jump statements
+////
+
+rule jump_statement() -> Statement =
+    pos:position!() [TokenKind::Goto] i:ident() pos2:position!() [TokenKind::Semicolon] {
+        let (i, label_loc) = i;
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+        Statement {
+            kind: StatementKind::Goto {
+                label: i,
+                label_loc,
+            },
+            loc
+        }
+    } /
+    pos:position!() [TokenKind::Continue] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::Continue,
+            loc
+        }
+    } /
+    pos:position!() [TokenKind::Break] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::Break,
+            loc
+        }
+    } /
+    pos:position!() [TokenKind::Return] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::Ret,
+            loc
+        }
+    } /
+    pos:position!() [TokenKind::Return] e:expr() pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::RetVal(e),
+            loc
+        }
+    }
+
+////
+// 6.9 External definitions
+////
+
+pub rule translation_unit() -> Vec<GlobalStatement> = d:external_declaration()*
+
+rule external_declaration() -> GlobalStatement =
+    d:declaration() {
+        GlobalStatement {
+            loc: d.loc,
+            kind: GlobalStatementKind::Declaration(d),
+        }
+    } /
+    d:scoped(<function_definition()>) {
+        GlobalStatement {
+            loc: d.loc,
+            kind: GlobalStatementKind::FunctionDefinition(d),
+        }
+    }
+
+rule function_definition() -> FunctionDefinition =
+    a:decl_specs() b:declarator() c:list0(<declaration()>) d:compound_statement() {
+        let (a, begin_loc) = a;
+        let (c, _) = c;
+
+        let loc = l_from(begin_loc, d.loc);
+        FunctionDefinition {
+            specifiers: env.buckets.add_array(a),
+            declarator: env.buckets.add(b),
+            declarations: env.buckets.add_array(c),
+            statements: d,
+            loc,
+        }
+    }
 
 }
 }

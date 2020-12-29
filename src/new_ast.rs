@@ -271,44 +271,77 @@ pub struct Initializer {
 pub struct FunctionDefinition {
     pub specifiers: &'static [DeclarationSpecifier],
     pub declarator: &'static Declarator,
-    pub declarations: &'static [Declaration],
-    pub statements: &'static [Statement],
+    pub declarations: &'static [Declaration], // K&R style function
+    pub statements: Block,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlockItemKind {
+    Statement(Statement),
+    Declaration(Declaration),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BlockItem {
+    pub kind: BlockItemKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Block {
-    pub stmts: &'static [Statement],
+    pub stmts: &'static [BlockItem],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum StatementKind {
-    Declaration(Declaration),
+    Labeled {
+        label: u32,
+        label_loc: CodeLoc,
+        stmt: &'static Statement,
+    },
+    CaseLabeled {
+        case_value: Expr,
+        stmt: &'static Statement,
+    },
+    DefaultCaseLabeled(&'static Statement),
+    Goto {
+        label: u32,
+        label_loc: CodeLoc,
+    },
     Expr(Expr),
     Ret,
     RetVal(Expr),
     Branch {
         if_cond: Expr,
-        if_body: Block,
-        else_body: Block,
+        if_body: &'static Statement,
+        else_body: Option<&'static Statement>,
     },
     Block(Block),
     For {
         at_start: Option<Expr>,
         condition: Option<Expr>,
         post_expr: Option<Expr>,
-        body: Block,
+        body: &'static Statement,
     },
     ForDecl {
-        decl: Option<Declaration>,
+        decl: Declaration,
         condition: Option<Expr>,
         post_expr: Option<Expr>,
-        body: Block,
+        body: &'static Statement,
     },
     While {
         condition: Expr,
-        body: Block,
+        body: &'static Statement,
+    },
+    DoWhile {
+        condition: Expr,
+        body: &'static Statement,
+    },
+    Switch {
+        expr: Expr,
+        body: &'static Statement,
     },
     Break,
     Continue,
@@ -324,6 +357,7 @@ pub struct Statement {
 pub enum GlobalStatementKind {
     Declaration(Declaration),
     FunctionDefinition(FunctionDefinition),
+    Pragma(&'static str),
 }
 
 #[derive(Debug, Clone, Copy)]

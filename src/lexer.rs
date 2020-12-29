@@ -44,6 +44,7 @@ pub enum TokenKind<'a> {
     Break,
     Continue,
     Return,
+    Goto,
 
     Dot,
     DotDotDot,
@@ -121,7 +122,7 @@ lazy_static! {
         set.insert("extern", TokenKind::Extern);
         set.insert("float", TokenKind::Float);
         set.insert("for", TokenKind::For);
-        set.insert("goto", TokenKind::Unimplemented);
+        set.insert("goto", TokenKind::Goto);
         set.insert("if", TokenKind::If);
         set.insert("inline", TokenKind::Unimplemented);
         set.insert("int", TokenKind::Int);
