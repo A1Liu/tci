@@ -43,85 +43,83 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ExprKind<'a> {
+pub enum ExprKind {
     IntLiteral(i32),
     CharLiteral(i8),
-    StringLiteral(&'a str),
-    ParenList(&'a [Expr<'a>]),
-    SizeofType(&'a TypeName<'a>),
-    SizeofExpr(&'a Expr<'a>),
+    StringLiteral(&'static str),
+    ParenList(&'static [Expr]),
+    SizeofType(&'static TypeName),
+    SizeofExpr(&'static Expr),
     Ident(u32),
-    BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
-    UnaryOp(UnaryOp, &'a Expr<'a>),
+    BinOp(BinOp, &'static Expr, &'static Expr),
+    UnaryOp(UnaryOp, &'static Expr),
     Call {
-        function: &'a Expr<'a>,
-        params: &'a [Expr<'a>],
+        function: &'static Expr,
+        params: &'static [Expr],
     },
     Cast {
-        type_name: TypeName<'a>,
-        expr: &'a Expr<'a>,
+        type_name: TypeName,
+        expr: &'static Expr,
     },
     Member {
-        base: &'a Expr<'a>,
+        base: &'static Expr,
         member: u32,
     },
     PtrMember {
-        base: &'a Expr<'a>,
+        base: &'static Expr,
         member: u32,
     },
-    PostIncr(&'a Expr<'a>),
-    PostDecr(&'a Expr<'a>),
-    Ref(&'a Expr<'a>),
-    Deref(&'a Expr<'a>),
+    PostIncr(&'static Expr),
+    PostDecr(&'static Expr),
+    Ref(&'static Expr),
+    Deref(&'static Expr),
     Ternary {
-        condition: &'a Expr<'a>,
-        if_true: &'a Expr<'a>,
-        if_false: &'a Expr<'a>,
+        condition: &'static Expr,
+        if_true: &'static Expr,
+        if_false: &'static Expr,
     },
     Uninit,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Expr<'a> {
-    pub kind: ExprKind<'a>,
+pub struct Expr {
+    pub kind: ExprKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Declaration<'a> {
-    pub specifiers: &'a [DeclarationSpecifier<'a>],
-    pub declarators: &'a [InitDeclarator<'a>],
+pub struct Declaration {
+    pub specifiers: &'static [DeclarationSpecifier],
+    pub declarators: &'static [InitDeclarator],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum DeclarationSpecifier<'a> {
-    StorageClass(StorageClassSpecifier),
-    TypeSpecifier(TypeSpecifier<'a>),
+pub enum DeclarationSpecifierKind {
+    Extern,
+    Static,
+    Typedef,
+    TypeSpecifier(TypeSpecifier),
     TypeQualifier(TypeQualifier),
     Inline,   // __inline__
     Noreturn, // _Noreturn
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct InitDeclarator<'a> {
-    pub declarator: Declarator<'a>,
-    pub initializer: Option<Initializer<'a>>,
+pub struct DeclarationSpecifier {
+    pub kind: DeclarationSpecifierKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum StorageClassSpecifier {
-    Typedef,
-    Static,
-    // Extern,
-    // ThreadLocal,
-    // Auto,
-    // Register,
+pub struct InitDeclarator {
+    pub declarator: Declarator,
+    pub initializer: Option<Initializer>,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TypeSpecifierKind<'a> {
+pub enum TypeSpecifierKind {
     Void,
     Char,
     Short,
@@ -131,14 +129,14 @@ pub enum TypeSpecifierKind<'a> {
     Double,
     Signed,
     Unsigned,
-    Struct(StructType<'a>),
-    Union(StructType<'a>),
+    Struct(StructType),
+    Union(StructType),
     Ident(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TypeSpecifier<'a> {
-    pub kind: TypeSpecifierKind<'a>,
+pub struct TypeSpecifier {
+    pub kind: TypeSpecifierKind,
     pub loc: CodeLoc,
 }
 
@@ -157,171 +155,179 @@ pub struct TypeQualifier {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct StructType<'a> {
+pub struct StructType {
     pub ident: n32,
-    pub declarations: &'a [StructField<'a>],
+    pub declarations: &'static [StructField],
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct StructField<'a> {
-    pub specifiers: &'a [SpecifierQualifier<'a>],
-    pub declarators: &'a [StructDeclarator<'a>],
+pub struct StructField {
+    pub specifiers: &'static [SpecifierQualifier],
+    pub declarators: &'static [StructDeclarator],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum SpecifierQualifierKind<'a> {
-    TypeSpecifier(TypeSpecifier<'a>),
+pub enum SpecifierQualifierKind {
+    TypeSpecifier(TypeSpecifier),
     TypeQualifier(TypeQualifier),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct SpecifierQualifier<'a> {
-    pub kind: SpecifierQualifierKind<'a>,
+pub struct SpecifierQualifier {
+    pub kind: SpecifierQualifierKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TypeName<'a> {
-    pub specifiers: &'a [SpecifierQualifier<'a>],
-    pub declarator: Option<Declarator<'a>>,
+pub struct TypeName {
+    pub specifiers: &'static [SpecifierQualifier],
+    pub declarator: Option<Declarator>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct StructDeclarator<'a> {
-    pub declarator: Declarator<'a>,
-    pub bit_width: Option<&'a Expr<'a>>,
+pub struct StructDeclarator {
+    pub declarator: Declarator,
+    pub bit_width: Option<&'static Expr>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum DeclaratorKind<'a> {
+pub enum DeclaratorKind {
     Abstract,
     Identifier(u32),
-    Declarator(&'a Declarator<'a>),
+    Declarator(&'static Declarator),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Declarator<'a> {
-    pub kind: DeclaratorKind<'a>,
-    pub derived: &'a [DerivedDeclarator<'a>],
+pub struct Declarator {
+    pub kind: DeclaratorKind,
+    pub derived: &'static [DerivedDeclarator],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum DerivedDeclaratorKind<'a> {
-    Pointer(&'a [TypeQualifier]),
-    Array(ArrayDeclarator<'a>),
-    Function(FunctionDeclarator<'a>),
+pub enum DerivedDeclaratorKind {
+    Pointer(&'static [TypeQualifier]),
+    Array(ArrayDeclarator),
+    Function(FunctionDeclarator),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DerivedDeclarator<'a> {
-    pub kind: DerivedDeclaratorKind<'a>,
+pub struct DerivedDeclarator {
+    pub kind: DerivedDeclaratorKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ArrayDeclarator<'a> {
-    pub qualifiers: TypeQualifier,
-    pub size: ArraySize<'a>,
+pub struct ArrayDeclarator {
+    pub qualifiers: &'static [TypeQualifier],
+    pub size: ArraySize,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FunctionDeclarator<'a> {
-    pub parameters: &'a [ParameterDeclaration<'a>],
+pub struct FunctionDeclarator {
+    pub parameters: &'static [ParameterDeclaration],
     pub varargs: bool,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ArraySizeKind<'a> {
+pub enum ArraySizeKind {
     Unknown,
     VariableUnknown,
-    VariableExpression(&'a Expr<'a>),
-    StaticExpression(&'a Expr<'a>),
+    VariableExpression(&'static Expr),
+    StaticExpression(&'static Expr),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ArraySize<'a> {
-    pub kind: ArraySizeKind<'a>,
+pub struct ArraySize {
+    pub kind: ArraySizeKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ParameterDeclaration<'a> {
-    pub specifiers: &'a [DeclarationSpecifier<'a>],
-    pub declarator: Option<Declarator<'a>>,
+pub struct ParameterDeclaration {
+    pub specifiers: &'static [DeclarationSpecifier],
+    pub declarator: Option<Declarator>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Initializer<'a> {
-    Expr(&'a Expr<'a>),
-    List(&'a [Expr<'a>]), // TODO support initializer list syntax
+pub enum InitializerKind {
+    Expr(&'static Expr),
+    List(&'static [Expr]), // TODO support initializer list syntax
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FunctionDefinition<'a> {
-    pub specifiers: &'a [DeclarationSpecifier<'a>],
-    pub declarator: &'a Declarator<'a>,
-    pub declarations: &'a [Declaration<'a>],
-    pub statements: &'a [Statement<'a>],
+pub struct Initializer {
+    pub kind: InitializerKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Block<'a> {
-    pub stmts: &'a [Statement<'a>],
+pub struct FunctionDefinition {
+    pub specifiers: &'static [DeclarationSpecifier],
+    pub declarator: &'static Declarator,
+    pub declarations: &'static [Declaration],
+    pub statements: &'static [Statement],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum StatementKind<'a> {
-    Declaration(Declaration<'a>),
-    Expr(Expr<'a>),
+pub struct Block {
+    pub stmts: &'static [Statement],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StatementKind {
+    Declaration(Declaration),
+    Expr(Expr),
     Ret,
-    RetVal(Expr<'a>),
+    RetVal(Expr),
     Branch {
-        if_cond: Expr<'a>,
-        if_body: Block<'a>,
-        else_body: Block<'a>,
+        if_cond: Expr,
+        if_body: Block,
+        else_body: Block,
     },
-    Block(Block<'a>),
+    Block(Block),
     For {
-        at_start: Option<Expr<'a>>,
-        condition: Option<Expr<'a>>,
-        post_expr: Option<Expr<'a>>,
-        body: Block<'a>,
+        at_start: Option<Expr>,
+        condition: Option<Expr>,
+        post_expr: Option<Expr>,
+        body: Block,
     },
     ForDecl {
-        decl: Option<Declaration<'a>>,
-        condition: Option<Expr<'a>>,
-        post_expr: Option<Expr<'a>>,
-        body: Block<'a>,
+        decl: Option<Declaration>,
+        condition: Option<Expr>,
+        post_expr: Option<Expr>,
+        body: Block,
     },
     While {
-        condition: Expr<'a>,
-        body: Block<'a>,
+        condition: Expr,
+        body: Block,
     },
     Break,
     Continue,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Statement<'a> {
-    pub kind: StatementKind<'a>,
+pub struct Statement {
+    pub kind: StatementKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum GlobalStatementKind<'a> {
-    Declaration(Declaration<'a>),
-    FunctionDefinition(FunctionDefinition<'a>),
+pub enum GlobalStatementKind {
+    Declaration(Declaration),
+    FunctionDefinition(FunctionDefinition),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct GlobalStatement<'a> {
-    pub kind: GlobalStatementKind<'a>,
+pub struct GlobalStatement {
+    pub kind: GlobalStatementKind,
     pub loc: CodeLoc,
 }
