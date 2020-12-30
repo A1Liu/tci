@@ -11,16 +11,18 @@ mod net_io;
 #[macro_use]
 mod runtime;
 
+// mod clang;
+
 mod assembler;
 mod ast;
 mod buckets;
-mod clang;
 mod commands;
 mod filedb;
 mod interpreter;
 mod lexer;
 mod new_ast;
 mod new_parser;
+mod new_tc_ast;
 mod parser;
 mod preprocessor;
 mod tc_ast;
@@ -29,6 +31,7 @@ mod type_checker;
 #[cfg(test)]
 mod test;
 
+use buckets::Allocator;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
 use core::ops::Deref;

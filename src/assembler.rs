@@ -5,8 +5,8 @@ use crate::runtime::*;
 use crate::tc_ast::*;
 use crate::type_checker::*;
 use crate::util::*;
+use core::mem;
 use core::mem::{align_of, size_of};
-use core::{alloc, mem};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -962,8 +962,7 @@ impl Assembler {
 
         let total_size = file_size + types_size + symbols_size + opcodes_size + data_size;
         let buckets = BucketList::with_capacity(0);
-        let layout = alloc::Layout::from_size_align(total_size, 8).unwrap();
-        let mut frame = buckets.alloc_frame(layout);
+        let mut frame = buckets.frame(total_size).unwrap();
 
         macro_rules! type_mapper {
             () => {

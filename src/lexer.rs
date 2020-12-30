@@ -35,6 +35,7 @@ pub enum TokenKind<'a> {
     Enum,
     Sizeof,
     Typedef,
+    Volatile,
 
     If,
     Else,

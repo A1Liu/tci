@@ -2,10 +2,134 @@ use std::alloc::{alloc, dealloc, Layout, LayoutErr};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::{cmp, mem, ptr, slice, str};
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
+
+pub struct Frame<'a> {
+    pub data: &'a mut [u8],
+    pub bump: AtomicUsize,
+}
+
+pub trait Allocator<'a> {
+    fn add<T>(&self, t: T) -> &'a mut T;
+
+    fn uninit(&self, len: usize) -> Result<&'a mut [u8], LayoutErr>;
+
+    /// Builds array from length and function. Guarantees that each index is initialized
+    /// only once.
+    fn build_array<T, F>(&self, len: usize, f: F) -> Result<&'a mut [T], LayoutErr>
+    where
+        F: FnMut(usize) -> T;
+
+    fn frame(&self, len: usize) -> Result<Frame<'a>, LayoutErr> {
+        let data = self.uninit(len)?;
+        let bump = AtomicUsize::new(0);
+        return Ok(Frame { data, bump });
+    }
+
+    fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T] {
+        let mut vec = vec;
+        let capa = vec.capacity();
+        let array = self
+            .build_array(vec.len(), |idx| unsafe { ptr::read(&vec[idx]) })
+            .unwrap();
+
+        let to_free = vec.as_mut_ptr() as *mut u8;
+        if capa > 0 {
+            unsafe { dealloc(to_free, Layout::array::<T>(capa).unwrap()) };
+        }
+
+        mem::forget(vec);
+        return array;
+    }
+
+    fn add_slice<T>(&self, slice: &[T]) -> &'a mut [T]
+    where
+        T: Clone,
+    {
+        return self
+            .build_array(slice.len(), |idx| slice[idx].clone())
+            .unwrap();
+    }
+
+    fn add_str(&self, string: &str) -> &'a mut str {
+        let string = string.as_bytes();
+        return unsafe { str::from_utf8_unchecked_mut(self.add_slice(string)) };
+    }
+}
+
+impl<'a> Frame<'a> {
+    // This could use &self if the bump were atomic
+    pub fn alloc(&self, layout: Layout) -> *mut u8 {
+        use Ordering::*;
+
+        let mut bump = self.bump.load(Ordering::SeqCst);
+        loop {
+            let bump_ptr = unsafe { self.data.as_ptr().add(bump) };
+
+            let required_offset = bump_ptr.align_offset(layout.align());
+            if required_offset == usize::MAX {
+                panic!("Frame: couldn't get aligned pointer");
+            }
+
+            let aligned = bump + required_offset;
+            let next = aligned + layout.size();
+            if next > self.data.len() {
+                panic!(
+                    "allocated past end of frame: at byte {} of frame with size {}",
+                    next,
+                    self.data.len()
+                );
+            }
+
+            match self.bump.compare_exchange_weak(bump, next, SeqCst, SeqCst) {
+                Ok(val) => {}
+                Err(val) => {
+                    bump = val;
+                    continue;
+                }
+            }
+
+            return &self.data[aligned] as *const u8 as *mut u8;
+        }
+    }
+}
+
+impl<'a> Allocator<'a> for Frame<'a> {
+    fn add<T>(&self, t: T) -> &'a mut T {
+        unsafe {
+            let location = self.alloc(Layout::new::<T>()) as *mut T;
+            ptr::write(location, t);
+            return &mut *location;
+        }
+    }
+
+    fn uninit(&self, len: usize) -> Result<&'a mut [u8], LayoutErr> {
+        let layout = Layout::from_size_align(len, 1)?;
+        unsafe {
+            let block = self.alloc(layout) as *mut u8;
+            return Ok(slice::from_raw_parts_mut(block, len));
+        }
+    }
+
+    fn build_array<T, F>(&self, len: usize, mut f: F) -> Result<&'a mut [T], LayoutErr>
+    where
+        F: FnMut(usize) -> T,
+    {
+        unsafe {
+            let layout = Layout::from_size_align(mem::size_of::<T>() * len, mem::align_of::<T>())?;
+            let block = self.alloc(layout) as *mut T;
+            let mut location = block;
+            for idx in 0..len {
+                ptr::write(location, f(idx));
+                location = location.add(1);
+            }
+            return Ok(slice::from_raw_parts_mut(block, len));
+        }
+    }
+}
 
 #[inline]
 pub fn grow_array(len: usize) -> usize {
@@ -28,11 +152,6 @@ struct Bump {
     next_bump: NonNull<u8>,
 }
 
-pub struct Frame<'a> {
-    pub data: &'a mut [u8],
-    pub bump: usize,
-}
-
 #[repr(C)]
 pub struct BucketList<'a> {
     unused: PhantomData<&'a u8>,
@@ -46,7 +165,22 @@ pub struct BucketListRef<'a> {
 
 impl<'a> BucketListRef<'a> {
     pub unsafe fn dealloc(self) -> Option<Self> {
-        // TODO
+        let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
+        let bucket_align = mem::align_of::<BucketListInner>();
+        let inner_size = cmp::max(bucket_align, mem::size_of::<BucketListInner>());
+        let bucket_size = inner_size + self.data.len;
+        let layout = Layout::from_size_align(bucket_size, bucket_align).unwrap();
+
+        unsafe { dealloc(self.buckets.as_ptr() as *mut u8, layout) };
+
+        if let Some(next) = next {
+            unsafe {
+                return Some(Self {
+                    buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
+                });
+            }
+        }
+
         return None;
     }
 }
@@ -195,15 +329,10 @@ impl<'a> BucketList<'a> {
             };
         }
     }
+}
 
-    pub fn alloc_frame(&self, layout: Layout) -> Frame<'a> {
-        unsafe {
-            let data = slice::from_raw_parts_mut(self.data.alloc(layout), layout.size());
-            return Frame { data, bump: 0 };
-        }
-    }
-
-    pub fn add<T>(&self, t: T) -> &'a mut T {
+impl<'a> Allocator<'a> for BucketList<'a> {
+    fn add<T>(&self, t: T) -> &'a mut T {
         unsafe {
             let location = self.data.alloc(Layout::new::<T>()) as *mut T;
             ptr::write(location, t);
@@ -211,7 +340,7 @@ impl<'a> BucketList<'a> {
         }
     }
 
-    pub fn uninit(&self, len: usize) -> Result<&'a mut [u8], LayoutErr> {
+    fn uninit(&self, len: usize) -> Result<&'a mut [u8], LayoutErr> {
         let layout = Layout::from_size_align(len, 1)?;
         unsafe {
             let block = self.data.alloc(layout) as *mut u8;
@@ -219,7 +348,7 @@ impl<'a> BucketList<'a> {
         }
     }
 
-    pub fn build_array<T, F>(&self, len: usize, mut f: F) -> Result<&'a mut [T], LayoutErr>
+    fn build_array<T, F>(&self, len: usize, mut f: F) -> Result<&'a mut [T], LayoutErr>
     where
         F: FnMut(usize) -> T,
     {
@@ -233,136 +362,6 @@ impl<'a> BucketList<'a> {
             }
             return Ok(slice::from_raw_parts_mut(block, len));
         }
-    }
-
-    pub fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T] {
-        unsafe {
-            let len = vec.len();
-            let layout =
-                Layout::from_size_align_unchecked(mem::size_of::<T>() * len, mem::align_of::<T>());
-            let block = self.data.alloc(layout) as *mut T;
-            let mut location = block;
-            for t in vec {
-                ptr::write(location, t);
-                location = location.add(1);
-            }
-            return slice::from_raw_parts_mut(block, len);
-        }
-    }
-
-    pub fn add_slice<T>(&self, slice: &[T]) -> &'a mut [T]
-    where
-        T: Clone,
-    {
-        let len = slice.len();
-        let (size, align) = (mem::size_of::<T>(), mem::align_of::<T>());
-        let layout = unsafe { Layout::from_size_align_unchecked(size * len, align) };
-        let block = unsafe { self.data.alloc(layout) as *mut T };
-        let mut location = block;
-        for t in slice {
-            unsafe { ptr::write(location, t.clone()) };
-            location = unsafe { location.add(1) };
-        }
-        return unsafe { slice::from_raw_parts_mut(block, len) };
-    }
-
-    pub fn add_str(&self, values: &str) -> &'a mut str {
-        let values = values.as_bytes();
-        return unsafe { str::from_utf8_unchecked_mut(self.add_slice(values)) };
-    }
-}
-
-impl<'a> Frame<'a> {
-    // This could use &self if the bump were atomic
-    pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
-        // todo do alignment stuff here
-        let bump_ptr = unsafe { self.data.as_ptr().add(self.bump) };
-
-        let required_offset = bump_ptr.align_offset(layout.align());
-        if required_offset == usize::MAX {
-            panic!("Frame: couldn't get aligned pointer");
-        }
-
-        self.bump += required_offset;
-        let bump = self.bump;
-        self.bump += layout.size();
-        if self.bump > self.data.len() {
-            panic!(
-                "allocated past end of frame: at byte {} of frame with size {}",
-                self.bump,
-                self.data.len()
-            );
-        }
-
-        &mut self.data[bump] as *mut u8
-    }
-
-    pub fn add<T>(&mut self, t: T) -> &'a mut T {
-        unsafe {
-            let location = self.alloc(Layout::new::<T>()) as *mut T;
-            ptr::write(location, t);
-            return &mut *location;
-        }
-    }
-
-    pub fn uninit(&mut self, len: usize) -> Result<&'a mut [u8], LayoutErr> {
-        let layout = Layout::from_size_align(len, 1)?;
-        unsafe {
-            let block = self.alloc(layout) as *mut u8;
-            return Ok(slice::from_raw_parts_mut(block, len));
-        }
-    }
-
-    pub fn build_array<T, F>(&mut self, len: usize, mut f: F) -> Result<&'a mut [T], LayoutErr>
-    where
-        F: FnMut(usize) -> T,
-    {
-        unsafe {
-            let layout = Layout::from_size_align(mem::size_of::<T>() * len, mem::align_of::<T>())?;
-            let block = self.alloc(layout) as *mut T;
-            let mut location = block;
-            for idx in 0..len {
-                ptr::write(location, f(idx));
-                location = location.add(1);
-            }
-            return Ok(slice::from_raw_parts_mut(block, len));
-        }
-    }
-
-    pub fn add_array<T>(&mut self, vec: Vec<T>) -> &'a mut [T] {
-        unsafe {
-            let len = vec.len();
-            let layout =
-                Layout::from_size_align_unchecked(mem::size_of::<T>() * len, mem::align_of::<T>());
-            let block = self.alloc(layout) as *mut T;
-            let mut location = block;
-            for t in vec {
-                ptr::write(location, t);
-                location = location.add(1);
-            }
-            return slice::from_raw_parts_mut(block, len);
-        }
-    }
-
-    pub fn add_slice<T>(&mut self, slice: &[T]) -> &'a mut [T]
-    where
-        T: Clone,
-    {
-        let len = slice.len();
-        let (size, align) = (mem::size_of::<T>(), mem::align_of::<T>());
-        let layout = unsafe { Layout::from_size_align_unchecked(size * len, align) };
-        let block = self.alloc(layout) as *mut T;
-        let mut location = block;
-        for t in slice {
-            unsafe { ptr::write(location, t.clone()) };
-            location = unsafe { location.add(1) };
-        }
-        return unsafe { slice::from_raw_parts_mut(block, len) };
-    }
-
-    pub fn add_str(&mut self, values: &str) -> &'a mut str {
-        let values = values.as_bytes();
-        return unsafe { str::from_utf8_unchecked_mut(self.add_slice(values)) };
     }
 }
 

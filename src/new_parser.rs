@@ -10,6 +10,7 @@ pub struct ParseEnv {
     pub locs: Vec<CodeLoc>,
     pub buckets_begin: BucketListRef<'static>,
     pub buckets: BucketListRef<'static>,
+    pub tree: Vec<GlobalStatement>,
 }
 
 impl ParseEnv {
@@ -21,6 +22,7 @@ impl ParseEnv {
             symbol_is_type: RefCell::new(vec![HashMap::new()]),
             locs: locs.iter().map(|tok| tok.loc).collect(),
             buckets_begin: buckets,
+            tree: Vec::new(),
             buckets,
         }
     }
@@ -446,9 +448,9 @@ rule specifier_qualifier_qualifier0() -> SpecifierQualifier = q:type_qualifier()
 }
 
 rule type_qualifier() -> TypeQualifier =
-    pos:position!() [TokenKind::Const] {
+    pos:position!() [TokenKind::Volatile] {
         TypeQualifier {
-            kind: TypeQualifierKind::Const,
+            kind: TypeQualifierKind::Volatile,
             loc: env.locs[pos],
         }
     }

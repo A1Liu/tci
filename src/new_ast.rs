@@ -142,9 +142,9 @@ pub struct TypeSpecifier {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TypeQualifierKind {
-    Const,
+    // Const,
     Volatile,
-    Restrict,
+    // Restrict,
     Atomic,
 }
 
