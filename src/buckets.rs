@@ -171,14 +171,12 @@ impl<'a> BucketListRef<'a> {
         let bucket_size = inner_size + self.data.len;
         let layout = Layout::from_size_align(bucket_size, bucket_align).unwrap();
 
-        unsafe { dealloc(self.buckets.as_ptr() as *mut u8, layout) };
+        dealloc(self.buckets.as_ptr() as *mut u8, layout);
 
         if let Some(next) = next {
-            unsafe {
-                return Some(Self {
-                    buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
-                });
-            }
+            return Some(Self {
+                buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
+            });
         }
 
         return None;
@@ -361,6 +359,45 @@ impl<'a> Allocator<'a> for BucketList<'a> {
                 location = location.add(1);
             }
             return Ok(slice::from_raw_parts_mut(block, len));
+        }
+    }
+}
+
+pub struct BucketListFactory {
+    pub begin: BucketListRef<'static>,
+    pub current: BucketListRef<'static>,
+}
+
+impl BucketListFactory {
+    pub fn new() -> Self {
+        let begin = BucketList::new();
+        Self {
+            begin,
+            current: begin,
+        }
+    }
+
+    pub fn with_capacity(capa: usize) -> Self {
+        let begin = BucketList::with_capacity(capa);
+        Self {
+            begin,
+            current: begin,
+        }
+    }
+
+    pub fn get_ref<'a>(&'a mut self) -> BucketListRef<'a> {
+        while let Some(current) = self.current.next() {
+            self.current = current;
+        }
+
+        return self.current;
+    }
+}
+
+impl Drop for BucketListFactory {
+    fn drop(&mut self) {
+        while let Some(b) = unsafe { self.begin.dealloc() } {
+            self.begin = b;
         }
     }
 }

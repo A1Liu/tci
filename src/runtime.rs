@@ -316,7 +316,7 @@ impl VarBuffer {
         return buffer;
     }
 
-    pub fn write_to_ref<'a>(&self, mut frame: Frame<'a>) -> VarBufferRef<'a> {
+    pub fn write_to_ref<'a>(&self, frame: Frame<'a>) -> VarBufferRef<'a> {
         let data = frame.add_slice(&self.data);
         let vars = frame.add_slice(&self.vars);
         return VarBufferRef { data, vars };
