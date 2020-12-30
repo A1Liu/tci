@@ -41,7 +41,88 @@ use interpreter::Program;
 use net_io::WebServerError;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use util::*;
+
+fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
+    let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
+    let mut buckets_begin = buckets;
+    let mut tokens = lexer::TokenDb::new();
+    let mut errors: Vec<Error> = Vec::new();
+
+    let files_list = env.vec();
+    let files = files_list.iter();
+    files.for_each(|&id| {
+        let result = lexer::lex_file(buckets, &mut tokens, env, id);
+        match result {
+            Err(err) => {
+                errors.push(err);
+            }
+            Ok(_) => {}
+        }
+    });
+
+    if errors.len() != 0 {
+        while let Some(b) = unsafe { buckets_begin.dealloc() } {
+            buckets_begin = b;
+        }
+
+        return Err(errors);
+    }
+
+    while let Some(n) = buckets.next() {
+        buckets = n;
+    }
+    buckets = buckets.force_next();
+
+    let tokens: HashMap<_, _> = tokens
+        .keys()
+        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
+            Ok(toks) => {
+                if let Some(n) = buckets.next() {
+                    buckets = n;
+                }
+
+                Some((file, toks))
+            }
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        })
+        .collect();
+
+    let trees: HashMap<_, _> = tokens
+        .iter()
+        .filter_map(|(file, toks)| match new_parser::parse(&toks) {
+            Ok(env) => {
+                if let Some(n) = buckets.next() {
+                    buckets = n;
+                }
+
+                Some((file, env))
+            }
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        })
+        .collect();
+
+    if errors.len() != 0 {
+        while let Some(b) = unsafe { buckets_begin.dealloc() } {
+            buckets_begin = b;
+        }
+
+        return Err(errors);
+    }
+
+    while let Some(b) = unsafe { buckets_begin.dealloc() } {
+        buckets_begin = b;
+    }
+
+    return Ok(());
+}
 
 fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());

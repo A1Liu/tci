@@ -212,6 +212,7 @@ pub enum DerivedDeclaratorKind {
     Pointer(&'static [TypeQualifier]),
     Array(ArrayDeclarator),
     Function(FunctionDeclarator),
+    EmptyFunction,
 }
 
 #[derive(Debug, Clone, Copy)]

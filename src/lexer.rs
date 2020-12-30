@@ -603,7 +603,7 @@ impl<'b> Lexer<'b> {
         }
 
         match data[begin] {
-            x if (x >= b'a' && x <= b'z') || x == b'_' => {
+            x if (x >= b'A' && x <= b'Z') || (x >= b'a' && x <= b'z') || x == b'_' => {
                 while self.peek_check(data, is_ident_char) {
                     self.current += 1;
                 }
@@ -614,20 +614,7 @@ impl<'b> Lexer<'b> {
                 }
 
                 let id = symbols.translate_add(begin..self.current, self.file);
-                if word.ends_with("_t") || word == "va_list" {
-                    ret_tok!(TokenKind::TypeIdent(id));
-                } else {
-                    ret_tok!(TokenKind::Ident(id));
-                }
-            }
-
-            x if (x >= b'A' && x <= b'Z') => {
-                while self.peek_check(data, is_ident_char) {
-                    self.current += 1;
-                }
-
-                let id = symbols.translate_add(begin..self.current, self.file);
-                ret_tok!(TokenKind::TypeIdent(id));
+                ret_tok!(TokenKind::Ident(id));
             }
 
             x if (x >= b'0' && x <= b'9') => {

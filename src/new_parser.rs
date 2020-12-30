@@ -14,13 +14,13 @@ pub struct ParseEnv {
 }
 
 impl ParseEnv {
-    pub fn new(locs: &[Token]) -> Self {
+    pub fn new(toks: &[Token]) -> Self {
         let buckets = BucketList::new();
 
         Self {
             // TODO This is a hack to work around stuff in rust-peg
             symbol_is_type: RefCell::new(vec![HashMap::new()]),
-            locs: locs.iter().map(|tok| tok.loc).collect(),
+            locs: toks.iter().map(|tok| tok.loc).collect(),
             buckets_begin: buckets,
             tree: Vec::new(),
             buckets,
@@ -71,6 +71,25 @@ pub fn concat<E>(mut a: Vec<E>, b: Vec<E>) -> Vec<E> {
     return a;
 }
 
+pub fn parse(toks: &[Token<'static>]) -> Result<ParseEnv, Error> {
+    let mut parser = ParseEnv::new(toks);
+    let toks: Vec<_> = toks.iter().map(|tok| tok.kind).collect();
+    match c_parser::translation_unit(&toks, &mut parser) {
+        Ok(tree) => {
+            parser.tree = tree;
+        }
+        Err(err) => {
+            return Err(error!(
+                &format!("expected set: {}", err.expected),
+                parser.locs[err.location],
+                format!("unexpected token '{:?}' found here", toks[err.location])
+            ));
+        }
+    }
+
+    return Ok(parser);
+}
+
 peg::parser! {
 
 // Translated from https://github.com/vickenty/lang-c/blob/master/grammar.rustpeg
@@ -96,10 +115,7 @@ rule cs0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ** [TokenK
     }
 }
 
-rule cs1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) =
-    pos:position!() v:(x() ** [TokenKind::Comma]) [TokenKind::Comma] last:x() pos2:position!() {
-    let mut v = v;
-    v.push(last);
+rule cs1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ++ [TokenKind::Comma]) pos2:position!() {
     (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
 }
 
@@ -231,7 +247,9 @@ rule declaration1() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc)
     declaration_seq(<decl_specs_unique()>, <declaration2()>)
 
 rule declaration2() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
-    declaration_seq(<declaration_typedef()>, <declaration_typedef_tail()>)
+    declaration_seq(<declaration_typedef()>, <declaration_typedef_tail()>) /
+    declaration_seq(<declaration_unique_type()>, <declaration_tail(<decl_specs_unique()>)>) /
+    declaration_seq(<declaration_nonunique_type()>, <declaration_tail(<decl_specs_nonunique()>)>)
 
 
 // What can follow a type specifier keyword or typename in a declaration
@@ -499,6 +517,12 @@ rule derived_declarator() -> DerivedDeclarator  =
             kind: DerivedDeclaratorKind::Function(f),
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
+    } /
+    pos:position!() [TokenKind::LParen] pos2:position!() [TokenKind::RParen] {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::EmptyFunction,
+            loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
     }
 
 rule array_declarator() -> ArrayDeclarator =
@@ -531,20 +555,19 @@ rule array_declarator() -> ArrayDeclarator =
 
 rule function_declarator() -> FunctionDeclarator =
     params:cs1(<parameter_declaration()>) pos:position!() varargs:([TokenKind::Comma] [TokenKind::DotDotDot])?
-{
-    let (params, mut loc) = params;
-    let varargs = varargs.is_some();
-    if varargs {
-        loc = l_from(loc, env.locs[pos + 1]);
-    }
+    {
+        let (params, mut loc) = params;
+        let varargs = varargs.is_some();
+        if varargs {
+            loc = l_from(loc, env.locs[pos + 1]);
+        }
 
-    FunctionDeclarator {
-        parameters: env.buckets.add_array(params),
-        varargs,
-        loc,
+        FunctionDeclarator {
+            parameters: env.buckets.add_array(params),
+            varargs,
+            loc,
+        }
     }
-}
-
 
 rule pointer() -> DerivedDeclarator = pos:position!() [TokenKind::Star] q:list0(<type_qualifier()>) {
     let (q, mut end_loc) = q;
@@ -650,6 +673,12 @@ rule derived_abstract_declarator() -> DerivedDeclarator =
             kind: DerivedDeclaratorKind::Array(a),
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
+    } /
+    pos:position!() [TokenKind::LParen] a:abstract_function_declarator() pos2:position!() [TokenKind::RParen] {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::Function(a),
+            loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
     }
 
 rule abstract_array_declarator() -> ArrayDeclarator =
@@ -674,6 +703,28 @@ rule abstract_array_declarator() -> ArrayDeclarator =
                 loc: e.loc,
             },
             loc: l_from(loc, e.loc),
+        }
+    }
+
+rule abstract_function_declarator() -> FunctionDeclarator =
+    p:cs1(<parameter_declaration()>) pos:position!() varargs:([TokenKind::Comma] [TokenKind::DotDotDot])? {
+        let (p, mut loc) = p;
+        let varargs = varargs.is_some();
+        if varargs {
+            loc = l_from(loc, env.locs[pos + 1]);
+        }
+
+        FunctionDeclarator {
+            parameters: env.buckets.add_array(p),
+            varargs,
+            loc,
+        }
+    } /
+    pos:position!() {
+        FunctionDeclarator {
+            parameters: &[],
+            varargs: false,
+            loc: env.locs[pos],
         }
     }
 

@@ -60,8 +60,9 @@ impl TCPrimType {
 pub enum TCOpcodeKind {
     Allocate(u32),
     Drop {
+        // go_back indicates how many instructions to go back to find the associated allocate
         go_back: u32,
-    }, // go_back indicates how many instructions to go back to find the associated allocate
+    },
     Goto(i32), // a user-generated goto
     BranchGoto {
         // A conditional goto, always going forwards; not checked by assembler
@@ -73,6 +74,47 @@ pub enum TCOpcodeKind {
     Expr(TCExpr),
     Ret,
     RetVal(TCExpr),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCOpcode {
+    pub kind: TCOpcodeKind,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[serde(tag = "kind", content = "data")]
+pub enum TCTypeKind {
+    I32, // int
+    U32, // unsigned int
+    U64, // unsigned long
+    I64, // long
+    I8,  // char
+    U8,  // unsigned char
+    Void,
+    Ident {
+        ident: u32,
+        sa: SizeAlign,
+    },
+    Function {
+        ret: &'static TCType,
+        params: &'static [TCType],
+    },
+}
+
+#[derive(Debug, PartialEq, Hash, Eq, Clone, Copy, Serialize)]
+pub struct TCType {
+    pub kind: TCTypeKind,
+    pub pointer_count: u32,
+    pub array_kind: TCArrayKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[serde(tag = "kind", content = "data")]
+pub enum TCArrayKind {
+    None,
+    Fixed(u32),
+    // Fixed2d { rows: u32, cols: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]

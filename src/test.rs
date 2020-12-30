@@ -2,15 +2,15 @@ use crate::filedb::*;
 use crate::interpreter::Runtime;
 use crate::runtime::*;
 use crate::util::*;
-use crate::{compile, emit_err};
+use crate::{compile, emit_err, new_compile};
 use core::mem;
-use std::fs::read_to_string;
+// use std::fs::read_to_string;
 
 fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
 
-    let program = match compile(files) {
+    let program = match new_compile(files) {
         Ok(program) => program,
         Err(errs) => {
             emit_err(&errs, &files, &mut writer);
@@ -18,42 +18,45 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
             panic!();
         }
     };
+
     mem::drop(files);
-    for (idx, op) in program.ops.iter().enumerate() {
-        println!("op {}: {:?}", idx, op);
-    }
+    panic!();
 
-    let mut runtime = Runtime::new(program, StringArray::new());
+    // for (idx, op) in program.ops.iter().enumerate() {
+    //     println!("op {}: {:?}", idx, op);
+    // }
 
-    let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
-    let code = match diag.status {
-        RuntimeStatus::Exited(code) => code,
-        RuntimeStatus::ErrorExited(err) => {
-            println!("error is: {:?}", err);
-            1
-        }
-        x => panic!("runtime status is: {:?}", x),
-    };
+    // let mut runtime = Runtime::new(program, StringArray::new());
 
-    println!("return code: {}", code);
-    let output = writer.into_string();
+    // let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
+    // let code = match diag.status {
+    //     RuntimeStatus::Exited(code) => code,
+    //     RuntimeStatus::ErrorExited(err) => {
+    //         println!("error is: {:?}", err);
+    //         1
+    //     }
+    //     x => panic!("runtime status is: {:?}", x),
+    // };
 
-    if code != 0 {
-        println!("{}", output);
-        println!("pc: {}", runtime.pc());
-        panic!();
-    }
+    // println!("return code: {}", code);
+    // let output = writer.into_string();
 
-    println!("{}", output);
-    match read_to_string(output_file) {
-        Ok(expected) => {
-            if output != expected.replace("\r\n", "\n") {
-                println!("left: {:?}\nright: {:?}", output, expected);
-                panic!();
-            }
-        }
-        Err(_) => {}
-    }
+    // if code != 0 {
+    //     println!("{}", output);
+    //     println!("pc: {}", runtime.pc());
+    //     panic!();
+    // }
+
+    // println!("{}", output);
+    // match read_to_string(output_file) {
+    //     Ok(expected) => {
+    //         if output != expected.replace("\r\n", "\n") {
+    //             println!("left: {:?}\nright: {:?}", output, expected);
+    //             panic!();
+    //         }
+    //     }
+    //     Err(_) => {}
+    // }
 }
 
 fn test_file_compile_should_fail(filename: &str) {
@@ -160,4 +163,4 @@ gen_test_should_succeed!(
     ("statics/", statics, main)
 );
 
-gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
+// gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

@@ -147,6 +147,14 @@ impl Into<ops::Range<usize>> for CodeLoc {
 
 #[inline]
 pub fn l_from(loc1: CodeLoc, loc2: CodeLoc) -> CodeLoc {
+    if loc1 == NO_FILE {
+        return loc2;
+    }
+
+    if loc2 == NO_FILE {
+        return loc1;
+    }
+
     debug_assert_eq!(loc1.file, loc2.file);
     l(loc1.start, loc2.end, loc1.file)
 }
