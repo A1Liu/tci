@@ -29,6 +29,7 @@ const BasicEditor = () => {
   const files = useSelector((state) => state.files);
   const debugging = useSelector((state) => state.debugging);
   const currentCodeLoc = useSelector((state) => state.currentCodeLoc);
+  const message = useSelector((state) => state.message);
   const fileNames = useSelector((state) => state.fileNames);
 
   const codeLocRef = useRef(undefined);
@@ -105,15 +106,17 @@ const BasicEditor = () => {
       monacoRef.current.editor.setModelMarkers(model, currentFile, []);
 
     marker.current = 1;
-    // Severities: Error
+
+    // Severities: Hint=1, Info=2, Warning=4, Error=8;
     monacoRef.current.editor.setModelMarkers(model, currentFile, [
       {
         startLineNumber: rowStart,
         startColumn: columnStart,
         endLineNumber: rowEnd,
         endColumn: columnEnd,
-        message: "bruh",
-        severity: 5,
+        message: message?.message ?? "current position",
+        code: message?.short_name ?? "",
+        severity: message?.message ? 5 : 2,
       },
     ]);
   };
