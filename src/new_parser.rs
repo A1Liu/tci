@@ -206,7 +206,8 @@ rule atom() -> Expr =
             loc,
         }
     } /
-    pos:position!() [TokenKind::LParen] v:(expr() ** [TokenKind::Comma]) pos2:position!() [TokenKind::RParen] {
+    pos:position!() [TokenKind::LParen] v:cs1(<expr()>) pos2:position!() [TokenKind::RParen] {
+        let (v, loc) = v;
         Expr {
             kind: ExprKind::ParenList(env.buckets.add_array(v)),
             loc: l_from(env.locs[pos], env.locs[pos2]),
@@ -222,6 +223,22 @@ rule expr() -> Expr = precedence! {
     x:(@) [TokenKind::Dash] y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Sub, x, y) }
+    }
+    --
+    x:(@) [TokenKind::LParen] c:cs0(<expr()>) pos:position!() [TokenKind::RParen] {
+        let (c, _) = c;
+        let loc = l_from(x.loc, env.locs[pos]);
+        let function = env.buckets.add(x);
+        let params = env.buckets.add_array(c);
+        Expr { loc, kind: ExprKind::Call { function, params } }
+    }
+    x:(@) pos:position!() [TokenKind::DashDash] {
+        let loc = l_from(x.loc, env.locs[pos]);
+        Expr { loc, kind: ExprKind::PostDecr(env.buckets.add(x)) }
+    }
+    x:(@) pos:position!() [TokenKind::PlusPlus] {
+        let loc = l_from(x.loc, env.locs[pos]);
+        Expr { loc, kind: ExprKind::PostIncr(env.buckets.add(x)) }
     }
     --
     n:atom() { n }
@@ -388,7 +405,15 @@ rule type_specifier_unique() -> TypeSpecifier =
             kind: TypeSpecifierKind::Void,
             loc: env.locs[pos],
         }
+    } /
+    t:typedef_name() {
+        let (t, loc) = t;
+        TypeSpecifier {
+            kind: TypeSpecifierKind::Ident(t),
+            loc,
+        }
     }
+
 
 rule type_specifier_nonunique() -> TypeSpecifier =
     pos:position!() [TokenKind::Char] {
@@ -767,7 +792,14 @@ pub rule statement() -> Statement =
     expression_statement() /
     scoped(<selection_statement()>) /
     scoped(<iteration_statement()>) /
-    jump_statement()
+    jump_statement() /
+    pos:position!() [TokenKind::Semicolon] {
+        let loc = env.locs[pos];
+        Statement {
+            kind: StatementKind::Block(Block { stmts: &[], loc }),
+            loc,
+        }
+    }
 
 ////
 // 6.8.1 Labeled statements
@@ -811,7 +843,7 @@ rule compound_statement() -> Block =
     let (block, loc) = b;
 
     Block{
-        stmts: env.buckets.add(block),
+        stmts: env.buckets.add_array(block),
         loc: l_from(env.locs[pos], env.locs[pos2]),
     }
 }

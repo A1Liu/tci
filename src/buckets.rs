@@ -13,7 +13,9 @@ pub struct Frame<'a> {
 }
 
 pub trait Allocator<'a> {
-    fn add<T>(&self, t: T) -> &'a mut T;
+    fn add<T>(&self, t: T) -> &'a mut T
+    where
+        T: Copy;
 
     fn uninit(&self, len: usize) -> Result<&'a mut [u8], LayoutErr>;
 
@@ -21,7 +23,8 @@ pub trait Allocator<'a> {
     /// only once.
     fn build_array<T, F>(&self, len: usize, f: F) -> Result<&'a mut [T], LayoutErr>
     where
-        F: FnMut(usize) -> T;
+        F: FnMut(usize) -> T,
+        T: Copy;
 
     fn frame(&self, len: usize) -> Result<Frame<'a>, LayoutErr> {
         let data = self.uninit(len)?;
@@ -29,7 +32,10 @@ pub trait Allocator<'a> {
         return Ok(Frame { data, bump });
     }
 
-    fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T] {
+    fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T]
+    where
+        T: Copy,
+    {
         let mut vec = vec;
         let capa = vec.capacity();
         let array = self
@@ -47,7 +53,7 @@ pub trait Allocator<'a> {
 
     fn add_slice<T>(&self, slice: &[T]) -> &'a mut [T]
     where
-        T: Clone,
+        T: Copy,
     {
         return self
             .build_array(slice.len(), |idx| slice[idx].clone())

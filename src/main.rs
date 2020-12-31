@@ -23,6 +23,8 @@ mod lexer;
 mod new_ast;
 mod new_parser;
 mod new_tc_ast;
+mod new_tc_structs;
+mod new_type_checker;
 mod parser;
 mod preprocessor;
 mod tc_ast;

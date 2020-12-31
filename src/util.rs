@@ -673,16 +673,21 @@ impl BuildHasher for DetState {
     }
 }
 
-pub enum HashRefSlot<Key, Value> {
+#[derive(Clone, Copy)]
+pub enum HashRefSlot<Key, Value>
+where
+    Key: Copy,
+    Value: Copy,
+{
     Some(Key, Value),
     None,
-    // TODO add Tomb variant and remove operation?
 }
 
 #[derive(Clone, Copy)]
 pub struct HashRef<'a, Key, Value, State = DetState>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Copy,
+    Value: Copy,
     State: BuildHasher,
 {
     pub slots: &'a [HashRefSlot<Key, Value>],
@@ -692,8 +697,8 @@ where
 
 impl<'a, Key, Value> HashRef<'a, Key, Value, DetState>
 where
-    Key: Eq + Hash + Clone,
-    Value: Clone,
+    Key: Eq + Hash + Copy,
+    Value: Copy,
 {
     pub fn new<I>(frame: &mut Frame<'a>, capacity: usize, data: I) -> Self
     where
@@ -741,7 +746,8 @@ where
 
 impl<'a, Key, Value, State> HashRef<'a, Key, Value, State>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Copy,
+    Value: Copy,
     State: BuildHasher,
 {
     #[inline]
@@ -799,14 +805,19 @@ where
     }
 }
 
-pub struct HashRefIter<'a, Key, Value> {
+pub struct HashRefIter<'a, Key, Value>
+where
+    Key: Copy,
+    Value: Copy,
+{
     pub slots: &'a [HashRefSlot<Key, Value>],
     pub slot_idx: usize,
 }
 
 impl<'a, Key, Value> Iterator for HashRefIter<'a, Key, Value>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Copy,
+    Value: Copy,
 {
     type Item = (&'a Key, &'a Value);
 
@@ -826,8 +837,8 @@ where
 
 impl<'a, Key, Value, State> fmt::Debug for HashRef<'a, Key, Value, State>
 where
-    Key: Eq + Hash + fmt::Debug,
-    Value: fmt::Debug,
+    Key: Eq + Hash + Copy + fmt::Debug,
+    Value: fmt::Debug + Copy,
     State: BuildHasher,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -837,8 +848,8 @@ where
 
 impl<'a, Key, Value, State> Serialize for HashRef<'a, Key, Value, State>
 where
-    Key: Eq + Hash + Serialize,
-    Value: Serialize,
+    Key: Eq + Hash + Copy + Serialize,
+    Value: Copy + Serialize,
     State: BuildHasher,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

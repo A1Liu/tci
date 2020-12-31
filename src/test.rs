@@ -20,7 +20,6 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     };
 
     mem::drop(files);
-    panic!();
 
     // for (idx, op) in program.ops.iter().enumerate() {
     //     println!("op {}: {:?}", idx, op);

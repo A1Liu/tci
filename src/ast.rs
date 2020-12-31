@@ -101,14 +101,14 @@ pub struct DeclReceiver<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct InnerStructDecl<'a> {
     pub decl_type: ASTType<'a>,
     pub recv: DeclReceiver<'a>,
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ParamKind<'a> {
     StructLike {
         decl_type: ASTType<'a>,
@@ -122,7 +122,7 @@ pub enum ParamKind<'a> {
     Vararg,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ParamDecl<'a> {
     pub kind: ParamKind<'a>,
     pub loc: CodeLoc,
@@ -145,7 +145,7 @@ pub struct Decl<'a> {
     pub expr: Expr<'a>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum GlobalStmtKind<'a> {
     Func {
         // TODO func declaration span separate from global_stmt.span
@@ -173,7 +173,7 @@ pub enum GlobalStmtKind<'a> {
     PragmaEnableBuiltins,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct GlobalStmt<'a> {
     pub kind: GlobalStmtKind<'a>,
     pub loc: CodeLoc,
@@ -201,7 +201,7 @@ pub struct ASTType<'a> {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum StmtKind<'a> {
     Decl {
         decl_type: ASTType<'a>,
@@ -238,7 +238,7 @@ pub enum StmtKind<'a> {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Stmt<'a> {
     pub kind: StmtKind<'a>,
     pub loc: CodeLoc,

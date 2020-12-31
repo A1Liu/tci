@@ -4,6 +4,13 @@ use crate::util::*;
 use serde::Serialize;
 // use std::io::Write;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TCIdent {
+    GlobalIdent(u32),
+    ScopedIdent { scope: CodeLoc, ident: u32 },
+    Anonymous(CodeLoc),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
 pub struct SizeAlign {
     pub size: u32,
@@ -58,7 +65,11 @@ impl TCPrimType {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCOpcodeKind {
-    Allocate(u32),
+    Allocate {
+        var_type: TCType,
+        is_static: bool,
+    },
+    Label(u32),
     Drop {
         // go_back indicates how many instructions to go back to find the associated allocate
         go_back: u32,
@@ -99,6 +110,7 @@ pub enum TCTypeKind {
     Function {
         ret: &'static TCType,
         params: &'static [TCType],
+        varargs: bool,
     },
 }
 
@@ -216,4 +228,41 @@ pub struct TCAssignTarget {
     pub target_loc: CodeLoc,
     pub target_size: u32,
     pub offset: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TCTypedef {
+    pub typedef: TCType,
+    pub defn_idx: u32,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCFuncType {
+    return_type: TCType,
+    param_types: &'static [TCType],
+    varargs: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCVar {
+    pub is_static: bool,
+    pub decl_type: TCType,
+    pub var_offset: i16, // The offset from the frame pointer for this variable
+    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StorageClass {
+    Extern,
+    Static,
+    Default,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCGlobalVar {
+    pub storage_class: StorageClass,
+    pub decl_type: TCType,
+    pub var_offset: u32, // The offset from the frame pointer for this variable
+    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
 }
