@@ -119,7 +119,7 @@ pub enum TCTypeKind {
 #[derive(Debug, Clone, Copy, Hash, Serialize)]
 pub struct TCType {
     pub kind: TCTypeKind,
-    pub typedef: n32,
+    pub typedef: (n32, CodeLoc),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
@@ -232,13 +232,6 @@ pub struct TCAssignTarget {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TCTypedef {
-    pub typedef: TCType,
-    pub defn_idx: u32,
-    pub loc: CodeLoc,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub struct TCFuncType {
     return_type: TCType,
     param_types: &'static [TCType],
@@ -280,7 +273,7 @@ pub struct TCFunction {
 
 pub struct TranslationUnit {
     pub buckets: BucketListRef<'static>,
-    pub typedefs: HashMap<(u32, CodeLoc), TCTypedef>,
+    pub typedefs: HashMap<(u32, CodeLoc), TCType>,
     pub variables: HashMap<u32, TCGlobalVar>,
     pub functions: HashMap<u32, TCFunction>,
 }

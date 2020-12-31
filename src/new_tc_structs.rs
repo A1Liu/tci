@@ -1,6 +1,12 @@
 use crate::new_tc_ast::*;
 use crate::util::*;
 
+pub struct GlobalEnv {
+    pub tu: TranslationUnit,
+    pub typedefs: HashMap<u32, (TCType, CodeLoc)>,
+    pub builtins_enabled: bool,
+}
+
 pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,
     pub gotos: Vec<u32>,
@@ -17,6 +23,16 @@ pub struct LocalTypeEnv {
     pub cases: Option<HashMap<TCExpr, u32>>,
     pub parent: *const LocalTypeEnv,
     pub decl_idx: i16,
+}
+
+impl GlobalEnv {
+    pub fn new() -> Self {
+        GlobalEnv {
+            tu: TranslationUnit::new(),
+            typedefs: HashMap::new(),
+            builtins_enabled: false,
+        }
+    }
 }
 
 impl LocalTypeEnv {
