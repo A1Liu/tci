@@ -119,7 +119,7 @@ pub struct InitDeclarator {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TypeSpecifierKind {
+pub enum TypeSpecifier {
     Void,
     Char,
     Short,
@@ -132,12 +132,6 @@ pub enum TypeSpecifierKind {
     Struct(StructType),
     Union(StructType),
     Ident(u32),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct TypeSpecifier {
-    pub kind: TypeSpecifierKind,
-    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]

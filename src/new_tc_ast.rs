@@ -96,7 +96,7 @@ pub struct TCOpcode {
 
 #[derive(Debug, Clone, Copy, Hash, Serialize)]
 #[serde(tag = "kind", content = "data")]
-pub enum TCTypeKind {
+pub enum TCType {
     I32, // int
     U32, // unsigned int
     U64, // unsigned long
@@ -114,12 +114,10 @@ pub enum TCTypeKind {
         values: &'static TCType,
         count: u32,
     },
-}
-
-#[derive(Debug, Clone, Copy, Hash, Serialize)]
-pub struct TCType {
-    pub kind: TCTypeKind,
-    pub typedef: (n32, CodeLoc),
+    Typedef {
+        refers_to: &'static TCType,
+        typedef: (n32, CodeLoc),
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
@@ -250,6 +248,7 @@ pub struct TCVar {
 pub enum StorageClass {
     Extern,
     Static,
+    Typedef,
     Default,
 }
 

@@ -325,12 +325,17 @@ rule declaration_typedef() -> (Vec<DeclarationSpecifier>, CodeLoc) =
 rule declaration_typedef0() -> DeclarationSpecifier =
     s:storage_class_typedef() { s }
 
-rule decl_spec_unique_type0() -> DeclarationSpecifier = s:type_specifier_unique() {
-    DeclarationSpecifier { loc: s.loc, kind: DeclarationSpecifierKind::TypeSpecifier(s) }
+rule decl_spec_unique_type0() -> DeclarationSpecifier =
+    pos:position!() s:type_specifier_unique() pos2:position!()
+{
+    DeclarationSpecifier {
+        loc: l_from(env.locs[pos], env.locs[pos2 - 1]),
+        kind: DeclarationSpecifierKind::TypeSpecifier(s)
+    }
 }
 
-rule decl_spec_nonunique_type0() -> DeclarationSpecifier = s:type_specifier_nonunique() {
-    DeclarationSpecifier { loc: s.loc, kind: DeclarationSpecifierKind::TypeSpecifier(s) }
+rule decl_spec_nonunique_type0() -> DeclarationSpecifier = pos:position!() s:type_specifier_nonunique() {
+    DeclarationSpecifier { loc: env.locs[pos], kind: DeclarationSpecifierKind::TypeSpecifier(s) }
 }
 
 rule declaration_init_declarators() -> (Vec<InitDeclarator>, CodeLoc) = cs0(<init_declarator()>)
@@ -399,86 +404,41 @@ rule storage_class_typedef() -> DeclarationSpecifier =
 ////
 
 rule type_specifier_unique() -> TypeSpecifier =
-    pos:position!() [TokenKind::Void] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Void,
-            loc: env.locs[pos],
-        }
-    } /
+    pos:position!() [TokenKind::Void] { TypeSpecifier::Void } /
     t:typedef_name() {
         let (t, loc) = t;
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Ident(t),
-            loc,
-        }
+        TypeSpecifier::Ident(t)
     }
 
 
 rule type_specifier_nonunique() -> TypeSpecifier =
-    pos:position!() [TokenKind::Char] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Char,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Short] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Short,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Int] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Int,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Long] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Long,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Float] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Float,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Double] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Double,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Signed] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Signed,
-            loc: env.locs[pos],
-        }
-    } /
-    pos:position!() [TokenKind::Unsigned] {
-        TypeSpecifier {
-            kind: TypeSpecifierKind::Unsigned,
-            loc: env.locs[pos],
-        }
-    }
+    pos:position!() [TokenKind::Char] { TypeSpecifier::Char } /
+    pos:position!() [TokenKind::Short] { TypeSpecifier::Short } /
+    pos:position!() [TokenKind::Int] { TypeSpecifier::Int } /
+    pos:position!() [TokenKind::Long] { TypeSpecifier::Long } /
+    pos:position!() [TokenKind::Float] { TypeSpecifier::Float } /
+    pos:position!() [TokenKind::Double] { TypeSpecifier::Double } /
+    pos:position!() [TokenKind::Signed] { TypeSpecifier::Signed } /
+    pos:position!() [TokenKind::Unsigned] { TypeSpecifier::Unsigned }
 
 rule specifier_qualifiers() -> (Vec<SpecifierQualifier>, CodeLoc) =
     list_eq1_n(<specifier_qualifier_unique_type0()>, <specifier_qualifier_qualifier0()>) /
     list_ge1_n(<specifier_qualifier_nonunique_type0()>, <specifier_qualifier_qualifier0()>)
 
-rule specifier_qualifier_unique_type0() -> SpecifierQualifier = s:type_specifier_unique() {
+rule specifier_qualifier_unique_type0() -> SpecifierQualifier =
+    pos:position!() s:type_specifier_unique() pos2:position!()
+{
     SpecifierQualifier {
         kind: SpecifierQualifierKind::TypeSpecifier(s),
-        loc: s.loc,
+        loc: l_from(env.locs[pos], env.locs[pos2 - 1]),
     }
 }
 
-rule specifier_qualifier_nonunique_type0() -> SpecifierQualifier = s:type_specifier_nonunique() {
+rule specifier_qualifier_nonunique_type0() -> SpecifierQualifier = pos:position!() s:type_specifier_nonunique()
+{
     SpecifierQualifier {
         kind: SpecifierQualifierKind::TypeSpecifier(s),
-        loc: s.loc,
+        loc: env.locs[pos],
     }
 }
 

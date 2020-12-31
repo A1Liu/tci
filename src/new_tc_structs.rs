@@ -1,122 +1,119 @@
 use crate::new_tc_ast::*;
 use crate::util::*;
 
-pub struct GlobalEnv {
-    pub tu: TranslationUnit,
-    pub typedefs: HashMap<u32, (TCType, CodeLoc)>,
-    pub builtins_enabled: bool,
-}
-
 pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,
     pub gotos: Vec<u32>,
     pub next_label: u32,
+    pub next_decl_idx: i16,
 
     // const fields
     pub return_type: TCType,
     pub rtype_loc: CodeLoc,
-    pub decl_idx: u32,
 }
 
-pub struct LocalTypeEnv {
-    pub symbols: HashMap<u32, TCVar>,
-    pub cases: Option<HashMap<TCExpr, u32>>,
-    pub parent: *const LocalTypeEnv,
-    pub decl_idx: i16,
+pub enum TypeEnvKind {
+    Global {
+        symbols: HashMap<u32, TCGlobalVar>,
+        functions: HashMap<u32, TCFunction>,
+        tu: TranslationUnit,
+    },
+    Local {
+        symbols: HashMap<u32, TCVar>,
+        parent: *const TypeEnv,
+        global: *const TypeEnv,
+    },
+    LocalSwitch {
+        symbols: HashMap<u32, TCVar>,
+        cases: HashMap<TCExpr, u32>,
+        parent: *const TypeEnv,
+        global: *const TypeEnv,
+    },
 }
 
-impl GlobalEnv {
-    pub fn new() -> Self {
-        GlobalEnv {
-            tu: TranslationUnit::new(),
+pub struct TypeEnv {
+    pub kind: TypeEnvKind,
+    pub typedefs: HashMap<u32, (&'static TCType, CodeLoc)>,
+    pub builtins_enabled: bool,
+}
+
+impl TypeEnv {
+    pub fn global() -> Self {
+        Self {
+            kind: TypeEnvKind::Global {
+                symbols: HashMap::new(),
+                functions: HashMap::new(),
+                tu: TranslationUnit::new(),
+            },
             typedefs: HashMap::new(),
             builtins_enabled: false,
         }
     }
-}
 
-impl LocalTypeEnv {
-    pub fn new(params: i16) -> Self {
-        Self {
-            symbols: HashMap::new(),
-            cases: None,
-            parent: core::ptr::null(),
-            decl_idx: -params,
-        }
+    pub fn tu(self) -> TranslationUnit {
+        return match self.kind {
+            TypeEnvKind::Global { tu, .. } => tu,
+            _ => unreachable!(),
+        };
+    }
+
+    pub fn globals(&self) -> &TypeEnv {
+        let global: *const TypeEnv = match self.kind {
+            TypeEnvKind::Global { .. } => self,
+            TypeEnvKind::Local { global, .. } => global,
+            TypeEnvKind::LocalSwitch { global, .. } => global,
+        };
+
+        return unsafe { &*global };
     }
 
     pub fn child(&self, is_switch: bool) -> Self {
-        let cases = if is_switch {
-            Some(HashMap::new())
-        } else {
-            None
-        };
+        let global = self.globals();
 
-        if self.symbols.is_empty() {
-            // for the case of chained if-else
-            Self {
+        let kind = if is_switch {
+            TypeEnvKind::Local {
                 symbols: HashMap::new(),
-                cases,
-                parent: self.parent,
-                decl_idx: self.decl_idx,
-            }
-        } else {
-            Self {
-                symbols: HashMap::new(),
-                cases,
-                decl_idx: self.decl_idx,
                 parent: self,
+                global,
             }
-        }
-    }
-
-    pub fn var(&self, id: u32) -> Option<&TCVar> {
-        if let Some(var_type) = self.symbols.get(&id) {
-            return Some(var_type);
-        }
-
-        if self.parent.is_null() {
-            return None;
-        }
-
-        return unsafe { &*self.parent }.var(id);
-    }
-
-    pub fn add_var(&mut self, ident: u32, tc_value: TCVar) -> Result<(), Error> {
-        let tc_loc = tc_value.loc;
-        if let Some(var_type) = self.symbols.insert(ident, tc_value) {
-            return Err(error!(
-                "name redefined in scope",
-                var_type.loc, "first declaration defined here", tc_loc, "redecaration defined here"
-            ));
-        }
-
-        return Ok(());
-    }
-
-    pub fn add_static(&mut self, ident: u32, decl_type: TCType, loc: CodeLoc) -> Result<(), Error> {
-        let tc_var = TCVar {
-            is_static: true,
-            decl_type,
-            var_offset: self.decl_idx,
-            loc,
+        } else {
+            TypeEnvKind::LocalSwitch {
+                symbols: HashMap::new(),
+                cases: HashMap::new(),
+                parent: self,
+                global,
+            }
         };
 
-        self.decl_idx += 1;
-
-        return self.add_var(ident, tc_var);
+        Self {
+            kind,
+            typedefs: HashMap::new(),
+            builtins_enabled: false,
+        }
     }
 
-    pub fn add_local(&mut self, ident: u32, decl_type: TCType, loc: CodeLoc) -> Result<(), Error> {
-        let tc_var = TCVar {
-            is_static: false,
-            decl_type,
-            var_offset: self.decl_idx,
-            loc,
-        };
+    pub fn check_typedef(&self, ident: u32, loc: CodeLoc) -> Result<TCType, Error> {
+        let mut c_env: *const TypeEnv = self;
 
-        self.decl_idx += 1;
+        loop {
+            let current = unsafe { &*c_env };
+            if let Some((ty, loc)) = self.typedefs.get(&ident) {
+                return Ok(TCType::Typedef {
+                    refers_to: ty,
+                    typedef: (ident.into(), *loc),
+                });
+            }
 
-        return self.add_var(ident, tc_var);
+            c_env = match current.kind {
+                TypeEnvKind::Global { .. } => break,
+                TypeEnvKind::Local { parent, .. } => parent,
+                TypeEnvKind::LocalSwitch { parent, .. } => parent,
+            };
+        }
+
+        return Err(error!(
+            "couldn't find typedef",
+            loc, "typedef referenced here"
+        ));
     }
 }
