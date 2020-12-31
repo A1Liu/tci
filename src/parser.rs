@@ -3,7 +3,6 @@ use crate::buckets::*;
 use crate::lexer::*;
 use crate::util::*;
 use core::slice;
-use std::collections::HashMap;
 
 // TODO use https://github.com/vickenty/lang-c as inspiration for full parser rewrite
 

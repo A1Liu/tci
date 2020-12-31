@@ -4,7 +4,6 @@ use codespan_reporting::files::{line_starts, Files};
 use core::include_bytes;
 use core::{mem, ops, str};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::io;
 use std::path::Path;
@@ -29,7 +28,7 @@ impl<'a> File<'a> {
         }
     }
 
-    pub fn new(buckets: BucketListRef<'a>, name: &str, source: &str) -> Self {
+    pub fn new(buckets: impl Allocator<'a>, name: &str, source: &str) -> Self {
         let line_starts: Vec<usize> = line_starts(source).collect();
         File {
             _name: buckets.add_str(name),

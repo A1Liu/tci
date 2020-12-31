@@ -1,13 +1,5 @@
 use crate::new_tc_ast::*;
 use crate::util::*;
-use std::collections::HashMap;
-
-pub struct GlobalEnv {
-    pub typedefs: HashMap<u32, TCTypedef>,
-    pub func_types: HashMap<u32, TCFuncType>,
-    pub values: HashMap<u32, TCGlobalVar>,
-    pub builtins_enabled: Option<u32>,
-}
 
 pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,

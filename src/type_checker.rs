@@ -3,7 +3,7 @@ use crate::buckets::*;
 use crate::filedb::*;
 use crate::tc_ast::*;
 use crate::util::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::mem::Discriminant;
 
 type BuiltinTransform = for<'a, 'b, 'c, 'd, 'e> fn(

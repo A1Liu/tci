@@ -3,7 +3,6 @@ use crate::lexer::*;
 use crate::new_ast::*;
 use crate::util::*;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 pub struct ParseEnv {
     pub symbol_is_type: RefCell<Vec<HashMap<u32, bool>>>, // true is type

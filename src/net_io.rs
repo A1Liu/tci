@@ -376,8 +376,8 @@ where
 {
     let buckets = BucketList::with_capacity(TOTAL_BUCKET_SIZE);
 
-    let tcp_buf = buckets.uninit(TCP_BUCKET_SIZE).unwrap();
-    let scratch_buf = buckets.uninit(SCRATCH_BUCKET_SIZE).unwrap();
+    let tcp_buf = buckets.uninit(TCP_BUCKET_SIZE, 1).unwrap();
+    let scratch_buf = buckets.uninit(SCRATCH_BUCKET_SIZE, 1).unwrap();
 
     let mut num_bytes = 0;
     macro_rules! stream_read {

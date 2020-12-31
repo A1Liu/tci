@@ -1,4 +1,5 @@
 // use crate::filedb::*;
+use crate::buckets::*;
 pub use crate::new_ast::BinOp;
 use crate::util::*;
 use serde::Serialize;
@@ -6,7 +7,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TCIdent {
-    GlobalIdent(u32),
+    Ident(u32),
     ScopedIdent { scope: CodeLoc, ident: u32 },
     Anonymous(CodeLoc),
 }
@@ -93,7 +94,7 @@ pub struct TCOpcode {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Hash, Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum TCTypeKind {
     I32, // int
@@ -103,22 +104,22 @@ pub enum TCTypeKind {
     I8,  // char
     U8,  // unsigned char
     Void,
-    Ident {
-        ident: u32,
-        sa: SizeAlign,
-    },
     Function {
         ret: &'static TCType,
         params: &'static [TCType],
         varargs: bool,
     },
+    PointerTo(&'static TCType),
+    FixedArrayOf {
+        values: &'static TCType,
+        count: u32,
+    },
 }
 
-#[derive(Debug, PartialEq, Hash, Eq, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Hash, Serialize)]
 pub struct TCType {
     pub kind: TCTypeKind,
-    pub pointer_count: u32,
-    pub array_kind: TCArrayKind,
+    pub typedef: n32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
@@ -230,7 +231,7 @@ pub struct TCAssignTarget {
     pub offset: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct TCTypedef {
     pub typedef: TCType,
     pub defn_idx: u32,
@@ -265,4 +266,32 @@ pub struct TCGlobalVar {
     pub decl_type: TCType,
     pub var_offset: u32, // The offset from the frame pointer for this variable
     pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+}
+
+pub struct TCFuncDefn {
+    pub ops: &'static [TCOpcode],
+    pub loc: CodeLoc,
+}
+
+pub struct TCFunction {
+    pub func_type: TCFuncType,
+    pub defn: Option<TCFuncDefn>,
+}
+
+pub struct TranslationUnit {
+    pub buckets: BucketListRef<'static>,
+    pub typedefs: HashMap<(u32, CodeLoc), TCTypedef>,
+    pub variables: HashMap<u32, TCGlobalVar>,
+    pub functions: HashMap<u32, TCFunction>,
+}
+
+impl TranslationUnit {
+    pub fn new() -> Self {
+        Self {
+            buckets: BucketList::new(),
+            typedefs: HashMap::new(),
+            variables: HashMap::new(),
+            functions: HashMap::new(),
+        }
+    }
 }

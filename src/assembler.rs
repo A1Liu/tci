@@ -7,7 +7,6 @@ use crate::type_checker::*;
 use crate::util::*;
 use core::mem;
 use core::mem::{align_of, size_of};
-use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct ASMFunc {
