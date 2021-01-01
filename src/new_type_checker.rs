@@ -174,14 +174,161 @@ pub fn parse_decl_specs(
     return Ok((sc, base));
 }
 
-pub fn check_declarator(
+pub fn check_func_defn_decl(
     locals: &TypeEnv,
-    buckets: BucketListRef<'static>,
+    buckets: &impl Allocator<'static>,
+    decl: &FunctionDefinition,
+) -> Result<TCFunctionDeclarator, Error> {
+    let (sc, base) = parse_decl_specs(locals, decl.specifiers)?;
+    let mut rtype = TCTypeOwned::new(base);
+
+    for modifier in decl.pointer {
+        // TODO warn when there are qualifiers
+        rtype.mods.push(TCTypeModifier::Pointer);
+    }
+
+    let params_decl = if let Some(params) = decl.params {
+        params
+    } else {
+        return Ok(TCFunctionDeclarator {
+            sc,
+            return_type: rtype.to_ref(&buckets),
+            ident: decl.ident,
+            params: None,
+            varargs: false,
+        });
+    };
+
+    let params = check_param_types(locals, buckets, params_decl.parameters)?;
+    let mut out = Vec::new();
+    for (idx, (ty, id)) in params.into_iter().enumerate() {
+        if id == n32::NULL {
+            return Err(error!(
+                "missing identifier",
+                params_decl.parameters[idx].loc, "parameter found here"
+            ));
+        } else {
+            out.push(TCParamDeclarator {
+                ty,
+                ident: id.into(),
+                loc: params_decl.parameters[idx].loc,
+            });
+        }
+    }
+
+    return Ok(TCFunctionDeclarator {
+        sc,
+        return_type: rtype.to_ref(&buckets),
+        ident: decl.ident,
+        params: Some(buckets.add_array(out)),
+        varargs: params_decl.varargs,
+    });
+}
+
+pub fn check_decl(
+    locals: &TypeEnv,
+    buckets: &impl Allocator<'static>,
+    decl_specs: &[DeclarationSpecifier],
+    decl: &Declarator,
+) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
+    let (sc, ty, id) = check_decl_rec(locals, buckets, decl_specs, decl)?;
+
+    let mut was_array = false;
+    for modifier in &ty.mods {
+        match modifier {
+            TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
+                was_array = true;
+            }
+            TCTypeModifier::BeginParam(_)
+            | TCTypeModifier::UnknownParams
+            | TCTypeModifier::NoParams => {
+                if was_array {
+                    return Err(error!(
+                        "type is an array of functions (functions don't have a constant size\
+                            so you can't have an array of them)",
+                        decl.loc, "type declaration found here"
+                    ));
+                }
+
+                was_array = false;
+            }
+            _ => was_array = false,
+        }
+    }
+
+    return Ok((sc, ty, id));
+}
+
+pub fn check_param_types(
+    locals: &TypeEnv,
+    buckets: &impl Allocator<'static>,
+    params: &[ParameterDeclaration],
+) -> Result<Vec<(TCType, n32)>, Error> {
+    let param = params[0];
+    let (sc, mut param_type, id) = if let Some(decl) = param.declarator {
+        let (sc, tc_type, id) = check_decl(locals, buckets, param.specifiers, &decl)?;
+        (sc, tc_type, id)
+    } else {
+        let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
+
+        (sc, TCTypeOwned::new(base), n32::NULL)
+    };
+
+    debug_assert!(let_expr!(StorageClass::Default = sc));
+
+    if param_type.is_void() {
+        if params.len() == 1 && id == n32::NULL {
+            return Ok(Vec::new());
+        } else {
+            return Err(error!(
+                "cannot have a parameter of type void",
+                param.loc, "parameter found here"
+            ));
+        }
+    }
+
+    param_type.canonicalize_param();
+    let param_type = param_type.to_ref(buckets);
+
+    let mut out = Vec::new();
+    out.push((param_type, id));
+
+    for param in &params[1..] {
+        let (sc, param_type, id) = if let Some(decl) = param.declarator {
+            let (sc, tc_type, id) = check_decl(locals, buckets, param.specifiers, &decl)?;
+            (sc, tc_type.to_ref(buckets), id)
+        } else {
+            let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
+            let tc_type = TCType { base, mods: &[] };
+
+            (sc, tc_type, n32::NULL)
+        };
+
+        debug_assert!(let_expr!(StorageClass::Default = sc));
+
+        if let TCTypeBase::Void = param_type.base {
+            if param_type.mods.len() == 0 {
+                return Err(error!(
+                    "cannot have a parameter of type void",
+                    param.loc, "parameter found here"
+                ));
+            }
+        }
+
+        out.push((param_type, id));
+    }
+
+    return Ok(out);
+}
+
+pub fn check_decl_rec(
+    locals: &TypeEnv,
+    buckets: &impl Allocator<'static>,
     decl_specs: &[DeclarationSpecifier],
     decl: &Declarator,
 ) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
     let (sc, mut tc_type, ident) = match decl.kind {
-        DeclaratorKind::Declarator(decl) => check_declarator(locals, buckets, decl_specs, decl)?,
+        DeclaratorKind::Declarator(decl) => check_decl_rec(locals, buckets, decl_specs, decl)?,
         DeclaratorKind::Identifier(ident) => {
             let (sc, base) = parse_decl_specs(locals, decl_specs)?;
 
@@ -195,6 +342,7 @@ pub fn check_declarator(
     };
 
     use DerivedDeclaratorKind as DDK;
+
     for derived in decl.derived {
         match derived.kind {
             DDK::Array(array_decl) => {
@@ -229,58 +377,15 @@ pub fn check_declarator(
                 }
             }
             DDK::Function(func) => {
-                let param = func.parameters[0];
-                let (sc, param_type) = if let Some(decl) = param.declarator {
-                    let (sc, tc_type, _) =
-                        check_declarator(locals, buckets, param.specifiers, &decl)?;
-                    (sc, tc_type.to_ref(buckets))
-                } else {
-                    let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
-                    let tc_type = TCType { base, mods: &[] };
-
-                    (sc, tc_type)
-                };
-
-                debug_assert!(let_expr!(StorageClass::Default = sc));
-
-                if param_type.is_void() {
-                    if func.parameters.len() == 1 {
-                        tc_type.mods.push(TCTypeModifier::NoParams);
-                        continue;
-                    } else {
-                        return Err(error!(
-                            "cannot have a parameter of type void",
-                            param.loc, "parameter found here"
-                        ));
-                    }
+                let params = check_param_types(locals, buckets, func.parameters)?;
+                if params.len() == 0 {
+                    tc_type.mods.push(TCTypeModifier::NoParams);
+                    continue;
                 }
 
-                tc_type.mods.push(TCTypeModifier::BeginParam(param_type));
-
-                for param in &func.parameters[1..] {
-                    let (sc, param_type) = if let Some(decl) = param.declarator {
-                        let (sc, tc_type, _) =
-                            check_declarator(locals, buckets, param.specifiers, &decl)?;
-                        (sc, tc_type.to_ref(buckets))
-                    } else {
-                        let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
-                        let tc_type = TCType { base, mods: &[] };
-
-                        (sc, tc_type)
-                    };
-
-                    debug_assert!(let_expr!(StorageClass::Default = sc));
-
-                    if let TCTypeBase::Void = param_type.base {
-                        if param_type.mods.len() == 0 {
-                            return Err(error!(
-                                "cannot have a parameter of type void",
-                                param.loc, "parameter found here"
-                            ));
-                        }
-                    }
-
-                    tc_type.mods.push(TCTypeModifier::Param(param_type));
+                tc_type.mods.push(TCTypeModifier::BeginParam(params[0].0));
+                for param in &params[1..] {
+                    tc_type.mods.push(TCTypeModifier::Param(param.0));
                 }
 
                 if func.varargs {
@@ -291,6 +396,7 @@ pub fn check_declarator(
                 tc_type.mods.push(TCTypeModifier::UnknownParams);
             }
             DDK::Pointer(ptr_qual) => {
+                // TODO warn when there are qualifiers
                 tc_type.mods.push(TCTypeModifier::Pointer);
             }
         }
@@ -320,7 +426,7 @@ pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
                 check_declaration(&globals, decl)?;
             }
             GlobalStatementKind::FunctionDefinition(func) => {
-                check_function_defn(&globals, func)?;
+                // check_function_defn(&globals, func)?;
             }
             GlobalStatementKind::Pragma(pragma) => {
                 if pragma == "tci enable_builtins" {
@@ -333,10 +439,6 @@ pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
     return Ok(globals.tu());
 }
 
-pub fn check_declaration(globals: &TypeEnv, declaration: Declaration) -> Result<(), Error> {
-    return Ok(());
-}
-
-pub fn check_function_defn(globals: &TypeEnv, defn: FunctionDefinition) -> Result<(), Error> {
+pub fn check_declaration(locals: &TypeEnv, declaration: Declaration) -> Result<(), Error> {
     return Ok(());
 }

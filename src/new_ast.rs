@@ -202,6 +202,12 @@ pub struct Declarator {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct PointerQuals {
+    pub quals: &'static [TypeQualifier],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum DerivedDeclaratorKind {
     Pointer(&'static [TypeQualifier]),
     Array(ArrayDeclarator),
@@ -265,8 +271,9 @@ pub struct Initializer {
 #[derive(Debug, Clone, Copy)]
 pub struct FunctionDefinition {
     pub specifiers: &'static [DeclarationSpecifier],
-    pub declarator: &'static Declarator,
-    pub declarations: &'static [Declaration], // K&R style function
+    pub ident: u32,
+    pub pointer: &'static [PointerQuals],
+    pub params: Option<FunctionDeclarator>,
     pub statements: Block,
     pub loc: CodeLoc,
 }

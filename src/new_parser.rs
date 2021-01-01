@@ -485,7 +485,14 @@ rule direct_declarator() -> Declarator =
             derived: &[],
             loc: i.1,
         }
-}
+    } /
+    pos:position!() [TokenKind::LParen] d:declarator() pos2:position!() [TokenKind::RParen] {
+        Declarator {
+           kind: DeclaratorKind::Declarator(env.buckets.add(d)),
+           derived: &[],
+           loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
+    }
 
 rule derived_declarator() -> DerivedDeclarator  =
     pos:position!() [TokenKind::LBracket] a:array_declarator() pos2:position!() [TokenKind::RBracket] {
@@ -494,10 +501,10 @@ rule derived_declarator() -> DerivedDeclarator  =
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     } /
-    pos:position!() [TokenKind::LParen] f:scoped(<function_declarator()>) pos2:position!() [TokenKind::RParen] {
+    f:scoped(<function_declarator()>) {
         DerivedDeclarator {
             kind: DerivedDeclaratorKind::Function(f),
-            loc: l_from(env.locs[pos], env.locs[pos2]),
+            loc: f.loc,
         }
     } /
     pos:position!() [TokenKind::LParen] pos2:position!() [TokenKind::RParen] {
@@ -536,13 +543,12 @@ rule array_declarator() -> ArrayDeclarator =
     }
 
 rule function_declarator() -> FunctionDeclarator =
-    params:cs1(<parameter_declaration()>) pos:position!() varargs:([TokenKind::Comma] [TokenKind::DotDotDot])?
+    pos:position!() [TokenKind::LParen] params:cs1(<parameter_declaration()>)
+    varargs:([TokenKind::Comma] [TokenKind::DotDotDot])? pos2:position!() [TokenKind::RParen]
     {
         let (params, mut loc) = params;
         let varargs = varargs.is_some();
-        if varargs {
-            loc = l_from(loc, env.locs[pos + 1]);
-        }
+        loc = l_from(env.locs[pos], env.locs[pos2]);
 
         FunctionDeclarator {
             parameters: env.buckets.add_array(params),
@@ -564,6 +570,21 @@ rule pointer() -> DerivedDeclarator = pos:position!() [TokenKind::Star] q:list0(
         loc,
     }
 }
+
+rule pointer_quals() -> PointerQuals = pos:position!() [TokenKind::Star] q:list0(<type_qualifier()>) {
+    let (q, mut end_loc) = q;
+    let loc = env.locs[pos];
+    if end_loc == NO_FILE {
+        end_loc = loc;
+    }
+
+    let loc = l_from(loc, end_loc);
+    PointerQuals {
+        quals: env.buckets.add_array(q),
+        loc,
+    }
+}
+
 
 rule parameter_declaration() -> ParameterDeclaration = s:decl_specs() d:parameter_declarator()
 {
@@ -1002,15 +1023,18 @@ rule external_declaration() -> GlobalStatement =
     }
 
 rule function_definition() -> FunctionDefinition =
-    a:decl_specs() b:declarator() c:list0(<declaration()>) d:compound_statement() {
+    a:decl_specs() pointer:list0(<pointer_quals()>) id:ident()
+    f:function_declarator() d:compound_statement() {
         let (a, begin_loc) = a;
-        let (c, _) = c;
+        let (ident, _) = id;
+        let (pointer, _) = pointer;
 
         let loc = l_from(begin_loc, d.loc);
         FunctionDefinition {
             specifiers: env.buckets.add_array(a),
-            declarator: env.buckets.add(b),
-            declarations: env.buckets.add_array(c),
+            pointer: env.buckets.add_array(pointer),
+            ident,
+            params: Some(f),
             statements: d,
             loc,
         }

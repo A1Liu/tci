@@ -66,9 +66,14 @@ impl TCPrimType {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCOpcodeKind {
-    Allocate {
+    AllocateInit {
         var_type: TCType,
-        is_static: bool,
+        init: TCExpr,
+    },
+    Allocate(TCType),
+    AllocateStatic {
+        var_type: TCType,
+        init: TCExpr,
     },
     Label(u32),
     Drop {
@@ -123,21 +128,67 @@ pub enum TCTypeModifier {
     UnknownParams,
 }
 
+pub trait TCTy {
+    fn base(&self) -> TCTypeBase;
+    fn mods(&self) -> &[TCTypeModifier];
+
+    fn is_void(&self) -> bool {
+        if let TCTypeBase::Void = self.base() {
+            if self.mods().len() == 0 {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn is_function(&self) -> bool {
+        if self.mods().len() == 0 {
+            return false;
+        }
+
+        if let TCTypeModifier::NoParams = self.mods()[0] {
+            return true;
+        }
+
+        if let TCTypeModifier::UnknownParams = self.mods()[0] {
+            return true;
+        }
+
+        if let TCTypeModifier::BeginParam(_) = self.mods()[0] {
+            return true;
+        }
+
+        return false;
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, Serialize)]
 pub struct TCType {
     pub base: TCTypeBase,
     pub mods: &'static [TCTypeModifier],
 }
 
-impl TCType {
-    pub fn is_void(&self) -> bool {
-        if let TCTypeBase::Void = self.base {
-            if self.mods.len() == 0 {
-                return true;
-            }
-        }
+impl TCTy for TCType {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
 
-        return false;
+    fn mods(&self) -> &[TCTypeModifier] {
+        return self.mods;
+    }
+}
+
+impl TCType {
+    pub fn new(base: TCTypeBase) -> Self {
+        TCType { base, mods: &[] }
+    }
+
+    pub fn new_ptr(base: TCTypeBase) -> Self {
+        TCType {
+            base,
+            mods: &[TCTypeModifier::Pointer],
+        }
     }
 }
 
@@ -145,12 +196,6 @@ impl TCType {
 pub struct TCTypeOwned {
     pub base: TCTypeBase,
     pub mods: Vec<TCTypeModifier>,
-}
-
-#[derive(Debug, Clone, Copy, Hash)]
-pub struct TCTypeMut<'a> {
-    pub base: TCTypeBase,
-    pub mods: &'a [TCTypeModifier],
 }
 
 impl TCTypeOwned {
@@ -166,6 +211,67 @@ impl TCTypeOwned {
             base: self.base,
             mods: alloc.add_array(self.mods),
         }
+    }
+
+    pub fn canonicalize(&mut self) {
+        let mut found_func = false;
+
+        for modifier in &mut self.mods {
+            match modifier {
+                TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams
+                | TCTypeModifier::BeginParam(_) => {
+                    found_func = true;
+                }
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
+                    if found_func {
+                        *modifier = TCTypeModifier::Pointer;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn canonicalize_param(&mut self) {
+        if self.is_function() {
+            self.mods.insert(0, TCTypeModifier::Pointer);
+        }
+
+        for modifier in &mut self.mods {
+            match modifier {
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
+                    *modifier = TCTypeModifier::Pointer;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl TCTy for TCTypeOwned {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
+
+    fn mods(&self) -> &[TCTypeModifier] {
+        return &self.mods;
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash)]
+pub struct TCTypeMut<'a> {
+    pub base: TCTypeBase,
+    pub mods: &'a [TCTypeModifier],
+}
+
+impl<'a> TCTy for TCTypeMut<'a> {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
+
+    fn mods(&self) -> &[TCTypeModifier] {
+        return self.mods;
     }
 }
 
@@ -297,8 +403,8 @@ pub enum StorageClass {
 pub struct TCGlobalVar {
     pub storage_class: StorageClass,
     pub decl_type: TCType,
-    pub var_offset: u32, // The offset from the frame pointer for this variable
-    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+    pub var_idx: u32,
+    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
 
 pub struct TCFuncDefn {
@@ -311,11 +417,47 @@ pub struct TCFunction {
     pub defn: Option<TCFuncDefn>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TCParamDeclarator {
+    pub ty: TCType,
+    pub ident: u32,
+    pub loc: CodeLoc,
+}
+
+pub struct TCFunctionDeclarator {
+    pub sc: StorageClass,
+    pub return_type: TCType,
+    pub ident: u32,
+    pub params: Option<&'static [TCParamDeclarator]>,
+    pub varargs: bool,
+}
+
 pub struct TranslationUnit {
     pub buckets: BucketListRef<'static>,
     pub typedefs: HashMap<(u32, CodeLoc), TCType>,
     pub variables: HashMap<u32, TCGlobalVar>,
     pub functions: HashMap<u32, TCFunction>,
+}
+
+pub enum DeclarationResult {
+    Typedef {
+        ty: TCType,
+        ident: u32,
+    },
+    Static {
+        ty: TCType,
+        ident: u32,
+        expr: TCExpr,
+    },
+    Default {
+        ty: TCType,
+        ident: u32,
+    },
+    Init {
+        ty: TCType,
+        ident: u32,
+        expr: TCExpr,
+    },
 }
 
 impl TranslationUnit {

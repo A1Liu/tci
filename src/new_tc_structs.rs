@@ -17,6 +17,7 @@ pub enum TypeEnvKind {
         symbols: HashMap<u32, TCGlobalVar>,
         functions: HashMap<u32, TCFunction>,
         tu: TranslationUnit,
+        next_var: u32,
     },
     Local {
         symbols: HashMap<u32, TCVar>,
@@ -44,6 +45,7 @@ impl TypeEnv {
                 symbols: HashMap::new(),
                 functions: HashMap::new(),
                 tu: TranslationUnit::new(),
+                next_var: 0,
             },
             typedefs: HashMap::new(),
             builtins_enabled: false,
@@ -67,22 +69,38 @@ impl TypeEnv {
         return unsafe { &*global };
     }
 
-    pub fn child(&self, is_switch: bool) -> Self {
+    pub fn is_global(&self) -> bool {
+        match self.kind {
+            TypeEnvKind::Global { .. } => true,
+            TypeEnvKind::Local { global, .. } => false,
+            TypeEnvKind::LocalSwitch { global, .. } => false,
+        }
+    }
+
+    pub fn child(&self) -> Self {
         let global = self.globals();
 
-        let kind = if is_switch {
-            TypeEnvKind::Local {
-                symbols: HashMap::new(),
-                parent: self,
-                global,
-            }
-        } else {
-            TypeEnvKind::LocalSwitch {
-                symbols: HashMap::new(),
-                cases: HashMap::new(),
-                parent: self,
-                global,
-            }
+        let kind = TypeEnvKind::Local {
+            symbols: HashMap::new(),
+            parent: self,
+            global,
+        };
+
+        Self {
+            kind,
+            typedefs: HashMap::new(),
+            builtins_enabled: false,
+        }
+    }
+
+    pub fn switch(&self) -> Self {
+        let global = self.globals();
+
+        let kind = TypeEnvKind::LocalSwitch {
+            symbols: HashMap::new(),
+            cases: HashMap::new(),
+            parent: self,
+            global,
         };
 
         Self {
