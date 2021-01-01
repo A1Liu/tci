@@ -96,7 +96,7 @@ pub struct TCOpcode {
 
 #[derive(Debug, Clone, Copy, Hash, Serialize)]
 #[serde(tag = "kind", content = "data")]
-pub enum TCType {
+pub enum TCTypeBase {
     I32, // int
     U32, // unsigned int
     U64, // unsigned long
@@ -104,28 +104,69 @@ pub enum TCType {
     I8,  // char
     U8,  // unsigned char
     Void,
-    Function {
-        ret: &'static TCType,
-        params: &'static [TCType],
-        varargs: bool,
-    },
-    PointerTo(&'static TCType),
-    FixedArrayOf {
-        values: &'static TCType,
-        count: u32,
-    },
     Typedef {
         refers_to: &'static TCType,
         typedef: (n32, CodeLoc),
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
-#[serde(tag = "kind", content = "data")]
-pub enum TCArrayKind {
-    None,
-    Fixed(u32),
-    // Fixed2d { rows: u32, cols: u32 },
+#[derive(Debug, Clone, Copy, Hash, Serialize)]
+#[serde(tag = "modifier", content = "data")]
+pub enum TCTypeModifier {
+    Pointer, // TODO add qualifiers
+    Array(u32),
+    VariableArray,
+    BeginParam(TCType),
+    Param(TCType),
+    VarargsParam,
+    NoParams,
+    UnknownParams,
+}
+
+#[derive(Debug, Clone, Copy, Hash, Serialize)]
+pub struct TCType {
+    pub base: TCTypeBase,
+    pub mods: &'static [TCTypeModifier],
+}
+
+impl TCType {
+    pub fn is_void(&self) -> bool {
+        if let TCTypeBase::Void = self.base {
+            if self.mods.len() == 0 {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+#[derive(Debug, Clone, Hash)]
+pub struct TCTypeOwned {
+    pub base: TCTypeBase,
+    pub mods: Vec<TCTypeModifier>,
+}
+
+#[derive(Debug, Clone, Copy, Hash)]
+pub struct TCTypeMut<'a> {
+    pub base: TCTypeBase,
+    pub mods: &'a [TCTypeModifier],
+}
+
+impl TCTypeOwned {
+    pub fn new(base: TCTypeBase) -> Self {
+        Self {
+            base,
+            mods: Vec::new(),
+        }
+    }
+
+    pub fn to_ref(self, alloc: impl Allocator<'static>) -> TCType {
+        TCType {
+            base: self.base,
+            mods: alloc.add_array(self.mods),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

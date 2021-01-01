@@ -41,7 +41,7 @@ macro_rules! gen_type_decl_spec {
             gen_type_decl_spec!(@INCR_CORRECT, decl, $ident);
         )*
 
-        $map.insert(decl, TCType::$ast);
+        $map.insert(decl, TCTypeBase::$ast);
     }};
     (@INCR_CORRECT, $decl:expr, void) => {
         $decl.void += 1;
@@ -76,8 +76,8 @@ macro_rules! gen_type_decl_spec {
 }
 
 lazy_static! {
-    pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, TCType> = {
-        let mut map: HashMap<TypeDeclSpec, TCType> = HashMap::new();
+    pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, TCTypeBase> = {
+        let mut map: HashMap<TypeDeclSpec, TCTypeBase> = HashMap::new();
 
         gen_type_decl_spec!(map, I32, int);
         gen_type_decl_spec!(map, I64, long);
@@ -105,7 +105,7 @@ lazy_static! {
 pub fn parse_decl_specs(
     locals: &TypeEnv,
     decl_specs: &[DeclarationSpecifier],
-) -> Result<(StorageClass, TCType), Error> {
+) -> Result<(StorageClass, TCTypeBase), Error> {
     let mut sc = StorageClass::Default;
     let mut ds = TypeDeclSpec::new();
 
@@ -133,7 +133,7 @@ pub fn parse_decl_specs(
                 return Ok((sc, ty));
             }
             TypeSpecifier(TySpec::Void) => {
-                return Ok((sc, TCType::Void));
+                return Ok((sc, TCTypeBase::Void));
             }
 
             TypeSpecifier(TySpec::Char) => {
@@ -165,9 +165,13 @@ pub fn parse_decl_specs(
         }
     }
 
-    let tc_type = TCType::U8;
+    let begin = decl_specs[0].loc;
+    let end = decl_specs.last().unwrap().loc;
 
-    return Ok((sc, tc_type));
+    let or_else = || error!("incorrect ");
+    let base = *CORRECT_TYPES.get(&ds).ok_or_else(or_else)?;
+
+    return Ok((sc, base));
 }
 
 pub fn check_declarator(
@@ -175,22 +179,136 @@ pub fn check_declarator(
     buckets: BucketListRef<'static>,
     decl_specs: &[DeclarationSpecifier],
     decl: &Declarator,
-) -> Result<(StorageClass, TCType, n32), Error> {
-    let (sc, tc_type, ident) = match decl.kind {
+) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
+    let (sc, mut tc_type, ident) = match decl.kind {
         DeclaratorKind::Declarator(decl) => check_declarator(locals, buckets, decl_specs, decl)?,
         DeclaratorKind::Identifier(ident) => {
-            let (sc, tc_type) = parse_decl_specs(locals, decl_specs)?;
+            let (sc, base) = parse_decl_specs(locals, decl_specs)?;
 
-            (sc, tc_type, ident.into())
+            (sc, TCTypeOwned::new(base), ident.into())
         }
         DeclaratorKind::Abstract => {
-            let (sc, tc_type) = parse_decl_specs(locals, decl_specs)?;
+            let (sc, base) = parse_decl_specs(locals, decl_specs)?;
 
-            (sc, tc_type, n32::NULL)
+            (sc, TCTypeOwned::new(base), n32::NULL)
         }
     };
 
+    use DerivedDeclaratorKind as DDK;
+    for derived in decl.derived {
+        match derived.kind {
+            DDK::Array(array_decl) => {
+                if array_decl.qualifiers.len() != 0 {
+                    return Err(error!(
+                        "TCI doesn't handle array qualifiers right now",
+                        array_decl.loc, "qualfiiers found around here"
+                    ));
+                }
+
+                match array_decl.size.kind {
+                    ArraySizeKind::Unknown => {
+                        tc_type.mods.push(TCTypeModifier::VariableArray);
+                    }
+                    ArraySizeKind::VariableExpression(expr) => {
+                        let expr = eval_expr(expr)?;
+                        let (expr, loc) = if let ExprKind::IntLiteral(i) = expr.kind {
+                            (i, expr.loc)
+                        } else {
+                            unreachable!()
+                        };
+
+                        if expr < 0 {
+                            return Err(error!(
+                                "array must have positive size",
+                                loc, "size found here"
+                            ));
+                        }
+
+                        tc_type.mods.push(TCTypeModifier::Array(expr as u32));
+                    }
+                }
+            }
+            DDK::Function(func) => {
+                let param = func.parameters[0];
+                let (sc, param_type) = if let Some(decl) = param.declarator {
+                    let (sc, tc_type, _) =
+                        check_declarator(locals, buckets, param.specifiers, &decl)?;
+                    (sc, tc_type.to_ref(buckets))
+                } else {
+                    let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
+                    let tc_type = TCType { base, mods: &[] };
+
+                    (sc, tc_type)
+                };
+
+                debug_assert!(let_expr!(StorageClass::Default = sc));
+
+                if param_type.is_void() {
+                    if func.parameters.len() == 1 {
+                        tc_type.mods.push(TCTypeModifier::NoParams);
+                        continue;
+                    } else {
+                        return Err(error!(
+                            "cannot have a parameter of type void",
+                            param.loc, "parameter found here"
+                        ));
+                    }
+                }
+
+                tc_type.mods.push(TCTypeModifier::BeginParam(param_type));
+
+                for param in &func.parameters[1..] {
+                    let (sc, param_type) = if let Some(decl) = param.declarator {
+                        let (sc, tc_type, _) =
+                            check_declarator(locals, buckets, param.specifiers, &decl)?;
+                        (sc, tc_type.to_ref(buckets))
+                    } else {
+                        let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
+                        let tc_type = TCType { base, mods: &[] };
+
+                        (sc, tc_type)
+                    };
+
+                    debug_assert!(let_expr!(StorageClass::Default = sc));
+
+                    if let TCTypeBase::Void = param_type.base {
+                        if param_type.mods.len() == 0 {
+                            return Err(error!(
+                                "cannot have a parameter of type void",
+                                param.loc, "parameter found here"
+                            ));
+                        }
+                    }
+
+                    tc_type.mods.push(TCTypeModifier::Param(param_type));
+                }
+
+                if func.varargs {
+                    tc_type.mods.push(TCTypeModifier::VarargsParam);
+                }
+            }
+            DDK::EmptyFunction => {
+                tc_type.mods.push(TCTypeModifier::UnknownParams);
+            }
+            DDK::Pointer(ptr_qual) => {
+                tc_type.mods.push(TCTypeModifier::Pointer);
+            }
+        }
+    }
+
     return Ok((sc, tc_type, ident));
+}
+
+pub fn eval_expr(expr: &Expr) -> Result<&Expr, Error> {
+    // TODO cmon man
+    if let ExprKind::IntLiteral(i) = expr.kind {
+        return Ok(expr);
+    } else {
+        return Err(error!(
+            "cannot evaluate constant expression",
+            expr.loc, "expression found here"
+        ));
+    }
 }
 
 pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {

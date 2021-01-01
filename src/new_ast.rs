@@ -232,9 +232,9 @@ pub struct FunctionDeclarator {
 #[derive(Debug, Clone, Copy)]
 pub enum ArraySizeKind {
     Unknown,
-    VariableUnknown,
+    // VariableUnknown,
     VariableExpression(&'static Expr),
-    StaticExpression(&'static Expr),
+    // StaticExpression(&'static Expr),
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -473,9 +473,7 @@ rule declarator() -> Declarator
     let mut decl = decl;
     let loc = l_from(begin_loc, end_loc);
 
-    let mut pointer = pointer;
-    pointer.extend(derived);
-    decl.derived = env.buckets.add_array(pointer);
+    decl.derived = env.buckets.add_array(concat(derived, pointer));
     decl.loc = loc;
     decl
 }
@@ -615,9 +613,8 @@ rule abstract_declarator() -> Declarator =
         let loc = l_from(loc, end_loc);
 
         let mut declarator = k;
-        p.extend(d);
         declarator.loc = loc;
-        declarator.derived = env.buckets.add_array(p);
+        declarator.derived = env.buckets.add_array(concat(d, p));
         declarator
     } /
     p:list0(<pointer()>) d:list1(<derived_abstract_declarator()>) {
@@ -627,7 +624,7 @@ rule abstract_declarator() -> Declarator =
 
         Declarator {
             kind: DeclaratorKind::Abstract,
-            derived: env.buckets.add_array(concat(p, d)),
+            derived: env.buckets.add_array(concat(d, p)),
             loc,
         }
     } /

@@ -974,3 +974,13 @@ impl<F: FnOnce()> Drop for Defer<F> {
 pub fn defer<F: FnOnce()>(f: F) -> Defer<F> {
     return Defer { f: Some(f) };
 }
+
+macro_rules! let_expr {
+    ($left:pat = $right:expr) => {{
+        if let $left = $right {
+            true
+        } else {
+            false
+        }
+    }};
+}

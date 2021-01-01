@@ -92,13 +92,13 @@ impl TypeEnv {
         }
     }
 
-    pub fn check_typedef(&self, ident: u32, loc: CodeLoc) -> Result<TCType, Error> {
+    pub fn check_typedef(&self, ident: u32, loc: CodeLoc) -> Result<TCTypeBase, Error> {
         let mut c_env: *const TypeEnv = self;
 
         loop {
             let current = unsafe { &*c_env };
             if let Some((ty, loc)) = self.typedefs.get(&ident) {
-                return Ok(TCType::Typedef {
+                return Ok(TCTypeBase::Typedef {
                     refers_to: ty,
                     typedef: (ident.into(), *loc),
                 });
