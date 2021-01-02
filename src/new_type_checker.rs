@@ -195,7 +195,6 @@ pub fn check_func_defn_decl(
             return_type: rtype.to_ref(&buckets),
             ident: decl.ident,
             params: None,
-            varargs: false,
         });
     };
 
@@ -208,7 +207,7 @@ pub fn check_func_defn_decl(
                 params_decl.parameters[idx].loc, "parameter found here"
             ));
         } else {
-            out.push(TCParamDeclarator {
+            out.push(TCParamDeclaration {
                 ty,
                 ident: id.into(),
                 loc: params_decl.parameters[idx].loc,
@@ -220,8 +219,10 @@ pub fn check_func_defn_decl(
         sc,
         return_type: rtype.to_ref(&buckets),
         ident: decl.ident,
-        params: Some(buckets.add_array(out)),
-        varargs: params_decl.varargs,
+        params: Some(TCParamsDeclarator {
+            params: buckets.add_array(out),
+            varargs: params_decl.varargs,
+        }),
     });
 }
 
@@ -234,10 +235,19 @@ pub fn check_decl(
     let (sc, ty, id) = check_decl_rec(locals, buckets, decl_specs, decl)?;
 
     let mut was_array = false;
+    let mut was_function = false;
     for modifier in &ty.mods {
         match modifier {
             TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
+                if was_function {
+                    return Err(error!(
+                        "function type returns array (functions can't return arrays in C)",
+                        decl.loc, "type declaration found here"
+                    ));
+                }
+
                 was_array = true;
+                was_function = false;
             }
             TCTypeModifier::BeginParam(_)
             | TCTypeModifier::UnknownParams
@@ -250,10 +260,22 @@ pub fn check_decl(
                     ));
                 }
 
+                was_function = true;
                 was_array = false;
             }
-            _ => was_array = false,
+            TCTypeModifier::VarargsParam | TCTypeModifier::Param(_) => {}
+            TCTypeModifier::Pointer => {
+                was_array = false;
+                was_function = false;
+            }
         }
+    }
+
+    if was_array && ty.is_void() {
+        return Err(error!(
+            "can't have an array of void",
+            decl.loc, "this is an array type"
+        ));
     }
 
     return Ok((sc, ty, id));

@@ -71,10 +71,6 @@ pub enum TCOpcodeKind {
         init: TCExpr,
     },
     Allocate(TCType),
-    AllocateStatic {
-        var_type: TCType,
-        init: TCExpr,
-    },
     Label(u32),
     Drop {
         // go_back indicates how many instructions to go back to find the associated allocate
@@ -286,7 +282,6 @@ pub enum TCBuiltin {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCExprKind {
-    Uninit,
     I8Literal(i8),
     I32Literal(i32),
     I64Literal(i64),
@@ -295,10 +290,16 @@ pub enum TCExprKind {
     LocalIdent {
         var_offset: i16,
     },
+    GlobalIdent {
+        binary_offset: u32,
+    },
+    /// `ident` isn't ever anonymous
+    FunctionIdent {
+        ident: u32,
+    },
 
     Array(&'static [TCExpr]),
 
-    BraceList(&'static [TCExpr]),
     ParenList(&'static [TCExpr]),
 
     BinOp {
@@ -358,6 +359,7 @@ pub enum TCExprKind {
 #[derive(Debug, Clone, Copy)]
 pub struct TCExpr {
     pub kind: TCExprKind,
+    pub ty: TCType,
     pub loc: CodeLoc,
 }
 
@@ -377,18 +379,28 @@ pub struct TCAssignTarget {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct TCParamType {
+    pub types: &'static [TCType],
+    pub varargs: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct TCFuncType {
-    return_type: TCType,
-    param_types: &'static [TCType],
-    varargs: bool,
+    pub return_type: TCType,
+    pub params: Option<TCParamType>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum OffsetOrLoc {
+    LocalOffset(i16),
+    StaticLoc(CodeLoc),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCVar {
-    pub is_static: bool,
+    pub var_offset: OffsetOrLoc, // if none, it's a static; otherwise its offset from the frame pointer
     pub decl_type: TCType,
-    pub var_offset: i16, // The offset from the frame pointer for this variable
-    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -413,23 +425,29 @@ pub struct TCFuncDefn {
 }
 
 pub struct TCFunction {
+    pub is_static: bool,
     pub func_type: TCFuncType,
+    pub expr_type: TCType,
     pub defn: Option<TCFuncDefn>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TCParamDeclarator {
+pub struct TCParamDeclaration {
     pub ty: TCType,
     pub ident: u32,
     pub loc: CodeLoc,
+}
+
+pub struct TCParamsDeclarator {
+    pub params: &'static [TCParamDeclaration],
+    pub varargs: bool,
 }
 
 pub struct TCFunctionDeclarator {
     pub sc: StorageClass,
     pub return_type: TCType,
     pub ident: u32,
-    pub params: Option<&'static [TCParamDeclarator]>,
-    pub varargs: bool,
+    pub params: Option<TCParamsDeclarator>,
 }
 
 pub struct TranslationUnit {
