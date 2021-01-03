@@ -275,9 +275,16 @@ pub fn check_decl(
         }
     }
 
-    if was_array && ty.is_void() {
+    if was_function && ty.ignore_mods().is_array() {
         return Err(error!(
-            "can't have an array of void",
+            "function type returns array (functions can't return arrays in C)",
+            decl.loc, "type declaration found here"
+        ));
+    }
+
+    if was_array && !ty.ignore_mods().is_complete() {
+        return Err(error!(
+            "can't have an array of an incomplete type",
             decl.loc, "this is an array type"
         ));
     }
@@ -442,6 +449,10 @@ pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
     return Ok(globals.tu());
 }
 
+pub fn assign_convert(ty: TCType, expr: TCExpr) -> Result<TCExpr, Error> {
+    return Ok(expr);
+}
+
 pub fn check_declaration(
     locals: &TypeEnv,
     declaration: Declaration,
@@ -481,10 +492,11 @@ pub fn check_declaration(
         let (ty, id) = check_decl(locals, base, &decl.declarator)?;
         let (ty, ident) = (ty.to_ref(locals), id.into());
         let expr = if let Some(init) = decl.initializer {
-            TCExpr {
-                kind: TCExprKind::Uninit,
-                ty,
-                loc: init.loc,
+            match init.kind {
+                InitializerKind::Expr(&expr) => assign_convert(ty, check_expr(locals, expr)?)?,
+                InitializerKind::List(exprs) => {
+                    panic!("don't support initializer lists yet")
+                }
             }
         } else {
             TCExpr {

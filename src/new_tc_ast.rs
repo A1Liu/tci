@@ -39,7 +39,7 @@ pub enum TCPrimType {
     I64, // long
     I8,  // char
     U8,  // unsigned char
-    Pointer { stride_length: u32 },
+    Pointer { stride: n32 },
 }
 
 pub type TCPrimTypeDiscr = std::mem::Discriminant<TCPrimType>;
@@ -125,6 +125,20 @@ pub enum TCTypeModifier {
     UnknownParams,
 }
 
+pub struct TCTypeRef<'a> {
+    pub base: TCTypeBase,
+    pub mods: &'a [TCTypeModifier],
+}
+
+impl<'a> TCTy for TCTypeRef<'a> {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
+    fn mods(&self) -> &[TCTypeModifier] {
+        return self.mods;
+    }
+}
+
 pub trait TCTy {
     fn base(&self) -> TCTypeBase;
     fn mods(&self) -> &[TCTypeModifier];
@@ -139,8 +153,17 @@ pub trait TCTy {
         return false;
     }
 
+    fn ignore_mods(&self) -> TCType {
+        let base = self.base();
+        TCType { base, mods: &[] }
+    }
+
     fn is_function(&self) -> bool {
         if self.mods().len() == 0 {
+            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+                return refers_to.is_function();
+            }
+
             return false;
         }
 
@@ -157,6 +180,133 @@ pub trait TCTy {
         }
 
         return false;
+    }
+
+    fn is_array(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+                return refers_to.is_array();
+            }
+
+            return false;
+        }
+
+        if let TCTypeModifier::Array(_) = self.mods()[0] {
+            return true;
+        }
+
+        if let TCTypeModifier::VariableArray = self.mods()[0] {
+            return true;
+        }
+
+        return false;
+    }
+
+    fn is_complete(&self) -> bool {
+        if let Some(first) = self.mods().first() {
+            match first {
+                TCTypeModifier::Pointer => return true,
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return false,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => return true,
+                TCTypeModifier::Array(i) => return true,
+                TCTypeModifier::VariableArray => return false,
+            }
+        }
+
+        match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => return true,
+            TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
+            TCTypeBase::Void => return false,
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_complete(),
+        };
+    }
+
+    fn size(&self) -> n32 {
+        let mut multiplier = 1;
+        let mut is_array = false;
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    if is_array {
+                        return (multiplier * 8).into();
+                    } else {
+                        return 8.into();
+                    }
+                }
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return n32::NULL,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::Array(i) => {
+                    multiplier *= i;
+                    is_array = true;
+                }
+                TCTypeModifier::VariableArray => return n32::NULL,
+            }
+        }
+
+        let base = match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => 1,
+            TCTypeBase::U32 | TCTypeBase::I32 => 4,
+            TCTypeBase::U64 | TCTypeBase::I64 => 8,
+            TCTypeBase::Void => return n32::NULL,
+            TCTypeBase::Typedef { refers_to, .. } => {
+                let size = refers_to.size();
+                if size == n32::NULL {
+                    return size;
+                }
+
+                size.into()
+            }
+        };
+
+        return (multiplier * base).into();
+    }
+
+    /// Panics if called on an incomplete type
+    fn to_prim_type(&self) -> TCPrimType {
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    let deref = TCTypeRef {
+                        base: self.base(),
+                        mods: &self.mods()[1..],
+                    };
+
+                    let stride = deref.size();
+                    return TCPrimType::Pointer { stride };
+                }
+                TCTypeModifier::Array(_) => {
+                    let deref = TCTypeRef {
+                        base: self.base(),
+                        mods: &self.mods()[1..],
+                    };
+
+                    let stride = deref.size();
+                    return TCPrimType::Pointer { stride };
+                }
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => {
+                    return TCPrimType::Pointer { stride: n32::NULL };
+                }
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::VariableArray => unreachable!(),
+            }
+        }
+
+        return match self.base() {
+            TCTypeBase::I8 => TCPrimType::I8,
+            TCTypeBase::U8 => TCPrimType::U8,
+            TCTypeBase::I32 => TCPrimType::I32,
+            TCTypeBase::U32 => TCPrimType::U32,
+            TCTypeBase::I64 => TCPrimType::I64,
+            TCTypeBase::U64 => TCPrimType::U64,
+            TCTypeBase::Void => unreachable!(),
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.to_prim_type(),
+        };
     }
 
     fn ty_eq(l: &impl TCTy, r: &impl TCTy) -> bool {
@@ -228,6 +378,46 @@ impl TCType {
         };
 
         return Some(tc_func_type);
+    }
+
+    /// Panics if the type is incomplete
+    fn deref(&self, loc: CodeLoc) -> Result<TCType, Error> {
+        assert!(self.is_complete());
+
+        if let Some(first) = self.mods.first() {
+            let base = self.base;
+            let mods = &self.mods[1..];
+            let to_ret = TCType { base, mods };
+
+            match first {
+                TCTypeModifier::Pointer => {
+                    if to_ret.is_function() {
+                        return Ok(*self);
+                    }
+
+                    return Ok(to_ret);
+                }
+                TCTypeModifier::Array(_) => return Ok(to_ret),
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => {
+                    return Err(error!(
+                        "cannot dereference function type",
+                        loc, "dereference happened here"
+                    ))
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if let TCTypeBase::Typedef { refers_to, .. } = self.base {
+            return refers_to.deref(loc);
+        }
+
+        return Err(error!(
+            "cannot dereference primitive type",
+            loc, "dereference happened here"
+        ));
     }
 }
 
