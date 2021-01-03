@@ -1,4 +1,5 @@
 use crate::buckets::*;
+use crate::filedb::*;
 use crate::new_tc_ast::*;
 use crate::util::*;
 
@@ -13,33 +14,34 @@ pub struct FuncEnv {
     pub rtype_loc: CodeLoc,
 }
 
-pub enum TypeEnvKind {
-    Global(GlobalTypeEnv),
+pub enum TypeEnvKind<'a> {
+    Global(GlobalTypeEnv<'a>),
     Local {
         symbols: HashMap<u32, TCVar>,
-        parent: *const TypeEnv,
-        global: *const TypeEnv,
+        parent: *const TypeEnv<'a>,
+        global: *const TypeEnv<'a>,
         decl_idx: i16,
     },
     LocalSwitch {
         symbols: HashMap<u32, TCVar>,
         cases: HashMap<TCExpr, u32>,
-        parent: *const TypeEnv,
-        global: *const TypeEnv,
+        parent: *const TypeEnv<'a>,
+        global: *const TypeEnv<'a>,
         decl_idx: i16,
     },
 }
 
-pub struct TypeEnv {
-    pub kind: TypeEnvKind,
+pub struct TypeEnv<'a> {
+    pub kind: TypeEnvKind<'a>,
     pub typedefs: HashMap<u32, (&'static TCType, CodeLoc)>,
     pub builtins_enabled: bool,
 }
 
-pub struct GlobalTypeEnv {
+pub struct GlobalTypeEnv<'a> {
     symbols: HashMap<TCIdent, TCGlobalVar>,
     functions: HashMap<u32, TCFunction>,
     tu: TranslationUnit,
+    files: &'a FileDb,
     next_var: u32,
 }
 
@@ -51,25 +53,26 @@ pub struct LocalTypeEnv<'a> {
     pub builtins_enabled: bool,
 }
 
-impl Allocator<'static> for TypeEnv {
+impl<'a> Allocator<'static> for TypeEnv<'a> {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         return self.globals().0.tu.buckets.alloc(layout);
     }
 }
 
-impl Allocator<'static> for GlobalTypeEnv {
+impl<'a> Allocator<'static> for GlobalTypeEnv<'a> {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         return self.tu.buckets.alloc(layout);
     }
 }
 
-impl TypeEnv {
-    pub fn global() -> Self {
+impl<'a> TypeEnv<'a> {
+    pub fn global(files: &'a FileDb) -> Self {
         Self {
             kind: TypeEnvKind::Global(GlobalTypeEnv {
                 symbols: HashMap::new(),
                 functions: HashMap::new(),
                 tu: TranslationUnit::new(),
+                files,
                 next_var: 0,
             }),
             typedefs: HashMap::new(),
@@ -84,7 +87,7 @@ impl TypeEnv {
         };
     }
 
-    pub fn globals(&self) -> (&GlobalTypeEnv, &TypeEnv) {
+    pub fn globals(&self) -> (&GlobalTypeEnv<'a>, &TypeEnv<'a>) {
         let global: *const TypeEnv = match self.kind {
             TypeEnvKind::Global(_) => self,
             TypeEnvKind::Local { global, .. } => global,
@@ -100,7 +103,7 @@ impl TypeEnv {
         return (global_env, global);
     }
 
-    pub fn globals_mut(&mut self) -> &mut GlobalTypeEnv {
+    pub fn globals_mut(&mut self) -> &mut GlobalTypeEnv<'a> {
         let global: *mut TypeEnv = match self.kind {
             TypeEnvKind::Global(_) => self,
             TypeEnvKind::Local { global, .. } => global as *mut TypeEnv,
@@ -214,7 +217,7 @@ impl TypeEnv {
 
     pub fn search_local_scopes<T, F>(&self, f: F) -> Option<T>
     where
-        F: for<'a> Fn(LocalTypeEnv<'a>) -> Option<T>,
+        F: for<'b> Fn(LocalTypeEnv<'b>) -> Option<T>,
     {
         return self.search_scopes(|sel| match &sel.kind {
             TypeEnvKind::Global { .. } => None,

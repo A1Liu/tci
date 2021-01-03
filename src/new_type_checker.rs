@@ -1,4 +1,5 @@
 use crate::buckets::*;
+use crate::filedb::*;
 use crate::new_ast::*;
 use crate::new_tc_ast::*;
 use crate::new_tc_structs::*;
@@ -380,8 +381,8 @@ pub fn check_decl_rec(
                         tc_type.mods.push(TCTypeModifier::VariableArray);
                     }
                     ArraySizeKind::VariableExpression(expr) => {
-                        let expr = eval_expr(expr)?;
-                        let (expr, loc) = if let ExprKind::IntLiteral(i) = expr.kind {
+                        let expr = eval_expr(check_expr(locals, expr)?)?;
+                        let (expr, loc) = if let TCExprKind::I32Literal(i) = expr.kind {
                             (i, expr.loc)
                         } else {
                             unreachable!()
@@ -427,8 +428,8 @@ pub fn check_decl_rec(
     return Ok((tc_type, ident));
 }
 
-pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
-    let mut globals = TypeEnv::global();
+pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
+    let mut globals = TypeEnv::global(files);
 
     for decl in tree {
         match decl.kind {
@@ -449,8 +450,20 @@ pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
     return Ok(globals.tu());
 }
 
-pub fn assign_convert(ty: TCType, expr: TCExpr) -> Result<TCExpr, Error> {
-    return Ok(expr);
+pub fn assign_convert(alloc: impl Allocator<'static>, ty: TCType, expr: TCExpr) -> TCExpr {
+    if TCType::ty_eq(&ty, &expr.ty) {
+        return expr;
+    }
+
+    let to = ty.to_prim_type();
+    let from = expr.ty.to_prim_type();
+    let expr = alloc.add(expr);
+
+    return TCExpr {
+        kind: TCExprKind::Conv { from, to, expr },
+        ty,
+        loc: expr.loc,
+    };
 }
 
 pub fn check_declaration(
@@ -493,7 +506,9 @@ pub fn check_declaration(
         let (ty, ident) = (ty.to_ref(locals), id.into());
         let expr = if let Some(init) = decl.initializer {
             match init.kind {
-                InitializerKind::Expr(&expr) => assign_convert(ty, check_expr(locals, expr)?)?,
+                InitializerKind::Expr(expr) => {
+                    assign_convert(locals, ty, check_expr(locals, expr)?)
+                }
                 InitializerKind::List(exprs) => {
                     panic!("don't support initializer lists yet")
                 }
@@ -516,9 +531,9 @@ pub fn check_declaration(
     }
 }
 
-pub fn eval_expr(expr: &Expr) -> Result<&Expr, Error> {
+pub fn eval_expr(expr: TCExpr) -> Result<TCExpr, Error> {
     // TODO cmon man
-    if let ExprKind::IntLiteral(i) = expr.kind {
+    if let TCExprKind::I32Literal(i) = expr.kind {
         return Ok(expr);
     } else {
         return Err(error!(
@@ -528,10 +543,397 @@ pub fn eval_expr(expr: &Expr) -> Result<&Expr, Error> {
     }
 }
 
-pub fn check_expr(locals: &TypeEnv, expr: Expr) -> Result<TCExpr, Error> {
-    Ok(TCExpr {
-        kind: TCExprKind::Uninit,
-        ty: TCType::new(TCTypeBase::I8),
-        loc: expr.loc,
-    })
+pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
+    match expr.kind {
+        ExprKind::IntLiteral(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::I32Literal(val),
+                ty: TCType::new(TCTypeBase::I32),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::StringLiteral(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::StringLiteral(env.add_str(val)),
+                ty: TCType::new_ptr(TCTypeBase::I8),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::CharLiteral(c) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::I8Literal(c),
+                ty: TCType::new(TCTypeBase::I8),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::Ident(id) => {
+            return env.ident(id, expr.loc);
+        }
+
+        ExprKind::ParenList(exprs) => {
+            let mut tc_exprs = Vec::new();
+            for expr in exprs {
+                tc_exprs.push(check_expr(env, expr)?);
+            }
+
+            if tc_exprs.len() == 0 {
+                // happens in for loops
+                return Ok(TCExpr {
+                    ty: TCType::new(TCTypeBase::I8),
+                    kind: TCExprKind::I8Literal(0),
+                    loc: expr.loc,
+                });
+            }
+
+            return Ok(TCExpr {
+                ty: tc_exprs[tc_exprs.len() - 1].ty,
+                kind: TCExprKind::ParenList(env.add_array(tc_exprs)),
+                loc: expr.loc,
+            });
+        }
+
+        ExprKind::BinOp(op, l, r) => return check_bin_op(env, op, l, r),
+
+        ExprKind::UnaryOp(op, operand) => {
+            unimplemented!()
+            // let operand = check_expr(env, local_env, operand)?;
+            // let prim_operand = env.to_prim_type(operand.expr_type, operand.loc)?;
+
+            // let key = (op, prim_operand.discriminant());
+            // let un_op = match OVERLOADS.unary_op.get(&key) {
+            //     Some(un_op) => *un_op,
+            //     None => {
+            //         return Err(error!(
+            //             "invalid operation to unary operand",
+            //             operand.loc,
+            //             format!(
+            //                 "operand found here with type {}",
+            //                 operand.expr_type.display(env.files)
+            //             )
+            //         ))
+            //     }
+            // };
+
+            // return Ok(un_op(env.buckets, operand, expr.loc));
+        }
+
+        // ExprKind::Member { base, member } => {
+        //     let base = check_expr(env, local_env, base)?;
+        //     let member_info = env.check_struct_member(base.expr_type, base.loc, member)?;
+
+        //     return Ok(TCExpr {
+        //         expr_type: member_info.decl_type,
+        //         loc: expr.loc,
+        //         kind: TCExprKind::Member {
+        //             base: env.buckets.add(base),
+        //             offset: member_info.offset,
+        //         },
+        //     });
+        // }
+        // ExprKind::PtrMember { base, member } => {
+        //     let base = check_expr(env, base)?;
+
+        //     let deref_type = base.expr_type.deref(base.loc)?;
+        //     if deref_type.pointer_count != 0 {
+        //         return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
+        //     }
+
+        //     let member_info = env.check_struct_member(deref_type, base.loc, member)?;
+
+        //     return Ok(TCExpr {
+        //         expr_type: member_info.decl_type,
+        //         loc: expr.loc,
+        //         kind: TCExprKind::PtrMember {
+        //             base: env.add(base),
+        //             offset: member_info.offset,
+        //         },
+        //     });
+        // }
+        //ExprKind::Call { function, params } => {
+        //    let func_id = if let ExprKind::Ident(id) = function.kind {
+        //        id
+        //    } else {
+        //        return Err(error!(
+        //            "calling an expression that isn't a function",
+        //            function.loc, "called here"
+        //        ));
+        //    };
+
+        //    let func_type = if let Some(func_type) = env.func_types.get(&func_id) {
+        //        func_type
+        //    } else {
+        //        if env.types.builtins_enabled.map(|idx| idx < env.decl_idx) == Some(true) {
+        //            if let Some(trans) = BUILTINS.get(env.files.symbol_to_str(func_id)) {
+        //                let (builtin, expr_type) = trans(env, local_env, expr.loc, params)?;
+        //                return Ok(TCExpr {
+        //                    kind: TCExprKind::Builtin(builtin),
+        //                    loc: expr.loc,
+        //                    expr_type,
+        //                });
+        //            }
+        //        }
+
+        //        return Err(error!("function doesn't exist", expr.loc, "called here"));
+        //    };
+
+        //    if func_type.decl_idx > env.decl_idx {
+        //        return Err(error!(
+        //            "function hasn't been declared yet (declaration order matters in C)",
+        //            expr.loc, "function called here", func_type.loc, "function declared here"
+        //        ));
+        //    }
+
+        //    if params.len() < func_type.params.len()
+        //        || (params.len() > func_type.params.len() && !func_type.varargs)
+        //    {
+        //        return Err(error!(
+        //            "function call has wrong number of parameters",
+        //            expr.loc, "function called here", func_type.loc, "function declared here"
+        //        ));
+        //    }
+
+        //    let mut tparams = Vec::new();
+        //    for (idx, param) in params.iter().enumerate() {
+        //        let mut expr = check_expr(env, local_env, param)?;
+        //        if idx < func_type.params.len() {
+        //            let param_type = &func_type.params[idx];
+        //            expr = env.param_convert(&param_type.0, param_type.1, expr)?;
+        //        }
+
+        //        tparams.push(expr);
+        //    }
+
+        //    return Ok(TCExpr {
+        //        kind: TCExprKind::Call {
+        //            func: func_id,
+        //            params: env.buckets.add_array(tparams),
+        //            named_count: params.len() as u32,
+        //        },
+        //        expr_type: func_type.return_type,
+        //        loc: expr.loc,
+        //    });
+        //}
+        x => panic!("{:?} is unimplemented", x),
+    }
+}
+
+pub fn check_bin_op(env: &TypeEnv, op: BinOp, l: &Expr, r: &Expr) -> Result<TCExpr, Error> {
+    let l = check_expr(env, l)?;
+    let r = check_expr(env, r)?;
+
+    if l.ty.is_pointer() {
+        let stride = l.ty.pointer_stride();
+        if stride == n32::NULL {
+            return Err(error!(
+                "cannot perform arithmetic on pointer type",
+                l.loc, "pointer found here"
+            ));
+        }
+        let stride: u32 = stride.into();
+
+        // allowed operations are addition w/ integer, subtraction w/ integer/pointer, index with
+        // integer
+        match op {
+            BinOp::Add => {
+                if !r.ty.is_integer() {
+                    return Err(error!(
+                        "invalid operands to binary expression",
+                        l.loc, "left hand side", r.loc, "right hand side"
+                    ));
+                }
+
+                let l_prim = l.ty.to_prim_type();
+                let r_prim = r.ty.to_prim_type();
+
+                let r = if r_prim.signed() {
+                    let r = TCExpr {
+                        kind: TCExprKind::Conv {
+                            from: r_prim,
+                            to: TCPrimType::I64,
+                            expr: env.add(r),
+                        },
+                        ty: TCType::new(TCTypeBase::I64),
+                        loc: r.loc,
+                    };
+
+                    let elem_size = TCExpr {
+                        loc: l.loc,
+                        kind: TCExprKind::I64Literal(stride as i64),
+                        ty: TCType::new(TCTypeBase::I64),
+                    };
+
+                    let r = TCExpr {
+                        loc: r.loc,
+                        kind: TCExprKind::BinOp {
+                            op: BinOp::Mul,
+                            op_type: TCPrimType::I64,
+                            left: env.add(r),
+                            right: env.add(elem_size),
+                        },
+                        ty: TCType::new(TCTypeBase::I64),
+                    };
+
+                    TCExpr {
+                        kind: TCExprKind::Conv {
+                            from: l_prim,
+                            to: TCPrimType::I64,
+                            expr: env.add(l),
+                        },
+                        ty: TCType::new(TCTypeBase::I64),
+                        loc: r.loc,
+                    }
+                } else {
+                    let r = TCExpr {
+                        kind: TCExprKind::Conv {
+                            from: r_prim,
+                            to: TCPrimType::U64,
+                            expr: env.add(r),
+                        },
+                        ty: TCType::new(TCTypeBase::U64),
+                        loc: r.loc,
+                    };
+
+                    let elem_size = TCExpr {
+                        loc: l.loc,
+                        kind: TCExprKind::U64Literal(stride as u64),
+                        ty: TCType::new(TCTypeBase::U64),
+                    };
+
+                    TCExpr {
+                        loc: r.loc,
+                        kind: TCExprKind::BinOp {
+                            op: BinOp::Mul,
+                            op_type: TCPrimType::U64,
+                            left: env.add(r),
+                            right: env.add(elem_size),
+                        },
+                        ty: TCType::new(TCTypeBase::U64),
+                    }
+                };
+
+                return Ok(TCExpr {
+                    loc: l_from(l.loc, r.loc),
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Add,
+                        op_type: TCPrimType::U64,
+                        left: env.add(l),
+                        right: env.add(r),
+                    },
+                    ty: l.ty,
+                });
+            }
+            BinOp::Sub => {
+                unimplemented!()
+            }
+            BinOp::Index => {
+                unimplemented!()
+            }
+            _ => {
+                return Err(error!(
+                    "invalid operands to binary expression",
+                    l.loc, "left operand", r.loc, "right operand"
+                ))
+            }
+        }
+    }
+
+    if r.ty.is_pointer() { // valid operations are addition with integer
+    }
+
+    let (left, right, op_type) = prim_unify(env, l, r)?;
+    let ty = match op {
+        BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => TCType::new(TCTypeBase::I8),
+        BinOp::Eq | BinOp::Neq => TCType::new(TCTypeBase::I8),
+        BinOp::Index => {
+            return Err(error!(
+                "cannot index non-pointer type",
+                l.loc, "indexing here"
+            ))
+        }
+        _ => left.ty,
+    };
+
+    let (left, right) = (env.add(left), env.add(right));
+    let loc = l_from(left.loc, right.loc);
+
+    #[rustfmt::skip]
+    return Ok(TCExpr {
+        kind: TCExprKind::BinOp { op, op_type, left, right },
+        loc, ty,
+    });
+}
+
+pub fn prim_unify(
+    env: &TypeEnv,
+    l: TCExpr,
+    r: TCExpr,
+) -> Result<(TCExpr, TCExpr, TCPrimType), Error> {
+    use core::cmp::Ordering;
+
+    let l_prim = l.ty.to_prim_type();
+    if l.ty == r.ty {
+        return Ok((l, r, l_prim));
+    }
+    let r_prim = l.ty.to_prim_type();
+
+    if l.ty.is_pointer() && r.ty.is_pointer() {
+        // void*
+        let l = TCExpr {
+            kind: TCExprKind::Conv {
+                from: l_prim,
+                to: TCPrimType::Pointer { stride: 1.into() },
+                expr: env.add(l),
+            },
+            ty: TCType::new_ptr(TCTypeBase::Void),
+            loc: l.loc,
+        };
+
+        let r = TCExpr {
+            kind: TCExprKind::Conv {
+                from: r_prim,
+                to: TCPrimType::Pointer { stride: 1.into() },
+                expr: env.add(r),
+            },
+            ty: TCType::new_ptr(TCTypeBase::Void),
+            loc: r.loc,
+        };
+
+        return Ok((l, r, l_prim));
+    }
+
+    if l_prim == r_prim {
+        return Ok((l, r, l_prim));
+    }
+
+    let use_l_type = match l_prim.size().cmp(&r_prim.size()) {
+        Ordering::Less => false,
+        Ordering::Greater => true,
+        Ordering::Equal => !l_prim.signed() && !r.ty.is_pointer(),
+    };
+
+    if use_l_type {
+        let r = TCExpr {
+            kind: TCExprKind::Conv {
+                from: r_prim,
+                to: l_prim,
+                expr: env.add(r),
+            },
+            ty: l.ty,
+            loc: r.loc,
+        };
+
+        return Ok((l, r, l_prim));
+    } else {
+        let l = TCExpr {
+            kind: TCExprKind::Conv {
+                from: l_prim,
+                to: r_prim,
+                expr: env.add(l),
+            },
+            ty: r.ty,
+            loc: r.loc,
+        };
+
+        return Ok((l, r, r_prim));
+    }
 }

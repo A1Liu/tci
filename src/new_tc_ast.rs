@@ -1,6 +1,6 @@
 // use crate::filedb::*;
 use crate::buckets::*;
-pub use crate::new_ast::BinOp;
+pub use crate::new_ast::{BinOp, UnaryOp};
 use crate::util::*;
 use serde::Serialize;
 // use std::io::Write;
@@ -182,6 +182,41 @@ pub trait TCTy {
         return false;
     }
 
+    fn pointer_stride(&self) -> n32 {
+        if let Some(deref) = self.deref() {
+            return deref.size();
+        }
+
+        return n32::NULL;
+    }
+
+    fn is_pointer(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+                return refers_to.is_pointer();
+            }
+
+            return false;
+        }
+
+        return let_expr!(TCTypeModifier::Pointer = self.mods()[0])
+            || let_expr!(TCTypeModifier::Array(_) = self.mods()[0])
+            || let_expr!(TCTypeModifier::VariableArray = self.mods()[0]);
+    }
+
+    fn is_integer(&self) -> bool {
+        if self.mods().len() != 0 {
+            return false;
+        }
+
+        match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => return true,
+            TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
+            TCTypeBase::Void => return false,
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_integer(),
+        }
+    }
+
     fn is_array(&self) -> bool {
         if self.mods().len() == 0 {
             if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
@@ -309,6 +344,39 @@ pub trait TCTy {
         };
     }
 
+    /// Panics if the type is incomplete
+    fn deref(&self) -> Option<TCTypeRef> {
+        assert!(self.is_complete());
+
+        if let Some(first) = self.mods().first() {
+            let base = self.base();
+            let mods = &self.mods()[1..];
+            let to_ret = TCTypeRef { base, mods };
+
+            match first {
+                TCTypeModifier::Pointer => {
+                    if to_ret.is_function() {
+                        let mods = self.mods();
+                        return Some(TCTypeRef { base, mods });
+                    }
+
+                    return Some(to_ret);
+                }
+                TCTypeModifier::Array(_) => return Some(to_ret),
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return None,
+                _ => unreachable!(),
+            }
+        }
+
+        if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+            return TCTy::deref(refers_to);
+        }
+
+        return None;
+    }
+
     fn ty_eq(l: &impl TCTy, r: &impl TCTy) -> bool {
         return l.base() == r.base() && l.mods() == r.mods();
     }
@@ -381,7 +449,7 @@ impl TCType {
     }
 
     /// Panics if the type is incomplete
-    fn deref(&self, loc: CodeLoc) -> Result<TCType, Error> {
+    fn deref(&self) -> Option<TCType> {
         assert!(self.is_complete());
 
         if let Some(first) = self.mods.first() {
@@ -392,32 +460,24 @@ impl TCType {
             match first {
                 TCTypeModifier::Pointer => {
                     if to_ret.is_function() {
-                        return Ok(*self);
+                        return Some(*self);
                     }
 
-                    return Ok(to_ret);
+                    return Some(to_ret);
                 }
-                TCTypeModifier::Array(_) => return Ok(to_ret),
+                TCTypeModifier::Array(_) => return Some(to_ret),
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
-                | TCTypeModifier::UnknownParams => {
-                    return Err(error!(
-                        "cannot dereference function type",
-                        loc, "dereference happened here"
-                    ))
-                }
+                | TCTypeModifier::UnknownParams => return None,
                 _ => unreachable!(),
             }
         }
 
         if let TCTypeBase::Typedef { refers_to, .. } = self.base {
-            return refers_to.deref(loc);
+            return refers_to.deref();
         }
 
-        return Err(error!(
-            "cannot dereference primitive type",
-            loc, "dereference happened here"
-        ));
+        return None;
     }
 }
 
@@ -570,14 +630,17 @@ pub enum TCExprKind {
         right: &'static TCExpr,
     },
 
+    UnaryOp {
+        op: UnaryOp,
+        op_type: TCPrimType,
+        operand: &'static TCExpr,
+    },
+
     Conv {
         from: TCPrimType,
         to: TCPrimType,
         expr: &'static TCExpr,
     },
-
-    PostIncrU32(TCAssignTarget),
-    PostIncrU64(TCAssignTarget),
 
     Assign {
         target: TCAssignTarget,
@@ -589,6 +652,15 @@ pub enum TCExprKind {
         value: &'static TCExpr,
         op: BinOp,
         op_type: TCPrimType,
+    },
+
+    PostIncr {
+        ty: TCPrimType,
+        value: TCAssignTarget,
+    },
+    PostDecr {
+        ty: TCPrimType,
+        value: TCAssignTarget,
     },
 
     Ternary {
@@ -606,7 +678,6 @@ pub enum TCExprKind {
         offset: u32,
     },
 
-    Deref(&'static TCExpr),
     Ref(TCAssignTarget),
 
     Call {

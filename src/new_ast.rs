@@ -40,6 +40,8 @@ pub enum UnaryOp {
     Neg,
     BoolNot,
     BitNot,
+    PostIncr,
+    PostDecr,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,8 +50,6 @@ pub enum ExprKind {
     CharLiteral(i8),
     StringLiteral(&'static str),
     ParenList(&'static [Expr]),
-    SizeofType(&'static TypeName),
-    SizeofExpr(&'static Expr),
     Ident(u32),
     BinOp(BinOp, &'static Expr, &'static Expr),
     UnaryOp(UnaryOp, &'static Expr),
@@ -57,28 +57,11 @@ pub enum ExprKind {
         function: &'static Expr,
         params: &'static [Expr],
     },
-    Cast {
-        type_name: TypeName,
-        expr: &'static Expr,
-    },
-    Member {
-        base: &'static Expr,
-        member: u32,
-    },
-    PtrMember {
-        base: &'static Expr,
-        member: u32,
-    },
-    PostIncr(&'static Expr),
-    PostDecr(&'static Expr),
-    Ref(&'static Expr),
-    Deref(&'static Expr),
     Ternary {
         condition: &'static Expr,
         if_true: &'static Expr,
         if_false: &'static Expr,
     },
-    Uninit,
 }
 
 #[derive(Debug, Clone, Copy)]

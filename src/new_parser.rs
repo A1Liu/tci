@@ -233,11 +233,11 @@ rule expr() -> Expr = precedence! {
     }
     x:(@) pos:position!() [TokenKind::DashDash] {
         let loc = l_from(x.loc, env.locs[pos]);
-        Expr { loc, kind: ExprKind::PostDecr(env.buckets.add(x)) }
+        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostDecr, env.buckets.add(x)) }
     }
     x:(@) pos:position!() [TokenKind::PlusPlus] {
         let loc = l_from(x.loc, env.locs[pos]);
-        Expr { loc, kind: ExprKind::PostIncr(env.buckets.add(x)) }
+        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostIncr, env.buckets.add(x)) }
     }
     --
     n:atom() { n }
