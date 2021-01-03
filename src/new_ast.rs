@@ -21,7 +21,10 @@ pub enum BinOp {
     BitOr,
     BoolAnd,
     BoolOr,
+}
 
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
+pub enum AssignOp {
     Assign,
     AssignAdd,
     AssignSub,
@@ -52,6 +55,11 @@ pub enum ExprKind {
     ParenList(&'static [Expr]),
     Ident(u32),
     BinOp(BinOp, &'static Expr, &'static Expr),
+    Assign {
+        op: AssignOp,
+        to: &'static Expr,
+        expr: &'static Expr,
+    },
     UnaryOp(UnaryOp, &'static Expr),
     Call {
         function: &'static Expr,

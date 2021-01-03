@@ -649,70 +649,60 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
         //         },
         //     });
         // }
-        //ExprKind::Call { function, params } => {
-        //    let func_id = if let ExprKind::Ident(id) = function.kind {
-        //        id
-        //    } else {
-        //        return Err(error!(
-        //            "calling an expression that isn't a function",
-        //            function.loc, "called here"
-        //        ));
-        //    };
+        ExprKind::Call { function, params } => {
+            let func = check_expr(env, function)?;
+            let func_type = if let Some(f) = func.ty.to_func_type(env) {
+                f
+            } else {
+                return Err(error!("can't call expression", func.loc, "expr found here"));
+            };
 
-        //    let func_type = if let Some(func_type) = env.func_types.get(&func_id) {
-        //        func_type
-        //    } else {
-        //        if env.types.builtins_enabled.map(|idx| idx < env.decl_idx) == Some(true) {
-        //            if let Some(trans) = BUILTINS.get(env.files.symbol_to_str(func_id)) {
-        //                let (builtin, expr_type) = trans(env, local_env, expr.loc, params)?;
-        //                return Ok(TCExpr {
-        //                    kind: TCExprKind::Builtin(builtin),
-        //                    loc: expr.loc,
-        //                    expr_type,
-        //                });
-        //            }
-        //        }
+            if let Some(ftype_params) = func_type.params {
+                if params.len() < ftype_params.types.len()
+                    || (params.len() > ftype_params.types.len() && !ftype_params.varargs)
+                {
+                    return Err(error!(
+                        "function call has wrong number of parameters",
+                        expr.loc,
+                        "function called here" // TODO say what the type of the function is
+                    ));
+                }
 
-        //        return Err(error!("function doesn't exist", expr.loc, "called here"));
-        //    };
+                let mut tparams = Vec::new();
+                for (idx, param) in params.iter().enumerate() {
+                    let mut expr = check_expr(env, param)?;
+                    if idx < ftype_params.types.len() {
+                        let param_type = &ftype_params.types[idx];
+                        expr = assign_convert(env, *param_type, expr);
+                    }
 
-        //    if func_type.decl_idx > env.decl_idx {
-        //        return Err(error!(
-        //            "function hasn't been declared yet (declaration order matters in C)",
-        //            expr.loc, "function called here", func_type.loc, "function declared here"
-        //        ));
-        //    }
+                    tparams.push(expr);
+                }
 
-        //    if params.len() < func_type.params.len()
-        //        || (params.len() > func_type.params.len() && !func_type.varargs)
-        //    {
-        //        return Err(error!(
-        //            "function call has wrong number of parameters",
-        //            expr.loc, "function called here", func_type.loc, "function declared here"
-        //        ));
-        //    }
+                let func = env.add(func);
+                let params = env.add_array(tparams);
 
-        //    let mut tparams = Vec::new();
-        //    for (idx, param) in params.iter().enumerate() {
-        //        let mut expr = check_expr(env, local_env, param)?;
-        //        if idx < func_type.params.len() {
-        //            let param_type = &func_type.params[idx];
-        //            expr = env.param_convert(&param_type.0, param_type.1, expr)?;
-        //        }
+                return Ok(TCExpr {
+                    kind: TCExprKind::Call { func, params },
+                    ty: func_type.return_type,
+                    loc: expr.loc,
+                });
+            }
 
-        //        tparams.push(expr);
-        //    }
+            let mut tparams = Vec::new();
+            for (idx, param) in params.iter().enumerate() {
+                tparams.push(check_expr(env, param)?);
+            }
 
-        //    return Ok(TCExpr {
-        //        kind: TCExprKind::Call {
-        //            func: func_id,
-        //            params: env.buckets.add_array(tparams),
-        //            named_count: params.len() as u32,
-        //        },
-        //        expr_type: func_type.return_type,
-        //        loc: expr.loc,
-        //    });
-        //}
+            let func = env.add(func);
+            let params = env.add_array(tparams);
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Call { func, params },
+                ty: func_type.return_type,
+                loc: expr.loc,
+            });
+        }
         x => panic!("{:?} is unimplemented", x),
     }
 }

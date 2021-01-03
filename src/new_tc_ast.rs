@@ -1,9 +1,9 @@
-// use crate::filedb::*;
 use crate::buckets::*;
+use crate::filedb::*;
 pub use crate::new_ast::{BinOp, UnaryOp};
 use crate::util::*;
 use serde::Serialize;
-// use std::io::Write;
+use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TCIdent {
@@ -108,7 +108,7 @@ pub enum TCTypeBase {
     Void,
     Typedef {
         refers_to: &'static TCType,
-        typedef: (n32, CodeLoc),
+        typedef: (u32, CodeLoc),
     },
 }
 
@@ -142,6 +142,38 @@ impl<'a> TCTy for TCTypeRef<'a> {
 pub trait TCTy {
     fn base(&self) -> TCTypeBase;
     fn mods(&self) -> &[TCTypeModifier];
+
+    fn display(&self, files: &FileDb) -> String {
+        let mut writer = StringWriter::new();
+        match self.base() {
+            TCTypeBase::I8 => write!(writer, "char"),
+            TCTypeBase::U8 => write!(writer, "unsigned char"),
+            TCTypeBase::I32 => write!(writer, "int"),
+            TCTypeBase::U32 => write!(writer, "unsigned int"),
+            TCTypeBase::I64 => write!(writer, "long"),
+            TCTypeBase::U64 => write!(writer, "unsigned long"),
+            TCTypeBase::Void => write!(writer, "void"),
+            TCTypeBase::Typedef { typedef, .. } => {
+                write!(writer, "{}", files.symbol_to_str(typedef.0))
+            }
+        }
+        .unwrap();
+
+        return writer.to_string();
+    }
+
+    fn expand_typedef(&self, files: &FileDb) -> TCTypeOwned {
+        let mut owned = if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+            let (base, mods) = (refers_to.base, Vec::from(refers_to.mods));
+            TCTypeOwned { base, mods }
+        } else {
+            let (base, mods) = (self.base(), Vec::new());
+            TCTypeOwned { base, mods }
+        };
+
+        owned.mods.extend(self.mods());
+        return owned;
+    }
 
     fn is_void(&self) -> bool {
         if let TCTypeBase::Void = self.base() {
@@ -177,6 +209,30 @@ pub trait TCTy {
 
         if let TCTypeModifier::BeginParam(_) = self.mods()[0] {
             return true;
+        }
+
+        return false;
+    }
+
+    fn is_callable(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+                return refers_to.is_callable();
+            }
+
+            return false;
+        }
+
+        if self.is_function() {
+            return true;
+        }
+
+        if let TCTypeModifier::Pointer = self.mods()[0] {
+            let (base, mods) = (self.base(), &self.mods()[1..]);
+
+            if (TCTypeRef { base, mods }).is_function() {
+                return true;
+            }
         }
 
         return false;
@@ -389,8 +445,12 @@ pub struct TCType {
 }
 
 impl TCType {
-    pub fn to_tc_func_type(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
+    pub fn to_func_type_strict(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
         if self.mods.len() == 0 {
+            if let TCTypeBase::Typedef { refers_to, .. } = self.base {
+                return refers_to.to_func_type(alloc);
+            }
+
             return None;
         }
 
@@ -446,6 +506,14 @@ impl TCType {
         };
 
         return Some(tc_func_type);
+    }
+
+    pub fn to_func_type(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
+        if let Some(deref) = self.deref() {
+            return deref.to_func_type_strict(alloc);
+        }
+
+        return self.to_func_type_strict(alloc);
     }
 
     /// Panics if the type is incomplete
@@ -683,7 +751,6 @@ pub enum TCExprKind {
     Call {
         func: &'static TCExpr,
         params: &'static [TCExpr],
-        named_count: u32,
     },
     Builtin(TCBuiltin),
 }

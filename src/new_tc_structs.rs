@@ -249,7 +249,7 @@ impl<'a> TypeEnv<'a> {
         if let Some((ty, td_loc)) = self.search_scopes(|sel| sel.typedefs.get(&ident).map(|a| *a)) {
             return Ok(TCTypeBase::Typedef {
                 refers_to: ty,
-                typedef: (ident.into(), td_loc),
+                typedef: (ident, td_loc),
             });
         }
 
@@ -387,7 +387,7 @@ impl<'a> TypeEnv<'a> {
         global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
 
-        if let Some(func_type) = init.ty.to_tc_func_type(&*global_env) {
+        if let Some(func_type) = init.ty.to_func_type_strict(&*global_env) {
             let tc_function = TCFunction {
                 is_static: false,
                 func_type,
@@ -425,7 +425,7 @@ impl<'a> TypeEnv<'a> {
         global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
 
-        if let Some(func_type) = init.ty.to_tc_func_type(&*global_env) {
+        if let Some(func_type) = init.ty.to_func_type_strict(&*global_env) {
             let tc_function = TCFunction {
                 is_static: false,
                 func_type,
