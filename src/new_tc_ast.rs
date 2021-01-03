@@ -170,6 +170,67 @@ pub struct TCType {
     pub mods: &'static [TCTypeModifier],
 }
 
+impl TCType {
+    pub fn to_tc_func_type(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
+        if self.mods.len() == 0 {
+            return None;
+        }
+
+        let tc_func_type = match self.mods[0] {
+            TCTypeModifier::UnknownParams => TCFuncType {
+                return_type: TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                },
+                params: None,
+            },
+            TCTypeModifier::NoParams => TCFuncType {
+                return_type: TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                },
+                params: Some(TCParamType {
+                    types: &[],
+                    varargs: false,
+                }),
+            },
+            TCTypeModifier::BeginParam(param) => {
+                let mut params = vec![param];
+                let mut cursor = 1;
+                let mut varargs = false;
+
+                while cursor < self.mods.len() {
+                    match self.mods[cursor] {
+                        TCTypeModifier::Param(p) => params.push(p),
+                        TCTypeModifier::VarargsParam => varargs = true,
+                        _ => break,
+                    }
+
+                    cursor += 1;
+                }
+
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[cursor..],
+                };
+
+                let params = Some(TCParamType {
+                    types: alloc.add_array(params),
+                    varargs,
+                });
+
+                TCFuncType {
+                    return_type,
+                    params,
+                }
+            }
+            _ => return None,
+        };
+
+        return Some(tc_func_type);
+    }
+}
+
 impl PartialEq<TCType> for TCType {
     fn eq(&self, other: &TCType) -> bool {
         return TCType::ty_eq(self, other);
@@ -376,15 +437,16 @@ pub struct TCExpr {
 #[derive(Debug, Clone, Copy)]
 pub enum TCAssignTargetKind {
     LocalIdent { var_offset: i16 },
+    GlobalIdent { binary_offset: u32 },
     Ptr(&'static TCExpr),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCAssignTarget {
     pub kind: TCAssignTargetKind,
-    pub defn_loc: Option<CodeLoc>,
-    pub target_loc: CodeLoc,
-    pub target_size: u32,
+    pub defn_loc: CodeLoc,
+    pub loc: CodeLoc,
+    pub ty: TCType,
     pub offset: u32,
 }
 
@@ -409,7 +471,7 @@ pub enum OffsetOrLoc {
 #[derive(Debug, Clone, Copy)]
 pub struct TCVar {
     pub var_offset: OffsetOrLoc, // if none, it's a static; otherwise its offset from the frame pointer
-    pub decl_type: TCType,
+    pub ty: TCType,
     pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
 
@@ -436,11 +498,13 @@ pub struct TCGlobalVar {
     pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct TCFuncDefn {
     pub ops: &'static [TCOpcode],
     pub loc: CodeLoc,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct TCFunction {
     pub is_static: bool,
     pub func_type: TCFuncType,

@@ -271,7 +271,7 @@ impl TypeEnv {
 
         let tc_var = TCVar {
             var_offset: OffsetOrLoc::LocalOffset(idx),
-            decl_type: ty,
+            ty,
             loc,
         };
 
@@ -306,7 +306,7 @@ impl TypeEnv {
 
         let tc_var = TCVar {
             var_offset: OffsetOrLoc::LocalOffset(idx),
-            decl_type: ty,
+            ty,
             loc,
         };
 
@@ -333,7 +333,7 @@ impl TypeEnv {
 
         let tc_var = TCVar {
             var_offset: OffsetOrLoc::StaticLoc(loc),
-            decl_type: init.ty,
+            ty: init.ty,
             loc,
         };
 
@@ -382,6 +382,18 @@ impl TypeEnv {
 
         global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
+
+        if let Some(func_type) = init.ty.to_tc_func_type(&*global_env) {
+            let tc_function = TCFunction {
+                is_static: false,
+                func_type,
+                defn: None,
+            };
+
+            global_env.functions.insert(id, tc_function);
+            global_env.tu.functions.insert(id, tc_function);
+        }
+
         return Ok(());
     }
 
@@ -406,96 +418,20 @@ impl TypeEnv {
             ));
         }
 
-        if init.ty.mods.len() == 0 {
-            global_env.tu.variables.insert(global_ident, global_var);
-            global_env.next_var += 1;
-            return Ok(());
-        }
-
-        match init.ty.mods[0] {
-            TCTypeModifier::UnknownParams => {
-                let func_type = TCFuncType {
-                    return_type: TCType {
-                        base: init.ty.base,
-                        mods: &init.ty.mods[1..],
-                    },
-                    params: None,
-                };
-
-                global_env.functions.insert(
-                    id,
-                    TCFunction {
-                        is_static: true,
-                        func_type,
-                        defn: None,
-                    },
-                );
-            }
-            TCTypeModifier::NoParams => {
-                let func_type = TCFuncType {
-                    return_type: TCType {
-                        base: init.ty.base,
-                        mods: &init.ty.mods[1..],
-                    },
-                    params: Some(TCParamType {
-                        types: &[],
-                        varargs: false,
-                    }),
-                };
-
-                global_env.functions.insert(
-                    id,
-                    TCFunction {
-                        is_static: true,
-                        func_type,
-                        defn: None,
-                    },
-                );
-            }
-            TCTypeModifier::BeginParam(param) => {
-                let mut params = vec![param];
-                let mut cursor = 1;
-                let mut varargs = false;
-
-                while cursor < init.ty.mods.len() {
-                    match init.ty.mods[cursor] {
-                        TCTypeModifier::Param(p) => params.push(p),
-                        TCTypeModifier::VarargsParam => varargs = true,
-                        _ => break,
-                    }
-
-                    cursor += 1;
-                }
-
-                let return_type = TCType {
-                    base: init.ty.base,
-                    mods: &init.ty.mods[cursor..],
-                };
-
-                let params = Some(TCParamType {
-                    types: global_env.add_array(params),
-                    varargs,
-                });
-
-                let func_type = TCFuncType {
-                    return_type,
-                    params,
-                };
-
-                global_env.functions.insert(
-                    id,
-                    TCFunction {
-                        is_static: true,
-                        func_type,
-                        defn: None,
-                    },
-                );
-            }
-            _ => {}
-        }
-
         global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
+
+        if let Some(func_type) = init.ty.to_tc_func_type(&*global_env) {
+            let tc_function = TCFunction {
+                is_static: false,
+                func_type,
+                defn: None,
+            };
+
+            global_env.functions.insert(id, tc_function);
+            global_env.tu.functions.insert(id, tc_function);
+        }
+
         return Ok(());
     }
 
@@ -534,7 +470,7 @@ impl TypeEnv {
                 OffsetOrLoc::LocalOffset(var_offset) => {
                     return Ok(TCExpr {
                         kind: TCExprKind::LocalIdent { var_offset },
-                        ty: tc_var.decl_type,
+                        ty: tc_var.ty,
                         loc,
                     });
                 }
@@ -545,7 +481,7 @@ impl TypeEnv {
 
                     return Ok(TCExpr {
                         kind: TCExprKind::GlobalIdent { binary_offset },
-                        ty: tc_var.decl_type,
+                        ty: tc_var.ty,
                         loc,
                     });
                 }
@@ -561,6 +497,61 @@ impl TypeEnv {
                 kind: TCExprKind::GlobalIdent { binary_offset },
                 ty: global_var.ty,
                 loc,
+            });
+        }
+
+        return Err(error!("couldn't find symbol", loc, "symbol used here"));
+    }
+
+    pub fn assign_ident(&self, ident: u32, loc: CodeLoc) -> Result<TCAssignTarget, Error> {
+        debug_assert!(!self.is_global());
+
+        // search locals
+        if let Some(tc_var) = self.search_local_scopes(|sel| sel.symbols.get(&ident).map(|a| *a)) {
+            match tc_var.var_offset {
+                OffsetOrLoc::LocalOffset(var_offset) => {
+                    return Ok(TCAssignTarget {
+                        kind: TCAssignTargetKind::LocalIdent { var_offset },
+                        defn_loc: tc_var.loc,
+                        ty: tc_var.ty,
+                        loc,
+                        offset: 0,
+                    });
+                }
+                OffsetOrLoc::StaticLoc(scope) => {
+                    let (global_env, _) = self.globals();
+                    let global_var = global_env.symbols[&TCIdent::ScopedIdent { scope, ident }];
+                    let binary_offset = global_var.var_idx;
+
+                    return Ok(TCAssignTarget {
+                        kind: TCAssignTargetKind::GlobalIdent { binary_offset },
+                        defn_loc: tc_var.loc,
+                        ty: tc_var.ty,
+                        loc,
+                        offset: 0,
+                    });
+                }
+            }
+        }
+
+        // search globals
+        let (global_env, _) = self.globals();
+        if let Some(tc_var) = global_env.symbols.get(&TCIdent::Ident(ident)) {
+            if tc_var.ty.is_function() {
+                return Err(error!(
+                    "can't assign to function type",
+                    loc, "assignment to name happens here"
+                ));
+            }
+
+            let binary_offset = tc_var.var_idx;
+
+            return Ok(TCAssignTarget {
+                kind: TCAssignTargetKind::GlobalIdent { binary_offset },
+                defn_loc: tc_var.loc,
+                ty: tc_var.ty,
+                loc,
+                offset: 0,
             });
         }
 

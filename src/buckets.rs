@@ -96,6 +96,15 @@ where
     }
 }
 
+impl<'a, T> Allocator<'a> for &mut T
+where
+    T: Allocator<'a>,
+{
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        return (&**self).alloc(layout);
+    }
+}
+
 impl<'a> Allocator<'a> for Frame<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         use Ordering::*;
