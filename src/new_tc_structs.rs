@@ -243,10 +243,10 @@ impl TypeEnv {
     }
 
     pub fn check_typedef(&self, ident: u32, loc: CodeLoc) -> Result<TCTypeBase, Error> {
-        if let Some((ty, loc)) = self.search_scopes(|sel| sel.typedefs.get(&ident).map(|a| *a)) {
+        if let Some((ty, td_loc)) = self.search_scopes(|sel| sel.typedefs.get(&ident).map(|a| *a)) {
             return Ok(TCTypeBase::Typedef {
                 refers_to: ty,
-                typedef: (ident.into(), loc),
+                typedef: (ident.into(), td_loc),
             });
         }
 
@@ -352,6 +352,7 @@ impl TypeEnv {
             loc,
             var_idx: global_env.next_var,
         };
+
         global_env.symbols.insert(global_ident, global_var);
         global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
@@ -556,5 +557,9 @@ impl TypeEnv {
         }
 
         return Err(error!("couldn't find symbol", loc, "symbol used here"));
+    }
+
+    pub fn add_typedef(&mut self, ty: TCType, id: u32, loc: CodeLoc) {
+        self.typedefs.insert(id, (self.add(ty), loc));
     }
 }

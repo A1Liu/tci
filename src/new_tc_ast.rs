@@ -524,7 +524,7 @@ pub struct TCParamsDeclarator {
 }
 
 pub struct TCFunctionDeclarator {
-    pub sc: StorageClass,
+    pub is_static: bool,
     pub return_type: TCType,
     pub ident: u32,
     pub params: Option<TCParamsDeclarator>,
@@ -537,25 +537,17 @@ pub struct TranslationUnit {
     pub functions: HashMap<u32, TCFunction>,
 }
 
+pub struct TCDecl {
+    pub ty: TCType,
+    pub ident: u32,
+    pub expr: TCExpr,
+}
+
 pub enum DeclarationResult {
-    Typedef {
-        ty: TCType,
-        ident: u32,
-    },
-    Static {
-        ty: TCType,
-        ident: u32,
-        expr: TCExpr,
-    },
-    Default {
-        ty: TCType,
-        ident: u32,
-    },
-    Init {
-        ty: TCType,
-        ident: u32,
-        expr: TCExpr,
-    },
+    Typedef { ty: TCType, ident: u32 },
+    Static(Vec<TCDecl>),
+    Default(Vec<TCDecl>),
+    Extern(Vec<(TCType, u32)>),
 }
 
 impl TranslationUnit {

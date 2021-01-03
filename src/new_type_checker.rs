@@ -168,7 +168,13 @@ pub fn parse_decl_specs(
     let begin = decl_specs[0].loc;
     let end = decl_specs.last().unwrap().loc;
 
-    let or_else = || error!("incorrect ");
+    let or_else = || {
+        error!(
+            "incorrect type specifiers",
+            l_from(begin, end),
+            "specifiers found here"
+        )
+    };
     let base = *CORRECT_TYPES.get(&ds).ok_or_else(or_else)?;
 
     return Ok((sc, base));
@@ -190,7 +196,7 @@ pub fn check_func_defn_decl(
         params
     } else {
         return Ok(TCFunctionDeclarator {
-            sc,
+            is_static: let_expr!(StorageClass::Static = sc),
             return_type: rtype.to_ref(locals),
             ident: decl.ident,
             params: None,
@@ -215,7 +221,7 @@ pub fn check_func_defn_decl(
     }
 
     return Ok(TCFunctionDeclarator {
-        sc,
+        is_static: let_expr!(StorageClass::Static = sc),
         return_type: rtype.to_ref(locals),
         ident: decl.ident,
         params: Some(TCParamsDeclarator {
@@ -227,10 +233,10 @@ pub fn check_func_defn_decl(
 
 pub fn check_decl(
     locals: &TypeEnv,
-    decl_specs: &[DeclarationSpecifier],
+    base: TCTypeBase,
     decl: &Declarator,
-) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
-    let (sc, ty, id) = check_decl_rec(locals, decl_specs, decl)?;
+) -> Result<(TCTypeOwned, n32), Error> {
+    let (ty, id) = check_decl_rec(locals, base, decl)?;
 
     let mut was_array = false;
     let mut was_function = false;
@@ -276,7 +282,7 @@ pub fn check_decl(
         ));
     }
 
-    return Ok((sc, ty, id));
+    return Ok((ty, id));
 }
 
 pub fn check_param_types(
@@ -284,13 +290,12 @@ pub fn check_param_types(
     params: &[ParameterDeclaration],
 ) -> Result<Vec<(TCType, n32)>, Error> {
     let param = params[0];
-    let (sc, mut param_type, id) = if let Some(decl) = param.declarator {
-        let (sc, tc_type, id) = check_decl(locals, param.specifiers, &decl)?;
-        (sc, tc_type, id)
+    let (sc, param_base) = parse_decl_specs(locals, param.specifiers)?;
+    let (mut param_type, id) = if let Some(decl) = param.declarator {
+        let (tc_type, id) = check_decl(locals, param_base, &decl)?;
+        (tc_type, id)
     } else {
-        let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
-
-        (sc, TCTypeOwned::new(base), n32::NULL)
+        (TCTypeOwned::new(param_base), n32::NULL)
     };
 
     debug_assert!(let_expr!(StorageClass::Default = sc));
@@ -313,14 +318,12 @@ pub fn check_param_types(
     out.push((param_type, id));
 
     for param in &params[1..] {
-        let (sc, param_type, id) = if let Some(decl) = param.declarator {
-            let (sc, tc_type, id) = check_decl(locals, param.specifiers, &decl)?;
-            (sc, tc_type.to_ref(locals), id)
+        let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
+        let (mut param_type, id) = if let Some(decl) = param.declarator {
+            let (tc_type, id) = check_decl(locals, param_base, &decl)?;
+            (tc_type, id)
         } else {
-            let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
-            let tc_type = TCType { base, mods: &[] };
-
-            (sc, tc_type, n32::NULL)
+            (TCTypeOwned::new(param_base), n32::NULL)
         };
 
         debug_assert!(let_expr!(StorageClass::Default = sc));
@@ -334,6 +337,8 @@ pub fn check_param_types(
             }
         }
 
+        param_type.canonicalize_param();
+        let param_type = param_type.to_ref(locals);
         out.push((param_type, id));
     }
 
@@ -342,21 +347,13 @@ pub fn check_param_types(
 
 pub fn check_decl_rec(
     locals: &TypeEnv,
-    decl_specs: &[DeclarationSpecifier],
+    base: TCTypeBase,
     decl: &Declarator,
-) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
-    let (sc, mut tc_type, ident) = match decl.kind {
-        DeclaratorKind::Declarator(decl) => check_decl_rec(locals, decl_specs, decl)?,
-        DeclaratorKind::Identifier(ident) => {
-            let (sc, base) = parse_decl_specs(locals, decl_specs)?;
-
-            (sc, TCTypeOwned::new(base), ident.into())
-        }
-        DeclaratorKind::Abstract => {
-            let (sc, base) = parse_decl_specs(locals, decl_specs)?;
-
-            (sc, TCTypeOwned::new(base), n32::NULL)
-        }
+) -> Result<(TCTypeOwned, n32), Error> {
+    let (mut tc_type, ident) = match decl.kind {
+        DeclaratorKind::Declarator(decl) => check_decl_rec(locals, base, decl)?,
+        DeclaratorKind::Identifier(ident) => (TCTypeOwned::new(base), ident.into()),
+        DeclaratorKind::Abstract => (TCTypeOwned::new(base), n32::NULL),
     };
 
     use DerivedDeclaratorKind as DDK;
@@ -420,19 +417,7 @@ pub fn check_decl_rec(
         }
     }
 
-    return Ok((sc, tc_type, ident));
-}
-
-pub fn eval_expr(expr: &Expr) -> Result<&Expr, Error> {
-    // TODO cmon man
-    if let ExprKind::IntLiteral(i) = expr.kind {
-        return Ok(expr);
-    } else {
-        return Err(error!(
-            "cannot evaluate constant expression",
-            expr.loc, "expression found here"
-        ));
-    }
+    return Ok((tc_type, ident));
 }
 
 pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
@@ -457,6 +442,84 @@ pub fn check_tree(tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
     return Ok(globals.tu());
 }
 
-pub fn check_declaration(locals: &TypeEnv, declaration: Declaration) -> Result<(), Error> {
-    return Ok(());
+pub fn check_declaration(
+    locals: &TypeEnv,
+    declaration: Declaration,
+) -> Result<DeclarationResult, Error> {
+    let (sc, base) = parse_decl_specs(locals, declaration.specifiers)?;
+
+    if let StorageClass::Typedef = sc {
+        debug_assert!(declaration.declarators.len() == 1);
+        let init_declarator = &declaration.declarators[0];
+        debug_assert!(init_declarator.initializer.is_none());
+
+        let (ty, id) = check_decl(locals, base, &init_declarator.declarator)?;
+        let (ty, ident) = (ty.to_ref(locals), id.into());
+        return Ok(DeclarationResult::Typedef { ty, ident });
+    }
+
+    if let StorageClass::Extern = sc {
+        let mut decls = Vec::new();
+
+        for decl in declaration.declarators {
+            if let Some(init) = decl.initializer {
+                return Err(error!(
+                    "initializer not valid in an extern declaration",
+                    init.loc, "initializer found here"
+                ));
+            }
+
+            let (ty, id) = check_decl(locals, base, &decl.declarator)?;
+            decls.push((ty.to_ref(locals), id.into()));
+        }
+
+        return Ok(DeclarationResult::Extern(decls));
+    }
+
+    let mut decls = Vec::new();
+    for decl in declaration.declarators {
+        let (ty, id) = check_decl(locals, base, &decl.declarator)?;
+        let (ty, ident) = (ty.to_ref(locals), id.into());
+        let expr = if let Some(init) = decl.initializer {
+            TCExpr {
+                kind: TCExprKind::Uninit,
+                ty,
+                loc: init.loc,
+            }
+        } else {
+            TCExpr {
+                kind: TCExprKind::Uninit,
+                ty,
+                loc: NO_FILE,
+            }
+        };
+
+        decls.push(TCDecl { ty, ident, expr });
+    }
+
+    if let StorageClass::Static = sc {
+        return Ok(DeclarationResult::Static(decls));
+    } else {
+        return Ok(DeclarationResult::Default(decls));
+    }
+}
+
+pub fn eval_expr(expr: &Expr) -> Result<&Expr, Error> {
+    // TODO cmon man
+    if let ExprKind::IntLiteral(i) = expr.kind {
+        return Ok(expr);
+    } else {
+        return Err(error!(
+            "cannot evaluate constant expression",
+            expr.loc, "expression found here"
+        ));
+    }
+}
+
+pub fn check_expr(locals: &TypeEnv, expr: Expr) -> Result<TCExpr, Error> {
+    Ok(TCExpr {
+        kind: TCExprKind::Uninit,
+        ty: TCType::new(TCTypeBase::I8),
+        loc: expr.loc,
+    })
 }
