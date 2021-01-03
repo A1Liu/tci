@@ -8,6 +8,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TCIdent {
     Ident(u32),
+    // this isn't enough for statics; assembler needs to tag idents with translation unit they came from as well
     ScopedIdent { scope: CodeLoc, ident: u32 },
     Anonymous(CodeLoc),
 }
@@ -95,7 +96,7 @@ pub struct TCOpcode {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum TCTypeBase {
     I32, // int
@@ -111,7 +112,7 @@ pub enum TCTypeBase {
     },
 }
 
-#[derive(Debug, Clone, Copy, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
 #[serde(tag = "modifier", content = "data")]
 pub enum TCTypeModifier {
     Pointer, // TODO add qualifiers
@@ -157,12 +158,22 @@ pub trait TCTy {
 
         return false;
     }
+
+    fn ty_eq(l: &impl TCTy, r: &impl TCTy) -> bool {
+        return l.base() == r.base() && l.mods() == r.mods();
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, Serialize)]
 pub struct TCType {
     pub base: TCTypeBase,
     pub mods: &'static [TCTypeModifier],
+}
+
+impl PartialEq<TCType> for TCType {
+    fn eq(&self, other: &TCType) -> bool {
+        return TCType::ty_eq(self, other);
+    }
 }
 
 impl TCTy for TCType {
@@ -282,6 +293,7 @@ pub enum TCBuiltin {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCExprKind {
+    Uninit,
     I8Literal(i8),
     I32Literal(i32),
     I64Literal(i64),
@@ -297,8 +309,6 @@ pub enum TCExprKind {
     FunctionIdent {
         ident: u32,
     },
-
-    Array(&'static [TCExpr]),
 
     ParenList(&'static [TCExpr]),
 
@@ -412,10 +422,17 @@ pub enum StorageClass {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum TCGlobalInit {
+    Extern,
+    Static(TCExprKind),
+    Default(TCExprKind),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct TCGlobalVar {
-    pub storage_class: StorageClass,
-    pub decl_type: TCType,
+    pub init: TCGlobalInit,
     pub var_idx: u32,
+    pub ty: TCType,
     pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
 
@@ -427,7 +444,6 @@ pub struct TCFuncDefn {
 pub struct TCFunction {
     pub is_static: bool,
     pub func_type: TCFuncType,
-    pub expr_type: TCType,
     pub defn: Option<TCFuncDefn>,
 }
 
@@ -453,7 +469,7 @@ pub struct TCFunctionDeclarator {
 pub struct TranslationUnit {
     pub buckets: BucketListRef<'static>,
     pub typedefs: HashMap<(u32, CodeLoc), TCType>,
-    pub variables: HashMap<u32, TCGlobalVar>,
+    pub variables: HashMap<TCIdent, TCGlobalVar>,
     pub functions: HashMap<u32, TCFunction>,
 }
 

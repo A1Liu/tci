@@ -176,7 +176,6 @@ pub fn parse_decl_specs(
 
 pub fn check_func_defn_decl(
     locals: &TypeEnv,
-    buckets: &impl Allocator<'static>,
     decl: &FunctionDefinition,
 ) -> Result<TCFunctionDeclarator, Error> {
     let (sc, base) = parse_decl_specs(locals, decl.specifiers)?;
@@ -192,13 +191,13 @@ pub fn check_func_defn_decl(
     } else {
         return Ok(TCFunctionDeclarator {
             sc,
-            return_type: rtype.to_ref(&buckets),
+            return_type: rtype.to_ref(locals),
             ident: decl.ident,
             params: None,
         });
     };
 
-    let params = check_param_types(locals, buckets, params_decl.parameters)?;
+    let params = check_param_types(locals, params_decl.parameters)?;
     let mut out = Vec::new();
     for (idx, (ty, id)) in params.into_iter().enumerate() {
         if id == n32::NULL {
@@ -217,10 +216,10 @@ pub fn check_func_defn_decl(
 
     return Ok(TCFunctionDeclarator {
         sc,
-        return_type: rtype.to_ref(&buckets),
+        return_type: rtype.to_ref(locals),
         ident: decl.ident,
         params: Some(TCParamsDeclarator {
-            params: buckets.add_array(out),
+            params: locals.add_array(out),
             varargs: params_decl.varargs,
         }),
     });
@@ -228,11 +227,10 @@ pub fn check_func_defn_decl(
 
 pub fn check_decl(
     locals: &TypeEnv,
-    buckets: &impl Allocator<'static>,
     decl_specs: &[DeclarationSpecifier],
     decl: &Declarator,
 ) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
-    let (sc, ty, id) = check_decl_rec(locals, buckets, decl_specs, decl)?;
+    let (sc, ty, id) = check_decl_rec(locals, decl_specs, decl)?;
 
     let mut was_array = false;
     let mut was_function = false;
@@ -283,12 +281,11 @@ pub fn check_decl(
 
 pub fn check_param_types(
     locals: &TypeEnv,
-    buckets: &impl Allocator<'static>,
     params: &[ParameterDeclaration],
 ) -> Result<Vec<(TCType, n32)>, Error> {
     let param = params[0];
     let (sc, mut param_type, id) = if let Some(decl) = param.declarator {
-        let (sc, tc_type, id) = check_decl(locals, buckets, param.specifiers, &decl)?;
+        let (sc, tc_type, id) = check_decl(locals, param.specifiers, &decl)?;
         (sc, tc_type, id)
     } else {
         let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
@@ -310,15 +307,15 @@ pub fn check_param_types(
     }
 
     param_type.canonicalize_param();
-    let param_type = param_type.to_ref(buckets);
+    let param_type = param_type.to_ref(locals);
 
     let mut out = Vec::new();
     out.push((param_type, id));
 
     for param in &params[1..] {
         let (sc, param_type, id) = if let Some(decl) = param.declarator {
-            let (sc, tc_type, id) = check_decl(locals, buckets, param.specifiers, &decl)?;
-            (sc, tc_type.to_ref(buckets), id)
+            let (sc, tc_type, id) = check_decl(locals, param.specifiers, &decl)?;
+            (sc, tc_type.to_ref(locals), id)
         } else {
             let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
             let tc_type = TCType { base, mods: &[] };
@@ -345,12 +342,11 @@ pub fn check_param_types(
 
 pub fn check_decl_rec(
     locals: &TypeEnv,
-    buckets: &impl Allocator<'static>,
     decl_specs: &[DeclarationSpecifier],
     decl: &Declarator,
 ) -> Result<(StorageClass, TCTypeOwned, n32), Error> {
     let (sc, mut tc_type, ident) = match decl.kind {
-        DeclaratorKind::Declarator(decl) => check_decl_rec(locals, buckets, decl_specs, decl)?,
+        DeclaratorKind::Declarator(decl) => check_decl_rec(locals, decl_specs, decl)?,
         DeclaratorKind::Identifier(ident) => {
             let (sc, base) = parse_decl_specs(locals, decl_specs)?;
 
@@ -399,7 +395,7 @@ pub fn check_decl_rec(
                 }
             }
             DDK::Function(func) => {
-                let params = check_param_types(locals, buckets, func.parameters)?;
+                let params = check_param_types(locals, func.parameters)?;
                 if params.len() == 0 {
                     tc_type.mods.push(TCTypeModifier::NoParams);
                     continue;
