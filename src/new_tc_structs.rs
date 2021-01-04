@@ -136,7 +136,7 @@ impl<'a> TypeEnv<'a> {
             symbols: HashMap::new(),
             parent: self,
             global,
-            decl_idx: -1,
+            decl_idx: -2,
         };
 
         Self {
