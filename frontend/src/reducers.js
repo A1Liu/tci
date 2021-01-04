@@ -15,6 +15,7 @@ const initialState = {
   fileNames: {},
   fileIds: {},
   terminal: "",
+  message: {},
   currentCodeLoc: undefined,
   debugging: false,
   blocked: false,
@@ -33,7 +34,7 @@ const appReducer = (state = initialState, action) => {
 
   if (type === "Status") {
     const { status, loc } = payload;
-    const newState = { ...state, currentCodeLoc: loc };
+    const newState = { ...state, currentCodeLoc: loc, message: status.data };
     switch (status.status) {
       case "ErrorExited":
         newState.running = false;

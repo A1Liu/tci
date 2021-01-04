@@ -1,11 +1,8 @@
-import AceEditor from "react-ace";
-import { Range } from "ace-builds";
-import styled from "styled-components";
-import "../App.css";
-import "ace-builds/src-noconflict/mode-csharp";
-import "ace-builds/src-noconflict/theme-monokai";
-import { useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import styled from "styled-components";
+import { ControlledEditor, monaco } from "@monaco-editor/react";
+import "../App.css";
 
 const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
   return (
@@ -16,7 +13,7 @@ const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
       onKeyDown={setCurrentFile}
       focused={file === currentFile}
     >
-      <p style={{ border: "10px" }}>{file}</p>
+      <p>{file}</p>
       <EditorTabClose
         type="button"
         onClick={() => dispatch({ type: "RemoveFile", payload: file })}
@@ -32,6 +29,7 @@ const BasicEditor = () => {
   const files = useSelector((state) => state.files);
   const debugging = useSelector((state) => state.debugging);
   const currentCodeLoc = useSelector((state) => state.currentCodeLoc);
+  const message = useSelector((state) => state.message);
   const fileNames = useSelector((state) => state.fileNames);
 
   const codeLocRef = useRef(undefined);
@@ -39,11 +37,12 @@ const BasicEditor = () => {
   codeLocRef.current = currentCodeLoc;
 
   const editor = useRef(undefined);
+  const monacoRef = useRef(undefined);
   const marker = useRef(undefined);
   const currentFile = useRef(undefined);
   const [rerender, setRerender] = useState(0);
 
-  const onValueChange = (content) => {
+  const onValueChange = (ev, content) => {
     if (currentFile.current !== undefined)
       dispatch({
         type: "EditFile",
@@ -68,10 +67,11 @@ const BasicEditor = () => {
 
     if (editor.current === undefined) return;
 
-    const ace = editor.current.editor;
+    const model = editor.current.getModel();
+
     if (!debugging) {
       if (marker.current !== undefined) {
-        ace.session.removeMarker(marker.current);
+        monacoRef.current.editor.setModelMarkers(model, currentFile, []);
         marker.current = undefined;
       }
 
@@ -81,7 +81,7 @@ const BasicEditor = () => {
     if (!codeLocChanged) return;
     if (currentCodeLoc === undefined) {
       if (marker.current !== undefined) {
-        ace.session.removeMarker(marker.current);
+        monacoRef.current.editor.setModelMarkers(model, currentFile, []);
         marker.current = undefined;
       }
 
@@ -91,18 +91,34 @@ const BasicEditor = () => {
     const nextFile = fileNames[currentCodeLoc.file];
     if (nextFile !== currentFile.current) {
       currentFile.current = undefined;
-      ace.setValue(files[nextFile], -1);
+      model.setValue(files[nextFile]);
       currentFile.current = nextFile;
     }
 
-    const doc = ace.session.getDocument();
-    const { row, column } = doc.indexToPosition(currentCodeLoc.start, 0);
-    if (marker.current !== undefined) ace.session.removeMarker(marker.current);
-    marker.current = ace.session.addMarker(
-      new Range(row, 0, row, column),
-      "current_line",
-      "fullLine"
+    const { lineNumber: rowStart, column: columnStart } = model.getPositionAt(
+      currentCodeLoc.start
     );
+    const { lineNumber: rowEnd, column: columnEnd } = model.getPositionAt(
+      currentCodeLoc.end
+    );
+
+    if (marker.current !== undefined)
+      monacoRef.current.editor.setModelMarkers(model, currentFile, []);
+
+    marker.current = 1;
+
+    // Severities: Hint=1, Info=2, Warning=4, Error=8;
+    monacoRef.current.editor.setModelMarkers(model, currentFile, [
+      {
+        startLineNumber: rowStart,
+        startColumn: columnStart,
+        endLineNumber: rowEnd,
+        endColumn: columnEnd,
+        message: message?.message ?? "current position",
+        code: message?.short_name ?? "",
+        severity: message?.message ? 5 : 2,
+      },
+    ]);
   };
 
   setupEditor();
@@ -120,9 +136,9 @@ const BasicEditor = () => {
             {Object.keys(files).map((name, index) => {
               const changeTab = () => {
                 if (name !== currentFile.current) {
-                  const { session } = editor.current.editor;
+                  const session = monacoRef.current.editor;
                   if (marker.current !== undefined) {
-                    session.removeMarker(marker.current);
+                    session.setModelMarkers(editor.getModel(), currentFile, []);
                     marker.current = undefined;
                   }
 
@@ -147,17 +163,22 @@ const BasicEditor = () => {
       </div>
 
       <div className="neutral" />
-      <AceEditor
-        ref={editor}
-        mode="csharp"
-        theme="monokai"
-        onChange={onValueChange}
-        readOnly={readOnly}
+      <ControlledEditor
+        height="100%"
+        theme="dark"
+        language="c"
         value={code}
-        fontSize={12}
-        highlightActiveLine={false}
-        setOptions={{ showLineNumbers: true, tabSize: 2 }}
-        style={{ height: "100%", width: "full" }}
+        onChange={onValueChange}
+        options={{
+          readOnly,
+        }}
+        editorDidMount={(_, editorRef) => {
+          monaco.init().then((ref) => {
+            monacoRef.current = ref;
+          });
+
+          editor.current = editorRef;
+        }}
       />
     </div>
   );
@@ -166,6 +187,8 @@ const BasicEditor = () => {
 const EditorTabDiv = styled.div`
   display: flex;
   flex-direction: row;
+  align-items: center;
+  padding: 0 0.5rem;
   height: 2.5rem;
   border-left-width: 1px;
   border-right-width: 1px;
