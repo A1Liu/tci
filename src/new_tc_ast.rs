@@ -385,7 +385,7 @@ pub trait TCTy {
     }
 
     /// Panics if called on an incomplete type
-    fn to_prim_type(&self) -> TCPrimType {
+    fn to_prim_type(&self) -> Option<TCPrimType> {
         for modifier in self.mods() {
             match modifier {
                 TCTypeModifier::Pointer => {
@@ -395,7 +395,7 @@ pub trait TCTy {
                     };
 
                     let stride = deref.size();
-                    return TCPrimType::Pointer { stride };
+                    return Some(TCPrimType::Pointer { stride });
                 }
                 TCTypeModifier::Array(_) => {
                     let deref = TCTypeRef {
@@ -404,26 +404,26 @@ pub trait TCTy {
                     };
 
                     let stride = deref.size();
-                    return TCPrimType::Pointer { stride };
+                    return Some(TCPrimType::Pointer { stride });
                 }
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
                 | TCTypeModifier::UnknownParams => {
-                    return TCPrimType::Pointer { stride: n32::NULL };
+                    return Some(TCPrimType::Pointer { stride: n32::NULL });
                 }
                 TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
-                TCTypeModifier::VariableArray => unreachable!(),
+                TCTypeModifier::VariableArray => return None,
             }
         }
 
         return match self.base() {
-            TCTypeBase::I8 => TCPrimType::I8,
-            TCTypeBase::U8 => TCPrimType::U8,
-            TCTypeBase::I32 => TCPrimType::I32,
-            TCTypeBase::U32 => TCPrimType::U32,
-            TCTypeBase::I64 => TCPrimType::I64,
-            TCTypeBase::U64 => TCPrimType::U64,
-            TCTypeBase::Void => unreachable!(),
+            TCTypeBase::I8 => Some(TCPrimType::I8),
+            TCTypeBase::U8 => Some(TCPrimType::U8),
+            TCTypeBase::I32 => Some(TCPrimType::I32),
+            TCTypeBase::U32 => Some(TCPrimType::U32),
+            TCTypeBase::I64 => Some(TCPrimType::I64),
+            TCTypeBase::U64 => Some(TCPrimType::U64),
+            TCTypeBase::Void => None,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.to_prim_type(),
             TCTypeBase::InternalTypedef(def) => return def.to_prim_type(),
         };

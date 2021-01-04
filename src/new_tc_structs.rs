@@ -512,6 +512,13 @@ impl<'a> TypeEnv<'a> {
 
         // search locals
         if let Some(tc_var) = self.search_local_scopes(|sel| sel.symbols.get(&ident).map(|a| *a)) {
+            if tc_var.ty.is_function() {
+                return Err(error!(
+                    "can't assign to function type",
+                    loc, "assignment to name happens here"
+                ));
+            }
+
             match tc_var.var_offset {
                 OffsetOrLoc::LocalOffset(var_offset) => {
                     return Ok(TCAssignTarget {
