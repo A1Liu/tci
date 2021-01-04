@@ -13,6 +13,13 @@ pub enum TCIdent {
     Anonymous(CodeLoc),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TCUnaryOp {
+    Neg,
+    BoolNot,
+    BitNot,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
 pub struct SizeAlign {
     pub size: u32,
@@ -106,6 +113,7 @@ pub enum TCTypeBase {
     I8,  // char
     U8,  // unsigned char
     Void,
+    InternalTypedef(&'static TCType),
     Typedef {
         refers_to: &'static TCType,
         typedef: (u32, CodeLoc),
@@ -143,8 +151,17 @@ pub trait TCTy {
     fn base(&self) -> TCTypeBase;
     fn mods(&self) -> &[TCTypeModifier];
 
+    fn get_typedef(&self) -> Option<&'static TCType> {
+        match self.base() {
+            TCTypeBase::InternalTypedef(td) => Some(td),
+            TCTypeBase::Typedef { refers_to, .. } => Some(refers_to),
+            _ => None,
+        }
+    }
+
     fn display(&self, files: &FileDb) -> String {
         let mut writer = StringWriter::new();
+
         match self.base() {
             TCTypeBase::I8 => write!(writer, "char"),
             TCTypeBase::U8 => write!(writer, "unsigned char"),
@@ -153,6 +170,7 @@ pub trait TCTy {
             TCTypeBase::I64 => write!(writer, "long"),
             TCTypeBase::U64 => write!(writer, "unsigned long"),
             TCTypeBase::Void => write!(writer, "void"),
+            TCTypeBase::InternalTypedef(def) => write!(writer, "{}", def.display(files)), // TODO fix this
             TCTypeBase::Typedef { typedef, .. } => {
                 write!(writer, "{}", files.symbol_to_str(typedef.0))
             }
@@ -163,7 +181,7 @@ pub trait TCTy {
     }
 
     fn expand_typedef(&self, files: &FileDb) -> TCTypeOwned {
-        let mut owned = if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
+        let mut owned = if let Some(refers_to) = self.get_typedef() {
             let (base, mods) = (refers_to.base, Vec::from(refers_to.mods));
             TCTypeOwned { base, mods }
         } else {
@@ -192,8 +210,8 @@ pub trait TCTy {
 
     fn is_function(&self) -> bool {
         if self.mods().len() == 0 {
-            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
-                return refers_to.is_function();
+            if let Some(def) = self.get_typedef() {
+                return def.is_function();
             }
 
             return false;
@@ -216,8 +234,8 @@ pub trait TCTy {
 
     fn is_callable(&self) -> bool {
         if self.mods().len() == 0 {
-            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
-                return refers_to.is_callable();
+            if let Some(def) = self.get_typedef() {
+                return def.is_callable();
             }
 
             return false;
@@ -248,8 +266,8 @@ pub trait TCTy {
 
     fn is_pointer(&self) -> bool {
         if self.mods().len() == 0 {
-            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
-                return refers_to.is_pointer();
+            if let Some(def) = self.get_typedef() {
+                return def.is_pointer();
             }
 
             return false;
@@ -270,13 +288,14 @@ pub trait TCTy {
             TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
             TCTypeBase::Void => return false,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_integer(),
+            TCTypeBase::InternalTypedef(def) => return def.is_integer(),
         }
     }
 
     fn is_array(&self) -> bool {
         if self.mods().len() == 0 {
-            if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
-                return refers_to.is_array();
+            if let Some(def) = self.get_typedef() {
+                return def.is_array();
             }
 
             return false;
@@ -311,6 +330,7 @@ pub trait TCTy {
             TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
             TCTypeBase::Void => return false,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_complete(),
+            TCTypeBase::InternalTypedef(def) => return def.is_complete(),
         };
     }
 
@@ -343,6 +363,14 @@ pub trait TCTy {
             TCTypeBase::U32 | TCTypeBase::I32 => 4,
             TCTypeBase::U64 | TCTypeBase::I64 => 8,
             TCTypeBase::Void => return n32::NULL,
+            TCTypeBase::InternalTypedef(def) => {
+                let size = def.size();
+                if size == n32::NULL {
+                    return size;
+                }
+
+                size.into()
+            }
             TCTypeBase::Typedef { refers_to, .. } => {
                 let size = refers_to.size();
                 if size == n32::NULL {
@@ -397,6 +425,7 @@ pub trait TCTy {
             TCTypeBase::U64 => TCPrimType::U64,
             TCTypeBase::Void => unreachable!(),
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.to_prim_type(),
+            TCTypeBase::InternalTypedef(def) => return def.to_prim_type(),
         };
     }
 
@@ -426,8 +455,8 @@ pub trait TCTy {
             }
         }
 
-        if let TCTypeBase::Typedef { refers_to, .. } = self.base() {
-            return TCTy::deref(refers_to);
+        if let Some(def) = self.get_typedef() {
+            return TCTy::deref(def);
         }
 
         return None;
@@ -447,8 +476,8 @@ pub struct TCType {
 impl TCType {
     pub fn to_func_type_strict(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
         if self.mods.len() == 0 {
-            if let TCTypeBase::Typedef { refers_to, .. } = self.base {
-                return refers_to.to_func_type(alloc);
+            if let Some(def) = self.get_typedef() {
+                return def.to_func_type(alloc);
             }
 
             return None;
@@ -517,7 +546,7 @@ impl TCType {
     }
 
     /// Panics if the type is incomplete
-    fn deref(&self) -> Option<TCType> {
+    pub fn deref(&self) -> Option<TCType> {
         assert!(self.is_complete());
 
         if let Some(first) = self.mods.first() {
@@ -541,8 +570,8 @@ impl TCType {
             }
         }
 
-        if let TCTypeBase::Typedef { refers_to, .. } = self.base {
-            return refers_to.deref();
+        if let Some(def) = self.get_typedef() {
+            return def.deref();
         }
 
         return None;
@@ -699,7 +728,7 @@ pub enum TCExprKind {
     },
 
     UnaryOp {
-        op: UnaryOp,
+        op: TCUnaryOp,
         op_type: TCPrimType,
         operand: &'static TCExpr,
     },
@@ -723,11 +752,11 @@ pub enum TCExprKind {
     },
 
     PostIncr {
-        ty: TCPrimType,
+        incr_ty: TCPrimType,
         value: TCAssignTarget,
     },
     PostDecr {
-        ty: TCPrimType,
+        decr_ty: TCPrimType,
         value: TCAssignTarget,
     },
 
@@ -747,6 +776,7 @@ pub enum TCExprKind {
     },
 
     Ref(TCAssignTarget),
+    Deref(&'static TCExpr),
 
     Call {
         func: &'static TCExpr,

@@ -566,9 +566,7 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 loc: expr.loc,
             });
         }
-        ExprKind::Ident(id) => {
-            return env.ident(id, expr.loc);
-        }
+        ExprKind::Ident(id) => return env.ident(id, expr.loc),
 
         ExprKind::ParenList(exprs) => {
             let mut tc_exprs = Vec::new();
@@ -592,30 +590,9 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             });
         }
 
-        ExprKind::BinOp(op, l, r) => return check_bin_op(env, op, l, r),
+        ExprKind::BinOp(op, l, r) => return check_bin_op(env, op, l, r, expr.loc),
 
-        ExprKind::UnaryOp(op, operand) => {
-            unimplemented!()
-            // let operand = check_expr(env, local_env, operand)?;
-            // let prim_operand = env.to_prim_type(operand.expr_type, operand.loc)?;
-
-            // let key = (op, prim_operand.discriminant());
-            // let un_op = match OVERLOADS.unary_op.get(&key) {
-            //     Some(un_op) => *un_op,
-            //     None => {
-            //         return Err(error!(
-            //             "invalid operation to unary operand",
-            //             operand.loc,
-            //             format!(
-            //                 "operand found here with type {}",
-            //                 operand.expr_type.display(env.files)
-            //             )
-            //         ))
-            //     }
-            // };
-
-            // return Ok(un_op(env.buckets, operand, expr.loc));
-        }
+        ExprKind::UnaryOp(op, operand) => return check_un_op(env, op, operand, expr.loc),
 
         // ExprKind::Member { base, member } => {
         //     let base = check_expr(env, local_env, base)?;
@@ -707,7 +684,13 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
     }
 }
 
-pub fn check_bin_op(env: &TypeEnv, op: BinOp, l: &Expr, r: &Expr) -> Result<TCExpr, Error> {
+pub fn check_bin_op(
+    env: &TypeEnv,
+    op: BinOp,
+    l: &Expr,
+    r: &Expr,
+    loc: CodeLoc,
+) -> Result<TCExpr, Error> {
     let l = check_expr(env, l)?;
     let r = check_expr(env, r)?;
 
@@ -802,13 +785,13 @@ pub fn check_bin_op(env: &TypeEnv, op: BinOp, l: &Expr, r: &Expr) -> Result<TCEx
                 };
 
                 return Ok(TCExpr {
-                    loc: l_from(l.loc, r.loc),
                     kind: TCExprKind::BinOp {
                         op: BinOp::Add,
                         op_type: TCPrimType::U64,
                         left: env.add(l),
                         right: env.add(r),
                     },
+                    loc,
                     ty: l.ty,
                 });
             }
@@ -844,7 +827,6 @@ pub fn check_bin_op(env: &TypeEnv, op: BinOp, l: &Expr, r: &Expr) -> Result<TCEx
     };
 
     let (left, right) = (env.add(left), env.add(right));
-    let loc = l_from(left.loc, right.loc);
 
     #[rustfmt::skip]
     return Ok(TCExpr {
@@ -925,5 +907,143 @@ pub fn prim_unify(
         };
 
         return Ok((l, r, r_prim));
+    }
+}
+
+pub fn check_assign_target(env: &TypeEnv, expr: &Expr) -> Result<TCAssignTarget, Error> {
+    match &expr.kind {
+        ExprKind::Ident(id) => return env.assign_ident(*id, expr.loc),
+
+        ExprKind::UnaryOp(UnaryOp::Deref, ptr) => {
+            let ptr = check_expr(env, ptr)?;
+            if let TCExprKind::Ref(mut target) = ptr.kind {
+                target.loc = expr.loc;
+                target.defn_loc = ptr.loc;
+                return Ok(target);
+            }
+
+            let or_else = || error!("cannot dereference type", ptr.loc, "value found here");
+            let ty = ptr.ty.deref().ok_or_else(or_else)?;
+
+            return Ok(TCAssignTarget {
+                kind: TCAssignTargetKind::Ptr(env.add(ptr)),
+                loc: expr.loc,
+                defn_loc: ptr.loc,
+                ty,
+                offset: 0,
+            });
+        }
+        ExprKind::BinOp(BinOp::Index, ptr, offset) => {
+            let sum = check_bin_op(env, BinOp::Index, ptr, offset, expr.loc)?;
+            let or_else = || error!("cannot dereference type", ptr.loc, "value found here");
+            let ty = sum.ty.deref().ok_or_else(or_else)?;
+
+            return Ok(TCAssignTarget {
+                kind: TCAssignTargetKind::Ptr(env.add(sum)),
+                loc: expr.loc,
+                defn_loc: ptr.loc,
+                ty,
+                offset: 0,
+            });
+        }
+
+        _ => {
+            return Err(error!(
+                "expression is not assignable",
+                expr.loc, "expression found here"
+            ))
+        }
+    }
+}
+
+pub fn check_un_op(env: &TypeEnv, op: UnaryOp, obj: &Expr, loc: CodeLoc) -> Result<TCExpr, Error> {
+    match op {
+        UnaryOp::Ref => {
+            let target = check_assign_target(env, obj)?;
+            let ty = TCType::new_ptr(TCTypeBase::InternalTypedef(env.add(target.ty)));
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Ref(target),
+                ty,
+                loc: obj.loc,
+            });
+        }
+        UnaryOp::Deref => {
+            let ptr = check_expr(env, obj)?;
+            let or_else = || error!("cannot dereference type", ptr.loc, "value found here");
+            let ty = ptr.ty.deref().ok_or_else(or_else)?;
+            return Ok(TCExpr {
+                kind: TCExprKind::Deref(env.add(ptr)),
+                ty,
+                loc,
+            });
+        }
+
+        UnaryOp::PostDecr => {
+            let value = check_assign_target(env, obj)?;
+            let decr_ty = value.ty.to_prim_type();
+
+            return Ok(TCExpr {
+                kind: TCExprKind::PostDecr { decr_ty, value },
+                ty: value.ty,
+                loc,
+            });
+        }
+        UnaryOp::PostIncr => {
+            let value = check_assign_target(env, obj)?;
+            let incr_ty = value.ty.to_prim_type();
+
+            return Ok(TCExpr {
+                kind: TCExprKind::PostIncr { incr_ty, value },
+                ty: value.ty,
+                loc,
+            });
+        }
+
+        UnaryOp::BoolNot => {
+            let operand = check_expr(env, obj)?;
+            let op_type = operand.ty.to_prim_type();
+            let operand = env.add(operand);
+
+            return Ok(TCExpr {
+                kind: TCExprKind::UnaryOp {
+                    op: TCUnaryOp::BoolNot,
+                    op_type,
+                    operand,
+                },
+                ty: operand.ty,
+                loc,
+            });
+        }
+        UnaryOp::Neg => {
+            let operand = check_expr(env, obj)?;
+            let op_type = operand.ty.to_prim_type();
+            let operand = env.add(operand);
+
+            return Ok(TCExpr {
+                kind: TCExprKind::UnaryOp {
+                    op: TCUnaryOp::Neg,
+                    op_type,
+                    operand,
+                },
+                ty: operand.ty,
+                loc,
+            });
+        }
+        UnaryOp::BitNot => {
+            let operand = check_expr(env, obj)?;
+            let op_type = operand.ty.to_prim_type();
+            let operand = env.add(operand);
+
+            return Ok(TCExpr {
+                kind: TCExprKind::UnaryOp {
+                    op: TCUnaryOp::BitNot,
+                    op_type,
+                    operand,
+                },
+                ty: operand.ty,
+                loc,
+            });
+        }
     }
 }

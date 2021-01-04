@@ -45,6 +45,8 @@ pub enum UnaryOp {
     BitNot,
     PostIncr,
     PostDecr,
+    Deref,
+    Ref,
 }
 
 #[derive(Debug, Clone, Copy)]
