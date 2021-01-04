@@ -108,11 +108,73 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
     for decl in tree {
         match decl.kind {
-            GlobalStatementKind::Declaration(decl) => {
-                check_declaration(&globals, decl)?;
-            }
+            GlobalStatementKind::Declaration(decl) => match check_declaration(&globals, decl)? {
+                DeclarationResult::Default(decls) => {
+                    for decl in decls.into_iter() {
+                        globals.add_global(decl.ident, decl.loc, decl.expr)?;
+                    }
+                }
+                DeclarationResult::Typedef { ty, ident, loc } => {
+                    globals.add_typedef(ty, ident, loc)
+                }
+                DeclarationResult::Static(decls) => {
+                    for decl in decls.into_iter() {
+                        globals.add_static_global(decl.ident, decl.loc, decl.expr)?;
+                    }
+                }
+                DeclarationResult::Extern(decls) => {
+                    for (ty, id, loc) in decls.into_iter() {
+                        globals.add_extern_global(ty, id, loc)?;
+                    }
+                }
+            },
             GlobalStatementKind::FunctionDefinition(func) => {
-                // check_function_defn(&globals, func)?;
+                let decl = check_func_defn_decl(&globals, &func)?;
+
+                let base = TCTypeBase::InternalTypedef(globals.add(decl.return_type));
+                let mut ty = TCTypeOwned::new(base);
+
+                if let Some(params) = decl.params {
+                    if params.params.len() == 0 {
+                        ty.mods.push(TCTypeModifier::NoParams);
+                    } else {
+                        ty.mods
+                            .push(TCTypeModifier::BeginParam(params.params[0].ty));
+                        for param in &params.params[1..] {
+                            ty.mods.push(TCTypeModifier::Param(param.ty));
+                        }
+
+                        if params.varargs {
+                            ty.mods.push(TCTypeModifier::VarargsParam);
+                        }
+                    }
+                } else {
+                    ty.mods.push(TCTypeModifier::UnknownParams);
+                }
+
+                let ty = ty.to_ref(&globals);
+                let expr = TCExpr {
+                    kind: TCExprKind::FunctionIdent { ident: decl.ident },
+                    ty,
+                    loc: decl.loc,
+                };
+
+                if decl.is_static {
+                    globals.add_static_global(decl.ident, decl.loc, expr)?;
+                } else {
+                    globals.add_global(decl.ident, decl.loc, expr)?;
+                }
+
+                let mut func_locals = globals.new_func();
+
+                if let Some(params) = decl.params {
+                    for param in params.params {
+                        func_locals.add_param(param.ty, param.ident, param.loc)?;
+                    }
+                }
+
+                let mut func_out = FuncEnv::new(decl.return_type, decl.loc);
+                check_stmts(&mut func_locals, &mut func_out, func.statements)?;
             }
             GlobalStatementKind::Pragma(pragma) => {
                 if pragma == "tci enable_builtins" {
@@ -123,6 +185,10 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
     }
 
     return Ok(globals.tu());
+}
+
+pub fn check_stmts(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
+    return Ok(());
 }
 
 pub fn parse_decl_specs(
@@ -223,6 +289,7 @@ pub fn check_func_defn_decl(
             return_type: rtype.to_ref(locals),
             ident: decl.ident,
             params: None,
+            loc: decl.loc,
         });
     };
 
@@ -251,6 +318,7 @@ pub fn check_func_defn_decl(
             params: locals.add_array(out),
             varargs: params_decl.varargs,
         }),
+        loc: decl.loc,
     });
 }
 
@@ -479,7 +547,9 @@ pub fn check_declaration(
 
         let (ty, id) = check_decl(locals, base, &init_declarator.declarator)?;
         let (ty, ident) = (ty.to_ref(locals), id.into());
-        return Ok(DeclarationResult::Typedef { ty, ident });
+        let loc = declaration.loc;
+
+        return Ok(DeclarationResult::Typedef { ty, ident, loc });
     }
 
     if let StorageClass::Extern = sc {
@@ -494,7 +564,7 @@ pub fn check_declaration(
             }
 
             let (ty, id) = check_decl(locals, base, &decl.declarator)?;
-            decls.push((ty.to_ref(locals), id.into()));
+            decls.push((ty.to_ref(locals), id.into(), decl.loc));
         }
 
         return Ok(DeclarationResult::Extern(decls));
@@ -504,6 +574,8 @@ pub fn check_declaration(
     for decl in declaration.declarators {
         let (ty, id) = check_decl(locals, base, &decl.declarator)?;
         let (ty, ident) = (ty.to_ref(locals), id.into());
+        let loc = decl.loc;
+
         let expr = if let Some(init) = decl.initializer {
             match init.kind {
                 InitializerKind::Expr(expr) => {
@@ -519,11 +591,11 @@ pub fn check_declaration(
             TCExpr {
                 kind: TCExprKind::Uninit,
                 ty,
-                loc: NO_FILE,
+                loc,
             }
         };
 
-        decls.push(TCDecl { ty, ident, expr });
+        decls.push(TCDecl { ident, expr, loc });
     }
 
     if let StorageClass::Static = sc {

@@ -876,6 +876,7 @@ pub struct TCParamDeclaration {
     pub loc: CodeLoc,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct TCParamsDeclarator {
     pub params: &'static [TCParamDeclaration],
     pub varargs: bool,
@@ -886,6 +887,7 @@ pub struct TCFunctionDeclarator {
     pub return_type: TCType,
     pub ident: u32,
     pub params: Option<TCParamsDeclarator>,
+    pub loc: CodeLoc,
 }
 
 pub struct TranslationUnit {
@@ -896,16 +898,20 @@ pub struct TranslationUnit {
 }
 
 pub struct TCDecl {
-    pub ty: TCType,
     pub ident: u32,
     pub expr: TCExpr,
+    pub loc: CodeLoc,
 }
 
 pub enum DeclarationResult {
-    Typedef { ty: TCType, ident: u32 },
+    Typedef {
+        ty: TCType,
+        ident: u32,
+        loc: CodeLoc,
+    },
     Static(Vec<TCDecl>),
     Default(Vec<TCDecl>),
-    Extern(Vec<(TCType, u32)>),
+    Extern(Vec<(TCType, u32, CodeLoc)>),
 }
 
 impl TranslationUnit {

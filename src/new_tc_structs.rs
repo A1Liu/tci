@@ -7,7 +7,6 @@ pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,
     pub gotos: Vec<u32>,
     pub next_label: u32,
-    pub next_decl_idx: i16,
 
     // const fields
     pub return_type: TCType,
@@ -62,6 +61,18 @@ impl<'a> Allocator<'static> for TypeEnv<'a> {
 impl<'a> Allocator<'static> for GlobalTypeEnv<'a> {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         return self.tu.buckets.alloc(layout);
+    }
+}
+
+impl FuncEnv {
+    pub fn new(return_type: TCType, rtype_loc: CodeLoc) -> Self {
+        return FuncEnv {
+            ops: Vec::new(),
+            gotos: Vec::new(),
+            next_label: 0,
+            return_type,
+            rtype_loc,
+        };
     }
 }
 
