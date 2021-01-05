@@ -980,7 +980,7 @@ impl Assembler {
 
         let files = FileDbRef::new_from_frame(&mut frame, env);
         let types: Vec<(u32, RuntimeStruct)> = self.types.iter().map(type_mapper!()).collect();
-        let types = HashRef::new(&mut frame, type_struct_slots, types.into_iter());
+        let types = HashRef::new_iter(&mut frame, type_struct_slots, types.into_iter());
         let symbols = frame.add_array(self.symbols);
         let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);

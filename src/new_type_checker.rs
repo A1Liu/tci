@@ -157,8 +157,8 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
                 };
                 globals.add_global(&decl)?;
 
-                let mut func_locals = globals.new_func();
                 let mut func_out = FuncEnv::new(func_decl.return_type, func_decl.loc);
+                let mut func_locals = globals.new_func(&mut func_out, decl.loc);
 
                 if let Some(params) = func_decl.params {
                     for param in params.params {
@@ -166,7 +166,8 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
                     }
                 }
 
-                check_stmts(&mut func_locals, &mut func_out, func.statements)?;
+                check_block(&mut func_locals, &mut func_out, func.statements)?;
+                func_locals.close_scope(&mut func_out);
             }
             GlobalStatementKind::Pragma(pragma) => {
                 if pragma == "tci enable_builtins" {
@@ -179,7 +180,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
     return Ok(globals.tu());
 }
 
-pub fn check_stmts(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
+pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
     for stmt in stmts.stmts {
         match stmt.kind {
             BlockItemKind::Declaration(decl) => match check_declaration(env, decl)? {
@@ -200,7 +201,10 @@ pub fn check_stmts(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result
 pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Result<(), Error> {
     match stmt.kind {
         StatementKind::Block(block) => {
-            let scope = env.child();
+            let mut scope = env.child(out, block.loc);
+            check_block(&mut scope, out, block)?;
+
+            scope.close_scope(out);
         }
         _ => unimplemented!(),
     }

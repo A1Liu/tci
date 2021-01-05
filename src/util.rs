@@ -696,20 +696,48 @@ where
     pub state: State,
 }
 
-impl<'a, Key, Value> HashRef<'a, Key, Value, DetState>
+impl<'a, K, V> HashRef<'a, K, V, DetState>
 where
-    Key: Eq + Hash + Copy,
-    Value: Copy,
+    K: Eq + Hash + Copy,
+    V: Copy,
 {
-    pub fn new<I>(frame: &mut Frame<'a>, capacity: usize, data: I) -> Self
+    pub fn new(frame: impl Allocator<'a>, data: &HashMap<K, V>) -> Self {
+        return Self::with_state(frame, data, DetState);
+    }
+
+    pub fn new_iter<I>(frame: impl Allocator<'a>, capa: usize, data: I) -> Self
     where
-        I: Iterator<Item = (Key, Value)>,
+        I: Iterator<Item = (K, V)>,
     {
-        let slots = frame
-            .build_array(capacity, |_idx| HashRefSlot::None)
-            .unwrap();
+        return Self::with_state_iter(frame, capa, data, DetState);
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            slots: &[],
+            size: 0,
+            state: DetState,
+        }
+    }
+}
+
+impl<'a, K, V, State> HashRef<'a, K, V, State>
+where
+    K: Eq + Hash + Copy,
+    V: Copy,
+    State: BuildHasher,
+{
+    pub fn with_state(frame: impl Allocator<'a>, data: &HashMap<K, V>, state: State) -> Self {
+        let capa = data.len() * 3 / 2;
+        return Self::with_state_iter(frame, capa, data.iter().map(|(&k, &v)| (k, v)), state);
+    }
+
+    pub fn with_state_iter<I>(frame: impl Allocator<'a>, capa: usize, data: I, state: State) -> Self
+    where
+        I: Iterator<Item = (K, V)>,
+    {
+        let slots = frame.build_array(capa, |_idx| HashRefSlot::None).unwrap();
         let mut size = 0;
-        let state = DetState;
 
         for (key, value) in data {
             let mut hasher = state.build_hasher();
@@ -736,29 +764,14 @@ where
                 slot_idx = slot_idx % slots.len();
             }
 
-            if size == capacity {
-                panic!("why are you inserting more keys than this HashRef can hold?");
+            if size == capa {
+                panic!("allocated too little capacity for size");
             }
         }
 
         Self { slots, size, state }
     }
 
-    pub fn empty() -> Self {
-        Self {
-            slots: &[],
-            size: 0,
-            state: DetState,
-        }
-    }
-}
-
-impl<'a, Key, Value, State> HashRef<'a, Key, Value, State>
-where
-    Key: Eq + Hash + Copy,
-    Value: Copy,
-    State: BuildHasher,
-{
     #[inline]
     pub fn len(&self) -> usize {
         return self.size;
@@ -769,9 +782,9 @@ where
         return self.slots.len();
     }
 
-    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&Value>
+    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&V>
     where
-        Key: Borrow<Q>,
+        K: Borrow<Q>,
         Q: Hash + Eq,
     {
         let mut hasher = self.state.build_hasher();
@@ -806,7 +819,7 @@ where
         }
     }
 
-    pub fn iter(&self) -> HashRefIter<'a, Key, Value> {
+    pub fn iter(&self) -> HashRefIter<'a, K, V> {
         HashRefIter {
             slots: self.slots,
             slot_idx: 0,

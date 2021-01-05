@@ -18,11 +18,13 @@ pub enum TypeEnvKind<'a> {
     Global(GlobalTypeEnv<'a>),
     Local {
         symbols: HashMap<u32, TCVar>,
+        scope_idx: u32,
         parent: *const TypeEnv<'a>,
         global: *const TypeEnv<'a>,
     },
     LocalSwitch {
         symbols: HashMap<u32, TCVar>,
+        scope_idx: u32,
         cases: Vec<(TCExpr, u32)>,
         parent: *const TypeEnv<'a>,
         global: *const TypeEnv<'a>,
@@ -75,6 +77,20 @@ impl FuncEnv {
     }
 }
 
+impl<'a> Drop for TypeEnv<'a> {
+    fn drop(&mut self) {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => return,
+        };
+
+        if scope_idx != !0 {
+            panic!("didn't close scope");
+        }
+    }
+}
+
 impl<'a> TypeEnv<'a> {
     pub fn global(files: &'a FileDb) -> Self {
         Self {
@@ -90,9 +106,11 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn tu(self) -> TranslationUnit {
-        return match self.kind {
-            TypeEnvKind::Global(GlobalTypeEnv { tu, .. }) => tu,
+    pub fn tu(mut self) -> TranslationUnit {
+        return match &mut self.kind {
+            TypeEnvKind::Global(GlobalTypeEnv { tu, .. }) => {
+                std::mem::replace(tu, TranslationUnit::new())
+            }
             _ => unreachable!(),
         };
     }
@@ -137,16 +155,22 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn new_func(&mut self) -> Self {
+    pub fn new_func(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
         debug_assert!(self.is_global());
 
         let (_, global) = self.globals();
 
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
+            scope_idx: 0,
             parent: self,
             global,
         };
+
+        env.ops.push(TCOpcode {
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            loc,
+        });
 
         Self {
             kind,
@@ -155,14 +179,20 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn child(&mut self) -> Self {
+    pub fn child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
         let (_, global) = self.globals();
 
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
+            scope_idx: env.ops.len() as u32,
             parent: self,
             global,
         };
+
+        env.ops.push(TCOpcode {
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            loc,
+        });
 
         Self {
             kind,
@@ -171,21 +201,64 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn switch(&mut self) -> Self {
+    pub fn switch(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
         let (_, global) = self.globals();
 
         let kind = TypeEnvKind::LocalSwitch {
             symbols: HashMap::new(),
+            scope_idx: env.ops.len() as u32,
             cases: Vec::new(),
             parent: self,
             global,
         };
 
+        env.ops.push(TCOpcode {
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            loc,
+        });
+
         Self {
             kind,
             typedefs: HashMap::new(),
             builtins_enabled: false,
         }
+    }
+
+    pub fn close_scope(mut self, env: &mut FuncEnv) {
+        let scope_idx = match &mut self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            _ => panic!("you don't need to close the global scope"),
+        };
+
+        let scope_idx = {
+            let idx = *scope_idx;
+            if idx == !0 {
+                panic!("already closed scope");
+            }
+
+            *scope_idx = !0;
+            idx
+        };
+
+        let symbols = match &self.kind {
+            TypeEnvKind::Local { symbols, .. } => symbols,
+            TypeEnvKind::LocalSwitch { symbols, .. } => symbols,
+            _ => panic!("you don't need to close the global scope"),
+        };
+
+        let (scope_end, capa) = (env.ops.len() as u32, symbols.len() * 3 / 2);
+        let symbols = symbols.iter().filter_map(|(_, v)| match v.symbol_label {
+            LabelOrLoc::Param(id) => Some((id, v.ty)),
+            LabelOrLoc::LocalIdent(id) => Some((id, v.ty)),
+            LabelOrLoc::StaticLoc(_) => None,
+        });
+        let symbols = HashRef::new_iter(&self, capa, symbols);
+        env.ops[scope_idx as usize].kind = TCOpcodeKind::ScopeBegin(symbols, scope_end);
+        env.ops.push(TCOpcode {
+            kind: TCOpcodeKind::ScopeEnd(scope_idx),
+            loc: env.ops[scope_idx as usize].loc,
+        });
     }
 
     pub fn search_scopes<T, F>(&self, f: F) -> Option<T>

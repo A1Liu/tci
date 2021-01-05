@@ -83,9 +83,8 @@ pub enum TCOpcodeKind {
         goto: u32,
     },
 
-    ScopeBegin(&'static [TCType]),
-    // points to scope beginning
-    ScopeEnd(u32),
+    ScopeBegin(HashRef<'static, u32, TCType>, u32), // points to scope end
+    ScopeEnd(u32),                                  // points to scope beginning
 
     // (expr, goto)
     Switch(&'static [(TCExpr, u32)]),
