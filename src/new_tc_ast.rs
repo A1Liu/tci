@@ -842,15 +842,17 @@ pub enum StorageClass {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TCGlobalInit {
+pub enum TCDeclInit {
     Extern,
+    ExternInit(TCExprKind),
     Static(TCExprKind),
     Default(TCExprKind),
+    DefaultUninit,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCGlobalVar {
-    pub init: TCGlobalInit,
+    pub init: TCDeclInit,
     pub var_idx: u32,
     pub ty: TCType,
     pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
@@ -899,7 +901,8 @@ pub struct TranslationUnit {
 
 pub struct TCDecl {
     pub ident: u32,
-    pub expr: TCExpr,
+    pub init: TCDeclInit,
+    pub ty: TCType,
     pub loc: CodeLoc,
 }
 
@@ -909,9 +912,7 @@ pub enum DeclarationResult {
         ident: u32,
         loc: CodeLoc,
     },
-    Static(Vec<TCDecl>),
-    Default(Vec<TCDecl>),
-    Extern(Vec<(TCType, u32, CodeLoc)>),
+    VarDecl(Vec<TCDecl>),
 }
 
 impl TranslationUnit {

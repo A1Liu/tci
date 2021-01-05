@@ -299,180 +299,111 @@ impl<'a> TypeEnv<'a> {
         return Ok(());
     }
 
-    pub fn add_local(&mut self, ty: TCType, id: u32, loc: CodeLoc) -> Result<(), Error> {
-        let (decl_idx, symbols) = match &mut self.kind {
-            TypeEnvKind::Local {
-                decl_idx, symbols, ..
-            } => (decl_idx, symbols),
-            TypeEnvKind::LocalSwitch {
-                decl_idx, symbols, ..
-            } => (decl_idx, symbols),
-            _ => unreachable!(),
-        };
+    pub fn add_local(&mut self, decl: &TCDecl) -> Result<(), Error> {
+        let TCDecl {
+            init,
+            ident,
+            ty,
+            loc,
+        } = *decl;
 
-        let idx = if *decl_idx < 0 {
-            *decl_idx = 1;
-            0
-        } else {
-            *decl_idx += 1;
-            *decl_idx - 1
+        let var_offset = match init {
+            TCDeclInit::Extern | TCDeclInit::ExternInit(_) => unimplemented!(),
+            TCDeclInit::Static(_) => {
+                let global_env = self.globals_mut();
+                let global_ident = TCIdent::ScopedIdent { scope: loc, ident };
+                let global_var = TCGlobalVar {
+                    init,
+                    ty,
+                    loc,
+                    var_idx: global_env.next_var,
+                };
+
+                global_env.symbols.insert(global_ident, global_var);
+                global_env.tu.variables.insert(global_ident, global_var);
+                global_env.next_var += 1;
+
+                OffsetOrLoc::StaticLoc(loc)
+            }
+            TCDeclInit::DefaultUninit | TCDeclInit::Default(_) => {
+                let decl_idx = match &mut self.kind {
+                    TypeEnvKind::Local { decl_idx, .. } => decl_idx,
+                    TypeEnvKind::LocalSwitch { decl_idx, .. } => decl_idx,
+                    _ => unreachable!(),
+                };
+
+                let idx = if *decl_idx < 0 {
+                    *decl_idx = 1;
+                    0
+                } else {
+                    *decl_idx += 1;
+                    *decl_idx - 1
+                };
+
+                OffsetOrLoc::LocalOffset(idx)
+            }
         };
 
         let tc_var = TCVar {
-            var_offset: OffsetOrLoc::LocalOffset(idx),
+            var_offset,
             ty,
             loc,
         };
 
-        if let Some(prev) = symbols.insert(id, tc_var) {
-            return Err(error!(
-                "variable already exists in current scope",
-                prev.loc, "previous declared here", loc, "new variable of same name declared here"
-            ));
-        }
-
-        return Ok(());
-    }
-
-    pub fn add_static_local(&mut self, id: u32, loc: CodeLoc, init: TCExpr) -> Result<(), Error> {
-        let (decl_idx, symbols) = match &mut self.kind {
-            TypeEnvKind::Local {
-                decl_idx, symbols, ..
-            } => (decl_idx, symbols),
-            TypeEnvKind::LocalSwitch {
-                decl_idx, symbols, ..
-            } => (decl_idx, symbols),
+        let symbols = match &mut self.kind {
+            TypeEnvKind::Local { symbols, .. } => symbols,
+            TypeEnvKind::LocalSwitch { symbols, .. } => symbols,
             _ => unreachable!(),
         };
 
-        let tc_var = TCVar {
-            var_offset: OffsetOrLoc::StaticLoc(loc),
-            ty: init.ty,
-            loc,
-        };
-
-        if let Some(prev) = symbols.insert(id, tc_var) {
+        if let Some(prev) = symbols.insert(ident, tc_var) {
             return Err(error!(
                 "variable already exists in current scope",
                 prev.loc, "previous declared here", loc, "new variable of same name declared here"
             ));
         }
 
-        let (global_env, ident) = (self.globals_mut(), id);
-        let global_ident = TCIdent::ScopedIdent { scope: loc, ident };
-        let global_var = TCGlobalVar {
-            init: TCGlobalInit::Static(init.kind),
-            ty: init.ty,
-            loc,
-            var_idx: global_env.next_var,
-        };
-
-        global_env.symbols.insert(global_ident, global_var);
-        global_env.tu.variables.insert(global_ident, global_var);
-        global_env.next_var += 1;
-
         return Ok(());
     }
 
-    pub fn add_global(&mut self, id: u32, loc: CodeLoc, init: TCExpr) -> Result<(), Error> {
+    pub fn add_global(&mut self, decl: &TCDecl) -> Result<(), Error> {
         let global_env = match &mut self.kind {
             TypeEnvKind::Global(g) => g,
             _ => unreachable!(),
         };
 
-        let global_ident = TCIdent::Ident(id);
+        let global_ident = TCIdent::Ident(decl.ident);
         let global_var = TCGlobalVar {
-            init: TCGlobalInit::Default(init.kind),
-            ty: init.ty,
-            loc,
+            init: decl.init,
+            ty: decl.ty,
+            loc: decl.loc,
             var_idx: global_env.next_var,
         };
 
         if let Some(prev) = global_env.symbols.insert(global_ident, global_var) {
             return Err(error!(
                 "variable already exists in current scope",
-                prev.loc, "previous declared here", loc, "new variable of same name declared here"
+                prev.loc,
+                "previous declared here",
+                decl.loc,
+                "new variable of same name declared here"
             ));
         }
 
         global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
 
-        if let Some(func_type) = init.ty.to_func_type_strict(&*global_env) {
+        if let Some(func_type) = decl.ty.to_func_type_strict(&*global_env) {
             let tc_function = TCFunction {
                 is_static: false,
                 func_type,
                 defn: None,
             };
 
-            global_env.functions.insert(id, tc_function);
-            global_env.tu.functions.insert(id, tc_function);
+            global_env.functions.insert(decl.ident, tc_function);
+            global_env.tu.functions.insert(decl.ident, tc_function);
         }
 
-        return Ok(());
-    }
-
-    pub fn add_static_global(&mut self, id: u32, loc: CodeLoc, init: TCExpr) -> Result<(), Error> {
-        let global_env = match &mut self.kind {
-            TypeEnvKind::Global(g) => g,
-            _ => unreachable!(),
-        };
-
-        let global_ident = TCIdent::Ident(id);
-        let global_var = TCGlobalVar {
-            init: TCGlobalInit::Static(init.kind),
-            ty: init.ty,
-            loc,
-            var_idx: global_env.next_var,
-        };
-
-        if let Some(prev) = global_env.symbols.insert(global_ident, global_var) {
-            return Err(error!(
-                "variable already exists in current scope",
-                prev.loc, "previous declared here", loc, "new variable of same name declared here"
-            ));
-        }
-
-        global_env.tu.variables.insert(global_ident, global_var);
-        global_env.next_var += 1;
-
-        if let Some(func_type) = init.ty.to_func_type_strict(&*global_env) {
-            let tc_function = TCFunction {
-                is_static: false,
-                func_type,
-                defn: None,
-            };
-
-            global_env.functions.insert(id, tc_function);
-            global_env.tu.functions.insert(id, tc_function);
-        }
-
-        return Ok(());
-    }
-
-    pub fn add_extern_global(&mut self, ty: TCType, id: u32, loc: CodeLoc) -> Result<(), Error> {
-        let global_env = match &mut self.kind {
-            TypeEnvKind::Global(g) => g,
-            _ => unreachable!(),
-        };
-
-        let global_ident = TCIdent::Ident(id);
-        let global_var = TCGlobalVar {
-            init: TCGlobalInit::Extern,
-            ty,
-            loc,
-            var_idx: global_env.next_var,
-        };
-
-        if let Some(prev) = global_env.symbols.insert(global_ident, global_var) {
-            return Err(error!(
-                "variable already exists in current scope",
-                prev.loc, "previous declared here", loc, "new variable of same name declared here"
-            ));
-        }
-
-        global_env.tu.variables.insert(global_ident, global_var);
-        global_env.next_var += 1;
         return Ok(());
     }
 
