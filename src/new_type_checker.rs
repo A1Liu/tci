@@ -158,7 +158,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
                 globals.add_global(&decl)?;
 
                 let mut func_out = FuncEnv::new(func_decl.return_type, func_decl.loc);
-                let mut func_locals = globals.new_func(&mut func_out, decl.loc);
+                let mut func_locals = globals.child(&mut func_out, decl.loc);
 
                 if let Some(params) = func_decl.params {
                     for param in params.params {
@@ -203,7 +203,6 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
         StatementKind::Block(block) => {
             let mut scope = env.child(out, block.loc);
             check_block(&mut scope, out, block)?;
-
             scope.close_scope(out);
         }
         _ => unimplemented!(),

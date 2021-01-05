@@ -19,12 +19,16 @@ pub enum TypeEnvKind<'a> {
     Local {
         symbols: HashMap<u32, TCVar>,
         scope_idx: u32,
+        cont_label: n32,
+        break_label: n32,
         parent: *const TypeEnv<'a>,
         global: *const TypeEnv<'a>,
     },
     LocalSwitch {
         symbols: HashMap<u32, TCVar>,
         scope_idx: u32,
+        cont_label: n32,
+        break_label: u32,
         cases: Vec<(TCExpr, u32)>,
         parent: *const TypeEnv<'a>,
         global: *const TypeEnv<'a>,
@@ -151,36 +155,66 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn new_func(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
-        debug_assert!(self.is_global());
+    pub fn loop_child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, TCOpcode, TCOpcode) {
+        let cont_label = env.next_label;
+        let break_label = env.next_label + 1;
+        env.next_label += 2;
 
-        let (_, global) = self.globals();
-
-        let kind = TypeEnvKind::Local {
-            symbols: HashMap::new(),
-            scope_idx: 0,
-            parent: self,
-            global,
+        let cont = TCOpcode {
+            kind: TCOpcodeKind::Label(cont_label),
+            loc,
+        };
+        let br = TCOpcode {
+            kind: TCOpcodeKind::Label(break_label),
+            loc,
         };
 
-        env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
-            loc,
-        });
-
-        Self {
-            kind,
-            typedefs: HashMap::new(),
-            builtins_enabled: false,
-        }
-    }
-
-    pub fn child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
         let (_, global) = self.globals();
 
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
             scope_idx: env.ops.len() as u32,
+            cont_label: cont_label.into(),
+            break_label: break_label.into(),
+            parent: self,
+            global,
+        };
+
+        env.ops.push(TCOpcode {
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            loc,
+        });
+
+        let sel = Self {
+            kind,
+            typedefs: HashMap::new(),
+            builtins_enabled: false,
+        };
+
+        (sel, cont, br)
+    }
+
+    pub fn child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
+        let (cont_label, break_label) = match self.kind {
+            TypeEnvKind::Local {
+                cont_label,
+                break_label,
+                ..
+            } => (cont_label, break_label),
+            TypeEnvKind::LocalSwitch {
+                cont_label,
+                break_label,
+                ..
+            } => (cont_label, break_label.into()),
+            TypeEnvKind::Global(_) => (n32::NULL, n32::NULL),
+        };
+        let (_, global) = self.globals();
+
+        let kind = TypeEnvKind::Local {
+            symbols: HashMap::new(),
+            scope_idx: env.ops.len() as u32,
+            cont_label,
+            break_label,
             parent: self,
             global,
         };
@@ -197,12 +231,26 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn switch(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
+    pub fn switch(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, TCOpcode) {
+        let cont_label = match self.kind {
+            TypeEnvKind::Local { cont_label, .. } => cont_label,
+            TypeEnvKind::LocalSwitch { cont_label, .. } => cont_label,
+            _ => unreachable!(),
+        };
         let (_, global) = self.globals();
+
+        let break_label = env.next_label;
+        env.next_label += 1;
+        let br = TCOpcode {
+            kind: TCOpcodeKind::Label(break_label),
+            loc,
+        };
 
         let kind = TypeEnvKind::LocalSwitch {
             symbols: HashMap::new(),
             scope_idx: env.ops.len() as u32,
+            cont_label,
+            break_label,
             cases: Vec::new(),
             parent: self,
             global,
@@ -213,11 +261,13 @@ impl<'a> TypeEnv<'a> {
             loc,
         });
 
-        Self {
+        let sel = Self {
             kind,
             typedefs: HashMap::new(),
             builtins_enabled: false,
-        }
+        };
+
+        (sel, br)
     }
 
     pub fn close_scope(mut self, env: &mut FuncEnv) {
@@ -341,14 +391,10 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn add_local(&mut self, env: &mut FuncEnv, decl: &TCDecl) -> Result<(), Error> {
-        let TCDecl {
-            init,
-            ident,
-            ty,
-            loc,
-        } = *decl;
+        let TCDecl { init, ident, .. } = *decl;
+        let TCDecl { ty, loc, .. } = *decl;
 
-        let symbol_label = match init {
+        let (symbol_label, init_expr) = match init {
             TCDeclInit::Extern | TCDeclInit::ExternInit(_) => unimplemented!(),
             TCDeclInit::Static(_) => {
                 let global_env = self.globals_mut();
@@ -363,13 +409,20 @@ impl<'a> TypeEnv<'a> {
                 global_env.tu.variables.insert(global_ident, global_var);
                 global_env.next_var += 1;
 
-                LabelOrLoc::StaticLoc(loc)
+                (LabelOrLoc::StaticLoc(loc), None)
             }
-            TCDeclInit::DefaultUninit | TCDeclInit::Default(_) => {
+            TCDeclInit::DefaultUninit => {
                 let idx = env.next_symbol_label;
                 env.next_symbol_label += 1;
 
-                LabelOrLoc::LocalIdent(idx)
+                (LabelOrLoc::LocalIdent(idx), None)
+            }
+            TCDeclInit::Default(init) => {
+                let label = env.next_symbol_label;
+                env.next_symbol_label += 1;
+                let target = TCAssignTargetKind::LocalIdent { label };
+
+                (LabelOrLoc::LocalIdent(label), Some((target, init)))
             }
         };
 
@@ -390,6 +443,32 @@ impl<'a> TypeEnv<'a> {
                 "variable already exists in current scope",
                 prev.loc, "previous declared here", loc, "new variable of same name declared here"
             ));
+        }
+
+        if let Some((target, init_expr)) = init_expr {
+            let init_expr = TCExpr {
+                kind: init_expr,
+                ty,
+                loc,
+            };
+
+            let expr = TCExpr {
+                kind: TCExprKind::Assign {
+                    target: TCAssignTarget {
+                        kind: target,
+                        defn_loc: loc,
+                        ty,
+                        loc,
+                        offset: 0,
+                    },
+                    value: self.add(init_expr),
+                },
+                ty,
+                loc,
+            };
+
+            let kind = TCOpcodeKind::Expr(expr);
+            env.ops.push(TCOpcode { kind, loc });
         }
 
         return Ok(());
