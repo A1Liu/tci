@@ -38,8 +38,6 @@ pub struct TypeEnv<'a> {
 }
 
 pub struct GlobalTypeEnv<'a> {
-    symbols: HashMap<TCIdent, TCGlobalVar>,
-    functions: HashMap<u32, TCFunction>,
     tu: TranslationUnit,
     files: &'a FileDb,
     next_var: u32,
@@ -95,8 +93,6 @@ impl<'a> TypeEnv<'a> {
     pub fn global(files: &'a FileDb) -> Self {
         Self {
             kind: TypeEnvKind::Global(GlobalTypeEnv {
-                symbols: HashMap::new(),
-                functions: HashMap::new(),
                 tu: TranslationUnit::new(),
                 files,
                 next_var: 0,
@@ -364,7 +360,6 @@ impl<'a> TypeEnv<'a> {
                     var_idx: global_env.next_var,
                 };
 
-                global_env.symbols.insert(global_ident, global_var);
                 global_env.tu.variables.insert(global_ident, global_var);
                 global_env.next_var += 1;
 
@@ -414,7 +409,7 @@ impl<'a> TypeEnv<'a> {
             var_idx: global_env.next_var,
         };
 
-        if let Some(prev) = global_env.symbols.insert(global_ident, global_var) {
+        if let Some(prev) = global_env.tu.variables.insert(global_ident, global_var) {
             return Err(error!(
                 "variable already exists in current scope",
                 prev.loc,
@@ -423,8 +418,6 @@ impl<'a> TypeEnv<'a> {
                 "new variable of same name declared here"
             ));
         }
-
-        global_env.tu.variables.insert(global_ident, global_var);
         global_env.next_var += 1;
 
         if let Some(func_type) = decl.ty.to_func_type_strict(&*global_env) {
@@ -434,7 +427,6 @@ impl<'a> TypeEnv<'a> {
                 defn: None,
             };
 
-            global_env.functions.insert(decl.ident, tc_function);
             global_env.tu.functions.insert(decl.ident, tc_function);
         }
 
@@ -463,7 +455,8 @@ impl<'a> TypeEnv<'a> {
                 }
                 LabelOrLoc::StaticLoc(scope) => {
                     let (global_env, _) = self.globals();
-                    let global_var = global_env.symbols[&TCIdent::ScopedIdent { scope, ident }];
+                    let global_var =
+                        global_env.tu.variables[&TCIdent::ScopedIdent { scope, ident }];
                     let binary_offset = global_var.var_idx;
 
                     return Ok(TCExpr {
@@ -477,7 +470,7 @@ impl<'a> TypeEnv<'a> {
 
         // search globals
         let (global_env, _) = self.globals();
-        if let Some(global_var) = global_env.symbols.get(&TCIdent::Ident(ident)) {
+        if let Some(global_var) = global_env.tu.variables.get(&TCIdent::Ident(ident)) {
             if global_var.ty.is_function() {
                 if let TCDeclInit::Default(kind) = global_var.init {
                     return Ok(TCExpr {
@@ -533,7 +526,8 @@ impl<'a> TypeEnv<'a> {
                 }
                 LabelOrLoc::StaticLoc(scope) => {
                     let (global_env, _) = self.globals();
-                    let global_var = global_env.symbols[&TCIdent::ScopedIdent { scope, ident }];
+                    let global_var =
+                        global_env.tu.variables[&TCIdent::ScopedIdent { scope, ident }];
                     let binary_offset = global_var.var_idx;
 
                     return Ok(TCAssignTarget {
@@ -549,7 +543,7 @@ impl<'a> TypeEnv<'a> {
 
         // search globals
         let (global_env, _) = self.globals();
-        if let Some(tc_var) = global_env.symbols.get(&TCIdent::Ident(ident)) {
+        if let Some(tc_var) = global_env.tu.variables.get(&TCIdent::Ident(ident)) {
             if tc_var.ty.is_function() {
                 return Err(error!(
                     "can't assign to function type",
