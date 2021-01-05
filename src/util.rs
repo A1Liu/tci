@@ -743,6 +743,14 @@ where
 
         Self { slots, size, state }
     }
+
+    pub fn empty() -> Self {
+        Self {
+            slots: &[],
+            size: 0,
+            state: DetState,
+        }
+    }
 }
 
 impl<'a, Key, Value, State> HashRef<'a, Key, Value, State>

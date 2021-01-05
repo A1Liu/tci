@@ -74,24 +74,22 @@ impl TCPrimType {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCOpcodeKind {
-    AllocateInit {
-        var_type: TCType,
-        init: TCExpr,
-    },
-    Allocate(TCType),
     Label(u32),
-    Drop {
-        // go_back indicates how many instructions to go back to find the associated allocate
-        go_back: u32,
-    },
-    Goto(i32), // a user-generated goto
+    Goto(u32),
+    InternalGoto(u32),
     BranchGoto {
-        // A conditional goto, always going forwards; not checked by assembler
+        // A conditional goto, not checked by assembler
         condition: TCExpr,
-        goto: u32, // always goes forwards
+        goto: u32,
     },
-    BackGoto(u32), // A goto meant for looping, always going backwards; not checked by assembler
-    ForwardGoto(u32), // A goto, always going forwards; not checked by assembler
+
+    ScopeBegin(&'static [TCType]),
+    // points to scope beginning
+    ScopeEnd(u32),
+
+    // (expr, goto)
+    Switch(&'static [(TCExpr, u32)]),
+
     Expr(TCExpr),
     Ret,
     RetVal(TCExpr),
@@ -708,7 +706,7 @@ pub enum TCExprKind {
     U64Literal(u64),
     StringLiteral(&'static str),
     LocalIdent {
-        var_offset: i16,
+        label: u32,
     },
     GlobalIdent {
         binary_offset: u32,
@@ -794,7 +792,7 @@ pub struct TCExpr {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCAssignTargetKind {
-    LocalIdent { var_offset: i16 },
+    LocalIdent { label: u32 },
     GlobalIdent { binary_offset: u32 },
     Ptr(&'static TCExpr),
 }
@@ -821,14 +819,15 @@ pub struct TCFuncType {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum OffsetOrLoc {
-    LocalOffset(i16),
+pub enum LabelOrLoc {
+    Param(u32),      // Parameter label local to the function
+    LocalIdent(u32), // symbol label local to the function
     StaticLoc(CodeLoc),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCVar {
-    pub var_offset: OffsetOrLoc, // if none, it's a static; otherwise its offset from the frame pointer
+    pub symbol_label: LabelOrLoc,
     pub ty: TCType,
     pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
 }
@@ -872,7 +871,7 @@ pub struct TCFunction {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TCParamDeclaration {
+pub struct TCParamDecl {
     pub ty: TCType,
     pub ident: u32,
     pub loc: CodeLoc,
@@ -880,7 +879,7 @@ pub struct TCParamDeclaration {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCParamsDeclarator {
-    pub params: &'static [TCParamDeclaration],
+    pub params: &'static [TCParamDecl],
     pub varargs: bool,
 }
 

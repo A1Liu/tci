@@ -144,23 +144,28 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
                 let ident = func_decl.ident;
                 let ty = ty.to_ref(&globals);
+                let init = if func_decl.is_static {
+                    TCDeclInit::Static(TCExprKind::FunctionIdent { ident })
+                } else {
+                    TCDeclInit::Default(TCExprKind::FunctionIdent { ident })
+                };
                 let decl = TCDecl {
                     ty,
-                    init: TCDeclInit::Default(TCExprKind::FunctionIdent { ident }),
+                    init,
                     ident,
                     loc: decl.loc,
                 };
                 globals.add_global(&decl)?;
 
                 let mut func_locals = globals.new_func();
+                let mut func_out = FuncEnv::new(func_decl.return_type, func_decl.loc);
 
                 if let Some(params) = func_decl.params {
                     for param in params.params {
-                        func_locals.add_param(param.ty, param.ident, param.loc)?;
+                        func_locals.add_param(&mut func_out, &param)?;
                     }
                 }
 
-                let mut func_out = FuncEnv::new(func_decl.return_type, func_decl.loc);
                 check_stmts(&mut func_locals, &mut func_out, func.statements)?;
             }
             GlobalStatementKind::Pragma(pragma) => {
@@ -180,13 +185,24 @@ pub fn check_stmts(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result
             BlockItemKind::Declaration(decl) => match check_declaration(env, decl)? {
                 DeclarationResult::VarDecl(decls) => {
                     for decl in &decls {
-                        env.add_local(decl)?;
+                        env.add_local(out, decl)?;
                     }
                 }
                 DeclarationResult::Typedef { ty, ident, loc } => env.add_typedef(ty, ident, loc),
             },
-            BlockItemKind::Statement(stmt) => {}
+            BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt)?,
         }
+    }
+
+    return Ok(());
+}
+
+pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Result<(), Error> {
+    match stmt.kind {
+        StatementKind::Block(block) => {
+            let scope = env.child();
+        }
+        _ => unimplemented!(),
     }
 
     return Ok(());
@@ -303,7 +319,7 @@ pub fn check_func_defn_decl(
                 params_decl.parameters[idx].loc, "parameter found here"
             ));
         } else {
-            out.push(TCParamDeclaration {
+            out.push(TCParamDecl {
                 ty,
                 ident: id.into(),
                 loc: params_decl.parameters[idx].loc,

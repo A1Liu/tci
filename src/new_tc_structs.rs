@@ -7,6 +7,7 @@ pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,
     pub gotos: Vec<u32>,
     pub next_label: u32,
+    pub next_symbol_label: u32,
 
     // const fields
     pub return_type: TCType,
@@ -19,14 +20,12 @@ pub enum TypeEnvKind<'a> {
         symbols: HashMap<u32, TCVar>,
         parent: *const TypeEnv<'a>,
         global: *const TypeEnv<'a>,
-        decl_idx: i16,
     },
     LocalSwitch {
         symbols: HashMap<u32, TCVar>,
-        cases: HashMap<TCExpr, u32>,
+        cases: Vec<(TCExpr, u32)>,
         parent: *const TypeEnv<'a>,
         global: *const TypeEnv<'a>,
-        decl_idx: i16,
     },
 }
 
@@ -46,8 +45,7 @@ pub struct GlobalTypeEnv<'a> {
 
 pub struct LocalTypeEnv<'a> {
     pub symbols: &'a HashMap<u32, TCVar>,
-    pub cases: Option<&'a HashMap<TCExpr, u32>>,
-    pub decl_idx: &'a i16,
+    pub cases: Option<&'a Vec<(TCExpr, u32)>>,
     pub typedefs: &'a HashMap<u32, (&'static TCType, CodeLoc)>,
     pub builtins_enabled: bool,
 }
@@ -70,6 +68,7 @@ impl FuncEnv {
             ops: Vec::new(),
             gotos: Vec::new(),
             next_label: 0,
+            next_symbol_label: 0,
             return_type,
             rtype_loc,
         };
@@ -147,7 +146,6 @@ impl<'a> TypeEnv<'a> {
             symbols: HashMap::new(),
             parent: self,
             global,
-            decl_idx: -2,
         };
 
         Self {
@@ -160,17 +158,10 @@ impl<'a> TypeEnv<'a> {
     pub fn child(&mut self) -> Self {
         let (_, global) = self.globals();
 
-        let decl_idx = match self.kind {
-            TypeEnvKind::Global { .. } => unreachable!(),
-            TypeEnvKind::Local { decl_idx, .. } => decl_idx,
-            TypeEnvKind::LocalSwitch { decl_idx, .. } => decl_idx,
-        };
-
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
             parent: self,
             global,
-            decl_idx,
         };
 
         Self {
@@ -183,18 +174,11 @@ impl<'a> TypeEnv<'a> {
     pub fn switch(&mut self) -> Self {
         let (_, global) = self.globals();
 
-        let decl_idx = match self.kind {
-            TypeEnvKind::Global { .. } => unreachable!(),
-            TypeEnvKind::Local { decl_idx, .. } => decl_idx,
-            TypeEnvKind::LocalSwitch { decl_idx, .. } => decl_idx,
-        };
-
         let kind = TypeEnvKind::LocalSwitch {
             symbols: HashMap::new(),
-            cases: HashMap::new(),
+            cases: Vec::new(),
             parent: self,
             global,
-            decl_idx,
         };
 
         Self {
@@ -232,24 +216,15 @@ impl<'a> TypeEnv<'a> {
     {
         return self.search_scopes(|sel| match &sel.kind {
             TypeEnvKind::Global { .. } => None,
-            TypeEnvKind::LocalSwitch {
-                symbols,
-                decl_idx,
-                cases,
-                ..
-            } => f(LocalTypeEnv {
+            TypeEnvKind::LocalSwitch { symbols, cases, .. } => f(LocalTypeEnv {
                 symbols,
                 cases: Some(cases),
-                decl_idx,
                 typedefs: &sel.typedefs,
                 builtins_enabled: sel.builtins_enabled,
             }),
-            TypeEnvKind::Local {
-                symbols, decl_idx, ..
-            } => f(LocalTypeEnv {
+            TypeEnvKind::Local { symbols, .. } => f(LocalTypeEnv {
                 symbols,
                 cases: None,
-                decl_idx,
                 typedefs: &sel.typedefs,
                 builtins_enabled: sel.builtins_enabled,
             }),
@@ -270,26 +245,23 @@ impl<'a> TypeEnv<'a> {
         ));
     }
 
-    pub fn add_param(&mut self, ty: TCType, id: u32, loc: CodeLoc) -> Result<(), Error> {
-        let (decl_idx, symbols) = match &mut self.kind {
-            TypeEnvKind::Local {
-                decl_idx, symbols, ..
-            } => (decl_idx, symbols),
+    pub fn add_param(&mut self, env: &mut FuncEnv, param: &TCParamDecl) -> Result<(), Error> {
+        let symbols = match &mut self.kind {
+            TypeEnvKind::Local { symbols, .. } => symbols,
             _ => unreachable!(),
         };
 
-        let idx = *decl_idx;
-        debug_assert!(idx < 0);
-
-        *decl_idx -= 1;
+        let TCParamDecl { ty, ident, loc } = *param;
+        let symbol_label = LabelOrLoc::Param(env.next_symbol_label);
+        env.next_symbol_label += 1;
 
         let tc_var = TCVar {
-            var_offset: OffsetOrLoc::LocalOffset(idx),
+            symbol_label,
             ty,
             loc,
         };
 
-        if let Some(prev) = symbols.insert(id, tc_var) {
+        if let Some(prev) = symbols.insert(ident, tc_var) {
             return Err(error!(
                 "variable already exists in current scope",
                 prev.loc, "previous declared here", loc, "new variable of same name declared here"
@@ -299,7 +271,7 @@ impl<'a> TypeEnv<'a> {
         return Ok(());
     }
 
-    pub fn add_local(&mut self, decl: &TCDecl) -> Result<(), Error> {
+    pub fn add_local(&mut self, env: &mut FuncEnv, decl: &TCDecl) -> Result<(), Error> {
         let TCDecl {
             init,
             ident,
@@ -307,7 +279,7 @@ impl<'a> TypeEnv<'a> {
             loc,
         } = *decl;
 
-        let var_offset = match init {
+        let symbol_label = match init {
             TCDeclInit::Extern | TCDeclInit::ExternInit(_) => unimplemented!(),
             TCDeclInit::Static(_) => {
                 let global_env = self.globals_mut();
@@ -323,29 +295,18 @@ impl<'a> TypeEnv<'a> {
                 global_env.tu.variables.insert(global_ident, global_var);
                 global_env.next_var += 1;
 
-                OffsetOrLoc::StaticLoc(loc)
+                LabelOrLoc::StaticLoc(loc)
             }
             TCDeclInit::DefaultUninit | TCDeclInit::Default(_) => {
-                let decl_idx = match &mut self.kind {
-                    TypeEnvKind::Local { decl_idx, .. } => decl_idx,
-                    TypeEnvKind::LocalSwitch { decl_idx, .. } => decl_idx,
-                    _ => unreachable!(),
-                };
+                let idx = env.next_symbol_label;
+                env.next_symbol_label += 1;
 
-                let idx = if *decl_idx < 0 {
-                    *decl_idx = 1;
-                    0
-                } else {
-                    *decl_idx += 1;
-                    *decl_idx - 1
-                };
-
-                OffsetOrLoc::LocalOffset(idx)
+                LabelOrLoc::LocalIdent(idx)
             }
         };
 
         let tc_var = TCVar {
-            var_offset,
+            symbol_label,
             ty,
             loc,
         };
@@ -412,15 +373,22 @@ impl<'a> TypeEnv<'a> {
 
         // search locals
         if let Some(tc_var) = self.search_local_scopes(|sel| sel.symbols.get(&ident).map(|a| *a)) {
-            match tc_var.var_offset {
-                OffsetOrLoc::LocalOffset(var_offset) => {
+            match tc_var.symbol_label {
+                LabelOrLoc::Param(label) => {
                     return Ok(TCExpr {
-                        kind: TCExprKind::LocalIdent { var_offset },
+                        kind: TCExprKind::LocalIdent { label },
                         ty: tc_var.ty,
                         loc,
                     });
                 }
-                OffsetOrLoc::StaticLoc(scope) => {
+                LabelOrLoc::LocalIdent(label) => {
+                    return Ok(TCExpr {
+                        kind: TCExprKind::LocalIdent { label },
+                        ty: tc_var.ty,
+                        loc,
+                    });
+                }
+                LabelOrLoc::StaticLoc(scope) => {
                     let (global_env, _) = self.globals();
                     let global_var = global_env.symbols[&TCIdent::ScopedIdent { scope, ident }];
                     let binary_offset = global_var.var_idx;
@@ -437,6 +405,16 @@ impl<'a> TypeEnv<'a> {
         // search globals
         let (global_env, _) = self.globals();
         if let Some(global_var) = global_env.symbols.get(&TCIdent::Ident(ident)) {
+            if global_var.ty.is_function() {
+                if let TCDeclInit::Default(kind) = global_var.init {
+                    return Ok(TCExpr {
+                        kind,
+                        ty: global_var.ty,
+                        loc,
+                    });
+                }
+            }
+
             let binary_offset = global_var.var_idx;
 
             return Ok(TCExpr {
@@ -461,17 +439,26 @@ impl<'a> TypeEnv<'a> {
                 ));
             }
 
-            match tc_var.var_offset {
-                OffsetOrLoc::LocalOffset(var_offset) => {
+            match tc_var.symbol_label {
+                LabelOrLoc::Param(label) => {
                     return Ok(TCAssignTarget {
-                        kind: TCAssignTargetKind::LocalIdent { var_offset },
+                        kind: TCAssignTargetKind::LocalIdent { label },
                         defn_loc: tc_var.loc,
                         ty: tc_var.ty,
                         loc,
                         offset: 0,
                     });
                 }
-                OffsetOrLoc::StaticLoc(scope) => {
+                LabelOrLoc::LocalIdent(label) => {
+                    return Ok(TCAssignTarget {
+                        kind: TCAssignTargetKind::LocalIdent { label },
+                        defn_loc: tc_var.loc,
+                        ty: tc_var.ty,
+                        loc,
+                        offset: 0,
+                    });
+                }
+                LabelOrLoc::StaticLoc(scope) => {
                     let (global_env, _) = self.globals();
                     let global_var = global_env.symbols[&TCIdent::ScopedIdent { scope, ident }];
                     let binary_offset = global_var.var_idx;
