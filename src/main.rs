@@ -77,50 +77,44 @@ fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
     }
     buckets = buckets.force_next();
 
-    let tokens: HashMap<_, _> = tokens
-        .keys()
-        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
-            Ok(toks) => {
-                if let Some(n) = buckets.next() {
-                    buckets = n;
-                }
+    let mut processed_tokens = HashMap::new();
+    for &file in tokens.keys() {
+        match preprocessor::preprocess_file(&tokens, file) {
+            Ok(toks) => std::mem::drop(processed_tokens.insert(file, toks)),
+            Err(err) => errors.push(err),
+        }
+    }
 
-                Some((file, toks))
-            }
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        })
-        .collect();
-
-    let trees: HashMap<_, _> = tokens
-        .iter()
-        .filter_map(|(file, toks)| match new_parser::parse(&toks) {
-            Ok(env) => {
-                if let Some(n) = buckets.next() {
-                    buckets = n;
-                }
-
-                Some((file, env))
-            }
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        })
-        .collect();
-
-    if errors.len() != 0 {
-        while let Some(b) = unsafe { buckets_begin.dealloc() } {
-            buckets_begin = b;
+    let mut trees = HashMap::new();
+    for (file, toks) in processed_tokens {
+        match new_parser::parse(&toks) {
+            Ok(env) => std::mem::drop(trees.insert(file, env)),
+            Err(err) => errors.push(err),
         }
 
-        return Err(errors);
+        while let Some(n) = buckets.next() {
+            buckets = n;
+        }
     }
 
     while let Some(b) = unsafe { buckets_begin.dealloc() } {
         buckets_begin = b;
+    }
+
+    if errors.len() != 0 {
+        return Err(errors);
+    }
+
+    let mut tu_map = HashMap::new();
+    for (file, tree) in trees {
+        match new_type_checker::check_tree(env, &tree.tree) {
+            Ok(tu) => std::mem::drop(tu_map.insert(file, tu)),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    if errors.len() != 0 {
+        return Err(errors);
     }
 
     return Ok(());

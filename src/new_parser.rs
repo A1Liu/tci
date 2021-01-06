@@ -12,6 +12,14 @@ pub struct ParseEnv {
     pub tree: Vec<GlobalStatement>,
 }
 
+impl Drop for ParseEnv {
+    fn drop(&mut self) {
+        while let Some(b) = unsafe { self.buckets_begin.dealloc() } {
+            self.buckets_begin = b;
+        }
+    }
+}
+
 impl ParseEnv {
     pub fn new(toks: &[Token]) -> Self {
         let buckets = BucketList::new();
@@ -215,6 +223,23 @@ rule atom() -> Expr =
 
 
 rule expr() -> Expr = precedence! {
+    x:(@) [TokenKind::Gt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Gt, x, y) }
+    }
+    x:(@) [TokenKind::Geq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Geq, x, y) }
+    }
+    x:(@) [TokenKind::Lt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Lt, x, y) }
+    }
+    x:(@) [TokenKind::Leq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Leq, x, y) }
+    }
+    --
     x:(@) [TokenKind::Plus] y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Add, x, y) }
@@ -1035,6 +1060,22 @@ rule function_definition() -> FunctionDefinition =
             pointer: env.buckets.add_array(pointer),
             ident,
             params: Some(f),
+            statements: d,
+            loc,
+        }
+    } /
+    a:decl_specs() pointer:list0(<pointer_quals()>) id:ident()
+    [TokenKind::LParen] [TokenKind::RParen] d:compound_statement() {
+        let (a, begin_loc) = a;
+        let (ident, _) = id;
+        let (pointer, _) = pointer;
+
+        let loc = l_from(begin_loc, d.loc);
+        FunctionDefinition {
+            specifiers: env.buckets.add_array(a),
+            pointer: env.buckets.add_array(pointer),
+            ident,
+            params: None,
             statements: d,
             loc,
         }

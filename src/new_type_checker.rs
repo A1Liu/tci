@@ -199,13 +199,34 @@ pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result
 }
 
 pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Result<(), Error> {
+    let mut op = TCOpcode {
+        kind: TCOpcodeKind::Ret,
+        loc: stmt.loc,
+    };
+
     match stmt.kind {
         StatementKind::Block(block) => {
             let mut scope = env.child(out, block.loc);
             check_block(&mut scope, out, block)?;
             scope.close_scope(out);
         }
-        _ => unimplemented!(),
+        StatementKind::Expr(expr) => {
+            let tc_expr = check_expr(env, &expr)?;
+            op.kind = TCOpcodeKind::Expr(tc_expr);
+            out.ops.push(op);
+        }
+
+        StatementKind::Ret => {
+            op.kind = TCOpcodeKind::Ret;
+            out.ops.push(op);
+        }
+        StatementKind::RetVal(expr) => {
+            let tc_expr = check_expr(env, &expr)?;
+            op.kind = TCOpcodeKind::RetVal(tc_expr);
+            out.ops.push(op);
+        }
+
+        x => unimplemented!("{:?}", x),
     }
 
     return Ok(());

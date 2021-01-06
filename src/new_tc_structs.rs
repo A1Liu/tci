@@ -2,10 +2,19 @@ use crate::buckets::*;
 use crate::filedb::*;
 use crate::new_tc_ast::*;
 use crate::util::*;
+use std::collections::hash_map::Entry;
+
+pub struct ContBr {
+    pub cont_l: TCOpcode,
+    pub br_l: TCOpcode,
+    pub cont: TCOpcode,
+    pub br: TCOpcode,
+}
 
 pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,
-    pub gotos: Vec<u32>,
+    pub symbol_to_label: HashMap<u32, u32>,
+    pub translate_gotos: Vec<u32>,
     pub next_label: u32,
     pub next_symbol_label: u32,
 
@@ -70,7 +79,8 @@ impl FuncEnv {
     pub fn new(return_type: TCType, rtype_loc: CodeLoc) -> Self {
         return FuncEnv {
             ops: Vec::new(),
-            gotos: Vec::new(),
+            symbol_to_label: HashMap::new(),
+            translate_gotos: Vec::new(),
             next_label: 0,
             next_symbol_label: 0,
             return_type,
@@ -155,18 +165,33 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn loop_child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, TCOpcode, TCOpcode) {
+    pub fn loop_child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, ContBr) {
         let cont_label = env.next_label;
         let break_label = env.next_label + 1;
         env.next_label += 2;
 
-        let cont = TCOpcode {
+        let cont_l = TCOpcode {
             kind: TCOpcodeKind::Label(cont_label),
             loc,
         };
-        let br = TCOpcode {
+        let cont = TCOpcode {
+            kind: TCOpcodeKind::Goto(cont_label),
+            loc,
+        };
+        let br_l = TCOpcode {
             kind: TCOpcodeKind::Label(break_label),
             loc,
+        };
+        let br = TCOpcode {
+            kind: TCOpcodeKind::Goto(break_label),
+            loc,
+        };
+
+        let cb = ContBr {
+            cont_l,
+            cont,
+            br_l,
+            br,
         };
 
         let (_, global) = self.globals();
@@ -191,7 +216,7 @@ impl<'a> TypeEnv<'a> {
             builtins_enabled: false,
         };
 
-        (sel, cont, br)
+        (sel, cb)
     }
 
     pub fn child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Self {
@@ -381,10 +406,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         if let Some(prev) = symbols.insert(ident, tc_var) {
-            return Err(error!(
-                "variable already exists in current scope",
-                prev.loc, "previous declared here", loc, "new variable of same name declared here"
-            ));
+            return Err(variable_redeclaration(prev.loc, loc));
         }
 
         return Ok(());
@@ -420,9 +442,8 @@ impl<'a> TypeEnv<'a> {
             TCDeclInit::Default(init) => {
                 let label = env.next_symbol_label;
                 env.next_symbol_label += 1;
-                let target = TCAssignTargetKind::LocalIdent { label };
 
-                (LabelOrLoc::LocalIdent(label), Some((target, init)))
+                (LabelOrLoc::LocalIdent(label), Some((label, init)))
             }
         };
 
@@ -438,37 +459,45 @@ impl<'a> TypeEnv<'a> {
             _ => unreachable!(),
         };
 
-        if let Some(prev) = symbols.insert(ident, tc_var) {
-            return Err(error!(
-                "variable already exists in current scope",
-                prev.loc, "previous declared here", loc, "new variable of same name declared here"
-            ));
+        let mut prev = match symbols.entry(ident) {
+            Entry::Occupied(o) => o,
+            Entry::Vacant(v) => {
+                v.insert(tc_var);
+
+                if let Some((label, init_expr)) = init_expr {
+                    let op = TCOpcode::init_local(self, label, init_expr, ty, loc);
+                    env.ops.push(op);
+                }
+
+                return Ok(());
+            }
+        };
+
+        let (prev_ty, prev_loc, decl_loc) = (prev.get().ty, prev.get().loc, decl.loc);
+        let or_else = move || variable_redeclaration(prev_loc, decl_loc);
+        let (rt, params) = decl.ty.func_parts_strict().ok_or_else(or_else)?;
+        let (prev_rt, prev_params) = prev_ty.func_parts_strict().ok_or_else(or_else)?;
+
+        if !TCType::ty_eq(&prev_rt, &rt) {
+            return Err(mismatched_return_types(prev.get().loc, decl.loc));
         }
 
-        if let Some((target, init_expr)) = init_expr {
-            let init_expr = TCExpr {
-                kind: init_expr,
-                ty,
-                loc,
-            };
+        let prev_static = prev.get().symbol_label.is_static();
+        let is_static = decl.init.is_static();
 
-            let expr = TCExpr {
-                kind: TCExprKind::Assign {
-                    target: TCAssignTarget {
-                        kind: target,
-                        defn_loc: loc,
-                        ty,
-                        loc,
-                        offset: 0,
-                    },
-                    value: self.add(init_expr),
-                },
-                ty,
-                loc,
-            };
+        if prev_static && !is_static {
+            return Err(mismatched_static_decl(prev.get().loc, decl.loc));
+        }
 
-            let kind = TCOpcodeKind::Expr(expr);
-            env.ops.push(TCOpcode { kind, loc });
+        if prev_params[0] != TCTypeModifier::UnknownParams {
+            if params[0] != TCTypeModifier::UnknownParams && prev_params != params {
+                return Err(mismatched_params(prev_loc, decl.loc));
+            }
+        } else if params[0] != TCTypeModifier::UnknownParams {
+            prev.get_mut().ty = decl.ty;
+            prev.get_mut().loc = decl.loc;
+            // TODO this stupid motherfucking language allows functions to be declared in
+            // a local scope but still requires a global definition
         }
 
         return Ok(());
@@ -487,26 +516,67 @@ impl<'a> TypeEnv<'a> {
             loc: decl.loc,
             var_idx: global_env.next_var,
         };
-
-        if let Some(prev) = global_env.tu.variables.insert(global_ident, global_var) {
-            return Err(error!(
-                "variable already exists in current scope",
-                prev.loc,
-                "previous declared here",
-                decl.loc,
-                "new variable of same name declared here"
-            ));
-        }
         global_env.next_var += 1;
 
-        if let Some(func_type) = decl.ty.to_func_type_strict(&*global_env) {
-            let tc_function = TCFunction {
-                is_static: false,
-                func_type,
-                defn: None,
-            };
+        let mut prev = match global_env.tu.variables.entry(global_ident) {
+            Entry::Occupied(o) => o,
+            Entry::Vacant(v) => {
+                v.insert(global_var);
 
-            global_env.tu.functions.insert(decl.ident, tc_function);
+                if let Some(func_type) = decl.ty.to_func_type_strict(global_env.tu.buckets) {
+                    let tc_function = TCFunction {
+                        is_static: decl.init.is_static(),
+                        func_type,
+                        decl_loc: decl.loc,
+                        defn: None,
+                    };
+                    global_env.tu.functions.insert(decl.ident, tc_function);
+                }
+                return Ok(());
+            }
+        };
+
+        let (prev_ty, prev_loc, decl_loc) = (prev.get().ty, prev.get().loc, decl.loc);
+        let or_else = move || variable_redeclaration(prev_loc, decl_loc);
+        let (rt, params) = decl.ty.func_parts_strict().ok_or_else(or_else)?;
+        let (prev_rt, prev_params) = prev_ty.func_parts_strict().ok_or_else(or_else)?;
+
+        if !TCType::ty_eq(&prev_rt, &rt) {
+            return Err(mismatched_return_types(prev.get().loc, decl.loc));
+        }
+
+        let prev_static = prev.get().init.is_static();
+        let is_static = decl.init.is_static();
+
+        if prev_static && !is_static {
+            return Err(mismatched_static_decl(prev.get().loc, decl.loc));
+        }
+
+        if prev_params[0] != TCTypeModifier::UnknownParams {
+            if params[0] != TCTypeModifier::UnknownParams && prev_params != params {
+                return Err(mismatched_params(prev_loc, decl.loc));
+            }
+        } else if params[0] != TCTypeModifier::UnknownParams {
+            let prev_func = global_env.tu.functions.get_mut(&decl.ident).unwrap();
+            prev.get_mut().ty = decl.ty;
+            prev.get_mut().loc = decl.loc;
+
+            let mut param_types = Vec::new();
+            let mut varargs = false;
+            for param in params {
+                match param {
+                    TCTypeModifier::BeginParam(ty) => param_types.push(*ty),
+                    TCTypeModifier::Param(ty) => param_types.push(*ty),
+                    TCTypeModifier::VarargsParam => varargs = true,
+                    _ => unreachable!(),
+                }
+            }
+
+            let types = global_env.tu.buckets.add_array(param_types);
+            let params = TCParamType { types, varargs };
+
+            prev_func.func_type.params = Some(params);
+            prev_func.decl_loc = decl.loc;
         }
 
         return Ok(());
@@ -647,4 +717,32 @@ impl<'a> TypeEnv<'a> {
     pub fn add_typedef(&mut self, ty: TCType, id: u32, loc: CodeLoc) {
         self.typedefs.insert(id, (self.add(ty), loc));
     }
+}
+
+pub fn mismatched_return_types(prev_loc: CodeLoc, decl_loc: CodeLoc) -> Error {
+    return error!(
+        "mismatched declared return types",
+        prev_loc, "previous declaration here", decl_loc, "new declaration here"
+    );
+}
+
+pub fn mismatched_params(prev_loc: CodeLoc, decl_loc: CodeLoc) -> Error {
+    return error!(
+        "mismatched declared parameter types",
+        prev_loc, "previous declaration here", decl_loc, "new declaration here"
+    );
+}
+
+pub fn mismatched_static_decl(prev_loc: CodeLoc, decl_loc: CodeLoc) -> Error {
+    return error!(
+        "previous declaration of function is static and new declaration is not",
+        prev_loc, "previous declaration here", decl_loc, "new declaration here"
+    );
+}
+
+pub fn variable_redeclaration(prev: CodeLoc, new: CodeLoc) -> Error {
+    return error!(
+        "variable already exists in current scope",
+        prev, "previous declaration here", new, "new variable of same name declared here"
+    );
 }

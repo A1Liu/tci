@@ -100,6 +100,36 @@ pub struct TCOpcode {
     pub loc: CodeLoc,
 }
 
+impl TCOpcode {
+    pub fn init_local(
+        alloc: impl Allocator<'static>,
+        label: u32,
+        kind: TCExprKind,
+        ty: TCType,
+        loc: CodeLoc,
+    ) -> TCOpcode {
+        let init_expr = TCExpr { kind, ty, loc };
+
+        let expr = TCExpr {
+            kind: TCExprKind::Assign {
+                target: TCAssignTarget {
+                    kind: TCAssignTargetKind::LocalIdent { label },
+                    defn_loc: loc,
+                    ty,
+                    loc,
+                    offset: 0,
+                },
+                value: alloc.add(init_expr),
+            },
+            ty,
+            loc,
+        };
+
+        let kind = TCOpcodeKind::Expr(expr);
+        return TCOpcode { kind, loc };
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum TCTypeBase {
@@ -144,16 +174,23 @@ impl<'a> TCTy for TCTypeRef<'a> {
     }
 }
 
-pub trait TCTy {
-    fn base(&self) -> TCTypeBase;
-    fn mods(&self) -> &[TCTypeModifier];
-
+impl TCTypeBase {
     fn get_typedef(&self) -> Option<&'static TCType> {
-        match self.base() {
+        match self {
             TCTypeBase::InternalTypedef(td) => Some(td),
             TCTypeBase::Typedef { refers_to, .. } => Some(refers_to),
             _ => None,
         }
+    }
+}
+
+pub trait TCTy {
+    fn base(&self) -> TCTypeBase;
+    fn mods(&self) -> &[TCTypeModifier];
+
+    #[inline]
+    fn get_typedef(&self) -> Option<&'static TCType> {
+        self.base().get_typedef()
     }
 
     fn display(&self, files: &FileDb) -> String {
@@ -315,8 +352,8 @@ pub trait TCTy {
                 TCTypeModifier::Pointer => return true,
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
-                | TCTypeModifier::UnknownParams => return false,
-                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => return true,
+                | TCTypeModifier::UnknownParams => return true,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
                 TCTypeModifier::Array(i) => return true,
                 TCTypeModifier::VariableArray => return false,
             }
@@ -460,7 +497,58 @@ pub trait TCTy {
     }
 
     fn ty_eq(l: &impl TCTy, r: &impl TCTy) -> bool {
-        return l.base() == r.base() && l.mods() == r.mods();
+        let (l_base, l_mods) = (l.base(), StackLL::new(l.mods()));
+        let (r_base, r_mods) = (r.base(), StackLL::new(r.mods()));
+        return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+    }
+
+    fn ty_eq_partial<'a, 'b>(
+        l_base: TCTypeBase,
+        l_mods: &StackLL<&[TCTypeModifier]>,
+        r_base: TCTypeBase,
+        r_mods: &StackLL<&[TCTypeModifier]>,
+    ) -> bool {
+        if let Some(l_typedef) = l_base.get_typedef() {
+            if let Some(r_typedef) = r_base.get_typedef() {
+                let (l_base, l_mods) = (l_typedef.base(), l_mods.child(l_typedef.mods()));
+                let (r_base, r_mods) = (r_typedef.base(), r_mods.child(r_typedef.mods()));
+                return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+            } else {
+                let (l_base, l_mods) = (l_typedef.base(), l_mods.child(l_typedef.mods()));
+                return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+            }
+        }
+
+        if let Some(r_typedef) = r_base.get_typedef() {
+            let (r_base, r_mods) = (r_typedef.base(), r_mods.child(r_typedef.mods()));
+            return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+        }
+
+        if l_base != r_base {
+            return false;
+        }
+
+        let mut l_mods = l_mods.into_iter().map(|a| *a).flatten();
+        let mut r_mods = r_mods.into_iter().map(|a| *a).flatten();
+        loop {
+            let (l, r) = if let Some(l_mod) = l_mods.next() {
+                if let Some(r_mod) = r_mods.next() {
+                    (l_mod, r_mod)
+                } else {
+                    return false;
+                }
+            } else {
+                if let Some(r_mod) = r_mods.next() {
+                    return false;
+                } else {
+                    return true;
+                }
+            };
+
+            if l != r {
+                return false;
+            }
+        }
     }
 }
 
@@ -572,6 +660,55 @@ impl TCType {
         }
 
         return None;
+    }
+
+    pub fn func_parts_strict(&self) -> Option<(TCType, &'static [TCTypeModifier])> {
+        if self.mods.len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.func_parts_strict();
+            }
+
+            return None;
+        }
+
+        let tc_func_type = match self.mods[0] {
+            TCTypeModifier::UnknownParams => {
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                };
+
+                return Some((return_type, &self.mods[..1]));
+            }
+            TCTypeModifier::NoParams => {
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                };
+
+                return Some((return_type, &self.mods[..1]));
+            }
+            TCTypeModifier::BeginParam(param) => {
+                let mut cursor = 1;
+
+                while cursor < self.mods.len() {
+                    match self.mods[cursor] {
+                        TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => {}
+                        _ => break,
+                    }
+
+                    cursor += 1;
+                }
+
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[cursor..],
+                };
+
+                return Some((return_type, &self.mods[..cursor]));
+            }
+            _ => return None,
+        };
     }
 }
 
@@ -824,6 +961,12 @@ pub enum LabelOrLoc {
     StaticLoc(CodeLoc),
 }
 
+impl LabelOrLoc {
+    pub fn is_static(&self) -> bool {
+        let_expr!(LabelOrLoc::StaticLoc(_) = self)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TCVar {
     pub symbol_label: LabelOrLoc,
@@ -848,6 +991,12 @@ pub enum TCDeclInit {
     DefaultUninit,
 }
 
+impl TCDeclInit {
+    pub fn is_static(&self) -> bool {
+        let_expr!(Self::Static(_) = self)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TCGlobalVar {
     pub init: TCDeclInit,
@@ -858,6 +1007,7 @@ pub struct TCGlobalVar {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TCFuncDefn {
+    pub param_count: u32,
     pub ops: &'static [TCOpcode],
     pub loc: CodeLoc,
 }
@@ -866,6 +1016,7 @@ pub struct TCFuncDefn {
 pub struct TCFunction {
     pub is_static: bool,
     pub func_type: TCFuncType,
+    pub decl_loc: CodeLoc,
     pub defn: Option<TCFuncDefn>,
 }
 
