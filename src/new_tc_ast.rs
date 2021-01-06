@@ -948,10 +948,40 @@ pub struct TCParamType {
     pub varargs: bool,
 }
 
+impl PartialEq<TCParamType> for TCParamType {
+    fn eq(&self, o: &Self) -> bool {
+        if self.varargs != o.varargs {
+            return false;
+        }
+
+        if self.types.len() != o.types.len() {
+            return false;
+        }
+
+        for (t1, t2) in self.types.iter().zip(o.types) {
+            if !TCType::ty_eq(t1, t2) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TCFuncType {
     pub return_type: TCType,
     pub params: Option<TCParamType>,
+}
+
+impl PartialEq<TCFuncType> for TCFuncType {
+    fn eq(&self, other: &Self) -> bool {
+        if !TCType::ty_eq(&self.return_type, &other.return_type) {
+            return false;
+        }
+
+        return self.params == other.params;
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

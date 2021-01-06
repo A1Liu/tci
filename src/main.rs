@@ -20,6 +20,7 @@ mod commands;
 mod filedb;
 mod interpreter;
 mod lexer;
+mod new_assembler;
 mod new_ast;
 mod new_parser;
 mod new_tc_ast;

@@ -1353,12 +1353,6 @@ pub struct UncheckedFuncDefn<'a> {
     pub body: &'a [Stmt<'a>],
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct LinkName {
-    name: u32,
-    file: n32,
-}
-
 pub struct UncheckedEnv<'b> {
     pub funcs: HashMap<u32, UncheckedFunc<'b>>,
     pub struct_types: HashMap<u32, UncheckedStruct>,

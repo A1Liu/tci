@@ -48,12 +48,6 @@ pub struct ASMRuntimeStruct {
     pub sa: SizeAlign,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LinkName {
-    name: u32,
-    file: n32,
-}
-
 pub struct Assembler {
     pub opcodes: Vec<TaggedOpcode>,
     pub func_linkage: HashMap<LinkName, u32>,
@@ -194,7 +188,7 @@ impl Assembler {
         let param_count = asm_func.func_type.params.len() as u32;
 
         self.opcodes.push(TaggedOpcode {
-            op: Opcode::Func(ident),
+            op: Opcode::Func(LinkName::new(ident)),
             loc: defn.loc,
         });
 

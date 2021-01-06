@@ -2,7 +2,6 @@ use crate::buckets::*;
 use crate::filedb::*;
 use crate::new_tc_ast::*;
 use crate::util::*;
-use std::collections::hash_map::Entry;
 
 pub struct ContBr {
     pub cont_l: TCOpcode,

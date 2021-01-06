@@ -54,7 +54,7 @@ pub const META_NO_SYMBOL: u32 = u32::MAX;
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(tag = "code", content = "data")]
 pub enum Opcode {
-    Func(u32), // Function header used for callstack manipulation
+    Func(LinkName), // Function header used for callstack manipulation
 
     StackAlloc { bytes: u32, symbol: u32 }, // Allocates space on the stack
     StackAllocDyn { symbol: u32 },          // Allocates space on the stack based on a u32 pop
@@ -359,7 +359,7 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         // .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
         let opcode = op.op;
         match opcode {
-            Opcode::Func(_) => {}
+            Opcode::Func { .. } => {}
 
             Opcode::StackAlloc { bytes, symbol } => {
                 self.memory.add_stack_var(bytes, symbol)?;

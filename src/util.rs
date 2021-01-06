@@ -10,6 +10,7 @@ use std::io;
 use std::sync::*;
 
 pub use lazy_static::lazy_static;
+pub use std::collections::hash_map::Entry;
 pub use std::collections::HashMap;
 
 #[allow(unused_macros)]

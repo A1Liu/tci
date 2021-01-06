@@ -6,7 +6,7 @@ use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
 use smol::io::AsyncReadExt;
 use std::collections::VecDeque;
 use std::io;
-use std::io::{stderr, stdout, Stderr, Stdout, Write};
+use std::io::Write;
 
 pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, files: &FileDbRef) -> String {
     use codespan_reporting::diagnostic::*;
@@ -66,16 +66,38 @@ impl From<io::Error> for IError {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+pub struct LinkName {
+    pub name: u32,
+    pub file: n32,
+}
+
+impl LinkName {
+    pub fn new(name: u32) -> Self {
+        Self {
+            name,
+            file: n32::NULL,
+        }
+    }
+
+    pub fn new_static(name: u32, file: u32) -> Self {
+        Self {
+            name,
+            file: file.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
-    pub name: u32,
+    pub name: LinkName,
     pub loc: CodeLoc,
     pub fp: u16,
     pub pc: u32,
 }
 
 impl CallFrame {
-    pub fn new(name: u32, loc: CodeLoc, fp: u16, pc: u32) -> Self {
+    pub fn new(name: LinkName, loc: CodeLoc, fp: u16, pc: u32) -> Self {
         Self { name, loc, fp, pc }
     }
 }
@@ -548,8 +570,8 @@ pub enum MAKind {
         bk: usize,
     },
     SetFunc {
-        prev: u32,
-        val: u32,
+        prev: LinkName,
+        val: LinkName,
         bk: usize,
     },
     Jump {
@@ -671,7 +693,7 @@ pub struct Memory {
     pub in_io_buf: VecDeque<u8>,
 
     pub callstack: Vec<CallFrame>,
-    pub current_func: u32,
+    pub current_func: LinkName,
     pub fp: u16,
     pub pc: u32,
 
@@ -695,7 +717,7 @@ impl Memory {
             in_io_buf: VecDeque::new(),
 
             callstack: Vec::new(),
-            current_func: INIT_SYMS.translate["main"],
+            current_func: LinkName::new(INIT_SYMS.translate["main"]),
             fp: 1,
             pc: 0,
 
@@ -731,7 +753,7 @@ impl Memory {
             in_io_buf: VecDeque::new(),
 
             callstack: Vec::new(),
-            current_func: INIT_SYMS.translate["main"],
+            current_func: LinkName::new(INIT_SYMS.translate["main"]),
             fp: 1,
             pc: 0,
 
@@ -836,21 +858,21 @@ impl Memory {
         return Ok(());
     }
 
-    pub fn call(&mut self, func: u32, func_name: u32, loc: CodeLoc) -> Result<(), IError> {
+    pub fn call(&mut self, new_pc: u32, name: LinkName, loc: CodeLoc) -> Result<(), IError> {
         self.check_mutate()?;
 
         let bk = self.historical_data.len();
 
+        self.push_history(MAKind::CallstackPush { loc, bk });
         self.callstack
             .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
-        self.push_history(MAKind::CallstackPush { loc, bk });
 
         self.push_history(MAKind::SetFunc {
             prev: self.current_func,
-            val: func_name,
+            val: name,
             bk,
         });
-        self.current_func = func_name;
+        self.current_func = name;
 
         self.push_history(MAKind::SetFp {
             prev: self.fp,
@@ -861,10 +883,10 @@ impl Memory {
 
         self.push_history(MAKind::Jump {
             prev: self.pc,
-            val: func,
+            val: new_pc,
             bk,
         });
-        self.pc = func;
+        self.pc = new_pc;
         return Ok(());
     }
 
@@ -2047,170 +2069,4 @@ fn test_memory_walker() {
     );
 
     assert_eq!(memory.stack, stack_expected_2);
-}
-
-pub trait RuntimeIO {
-    type Out: Write;
-    type Log: Write;
-    type Err: Write;
-
-    fn out(&mut self) -> &mut Self::Out;
-    fn log(&mut self) -> &mut Self::Log;
-    fn err(&mut self) -> &mut Self::Err;
-}
-
-pub struct InMemoryIO {
-    pub out: StringWriter,
-    pub log: StringWriter,
-    pub err: StringWriter,
-}
-
-impl InMemoryIO {
-    pub fn new() -> Self {
-        Self {
-            out: StringWriter::new(),
-            log: StringWriter::new(),
-            err: StringWriter::new(),
-        }
-    }
-}
-
-impl RuntimeIO for &mut InMemoryIO {
-    type Out = StringWriter;
-    type Log = StringWriter;
-    type Err = StringWriter;
-
-    fn out(&mut self) -> &mut StringWriter {
-        return &mut self.out;
-    }
-    fn err(&mut self) -> &mut StringWriter {
-        return &mut self.err;
-    }
-    fn log(&mut self) -> &mut StringWriter {
-        return &mut self.log;
-    }
-}
-
-impl RuntimeIO for InMemoryIO {
-    type Out = StringWriter;
-    type Log = StringWriter;
-    type Err = StringWriter;
-
-    fn out(&mut self) -> &mut StringWriter {
-        return &mut self.out;
-    }
-    fn err(&mut self) -> &mut StringWriter {
-        return &mut self.err;
-    }
-    fn log(&mut self) -> &mut StringWriter {
-        return &mut self.log;
-    }
-}
-
-pub struct DefaultIO {
-    pub out: Stdout,
-    pub log: StringWriter,
-    pub err: Stderr,
-}
-
-pub struct TestIO {
-    pub writer: RecordingWriter<Stderr>,
-}
-
-impl DefaultIO {
-    pub fn new() -> Self {
-        Self {
-            out: stdout(),
-            log: StringWriter::new(),
-            err: stderr(),
-        }
-    }
-}
-
-impl RuntimeIO for DefaultIO {
-    type Out = Stdout;
-    type Log = StringWriter;
-    type Err = Stderr;
-
-    fn out(&mut self) -> &mut Stdout {
-        return &mut self.out;
-    }
-    fn log(&mut self) -> &mut StringWriter {
-        return &mut self.log;
-    }
-    fn err(&mut self) -> &mut Stderr {
-        return &mut self.err;
-    }
-}
-
-impl RuntimeIO for &mut DefaultIO {
-    type Out = Stdout;
-    type Log = StringWriter;
-    type Err = Stderr;
-
-    fn out(&mut self) -> &mut Stdout {
-        return &mut self.out;
-    }
-    fn log(&mut self) -> &mut StringWriter {
-        return &mut self.log;
-    }
-    fn err(&mut self) -> &mut Stderr {
-        return &mut self.err;
-    }
-}
-
-impl TestIO {
-    pub fn new() -> Self {
-        Self {
-            writer: RecordingWriter::new(stderr()),
-        }
-    }
-}
-
-impl RuntimeIO for &mut TestIO {
-    type Out = RecordingWriter<Stderr>;
-    type Log = RecordingWriter<Stderr>;
-    type Err = RecordingWriter<Stderr>;
-
-    fn out(&mut self) -> &mut Self::Out {
-        return &mut self.writer;
-    }
-    fn log(&mut self) -> &mut Self::Log {
-        return &mut self.writer;
-    }
-    fn err(&mut self) -> &mut Self::Err {
-        return &mut self.writer;
-    }
-}
-
-impl RuntimeIO for TestIO {
-    type Out = RecordingWriter<Stderr>;
-    type Log = RecordingWriter<Stderr>;
-    type Err = RecordingWriter<Stderr>;
-
-    fn out(&mut self) -> &mut Self::Out {
-        return &mut self.writer;
-    }
-    fn log(&mut self) -> &mut Self::Log {
-        return &mut self.writer;
-    }
-    fn err(&mut self) -> &mut Self::Err {
-        return &mut self.writer;
-    }
-}
-
-impl RuntimeIO for Void {
-    type Out = Void;
-    type Log = Void;
-    type Err = Void;
-
-    fn out(&mut self) -> &mut Void {
-        return self;
-    }
-    fn log(&mut self) -> &mut Void {
-        return self;
-    }
-    fn err(&mut self) -> &mut Void {
-        return self;
-    }
 }
