@@ -522,7 +522,7 @@ impl<'a> TypeEnv<'a> {
             Entry::Vacant(v) => {
                 v.insert(global_var);
 
-                if let Some(func_type) = decl.ty.to_func_type_strict(global_env.tu.buckets) {
+                if let Some(func_type) = decl.ty.to_func_type_strict(&*global_env.tu.buckets) {
                     let tc_function = TCFunction {
                         is_static: decl.init.is_static(),
                         func_type,

@@ -558,6 +558,53 @@ pub struct TCType {
     pub mods: &'static [TCTypeModifier],
 }
 
+impl CloneInto<'static> for TCTypeBase {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self {
+        match self {
+            Self::InternalTypedef(ty) => {
+                Self::InternalTypedef(alloc.add(ty.clone_into_alloc(alloc)))
+            }
+            &Self::Typedef { refers_to, typedef } => {
+                let refers_to = alloc.add(refers_to.clone_into_alloc(alloc));
+
+                Self::Typedef { refers_to, typedef }
+            }
+            x => *self,
+        }
+    }
+}
+
+impl CloneInto<'static> for TCTypeModifier {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self {
+        match self {
+            Self::BeginParam(ty) => Self::BeginParam(ty.clone_into_alloc(alloc)),
+            Self::Param(ty) => Self::Param(ty.clone_into_alloc(alloc)),
+            _ => *self,
+        }
+    }
+}
+
+impl CloneInto<'static> for TCType {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self {
+        let mut mods = Vec::new();
+        for modifier in self.mods {
+            mods.push(modifier.clone_into_alloc(alloc));
+        }
+        let mods = alloc.add_array(mods);
+
+        return TCType {
+            base: self.base.clone_into_alloc(alloc),
+            mods,
+        };
+    }
+}
+
 impl TCType {
     pub fn to_func_type_strict(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
         if self.mods.len() == 0 {
@@ -948,6 +995,20 @@ pub struct TCParamType {
     pub varargs: bool,
 }
 
+impl CloneInto<'static> for TCParamType {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self::CloneOutput {
+        let mut types = Vec::new();
+        for ty in self.types {
+            types.push(ty.clone_into_alloc(alloc));
+        }
+        let (types, varargs) = (alloc.add_array(types), self.varargs);
+
+        return Self { types, varargs };
+    }
+}
+
 impl PartialEq<TCParamType> for TCParamType {
     fn eq(&self, o: &Self) -> bool {
         if self.varargs != o.varargs {
@@ -972,6 +1033,20 @@ impl PartialEq<TCParamType> for TCParamType {
 pub struct TCFuncType {
     pub return_type: TCType,
     pub params: Option<TCParamType>,
+}
+
+impl CloneInto<'static> for TCFuncType {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self::CloneOutput {
+        let return_type = self.return_type.clone_into_alloc(alloc);
+        let params = self.params.clone_into_alloc(alloc);
+
+        return Self {
+            return_type,
+            params,
+        };
+    }
 }
 
 impl PartialEq<TCFuncType> for TCFuncType {
@@ -1072,7 +1147,7 @@ pub struct TCFunctionDeclarator {
 }
 
 pub struct TranslationUnit {
-    pub buckets: BucketListRef<'static>,
+    pub buckets: BucketListFactory,
     pub typedefs: HashMap<(u32, CodeLoc), TCType>,
     pub variables: HashMap<TCIdent, TCGlobalVar>,
     pub functions: HashMap<u32, TCFunction>,
@@ -1094,10 +1169,16 @@ pub enum DeclarationResult {
     VarDecl(Vec<TCDecl>),
 }
 
+impl Drop for TranslationUnit {
+    fn drop(&mut self) {
+        unsafe { self.buckets.dealloc() };
+    }
+}
+
 impl TranslationUnit {
     pub fn new() -> Self {
         Self {
-            buckets: BucketList::new(),
+            buckets: BucketListFactory::new(),
             typedefs: HashMap::new(),
             variables: HashMap::new(),
             functions: HashMap::new(),

@@ -87,6 +87,27 @@ pub trait Allocator<'a> {
     }
 }
 
+pub trait CloneInto<'a> {
+    type CloneOutput;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'a>) -> Self::CloneOutput;
+}
+
+impl<'a, T> CloneInto<'a> for Option<T>
+where
+    T: CloneInto<'a>,
+{
+    type CloneOutput = Option<T::CloneOutput>;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'a>) -> Self::CloneOutput {
+        if let Some(a) = self.as_ref() {
+            return Some(a.clone_into_alloc(alloc));
+        }
+
+        return None;
+    }
+}
+
 impl<'a, T> Allocator<'a> for &T
 where
     T: Allocator<'a>,
@@ -172,26 +193,6 @@ pub struct BucketList<'a> {
 #[derive(Clone, Copy)]
 pub struct BucketListRef<'a> {
     buckets: NonNull<BucketList<'a>>,
-}
-
-impl<'a> BucketListRef<'a> {
-    pub unsafe fn dealloc(self) -> Option<Self> {
-        let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
-        let bucket_align = mem::align_of::<BucketListInner>();
-        let inner_size = cmp::max(bucket_align, mem::size_of::<BucketListInner>());
-        let bucket_size = inner_size + self.data.len;
-        let layout = Layout::from_size_align(bucket_size, bucket_align).unwrap();
-
-        dealloc(self.buckets.as_ptr() as *mut u8, layout);
-
-        if let Some(next) = next {
-            return Some(Self {
-                buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
-            });
-        }
-
-        return None;
-    }
 }
 
 impl<'a> Allocator<'a> for BucketListRef<'a> {
@@ -285,45 +286,7 @@ impl<'a> Deref for BucketListRef<'a> {
     }
 }
 
-impl<'a> BucketListRef<'a> {
-    pub fn next(&self) -> Option<Self> {
-        let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
-        if let Some(next) = next {
-            unsafe {
-                return Some(Self {
-                    buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
-                });
-            }
-        }
-
-        return None;
-    }
-
-    pub fn force_next(&self) -> Self {
-        let inner = &self.data;
-        let mut next = inner.next.load(Ordering::SeqCst);
-        unsafe {
-            if next.is_null() {
-                let (new_buffer, new_layout) = inner.make_next(Layout::new::<()>());
-                if let Err(ptr) = inner.next.compare_exchange(
-                    ptr::null_mut(),
-                    new_buffer,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    dealloc(new_buffer as *mut u8, new_layout);
-                    next = ptr;
-                } else {
-                    next = new_buffer;
-                }
-            }
-
-            return Self {
-                buckets: NonNull::new_unchecked(next as *mut BucketList),
-            };
-        }
-    }
-}
+impl<'a> BucketListRef<'a> {}
 
 impl<'a> BucketList<'a> {
     pub fn new() -> BucketListRef<'a> {
@@ -344,6 +307,62 @@ impl<'a> BucketList<'a> {
             };
         }
     }
+
+    pub unsafe fn dealloc(&self) -> Option<BucketListRef<'a>> {
+        let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
+        let bucket_align = mem::align_of::<BucketListInner>();
+        let inner_size = cmp::max(bucket_align, mem::size_of::<BucketListInner>());
+        let bucket_size = inner_size + self.data.len;
+        let layout = Layout::from_size_align(bucket_size, bucket_align).unwrap();
+
+        dealloc(self as *const BucketList as *mut u8, layout);
+
+        if let Some(next) = next {
+            return Some(BucketListRef {
+                buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
+            });
+        }
+
+        return None;
+    }
+
+    pub fn next(&self) -> Option<BucketListRef<'a>> {
+        let next = NonNull::new(self.data.next.load(Ordering::SeqCst));
+        if let Some(next) = next {
+            unsafe {
+                return Some(BucketListRef {
+                    buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
+                });
+            }
+        }
+
+        return None;
+    }
+
+    pub fn force_next(&self) -> BucketListRef<'a> {
+        let inner = &self.data;
+        let mut next = inner.next.load(Ordering::SeqCst);
+        unsafe {
+            if next.is_null() {
+                let (new_buffer, new_layout) = inner.make_next(Layout::new::<()>());
+                if let Err(ptr) = inner.next.compare_exchange(
+                    ptr::null_mut(),
+                    new_buffer,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    dealloc(new_buffer as *mut u8, new_layout);
+                    next = ptr;
+                } else {
+                    next = new_buffer;
+                }
+            }
+
+            return BucketListRef {
+                buckets: NonNull::new_unchecked(next as *mut BucketList),
+            };
+        }
+    }
 }
 
 impl<'a> Allocator<'a> for BucketList<'a> {
@@ -353,41 +372,54 @@ impl<'a> Allocator<'a> for BucketList<'a> {
 }
 
 pub struct BucketListFactory {
-    pub begin: BucketListRef<'static>,
-    pub current: BucketListRef<'static>,
+    pub begin: AtomicPtr<BucketList<'static>>,
+    pub current: AtomicPtr<BucketList<'static>>,
 }
 
 impl BucketListFactory {
     pub fn new() -> Self {
-        let begin = BucketList::new();
+        let begin = BucketList::new().buckets.as_ptr();
+
         Self {
-            begin,
-            current: begin,
+            begin: AtomicPtr::new(begin),
+            current: AtomicPtr::new(begin),
         }
     }
 
     pub fn with_capacity(capa: usize) -> Self {
-        let begin = BucketList::with_capacity(capa);
+        let begin = BucketList::with_capacity(capa).buckets.as_ptr();
+
         Self {
-            begin,
-            current: begin,
+            begin: AtomicPtr::new(begin),
+            current: AtomicPtr::new(begin),
         }
     }
 
-    pub fn get_ref<'a>(&'a mut self) -> BucketListRef<'a> {
-        while let Some(current) = self.current.next() {
-            self.current = current;
+    pub unsafe fn dealloc(&mut self) {
+        while let Some(new) = (&mut *self.begin.load(Ordering::SeqCst)).dealloc() {
+            self.begin.store(new.buckets.as_ptr(), Ordering::SeqCst);
         }
-
-        return self.current;
     }
 }
 
-impl Drop for BucketListFactory {
-    fn drop(&mut self) {
-        while let Some(b) = unsafe { self.begin.dealloc() } {
-            self.begin = b;
+impl Deref for BucketListFactory {
+    type Target = BucketList<'static>;
+    fn deref(&self) -> &Self::Target {
+        let current = unsafe { &mut *self.current.load(Ordering::SeqCst) };
+
+        if let Some(n) = current.next() {
+            let result = self.current.compare_exchange(
+                current,
+                n.buckets.as_ptr(),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+
+            if result.is_ok() {
+                return unsafe { &*n.buckets.as_ptr() };
+            }
         }
+        return current;
     }
 }
 
