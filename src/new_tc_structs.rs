@@ -326,7 +326,10 @@ impl<'a> TypeEnv<'a> {
         let symbols = HashRef::new_iter(&self, capa, symbols);
         env.ops[scope_idx as usize].kind = TCOpcodeKind::ScopeBegin(symbols, scope_end);
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeEnd(scope_idx),
+            kind: TCOpcodeKind::ScopeEnd {
+                count: symbols.len() as u32,
+                begin: scope_idx,
+            },
             loc: env.ops[scope_idx as usize].loc,
         });
     }

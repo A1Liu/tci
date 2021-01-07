@@ -76,7 +76,6 @@ impl TCPrimType {
 pub enum TCOpcodeKind {
     Label(u32),
     Goto(u32),
-    InternalGoto(u32),
     BranchGoto {
         // A conditional goto, not checked by assembler
         condition: TCExpr,
@@ -84,7 +83,11 @@ pub enum TCOpcodeKind {
     },
 
     ScopeBegin(HashRef<'static, u32, TCType>, u32), // points to scope end
-    ScopeEnd(u32),                                  // points to scope beginning
+    ScopeEnd {
+        // points to scope beginning
+        count: u32,
+        begin: u32,
+    },
 
     // (expr, goto)
     Switch(&'static [(TCExpr, u32)]),
@@ -1113,6 +1116,7 @@ pub struct TCGlobalVar {
 #[derive(Debug, Clone, Copy)]
 pub struct TCFuncDefn {
     pub param_count: u32,
+    pub sym_count: u32,
     pub ops: &'static [TCOpcode],
     pub loc: CodeLoc,
 }
