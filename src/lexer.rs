@@ -202,7 +202,7 @@ const WHITESPACE: [u8; 2] = [b' ', b'\t'];
 const CRLF: [u8; 2] = [b'\r', b'\n'];
 
 pub fn lex_file<'b>(
-    buckets: BucketListRef<'b>,
+    buckets: &impl Allocator<'b>,
     token_db: &mut TokenDb<'b>,
     symbols: &mut FileDb,
     file: u32,
@@ -234,7 +234,7 @@ impl<'b> Lexer<'b> {
 
     pub fn lex_file(
         mut self,
-        mut buckets: BucketListRef<'b>,
+        buckets: &impl Allocator<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
         symbols: &mut FileDb,
@@ -247,10 +247,6 @@ impl<'b> Lexer<'b> {
 
         while !done {
             done = self.lex_macro_or_token(buckets, incomplete, token_db, symbols, bytes)?;
-
-            while let Some(next) = buckets.next() {
-                buckets = next;
-            }
         }
 
         return Ok(buckets.add_array(self.output));
@@ -258,7 +254,7 @@ impl<'b> Lexer<'b> {
 
     pub fn lex_macro_or_token(
         &mut self,
-        buckets: BucketListRef<'b>,
+        buckets: &impl Allocator<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
         symbols: &mut FileDb,
@@ -306,7 +302,7 @@ impl<'b> Lexer<'b> {
 
     pub fn lex_macro(
         &mut self,
-        buckets: BucketListRef<'b>,
+        buckets: &impl Allocator<'b>,
         incomplete: &mut HashSet<u32>,
         token_db: &mut TokenDb<'b>,
         symbols: &mut FileDb,
@@ -589,7 +585,7 @@ impl<'b> Lexer<'b> {
 
     pub fn lex_token(
         &mut self,
-        buckets: BucketListRef<'b>,
+        buckets: &impl Allocator<'b>,
         symbols: &mut FileDb,
         data: &[u8],
     ) -> Result<Token<'b>, Error> {

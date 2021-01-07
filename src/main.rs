@@ -48,15 +48,14 @@ use std::collections::HashMap;
 use util::*;
 
 fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
-    let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
-    let mut buckets_begin = buckets;
+    let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
     let mut errors: Vec<Error> = Vec::new();
 
     let files_list = env.vec();
     let files = files_list.iter();
     files.for_each(|&id| {
-        let result = lexer::lex_file(buckets, &mut tokens, env, id);
+        let result = lexer::lex_file(&*buckets, &mut tokens, env, id);
         match result {
             Err(err) => {
                 errors.push(err);
@@ -66,17 +65,9 @@ fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
     });
 
     if errors.len() != 0 {
-        while let Some(b) = unsafe { buckets_begin.dealloc() } {
-            buckets_begin = b;
-        }
-
+        unsafe { buckets.dealloc() };
         return Err(errors);
     }
-
-    while let Some(n) = buckets.next() {
-        buckets = n;
-    }
-    buckets = buckets.force_next();
 
     let mut processed_tokens = HashMap::new();
     for &file in tokens.keys() {
@@ -92,15 +83,9 @@ fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
             Ok(env) => std::mem::drop(trees.insert(file, env)),
             Err(err) => errors.push(err),
         }
-
-        while let Some(n) = buckets.next() {
-            buckets = n;
-        }
     }
 
-    while let Some(b) = unsafe { buckets_begin.dealloc() } {
-        buckets_begin = b;
-    }
+    unsafe { buckets.dealloc() };
 
     if errors.len() != 0 {
         return Err(errors);
@@ -118,6 +103,15 @@ fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
         return Err(errors);
     }
 
+    let mut assembler = new_assembler::Assembler::new();
+
+    for (file, tu) in tu_map {
+        match assembler.add_file(file, tu) {
+            Ok(_) => {}
+            Err(err) => return Err(vec![err]),
+        }
+    }
+
     return Ok(());
 }
 
@@ -130,7 +124,7 @@ fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
     let files_list = env.vec();
     let files = files_list.iter();
     files.for_each(|&id| {
-        let result = lexer::lex_file(buckets, &mut tokens, env, id);
+        let result = lexer::lex_file(&*buckets, &mut tokens, env, id);
         match result {
             Err(err) => {
                 errors.push(err);

@@ -20,6 +20,12 @@ pub struct Assembler {
     pub symbols: Vec<RuntimeVar>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ASMEnv<'a> {
+    var_offsets: &'a [i16],
+    binary_offsets: &'a HashMap<u32, u32>,
+}
+
 impl Drop for Assembler {
     fn drop(&mut self) {
         unsafe { self.buckets.dealloc() };
@@ -109,6 +115,7 @@ impl Assembler {
 
         let jumps: Vec<u32> = Vec::new();
         let mut var_offsets: Vec<i16> = (0..defn.sym_count).map(|_| i16::MAX).collect();
+
         for idx in 0..defn.param_count {
             var_offsets[idx as usize] = -(idx as i16) - 2;
         }
@@ -393,7 +400,85 @@ impl Assembler {
         }
     }
 
-    pub fn translate_bin_op(&mut self, op: BinOp, op_type: TCPrimType, loc: CodeLoc) {}
+    pub fn translate_bin_op(&mut self, op: BinOp, op_type: TCPrimType, loc: CodeLoc) {
+        let mut tagged = TaggedOpcode {
+            op: Opcode::StackDealloc,
+            loc,
+        };
+
+        tagged.op = match (op, op_type) {
+            (BinOp::Add, TCPrimType::U32) => Opcode::AddU32,
+            (BinOp::Add, TCPrimType::I32) => Opcode::AddU32,
+            (BinOp::Add, TCPrimType::U64) => Opcode::AddU64,
+            (BinOp::Add, TCPrimType::I64) => Opcode::AddU64,
+            (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::AddU64,
+
+            (BinOp::Sub, TCPrimType::I32) => Opcode::SubI32,
+            (BinOp::Sub, TCPrimType::I64) => Opcode::SubI64,
+            (BinOp::Sub, TCPrimType::U64) => Opcode::SubU64,
+            (BinOp::Sub, TCPrimType::Pointer { .. }) => Opcode::SubU64,
+
+            (BinOp::Mul, TCPrimType::I32) => Opcode::MulI32,
+            (BinOp::Mul, TCPrimType::I64) => Opcode::MulI64,
+            (BinOp::Mul, TCPrimType::U64) => Opcode::MulU64,
+
+            (BinOp::Div, TCPrimType::I32) => Opcode::DivI32,
+            (BinOp::Div, TCPrimType::U64) => Opcode::DivU64,
+
+            (BinOp::Eq, TCPrimType::I32) => Opcode::CompEq32,
+            (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
+            (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
+
+            (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
+            (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
+
+            (BinOp::Gt, TCPrimType::I32) => {
+                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                self.opcodes.push(tagged);
+                Opcode::CompLtI32
+            }
+            (BinOp::Gt, TCPrimType::U64) => {
+                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                self.opcodes.push(tagged);
+                Opcode::CompLtU64
+            }
+
+            (BinOp::Lt, TCPrimType::I32) => Opcode::CompLtI32,
+            (BinOp::Lt, TCPrimType::U64) => Opcode::CompLtU64,
+
+            (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
+
+            (BinOp::Geq, TCPrimType::I32) => {
+                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
+                self.opcodes.push(tagged);
+                Opcode::CompLeqI32
+            }
+            (BinOp::Geq, TCPrimType::U64) => {
+                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
+                self.opcodes.push(tagged);
+                Opcode::CompLeqU64
+            }
+
+            (BinOp::LShift, TCPrimType::I32) => Opcode::LShiftI32,
+
+            (BinOp::RShift, TCPrimType::I32) => Opcode::RShiftI32,
+
+            (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAndI8,
+            (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAndI32,
+
+            (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOrI8,
+            (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOrI32,
+
+            (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXorI32,
+
+            (BinOp::BoolAnd, TCPrimType::I8) => Opcode::BitAndI8,
+            (BinOp::BoolOr, TCPrimType::I8) => Opcode::BitOrI8,
+
+            (op, ptype) => unreachable!("op={:?} type={:?}", op, ptype),
+        };
+
+        self.opcodes.push(tagged);
+    }
 }
 
 pub fn func_decl_mismatch(original: CodeLoc, new: CodeLoc) -> Error {

@@ -160,6 +160,7 @@ pub enum Opcode {
     Ret, // Returns to caller
 
     Call(u32),
+    CallDyn,
     EcallDyn,
 }
 
@@ -718,6 +719,24 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                 self.memory.call(func + 1, func_name, op.loc)?;
                 return Ok(());
             }
+            Opcode::CallDyn => {
+                let func: VarPointer = self.memory.pop_stack()?;
+                if func.var_idx() != u32::MAX as usize {
+                    return Err(ierror!(
+                        "InvalidFunctionPointer",
+                        "called function at address {} that's not actually a function",
+                        func
+                    ));
+                }
+
+                let func_name = match self.program.ops[func.offset() as usize].op {
+                    Opcode::Func(name) => name,
+                    op => panic!("found function header {:?} (this is an error in tci)", op),
+                };
+
+                self.memory.call(func.offset() + 1, func_name, op.loc)?;
+                return Ok(());
+            }
 
             Opcode::EcallDyn => {
                 let ecall = u32::from_le(self.memory.pop_stack()?);
@@ -737,7 +756,7 @@ impl<Stdin: IStdin> Runtime<Stdin> {
                         if arg_idx >= self.args.len() {
                             return Err(ierror!(
                                 "InvalidArgumentIndex",
-                                "Argument index {} is invalid (this is a problem with tci)",
+                                "argument index {} is invalid (this is a problem with tci)",
                                 arg_idx
                             ));
                         }

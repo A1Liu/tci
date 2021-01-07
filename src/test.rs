@@ -134,16 +134,16 @@ macro_rules! gen_test_should_succeed {
 
 }
 
-macro_rules! gen_test_runtime_should_fail {
-    ( $( ($ident:ident, $expr:expr ) ),* ) => {
-        $(
-            #[test]
-            fn $ident() {
-                test_file_runtime_should_fail(concat!("test/", stringify!($ident), ".c"), $expr);
-            }
-        )*
-    };
-}
+// macro_rules! gen_test_runtime_should_fail {
+//     ( $( ($ident:ident, $expr:expr ) ),* ) => {
+//         $(
+//             #[test]
+//             fn $ident() {
+//                 test_file_runtime_should_fail(concat!("test/", stringify!($ident), ".c"), $expr);
+//             }
+//         )*
+//     };
+// }
 
 gen_test_should_succeed!(
     hello_world,
