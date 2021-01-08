@@ -545,16 +545,6 @@ impl<'b> Lexer<'b> {
                             Lexer::new(id).lex_file(buckets, incomplete, token_db, symbols)?;
                         token_db.insert(id, toks);
 
-                        let sys_lib = "libs/".to_string() + sys_file + ".c";
-                        let lib_id = symbols.add(&sys_lib, sys_impl).unwrap();
-                        let lib_toks = Lexer::new(lib_id).lex_file(
-                            buckets,
-                            &mut HashSet::new(),
-                            token_db,
-                            symbols,
-                        )?;
-                        token_db.insert(lib_id, lib_toks);
-
                         return Ok(id);
                     })?;
 

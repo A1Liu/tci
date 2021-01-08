@@ -571,9 +571,9 @@ impl Assembler {
 
         let total_size = file_size + symbols_size + opcodes_size + data_size;
         let buckets = BucketListFactory::with_capacity(total_size + 16);
-        let mut frame = buckets.frame(total_size).unwrap();
+        let frame = buckets.frame(total_size).unwrap();
 
-        let files = FileDbRef::new_from_frame(&mut frame, env);
+        let files = FileDbRef::new(&frame, env);
         let symbols = frame.add_array(replace(&mut self.symbols, Vec::new()));
         let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);
