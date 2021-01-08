@@ -75,17 +75,6 @@ pub struct CommandEngine<Stdin: IStdin> {
     files: FileDbSlim,
 }
 
-impl<Stdin: IStdin> Drop for CommandEngine<Stdin> {
-    fn drop(&mut self) {
-        if let CommandEngineState::Running(runtime) = &self.state {
-            let mut buckets = runtime.program.buckets;
-            while let Some(b) = unsafe { buckets.dealloc() } {
-                buckets = b;
-            }
-        }
-    }
-}
-
 impl<Stdin: IStdin> CommandEngine<Stdin> {
     pub fn new() -> Self {
         Self {

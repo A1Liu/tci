@@ -47,7 +47,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use util::*;
 
-fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
+fn new_compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
     let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
     let mut errors: Vec<Error> = Vec::new();
@@ -57,9 +57,7 @@ fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
     files.for_each(|&id| {
         let result = lexer::lex_file(&*buckets, &mut tokens, env, id);
         match result {
-            Err(err) => {
-                errors.push(err);
-            }
+            Err(err) => errors.push(err),
             Ok(_) => {}
         }
     });
@@ -112,10 +110,15 @@ fn new_compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
         }
     }
 
-    return Ok(());
+    let program = match assembler.assemble(env) {
+        Ok(x) => x,
+        Err(err) => return Err(vec![err]),
+    };
+
+    return Ok(program);
 }
 
-fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
+fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
     let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
     let mut buckets_begin = buckets;
     let mut tokens = lexer::TokenDb::new();

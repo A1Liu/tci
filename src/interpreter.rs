@@ -190,18 +190,18 @@ pub struct RuntimeStruct<'a> {
     pub sa: SizeAlign,
 }
 
-#[derive(Clone, Copy, Serialize)]
-pub struct Program<'a> {
+#[derive(Serialize)]
+pub struct Program {
     #[serde(skip)]
-    pub buckets: BucketListRef<'a>,
-    pub files: FileDbRef<'a>,
-    pub types: HashRef<'a, u32, RuntimeStruct<'a>>,
-    pub symbols: &'a [RuntimeVar],
-    pub data: VarBufferRef<'a>,
-    pub ops: &'a [TaggedOpcode],
+    pub buckets: BucketListFactory,
+    pub files: FileDbRef<'static>,
+    pub types: HashRef<'static, u32, RuntimeStruct<'static>>,
+    pub symbols: &'static [RuntimeVar],
+    pub data: VarBufferRef<'static>,
+    pub ops: &'static [TaggedOpcode],
 }
 
-impl<'a> fmt::Debug for Program<'a> {
+impl fmt::Debug for Program {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         fmt.debug_struct("Program")
             .field("files", &self.files)
@@ -210,6 +210,12 @@ impl<'a> fmt::Debug for Program<'a> {
             .field("data", &self.data)
             .field("ops", &self.ops)
             .finish()
+    }
+}
+
+impl Drop for Program {
+    fn drop(&mut self) {
+        unsafe { self.buckets.dealloc() };
     }
 }
 
@@ -230,12 +236,12 @@ pub struct RuntimeDiagnostic {
 pub struct Runtime<Stdin: IStdin> {
     pub memory: Memory,
     pub args: StringArray,
-    pub program: Program<'static>,
+    pub program: Program,
     pub phantom: PhantomData<Stdin>,
 }
 
 impl<Stdin: IStdin> Runtime<Stdin> {
-    pub fn new(program: Program<'static>, args: StringArray) -> Self {
+    pub fn new(program: Program, args: StringArray) -> Self {
         let memory = Memory::new_with_binary(program.data);
         return Self {
             args,

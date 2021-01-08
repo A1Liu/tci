@@ -1,4 +1,5 @@
 use crate::buckets::*;
+use crate::filedb::*;
 use crate::interpreter::*;
 use crate::new_tc_ast::*;
 use crate::runtime::*;
@@ -30,6 +31,33 @@ impl Drop for Assembler {
     fn drop(&mut self) {
         unsafe { self.buckets.dealloc() };
     }
+}
+
+pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
+    return vec![
+        Opcode::StackAlloc {
+            bytes: 4,
+            symbol: META_NO_SYMBOL,
+        },
+        Opcode::StackAlloc {
+            bytes: 8,
+            symbol: META_NO_SYMBOL,
+        },
+        Opcode::MakeTempStackFpPtr { var: 0, offset: 0 },
+        Opcode::PopIntoTopVar {
+            offset: 0,
+            bytes: 8,
+        },
+        Opcode::Call(main_idx),
+        Opcode::StackDealloc,
+        Opcode::GetLocal {
+            var: 0,
+            offset: 0,
+            bytes: 4,
+        },
+        Opcode::MakeTempU32(ECALL_EXIT),
+        Opcode::EcallDyn,
+    ];
 }
 
 impl Assembler {
@@ -115,6 +143,7 @@ impl Assembler {
 
         let jumps: Vec<u32> = Vec::new();
         let mut var_offsets: Vec<i16> = (0..defn.sym_count).map(|_| i16::MAX).collect();
+        let mut next_offset = 0;
 
         for idx in 0..defn.param_count {
             var_offsets[idx as usize] = -(idx as i16) - 2;
@@ -125,13 +154,15 @@ impl Assembler {
 
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, scope_end) => {
-                    for (var, ty) in vars.iter() {
+                    for (&var, &ty) in vars.iter() {
                         op.op = Opcode::StackAlloc {
                             bytes: ty.size().into(),
                             symbol: self.symbols.len() as u32,
                         };
 
                         self.opcodes.push(op);
+                        var_offsets[var as usize] = next_offset;
+                        next_offset += 1;
 
                         // TODO add runtime var support
                         // self.symbols.push(RuntimeVar {
@@ -147,6 +178,8 @@ impl Assembler {
                     for _ in 0..count {
                         self.opcodes.push(op);
                     }
+
+                    next_offset -= count as i16;
                 }
                 TCOpcodeKind::Ret => {
                     op.op = Opcode::Ret;
@@ -163,10 +196,17 @@ impl Assembler {
                     self.opcodes.push(op);
                     op.op = Opcode::Set {
                         offset: 0,
-                        bytes: val.ty.size().into(),
+                        bytes: val.ty.repr_size(),
                     };
                     self.opcodes.push(op);
                     op.op = Opcode::Ret;
+                    self.opcodes.push(op);
+                }
+                TCOpcodeKind::Expr(expr) => {
+                    self.translate_expr(&var_offsets, &expr);
+
+                    let bytes = expr.ty.repr_size();
+                    op.op = Opcode::Pop { bytes };
                     self.opcodes.push(op);
                 }
                 _ => {}
@@ -195,7 +235,8 @@ impl Assembler {
                 self.opcodes.push(tagged);
             }
             TCExprKind::StringLiteral(val) => {
-                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL); // TODO overflow here
+                // TODO check overflow here
+                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL);
                 let slice = self.data.get_full_var_range_mut(var);
                 let end = slice.len() - 1;
                 slice[..end].copy_from_slice(val.as_bytes());
@@ -211,7 +252,7 @@ impl Assembler {
                     Opcode::GetLocal {
                         var,
                         offset: 0,
-                        bytes: expr.ty.size().into(),
+                        bytes: expr.ty.repr_size(),
                     }
                 };
 
@@ -221,7 +262,7 @@ impl Assembler {
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
                     self.translate_expr(var_offsets, expr);
-                    let bytes = expr.ty.size().into();
+                    let bytes = expr.ty.repr_size();
 
                     if idx + 1 < exprs.len() {
                         tagged.op = Opcode::Pop { bytes };
@@ -279,7 +320,7 @@ impl Assembler {
 
             TCExprKind::Assign { target, value } => {
                 self.translate_expr(var_offsets, value);
-                let bytes = value.ty.size().into();
+                let bytes = value.ty.repr_size();
                 tagged.op = Opcode::PushDup { bytes };
                 self.opcodes.push(tagged);
                 self.translate_assign(var_offsets, target);
@@ -298,8 +339,9 @@ impl Assembler {
             TCExprKind::Ref(lvalue) => self.translate_assign(var_offsets, lvalue),
 
             TCExprKind::Call { func, params } => {
-                let rtype_size = expr.ty.size().into();
+                self.translate_expr(var_offsets, func); // callee is sequenced before params
 
+                let rtype_size = expr.ty.repr_size();
                 tagged.op = Opcode::StackAlloc {
                     bytes: rtype_size,
                     symbol: META_NO_SYMBOL,
@@ -314,7 +356,7 @@ impl Assembler {
                 self.opcodes.push(tagged);
 
                 for (idx, param) in params.iter().rev().enumerate() {
-                    let bytes = param.ty.size().into();
+                    let bytes = param.ty.repr_size();
 
                     tagged.op = Opcode::StackAlloc {
                         bytes,
@@ -343,17 +385,8 @@ impl Assembler {
                 };
                 self.opcodes.push(tagged);
 
-                // TODO calling functions
-                // let link_name = self.link_names[func];
-
-                // let link_pos = if let Some(&link_pos) = self.func_linkage.get(&link_public) {
-                //     link_pos
-                // } else {
-                //     self.func_linkage[&link_static]
-                // };
-
-                // tagged.op = Opcode::Call(link_pos);
-                // self.opcodes.push(tagged);
+                tagged.op = Opcode::CallDyn;
+                self.opcodes.push(tagged);
 
                 tagged.op = Opcode::StackDealloc;
                 for _ in 0..params.len() {
@@ -371,7 +404,7 @@ impl Assembler {
                     self.opcodes.push(tagged);
                 }
             }
-            _ => unimplemented!(),
+            x => unimplemented!("{:?}", x),
         }
     }
 
@@ -478,6 +511,83 @@ impl Assembler {
         };
 
         self.opcodes.push(tagged);
+    }
+
+    pub fn assemble(mut self, env: &FileDb) -> Result<Program, Error> {
+        let no_main = || error!("missing main function definition");
+        let main_sym = if let Some(sym) = env.translate.get("main") {
+            *sym
+        } else {
+            return Err(no_main());
+        };
+
+        let main_link_name = LinkName {
+            name: main_sym,
+            file: n32::NULL,
+        };
+
+        let main_func_idx = self.func_linkage.get(&main_link_name).ok_or_else(no_main)?;
+
+        let main_func = &self.functions[*main_func_idx as usize];
+        let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
+        let mut opcodes: Vec<TaggedOpcode> = init_main_no_args(*main_func_idx)
+            .iter()
+            .map(|&op| TaggedOpcode { op, loc: main_loc })
+            .collect();
+        let runtime_length = opcodes.len() as u32; // No overflow here because len is predefined
+        opcodes.append(&mut self.opcodes);
+        for (op_idx, op) in opcodes.iter_mut().enumerate() {
+            let op_idx = op_idx as u32;
+            match &mut op.op {
+                Opcode::Call(addr) => {
+                    let function = &self.functions[*addr as usize];
+                    if let Some((fptr, _loc)) = function.func_header {
+                        *addr = fptr + runtime_length;
+                    } else {
+                        let func_loc = function.decl_loc;
+                        return Err(error!(
+                            "couldn't find definition for function",
+                            op.loc, "called here", func_loc, "declared here"
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        use core::mem::{align_of, replace, size_of};
+        let file_size = align_usize(env.size(), align_of::<HashRefSlot<u32, RuntimeStruct>>());
+
+        let symbols_size = align_usize(
+            self.symbols.len() * size_of::<RuntimeVar>(),
+            align_of::<TaggedOpcode>(),
+        );
+
+        let opcodes_size = opcodes.len() * size_of::<TaggedOpcode>();
+
+        let var_data_size = align_usize(self.data.data.len(), align_of::<Var>());
+        let vars_size = self.data.vars.len() * size_of::<Var>();
+        let data_size = var_data_size + vars_size;
+
+        let total_size = file_size + symbols_size + opcodes_size + data_size;
+        let buckets = BucketListFactory::with_capacity(total_size + 16);
+        let mut frame = buckets.frame(total_size).unwrap();
+
+        let files = FileDbRef::new_from_frame(&mut frame, env);
+        let symbols = frame.add_array(replace(&mut self.symbols, Vec::new()));
+        let ops = frame.add_array(opcodes);
+        let data = self.data.write_to_ref(frame);
+
+        let program = Program {
+            buckets,
+            files,
+            types: HashRef::empty(),
+            symbols,
+            data,
+            ops,
+        };
+
+        return Ok(program);
     }
 }
 

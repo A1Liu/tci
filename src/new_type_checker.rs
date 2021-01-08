@@ -168,6 +168,8 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
                 check_block(&mut func_locals, &mut func_out, func.statements)?;
                 func_locals.close_scope(&mut func_out);
+
+                globals.complete_func_defn(ident, func_out)?;
             }
             GlobalStatementKind::Pragma(pragma) => {
                 if pragma == "tci enable_builtins" {

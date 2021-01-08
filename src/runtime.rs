@@ -684,6 +684,7 @@ pub struct HeapValidity {
 /// Abstraction for the program's replayable state (i.e. its memory + read-in randomness).
 /// Note that the stack grows towards higher memory addresses in this memory implementation.
 pub struct Memory {
+    pub expr_stack: Vec<u8>,
     pub stack: VarBuffer,
     pub heap: VarBuffer,
     pub binary: VarBuffer,
@@ -708,6 +709,7 @@ pub struct Memory {
 impl Memory {
     pub fn new() -> Self {
         Self {
+            expr_stack: Vec::new(),
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::new(),
@@ -744,6 +746,7 @@ impl Memory {
         let history_binary_end = historical_data.len();
 
         Self {
+            expr_stack: Vec::new(),
             stack: VarBuffer::new(),
             heap: VarBuffer::new(),
             binary: VarBuffer::load_from_ref(binary),
@@ -1238,7 +1241,9 @@ impl Memory {
             .extend_from_slice(&self.stack.data[var.idx..]);
         let stack_end = self.historical_data.len();
 
-        self.stack.data.resize(var.idx + var.len as usize, 0);
+        self.expr_stack
+            .extend_from_slice(&self.stack.data[var.idx..(var.idx + var.len as usize)]);
+        self.stack.data.resize(var.idx, 0); // should always get smaller
         self.push_history(MAKind::PopStackVar {
             meta: var.meta,
             var_start,
@@ -1263,7 +1268,7 @@ impl Memory {
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
-        self.stack.data.extend_from_slice(from_bytes);
+        self.expr_stack.extend_from_slice(from_bytes);
         self.push_history(MAKind::PushStack {
             value_start,
             value_end,
@@ -1279,7 +1284,7 @@ impl Memory {
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
-        self.stack.data.extend_from_slice(from_bytes);
+        self.expr_stack.extend_from_slice(from_bytes);
         self.push_history(MAKind::PushStack {
             value_start,
             value_end,
@@ -1291,7 +1296,7 @@ impl Memory {
     pub fn pop_stack_bytes_into(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
         self.check_mutate()?;
 
-        if self.stack.data.len() < len as usize {
+        if self.expr_stack.len() < len as usize {
             return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
@@ -1300,36 +1305,20 @@ impl Memory {
             );
         }
 
-        let break_idx = if let Some(var) = self.stack.vars.last() {
-            if self.stack.data.len() - var.upper() < len as usize {
-                return ierr!(
-                    "StackPopInvalidatesVariable",
-                    "popping from the stack would invalidate a variable"
-                );
-            }
-            var.upper()
-        } else {
-            0
-        };
+        let pop_lower = self.expr_stack.len() - len as usize;
+        let from_bytes = &self.expr_stack[pop_lower..];
 
-        let (to_bytes, from_bytes) = if ptr.is_stack() {
+        let to_bytes = if ptr.is_stack() {
             let (start, end) = self.stack.get_var_range(ptr, len)?;
-            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
-            let pop_lower = stack.len() - len as usize;
 
-            (&mut stack_vars[start..end], &stack[pop_lower..])
+            &mut self.stack.data[start..end]
         } else if ptr.is_heap() {
             let (start, end) = self.heap.get_var_range(ptr, len)?;
-            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
-            let pop_lower = stack.len() - len as usize;
 
-            (&mut self.heap.data[start..end], &stack[pop_lower..])
+            &mut self.heap.data[start..end]
         } else {
             let (start, end) = self.binary.get_var_range(ptr, len)?;
-            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
-            let pop_lower = stack.len() - len as usize;
-
-            (&mut self.binary.data[start..end], &stack[pop_lower..])
+            &mut self.binary.data[start..end]
         };
 
         let value_start = self.historical_data.len();
@@ -1345,9 +1334,7 @@ impl Memory {
             overwrite_end,
         });
 
-        self.stack
-            .data
-            .resize(self.stack.data.len() - len as usize, 0);
+        self.expr_stack.resize(pop_lower, 0);
         self.push_history(MAKind::PopStack {
             value_start,
             value_end,
@@ -1365,38 +1352,21 @@ impl Memory {
             0
         };
 
-        let (from_bytes, stack) = if ptr.is_stack() {
-            let (start, end) = match self.stack.get_var_range(ptr, len) {
-                Ok((start, end)) => {
-                    let data = &mut self.stack.data;
-                    data.resize(data.len() + len as usize, 0);
-                    (start, end)
-                }
-                Err(err) => return Err(err),
-            };
-            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
-            (&stack_vars[start..end], stack)
+        let from_bytes = if ptr.is_stack() {
+            let (start, end) = self.stack.get_var_range(ptr, len)?;
+            &self.stack.data[start..end]
         } else if ptr.is_heap() {
             let (start, end) = self.heap.get_var_range(ptr, len)?;
-            let data = &mut self.stack.data;
-            data.resize(data.len() + len as usize, 0);
-            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
-            (&self.heap.data[start..end], stack)
+            &self.heap.data[start..end]
         } else {
             let (start, end) = self.binary.get_var_range(ptr, len)?;
-            let data = &mut self.stack.data;
-            data.resize(data.len() + len as usize, 0);
-            let (stack_vars, stack) = self.stack.data.split_at_mut(break_idx);
-            (&self.binary.data[start..end], stack)
+            &self.binary.data[start..end]
         };
-
-        let pop_lower = stack.len() - len as usize;
-        let to_bytes = &mut stack[pop_lower..];
 
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
-        to_bytes.copy_from_slice(from_bytes);
+        self.expr_stack.extend_from_slice(from_bytes);
         self.push_history(MAKind::PushStack {
             value_start,
             value_end,
@@ -1408,7 +1378,7 @@ impl Memory {
     pub fn pop_bytes(&mut self, len: u32) -> Result<(), IError> {
         self.check_mutate()?;
 
-        if self.stack.data.len() < len as usize {
+        if self.expr_stack.len() < len as usize {
             return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
@@ -1417,18 +1387,8 @@ impl Memory {
             );
         }
 
-        if let Some(var) = self.stack.vars.last() {
-            if self.stack.data.len() - var.upper() < len as usize {
-                return ierr!(
-                    "StackPopInvalidatesVariable",
-                    "popping from the stack would invalidate a variable"
-                );
-            }
-        }
-
-        let upper = self.stack.data.len();
-        let lower = upper - len as usize;
-        let from_bytes = &self.stack.data[lower..upper];
+        let lower = self.expr_stack.len() - len as usize;
+        let from_bytes = &self.expr_stack[lower..];
 
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(from_bytes);
@@ -1447,7 +1407,7 @@ impl Memory {
         self.check_mutate()?;
 
         let len = keep + pop;
-        if self.stack.data.len() < len as usize {
+        if self.expr_stack.len() < len as usize {
             return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
@@ -1456,30 +1416,21 @@ impl Memory {
             );
         }
 
-        if let Some(var) = self.stack.vars.last() {
-            if self.stack.data.len() - var.upper() < len as usize {
-                return ierr!(
-                    "StackPopInvalidatesVariable",
-                    "popping from the stack would invalidate a variable"
-                );
-            }
-        }
-
-        let keep_start = self.stack.data.len() - keep as usize;
+        let keep_start = self.expr_stack.len() - keep as usize;
         let pop_start = keep_start - pop as usize;
         let pop_value_start = self.historical_data.len();
         self.historical_data
-            .extend_from_slice(&self.stack.data[pop_start..]);
+            .extend_from_slice(&self.expr_stack[pop_start..]);
         let pop_value_end = self.historical_data.len();
         self.historical_data
-            .extend_from_slice(&self.stack.data[keep_start..]);
+            .extend_from_slice(&self.expr_stack[keep_start..]);
         let push_value_end = self.historical_data.len();
 
-        let mutate_slice = &mut self.stack.data[pop_start..];
+        let mutate_slice = &mut self.expr_stack[pop_start..];
         for i in 0..(keep as usize) {
             mutate_slice[i] = mutate_slice[i + pop as usize];
         }
-        self.stack.data.resize(pop_start + keep as usize, 0);
+        self.expr_stack.resize(pop_start + keep as usize, 0);
 
         self.push_history(MAKind::PopStack {
             value_start: pop_value_start,
@@ -1496,7 +1447,7 @@ impl Memory {
     pub fn dup_top_stack_bytes(&mut self, bytes: u32) -> Result<(), IError> {
         self.check_mutate()?;
 
-        if self.stack.data.len() < bytes as usize {
+        if self.expr_stack.len() < bytes as usize {
             return ierr!(
                 "StackTooShort",
                 "tried to read {} bytes from stack when stack is only {} bytes long",
@@ -1505,29 +1456,14 @@ impl Memory {
             );
         }
 
-        if let Some(var) = self.stack.vars.last() {
-            if self.stack.data.len() - var.upper() < bytes as usize {
-                return ierr!(
-                    "StackDupReadsVar",
-                    "Duplicating stack data would read from a stack variable"
-                );
-            }
-        }
-
-        let dup_start = self.stack.data.len() - bytes as usize;
-        let dup_end = self.stack.data.len();
+        let dup_start = self.expr_stack.len() - bytes as usize;
         let value_start = self.historical_data.len();
         self.historical_data
-            .extend_from_slice(&self.stack.data[dup_start..]);
+            .extend_from_slice(&self.expr_stack[dup_start..]);
         let value_end = self.historical_data.len();
 
-        self.stack
-            .data
-            .resize(self.stack.data.len() + bytes as usize, 0);
-        let (from_bytes, to_bytes) = self.stack.data.split_at_mut(dup_end);
-        let from_bytes = &from_bytes[dup_start..];
-        to_bytes.copy_from_slice(from_bytes);
-
+        self.expr_stack
+            .extend_from_slice(&self.historical_data[value_start..]);
         self.push_history(MAKind::PushStack {
             value_start,
             value_end,
@@ -1540,7 +1476,7 @@ impl Memory {
         self.check_mutate()?;
 
         let len = mem::size_of::<T>();
-        if self.stack.data.len() < len {
+        if self.expr_stack.len() < len {
             return ierr!(
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
@@ -1549,24 +1485,14 @@ impl Memory {
             );
         }
 
-        if let Some(var) = self.stack.vars.last() {
-            if self.stack.data.len() - var.upper() < len {
-                return ierr!(
-                    "StackPopInvalidatesVariable",
-                    "popping from the stack would invalidate a variable"
-                );
-            }
-        }
-
-        let upper = self.stack.data.len();
-        let lower = upper - len;
-        let from_bytes = &self.stack.data[lower..upper];
+        let lower = self.expr_stack.len() - len;
+        let from_bytes = &self.expr_stack[lower..];
 
         let value_start = self.historical_data.len();
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
-        let mut out = unsafe { mem::MaybeUninit::uninit().assume_init() };
+        let mut out = mem::MaybeUninit::uninit();
         unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
         self.stack.data.resize(lower, 0);
         self.push_history(MAKind::PopStack {
@@ -1574,7 +1500,7 @@ impl Memory {
             value_end,
         });
 
-        return Ok(out);
+        return Ok(unsafe { out.assume_init() });
     }
 
     pub fn stdout(&mut self) -> Result<MemoryStdout, IError> {
@@ -1625,7 +1551,7 @@ impl Memory {
                 value_end,
             } => {
                 let popped_len = value_end - value_start;
-                let data = &mut self.stack.data;
+                let data = &mut self.expr_stack;
                 data.resize(data.len() - popped_len, 0);
             }
             MAKind::PushStack {
@@ -1633,7 +1559,7 @@ impl Memory {
                 value_end,
             } => {
                 let popped_len = value_end - value_start;
-                let data = &mut self.stack.data;
+                let data = &mut self.expr_stack;
                 data.extend_from_slice(&self.historical_data[value_start..value_end]);
             }
             MAKind::PopStackVar {
@@ -1745,7 +1671,7 @@ impl Memory {
                 value_end,
             } => {
                 let popped_len = value_end - value_start;
-                let data = &mut self.stack.data;
+                let data = &mut self.expr_stack;
                 data.extend_from_slice(&self.historical_data[value_start..value_end]);
             }
             MAKind::PushStack {
@@ -1753,7 +1679,7 @@ impl Memory {
                 value_end,
             } => {
                 let popped_len = value_end - value_start;
-                let data = &mut self.stack.data;
+                let data = &mut self.expr_stack;
                 data.resize(data.len() - popped_len, 0);
             }
             MAKind::PopStackVar {

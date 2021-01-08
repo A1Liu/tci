@@ -123,15 +123,6 @@ lazy_static! {
         }
 
         add_sym!("main");
-        add_sym!("va_list");
-        add_sym!("printf");
-        add_sym!("exit");
-        add_sym!("malloc");
-        add_sym!("free");
-        add_sym!("realloc");
-        add_sym!("memcpy");
-        add_sym!("strlen");
-        add_sym!("scanf");
 
         InitSyms { names, translate }
     };
@@ -140,8 +131,7 @@ lazy_static! {
 pub const NO_SYMBOL: u32 = !0;
 
 pub struct FileDbSlim {
-    buckets: BucketListRef<'static>,
-    pub buckets_next: BucketListRef<'static>,
+    pub buckets: BucketListFactory,
     pub file_names: HashMap<&'static str, u32>,
     pub size: usize,
     pub garbage_size: usize,
@@ -151,18 +141,14 @@ pub struct FileDbSlim {
 
 impl Drop for FileDbSlim {
     fn drop(&mut self) {
-        while let Some(b) = unsafe { self.buckets.dealloc() } {
-            self.buckets = b;
-        }
+        unsafe { self.buckets.dealloc() };
     }
 }
 
 impl FileDbSlim {
     pub fn with_capacity(capacity: usize) -> Self {
-        let buckets = BucketList::with_capacity(capacity);
         Self {
-            buckets,
-            buckets_next: buckets,
+            buckets: BucketListFactory::with_capacity(capacity),
             size: 0,
             garbage_size: 0,
             file_names: HashMap::new(),
@@ -172,10 +158,8 @@ impl FileDbSlim {
     }
 
     pub fn new() -> Self {
-        let buckets = BucketList::new();
         Self {
-            buckets,
-            buckets_next: buckets,
+            buckets: BucketListFactory::new(),
             file_names: HashMap::new(),
             size: 0,
             garbage_size: 0,
@@ -273,12 +257,8 @@ impl FileDbSlim {
 
         let file_name: &str = &file_name_string;
 
-        let file = File::new(self.buckets_next, file_name, source);
+        let file = File::new(&*self.buckets, file_name, source);
         self.size += file.size();
-
-        while let Some(b) = self.buckets_next.next() {
-            self.buckets_next = b;
-        }
 
         if let Some(file_idx) = self.file_names.get(file_name) {
             let file_slot = &mut self.files[*file_idx as usize];
@@ -305,8 +285,7 @@ impl FileDbSlim {
 }
 
 pub struct FileDb {
-    buckets: BucketListRef<'static>,
-    pub buckets_next: BucketListRef<'static>,
+    pub buckets: BucketListFactory,
     pub _size: usize,
     pub file_names: HashMap<&'static str, u32>,
     pub files: Vec<Option<File<'static>>>,
@@ -317,52 +296,35 @@ pub struct FileDb {
 
 impl Drop for FileDb {
     fn drop(&mut self) {
-        while let Some(b) = unsafe { self.buckets.dealloc() } {
-            self.buckets = b;
-        }
+        unsafe { self.buckets.dealloc() };
     }
 }
 
 impl FileDb {
     pub fn with_capacity(capacity: usize, fs_read_access: bool) -> Self {
-        let mut string = String::new();
-        let mut symbols = Vec::new();
-        for name in INIT_SYMS.names.iter() {
-            let begin = string.len();
-            string.push_str(name);
-            let end = string.len();
-            symbols.push(begin..end);
-        }
-
-        let buckets = BucketList::with_capacity(capacity);
-        let file = File::new(buckets, "", &string);
-        let mut _size = file.size() + mem::size_of::<File>();
-
-        let mut files = Vec::new();
-        files.push(Some(file));
-
-        let mut new_self = Self {
-            buckets,
-            buckets_next: buckets,
-            _size,
-            files,
+        Self {
+            buckets: BucketListFactory::with_capacity(capacity),
+            _size: 0,
+            files: Vec::new(),
             file_names: HashMap::new(),
             translate: HashMap::new(),
             names: Vec::new(),
             fs_read_access,
-        };
-
-        for symbol in symbols {
-            new_self.translate_add(symbol, 0);
         }
-
-        new_self
     }
 
     /// Create a new files database.
     #[inline]
     pub fn new(fs_read_access: bool) -> Self {
-        return Self::with_capacity(16 * 1024 * 1024, fs_read_access);
+        Self {
+            buckets: BucketListFactory::new(),
+            _size: 0,
+            files: Vec::new(),
+            file_names: HashMap::new(),
+            translate: HashMap::new(),
+            names: Vec::new(),
+            fs_read_access,
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = u32> {
@@ -370,7 +332,7 @@ impl FileDb {
     }
 
     pub fn vec(&self) -> Vec<u32> {
-        let iter = self.files.iter().enumerate().skip(1); // +1 here is for the init syms initial file
+        let iter = self.files.iter().enumerate();
         let filter_map = |(idx, value): (usize, &Option<File>)| value.as_ref().map(|_| idx as u32);
 
         return iter.filter_map(filter_map).collect();
@@ -384,14 +346,10 @@ impl FileDb {
         }
 
         let file_id = self.files.len() as u32;
-        let file = File::new(self.buckets_next, file_name, &source);
+        let file = File::new(&*self.buckets, file_name, &source);
         self._size += file.size() + mem::size_of::<Option<File>>();
         self.files.push(Some(file));
         self.file_names.insert(file._name, file_id);
-
-        while let Some(b) = self.buckets_next.next() {
-            self.buckets_next = b;
-        }
 
         Ok(file_id)
     }

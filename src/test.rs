@@ -4,7 +4,7 @@ use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err, new_compile};
 use core::mem;
-// use std::fs::read_to_string;
+use std::fs::read_to_string;
 
 fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     let config = codespan_reporting::term::Config::default();
@@ -21,41 +21,41 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
 
     mem::drop(files);
 
-    // for (idx, op) in program.ops.iter().enumerate() {
-    //     println!("op {}: {:?}", idx, op);
-    // }
+    for (idx, op) in program.ops.iter().enumerate() {
+        println!("op {}: {:?}", idx, op);
+    }
 
-    // let mut runtime = Runtime::new(program, StringArray::new());
+    let mut runtime = Runtime::new(program, StringArray::new());
 
-    // let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
-    // let code = match diag.status {
-    //     RuntimeStatus::Exited(code) => code,
-    //     RuntimeStatus::ErrorExited(err) => {
-    //         println!("error is: {:?}", err);
-    //         1
-    //     }
-    //     x => panic!("runtime status is: {:?}", x),
-    // };
+    let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
+    let code = match diag.status {
+        RuntimeStatus::Exited(code) => code,
+        RuntimeStatus::ErrorExited(err) => {
+            println!("error is: {:?}", err);
+            1
+        }
+        x => panic!("runtime status is: {:?}", x),
+    };
 
-    // println!("return code: {}", code);
-    // let output = writer.into_string();
+    println!("return code: {}", code);
+    let output = writer.into_string();
 
-    // if code != 0 {
-    //     println!("{}", output);
-    //     println!("pc: {}", runtime.pc());
-    //     panic!();
-    // }
+    if code != 0 {
+        println!("{}", output);
+        println!("pc: {}", runtime.pc());
+        panic!();
+    }
 
-    // println!("{}", output);
-    // match read_to_string(output_file) {
-    //     Ok(expected) => {
-    //         if output != expected.replace("\r\n", "\n") {
-    //             println!("left: {:?}\nright: {:?}", output, expected);
-    //             panic!();
-    //         }
-    //     }
-    //     Err(_) => {}
-    // }
+    println!("{}", output);
+    match read_to_string(output_file) {
+        Ok(expected) => {
+            if output != expected.replace("\r\n", "\n") {
+                println!("left: {:?}\nright: {:?}", output, expected);
+                panic!();
+            }
+        }
+        Err(_) => {}
+    }
 }
 
 fn test_file_compile_should_fail(filename: &str) {
@@ -93,7 +93,7 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
 
     let mut runtime = Runtime::new(program, StringArray::new());
     let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
-    for (idx, op) in program.ops.iter().enumerate() {
+    for (idx, op) in runtime.program.ops.iter().enumerate() {
         println!("op {}: {:?}", idx, op);
     }
 

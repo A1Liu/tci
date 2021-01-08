@@ -19,7 +19,7 @@ pub struct FuncEnv {
 
     // const fields
     pub return_type: TCType,
-    pub rtype_loc: CodeLoc,
+    pub decl_loc: CodeLoc,
 }
 
 pub enum TypeEnvKind<'a> {
@@ -75,7 +75,7 @@ impl<'a> Allocator<'static> for GlobalTypeEnv<'a> {
 }
 
 impl FuncEnv {
-    pub fn new(return_type: TCType, rtype_loc: CodeLoc) -> Self {
+    pub fn new(return_type: TCType, decl_loc: CodeLoc) -> Self {
         return FuncEnv {
             ops: Vec::new(),
             symbol_to_label: HashMap::new(),
@@ -83,7 +83,7 @@ impl FuncEnv {
             next_label: 0,
             next_symbol_label: 0,
             return_type,
-            rtype_loc,
+            decl_loc,
         };
     }
 }
@@ -581,6 +581,39 @@ impl<'a> TypeEnv<'a> {
             prev_func.decl_loc = decl.loc;
         }
 
+        return Ok(());
+    }
+
+    pub fn complete_func_defn(&mut self, ident: u32, env: FuncEnv) -> Result<(), Error> {
+        let global_env = match &mut self.kind {
+            TypeEnvKind::Global(g) => g,
+            _ => unreachable!(),
+        };
+        let func = if let Some(func) = global_env.tu.functions.get_mut(&ident) {
+            func
+        } else {
+            panic!("function being defined doesn't exist")
+        };
+
+        if let Some(prev) = func.defn {
+            return Err(error!(
+                "function already defined",
+                prev.loc, "previous definition here", env.decl_loc, "repeated definition here"
+            ));
+        }
+
+        let param_count = if let Some(params) = func.func_type.params {
+            params.types.len() as u32
+        } else {
+            0
+        };
+
+        func.defn = Some(TCFuncDefn {
+            ops: global_env.tu.buckets.add_array(env.ops),
+            sym_count: env.next_symbol_label,
+            param_count,
+            loc: env.decl_loc,
+        });
         return Ok(());
     }
 

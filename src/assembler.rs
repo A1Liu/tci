@@ -867,7 +867,7 @@ impl Assembler {
         return ops;
     }
 
-    pub fn assemble<'b>(mut self, env: &FileDb) -> Result<Program<'b>, Error> {
+    pub fn assemble(mut self, env: &FileDb) -> Result<Program, Error> {
         let no_main = || error!("missing main function definition");
         let main_link_name = LinkName {
             name: INIT_SYMS.translate["main"],
@@ -954,7 +954,7 @@ impl Assembler {
         let data_size = var_data_size + vars_size;
 
         let total_size = file_size + types_size + symbols_size + opcodes_size + data_size;
-        let buckets = BucketList::with_capacity(0);
+        let buckets = BucketListFactory::with_capacity(total_size);
         let mut frame = buckets.frame(total_size).unwrap();
 
         macro_rules! type_mapper {

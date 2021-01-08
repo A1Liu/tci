@@ -371,6 +371,42 @@ pub trait TCTy {
         };
     }
 
+    fn repr_size(&self) -> u32 {
+        let mut multiplier = 1;
+        let mut is_array = false;
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    if is_array {
+                        return multiplier * 8;
+                    } else {
+                        return 8;
+                    }
+                }
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return 8,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::Array(i) => {
+                    multiplier *= i;
+                    is_array = true;
+                }
+                TCTypeModifier::VariableArray => return 8,
+            }
+        }
+
+        let base = match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => 1,
+            TCTypeBase::U32 | TCTypeBase::I32 => 4,
+            TCTypeBase::U64 | TCTypeBase::I64 => 8,
+            TCTypeBase::Void => return 0,
+            TCTypeBase::InternalTypedef(def) => def.repr_size(),
+            TCTypeBase::Typedef { refers_to, .. } => refers_to.repr_size(),
+        };
+
+        return (multiplier * base).into();
+    }
+
     fn size(&self) -> n32 {
         let mut multiplier = 1;
         let mut is_array = false;
