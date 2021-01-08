@@ -142,9 +142,21 @@ pub struct TypeQualifier {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum StructTypeKind {
+    Named(u32),
+    NamedDecl {
+        ident: u32,
+        declarations: &'static [StructField],
+    },
+    UnnamedDecl {
+        declarations: &'static [StructField],
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct StructType {
-    pub ident: n32,
-    pub declarations: &'static [StructField],
+    pub kind: StructTypeKind,
+    pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -176,7 +188,6 @@ pub struct TypeName {
 #[derive(Debug, Clone, Copy)]
 pub struct StructDeclarator {
     pub declarator: Declarator,
-    pub bit_width: Option<&'static Expr>,
     pub loc: CodeLoc,
 }
 

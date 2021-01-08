@@ -429,12 +429,97 @@ rule storage_class_typedef() -> DeclarationSpecifier =
 ////
 
 rule type_specifier_unique() -> TypeSpecifier =
-    pos:position!() [TokenKind::Void] { TypeSpecifier::Void } /
+    [TokenKind::Void] { TypeSpecifier::Void } /
+    pos:position!() [TokenKind::Struct] id:ident()? declarations:struct_body() {
+        let (declarations, loc) = declarations;
+
+        if let Some((ident, _)) = id {
+            TypeSpecifier::Struct(StructType {
+                kind: StructTypeKind::NamedDecl {
+                    ident,
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        } else {
+            TypeSpecifier::Struct(StructType {
+                kind: StructTypeKind::UnnamedDecl {
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        }
+    } /
+    pos:position!() [TokenKind::Union]  id:ident()? declarations:struct_body() {
+        let (declarations, loc) = declarations;
+
+        if let Some((ident, _)) = id {
+            TypeSpecifier::Union(StructType {
+                kind: StructTypeKind::NamedDecl {
+                    ident,
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        } else {
+            TypeSpecifier::Union(StructType {
+                kind: StructTypeKind::UnnamedDecl {
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        }
+    } /
+    pos:position!() [TokenKind::Struct] id:ident() {
+        let (id, loc) = id;
+
+        TypeSpecifier::Struct(StructType {
+            kind: StructTypeKind::Named(id),
+            loc: l_from(env.locs[pos], loc),
+        })
+    } /
+    pos:position!() [TokenKind::Union] id:ident() {
+        let (id, loc) = id;
+
+        TypeSpecifier::Union(StructType {
+            kind: StructTypeKind::Named(id),
+            loc: l_from(env.locs[pos], loc),
+        })
+    } /
     t:typedef_name() {
         let (t, loc) = t;
         TypeSpecifier::Ident(t)
     }
 
+
+rule struct_body() -> (&'static [StructField], CodeLoc) =
+    pos:position!() [TokenKind::LBrace] d:list0(<struct_field()>)
+    pos2:position!() [TokenKind::RBrace] {
+        let (d, _) = d;
+        let d = env.buckets.add_array(d);
+
+        (d, l_from(env.locs[pos], env.locs[pos2]))
+    }
+
+rule struct_field() -> StructField =
+    s:specifier_qualifiers() d:cs0(<struct_declarator()>)
+    pos2:position!() [TokenKind::Semicolon] {
+        let (s, loc) = s;
+        let (d, _) = d;
+        StructField {
+            specifiers: env.buckets.add_array(s),
+            declarators: env.buckets.add_array(d),
+            loc: l_from(loc, env.locs[pos2]),
+        }
+    }
+
+rule struct_declarator() -> StructDeclarator =
+    d:declarator() {
+        StructDeclarator {
+            declarator: d,
+            loc: d.loc,
+        }
+    }
 
 rule type_specifier_nonunique() -> TypeSpecifier =
     pos:position!() [TokenKind::Char] { TypeSpecifier::Char } /
