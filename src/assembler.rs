@@ -3,15 +3,34 @@ use crate::filedb::*;
 use crate::interpreter::*;
 use crate::runtime::*;
 use crate::tc_ast::*;
-use crate::type_checker::*;
 use crate::util::*;
-use core::mem;
-use core::mem::{align_of, size_of};
 
 #[derive(Debug)]
 pub struct ASMFunc {
     pub func_type: TCFuncType,
+    pub decl_loc: CodeLoc,
     pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
+}
+
+pub struct Assembler {
+    pub buckets: BucketListFactory,
+    pub opcodes: Vec<TaggedOpcode>,
+    pub func_linkage: HashMap<LinkName, u32>,
+    pub functions: Vec<ASMFunc>,
+    pub data: VarBuffer,
+    pub symbols: Vec<RuntimeVar>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ASMEnv<'a> {
+    var_offsets: &'a [i16],
+    binary_offsets: &'a HashMap<u32, u32>,
+}
+
+impl Drop for Assembler {
+    fn drop(&mut self) {
+        unsafe { self.buckets.dealloc() };
+    }
 }
 
 pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
@@ -41,345 +60,380 @@ pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
     ];
 }
 
-#[derive(Debug, Clone)]
-pub struct ASMRuntimeStruct {
-    pub members: Option<Vec<TCStructMember>>,
-    pub loc: CodeLoc,
-    pub sa: SizeAlign,
-}
-
-pub struct Assembler {
-    pub opcodes: Vec<TaggedOpcode>,
-    pub func_linkage: HashMap<LinkName, u32>,
-    pub data: VarBuffer,
-    pub functions: Vec<ASMFunc>, // keys are identifier symbols
-    pub types: HashMap<u32, ASMRuntimeStruct>,
-    pub symbols: Vec<RuntimeVar>,
-    pub struct_member_count: usize,
-}
-
 impl Assembler {
     pub fn new() -> Self {
         Self {
+            buckets: BucketListFactory::new(),
             opcodes: Vec::new(),
             data: VarBuffer::new(),
-            functions: Vec::new(),
             func_linkage: HashMap::new(),
-            types: HashMap::new(),
+            functions: Vec::new(),
             symbols: Vec::new(),
-            struct_member_count: 0,
         }
     }
 
-    pub fn add_file(&mut self, typed_ast: TypedFuncs) -> Result<(), Error> {
-        for (struct_id, struct_type) in typed_ast.types.structs.into_iter() {
-            let struct_type = match struct_type.defn {
-                Some(struct_type) => struct_type,
-                None => {
-                    if !self.types.contains_key(&struct_id) {
-                        self.types.insert(
-                            struct_id,
-                            ASMRuntimeStruct {
-                                members: None,
-                                loc: struct_type.decl_loc,
-                                sa: TC_UNKNOWN_SA,
-                            },
-                        );
+    pub fn add_file(&mut self, file: u32, mut tu: TranslationUnit) -> Result<(), Error> {
+        // Add function return sizes
+
+        let mut link_names = HashMap::new();
+        let mut defns = Vec::new();
+
+        for (ident, tc_func) in std::mem::replace(&mut tu.functions, HashMap::new()) {
+            let link_name = if tc_func.is_static {
+                LinkName::new_static(ident, file)
+            } else {
+                LinkName::new(ident)
+            };
+
+            link_names.insert(ident, link_name);
+
+            let prev = match self.func_linkage.entry(link_name) {
+                Entry::Occupied(o) => &self.functions[*o.get() as usize],
+                Entry::Vacant(v) => {
+                    v.insert(self.functions.len() as u32);
+                    self.functions.push(ASMFunc {
+                        func_type: tc_func.func_type.clone_into_alloc(&*self.buckets),
+                        decl_loc: tc_func.decl_loc,
+                        func_header: None,
+                    });
+
+                    if let Some(defn) = tc_func.defn {
+                        defns.push((link_name, defn));
                     }
 
                     continue;
                 }
             };
 
-            let member_count = struct_type.members.len();
-            if let Some(ASMRuntimeStruct { members, loc, sa }) = self.types.get_mut(&struct_id) {
-                if let Some(members) = members {
-                    if members != &struct_type.members {
-                        return Err(error!(
-                            "multiple, conflicting definitions of same type",
-                            *loc,
-                            "first one found here",
-                            struct_type.meta.loc,
-                            "second one found here"
-                        ));
-                    }
-                } else {
-                    self.struct_member_count += member_count;
-                    *members = Some(struct_type.members);
-                    *loc = struct_type.meta.loc;
-                    *sa = struct_type.meta.sa;
-                }
-
-                continue;
+            if prev.func_type != tc_func.func_type {
+                let error = func_decl_mismatch(prev.decl_loc, tc_func.decl_loc);
+                return Err(error);
             }
-
-            self.types.insert(
-                struct_id,
-                ASMRuntimeStruct {
-                    members: Some(struct_type.members),
-                    loc: struct_type.meta.loc,
-                    sa: struct_type.meta.sa,
-                },
-            );
-            self.struct_member_count += member_count;
-        }
-
-        // Add function return sizes
-        let mut defns = Vec::new();
-        for (ident, tc_func) in typed_ast.functions.into_iter() {
-            let link_name = if tc_func.func_type.is_static {
-                LinkName {
-                    name: ident,
-                    file: typed_ast.file.into(),
-                }
-            } else {
-                LinkName {
-                    name: ident,
-                    file: n32::NULL,
-                }
-            };
-
-            let link_pos = if let Some(prev) = self.func_linkage.get(&link_name) {
-                let prev_func_type = &self.functions[*prev as usize].func_type;
-                if prev_func_type != &tc_func.func_type {
-                    let error = func_decl_mismatch(prev_func_type.loc, tc_func.func_type.loc);
-                    return Err(error);
-                }
-
-                *prev
-            } else {
-                let pos = self.functions.len() as u32;
-                self.func_linkage.insert(link_name, pos);
-                self.functions.push(ASMFunc {
-                    func_type: tc_func.func_type,
-                    func_header: None,
-                });
-
-                pos
-            };
 
             if let Some(defn) = tc_func.defn {
-                defns.push((ident, link_pos, defn));
+                defns.push((link_name, defn));
             }
         }
 
-        // Add function definitions
-        for (ident, link_pos, defn) in defns.into_iter() {
-            self.add_function(typed_ast.file, ident, link_pos, defn)?;
+        for (link_name, defn) in defns {
+            let header = self.functions[self.func_linkage[&link_name] as usize].func_header;
+            if let Some((_, defn_loc)) = header.as_ref() {
+                return Err(func_redef(*defn_loc, defn.loc));
+            }
+
+            let opcode = self.opcodes.len() as u32;
+
+            self.opcodes.push(TaggedOpcode {
+                op: Opcode::Func(link_name),
+                loc: defn.loc,
+            });
+
+            self.add_function(&link_names, &defn);
+            let header = &mut self.functions[self.func_linkage[&link_name] as usize].func_header;
+            *header = Some((opcode, defn.loc));
         }
 
         return Ok(());
     }
 
-    pub fn add_function(
-        &mut self,
-        file: u32,
-        ident: u32,
-        link_pos: u32,
-        defn: TCFuncDefn,
-    ) -> Result<(), Error> {
-        let asm_func = &mut self.functions[link_pos as usize];
-
-        if let Some((_func_header, defn_loc)) = &asm_func.func_header {
-            return Err(func_redef(*defn_loc, defn.loc));
+    pub fn add_function(&mut self, link_names: &HashMap<u32, LinkName>, defn: &TCFuncDefn) {
+        if defn.ops.len() < 2 {
+            unreachable!()
         }
 
-        asm_func.func_header = Some((self.opcodes.len() as u32, defn.loc));
-        let param_count = asm_func.func_type.params.len() as u32;
+        let jumps: Vec<u32> = Vec::new();
+        let mut var_offsets: Vec<i16> = (0..defn.sym_count).map(|_| i16::MAX).collect();
+        let mut next_offset = 0;
 
-        self.opcodes.push(TaggedOpcode {
-            op: Opcode::Func(LinkName::new(ident)),
-            loc: defn.loc,
-        });
-
-        let mut ops = self.translate_block(file, param_count, defn.stmts, defn.loc, 0, 0);
-        self.opcodes.append(&mut ops);
-
-        self.opcodes.push(TaggedOpcode {
-            op: Opcode::Ret,
-            loc: defn.loc,
-        });
-
-        return Ok(());
-    }
-
-    pub fn translate_block(
-        &mut self,
-        file: u32,
-        param_count: u32,
-        block: &[TCStmt],
-        block_loc: CodeLoc,
-        cb_idx: u32, // docs for this later in the match statement: stands for continue-break
-        mut ld_count: u32, // loop declaration count
-    ) -> Vec<TaggedOpcode> {
-        let mut ops = Vec::new();
-        let mut decl_count = 0;
-
-        macro_rules! cb {
-            () => {{
-                cb_idx + ops.len() as u32
-            }};
+        for idx in 0..defn.param_count {
+            var_offsets[idx as usize] = -(idx as i16) - 2;
         }
 
-        for stmt in block {
-            let mut tagged = TaggedOpcode {
-                op: Opcode::StackDealloc,
-                loc: stmt.loc,
-            };
+        for t_op in defn.ops {
+            let mut op = TaggedOpcode::new(Opcode::Ret, t_op.loc);
 
-            match &stmt.kind {
-                TCStmtKind::RetVal(expr) => {
-                    ops.append(&mut self.translate_expr(file, expr));
+            match t_op.kind {
+                TCOpcodeKind::ScopeBegin(vars, scope_end) => {
+                    for (&var, &ty) in vars.iter() {
+                        op.op = Opcode::StackAlloc {
+                            bytes: ty.size().into(),
+                            symbol: self.symbols.len() as u32,
+                        };
 
-                    tagged.op = Opcode::GetLocal {
+                        self.opcodes.push(op);
+                        var_offsets[var as usize] = next_offset;
+                        next_offset += 1;
+
+                        // TODO add runtime var support
+                        // self.symbols.push(RuntimeVar {
+                        //     symbol: *symbol,
+                        //     decl_type: ty.clone_into_alloc(&*self.buckets),
+                        //     loc: t_op.loc,
+                        // });
+                    }
+                }
+                TCOpcodeKind::ScopeEnd { count, begin } => {
+                    op.op = Opcode::StackDealloc;
+
+                    for _ in 0..count {
+                        self.opcodes.push(op);
+                    }
+
+                    next_offset -= count as i16;
+                }
+                TCOpcodeKind::Ret => {
+                    op.op = Opcode::Ret;
+                    self.opcodes.push(op);
+                }
+                TCOpcodeKind::RetVal(val) => {
+                    self.translate_expr(&var_offsets, &val);
+
+                    op.op = Opcode::GetLocal {
                         var: -1,
                         offset: 0,
                         bytes: 8,
                     };
-                    ops.push(tagged);
-                    tagged.op = Opcode::Set {
+                    self.opcodes.push(op);
+                    op.op = Opcode::Set {
                         offset: 0,
-                        bytes: expr.expr_type.repr_size(),
+                        bytes: val.ty.repr_size(),
                     };
-                    ops.push(tagged);
-                    tagged.op = Opcode::Ret;
-                    ops.push(tagged);
+                    self.opcodes.push(op);
+                    op.op = Opcode::Ret;
+                    self.opcodes.push(op);
                 }
-                TCStmtKind::Ret => {
-                    tagged.op = Opcode::Ret;
-                    ops.push(tagged);
+                TCOpcodeKind::Expr(expr) => {
+                    self.translate_expr(&var_offsets, &expr);
+
+                    let bytes = expr.ty.repr_size();
+                    op.op = Opcode::Pop { bytes };
+                    self.opcodes.push(op);
                 }
-
-                TCStmtKind::Expr(expr) => {
-                    ops.append(&mut self.translate_expr(file, expr));
-                    tagged.op = Opcode::Pop {
-                        bytes: expr.expr_type.repr_size(),
-                    };
-                    ops.push(tagged);
-                }
-
-                TCStmtKind::Decl { symbol, init } => {
-                    decl_count += 1;
-                    ld_count += 1;
-                    let bytes = init.expr_type.size();
-                    tagged.op = Opcode::StackAlloc {
-                        bytes,
-                        symbol: self.symbols.len() as u32,
-                    };
-
-                    self.symbols.push(RuntimeVar {
-                        symbol: *symbol,
-                        decl_type: init.expr_type,
-                        loc: stmt.loc,
-                    });
-
-                    ops.push(tagged);
-                    ops.append(&mut self.translate_expr(file, init));
-                    tagged.op = Opcode::PopIntoTopVar { bytes, offset: 0 };
-                    ops.push(tagged);
-                }
-
-                TCStmtKind::Branch {
-                    cond,
-                    if_body: if_,
-                    else_body: else_,
-                } => {
-                    let cond_bytes = cond.expr_type.repr_size();
-                    ops.append(&mut self.translate_expr(file, cond));
-
-                    // cb! + 1 because of conditional jump instruction
-                    #[rustfmt::skip]
-                    let mut if_ops = self.translate_block(
-                        file, param_count, if_.stmts, if_.loc, cb!() + 1, ld_count,
-                    );
-                    let ifbr_len = if_ops.len() as u32 + 2;
-
-                    tagged.op = match cond_bytes {
-                        1 => Opcode::JumpIfZero8(ifbr_len),
-                        2 => Opcode::JumpIfZero16(ifbr_len),
-                        4 => Opcode::JumpIfZero32(ifbr_len),
-                        8 => Opcode::JumpIfZero64(ifbr_len),
-                        _ => unreachable!(),
-                    };
-                    ops.push(tagged);
-                    ops.append(&mut if_ops);
-                    mem::drop(if_ops);
-
-                    // cb! + 1 because of jump instruction
-                    #[rustfmt::skip]
-                    let mut else_ops = self.translate_block(
-                        file, param_count, else_.stmts, else_.loc, cb!() + 1, ld_count,
-                    );
-                    let elsebr_len = else_ops.len() as u32 + 1;
-
-                    tagged.op = Opcode::Jump(elsebr_len);
-                    ops.push(tagged);
-                    ops.append(&mut else_ops);
-                }
-
-                TCStmtKind::Block(block) => {
-                    #[rustfmt::skip]
-                    let mut block = self.translate_block(
-                        file, param_count, block.stmts, block.loc, cb!(), ld_count,
-                    );
-                    ops.append(&mut block);
-                }
-
-                TCStmtKind::Loop(block) => {
-                    // cb_idx is the way we track loop structures and handle break and continue
-
-                    tagged.op = Opcode::Jump(2);
-                    ops.push(tagged);
-
-                    let mut block =
-                        self.translate_block(file, param_count, block.stmts, block.loc, 0, 0);
-                    tagged.op = Opcode::Jump(block.len() as u32 + 2); // break out of loop
-                    ops.push(tagged);
-                    tagged.op = Opcode::Jump(0u32.wrapping_sub(block.len() as u32));
-                    ops.append(&mut block);
-                    ops.push(tagged);
-                }
-
-                TCStmtKind::Break => {
-                    tagged.op = Opcode::StackDealloc;
-                    for _ in 0..ld_count {
-                        ops.push(tagged);
-                    }
-
-                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!() + 1));
-                    ops.push(tagged);
-                }
-                TCStmtKind::Continue => {
-                    tagged.op = Opcode::StackDealloc;
-                    for _ in 0..ld_count {
-                        ops.push(tagged);
-                    }
-
-                    tagged.op = Opcode::Jump(0u32.wrapping_sub(cb!()));
-                    ops.push(tagged);
-                }
+                _ => {}
             }
         }
-
-        let dealloc = TaggedOpcode {
-            op: Opcode::StackDealloc,
-            loc: block_loc,
-        };
-
-        for _ in 0..decl_count {
-            ops.push(dealloc);
-        }
-
-        return ops;
     }
 
-    pub fn translate_bin_op(
-        &self,
-        op: BinOp,
-        op_type: TCPrimType,
-        ops: &mut Vec<TaggedOpcode>,
-        loc: CodeLoc,
-    ) {
+    pub fn translate_expr(&mut self, var_offsets: &[i16], expr: &TCExpr) {
+        let mut tagged = TaggedOpcode::new(Opcode::Ret, expr.loc);
+
+        match &expr.kind {
+            TCExprKind::I8Literal(val) => {
+                tagged.op = Opcode::MakeTempI8(*val);
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::I32Literal(val) => {
+                tagged.op = Opcode::MakeTempI32(*val);
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::I64Literal(val) => {
+                tagged.op = Opcode::MakeTempI64(*val);
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::U64Literal(val) => {
+                tagged.op = Opcode::MakeTempU64(*val);
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::StringLiteral(val) => {
+                // TODO check overflow here
+                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL);
+                let slice = self.data.get_full_var_range_mut(var);
+                let end = slice.len() - 1;
+                slice[..end].copy_from_slice(val.as_bytes());
+                slice[end] = 0;
+                tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::LocalIdent { label } => {
+                let var = var_offsets[*label as usize];
+                tagged.op = if expr.ty.is_array() {
+                    Opcode::MakeTempStackFpPtr { var, offset: 0 }
+                } else {
+                    Opcode::GetLocal {
+                        var,
+                        offset: 0,
+                        bytes: expr.ty.repr_size(),
+                    }
+                };
+
+                self.opcodes.push(tagged);
+            }
+
+            TCExprKind::ParenList(exprs) => {
+                for (idx, expr) in exprs.iter().enumerate() {
+                    self.translate_expr(var_offsets, expr);
+                    let bytes = expr.ty.repr_size();
+
+                    if idx + 1 < exprs.len() {
+                        tagged.op = Opcode::Pop { bytes };
+                        self.opcodes.push(tagged);
+                    }
+                }
+            }
+
+            TCExprKind::BinOp {
+                op,
+                op_type,
+                left,
+                right,
+            } => {
+                self.translate_expr(var_offsets, left);
+                self.translate_expr(var_offsets, right);
+                self.translate_bin_op(*op, *op_type, tagged.loc);
+            }
+
+            TCExprKind::Conv { from, to, expr } => {
+                self.translate_expr(var_offsets, expr);
+                let opcode = match (from, to.size()) {
+                    (TCPrimType::U8, 1) => None,
+                    (TCPrimType::U8, 4) => Some(Opcode::ZExtend8To32),
+                    (TCPrimType::U8, 8) => Some(Opcode::ZExtend8To64),
+                    (TCPrimType::I8, 1) => None,
+                    (TCPrimType::I8, 4) => Some(Opcode::SExtend8To32),
+                    (TCPrimType::I8, 8) => Some(Opcode::SExtend8To64),
+
+                    (TCPrimType::U32, 1) => Some(Opcode::Pop { bytes: 3 }),
+                    (TCPrimType::U32, 4) => None,
+                    (TCPrimType::U32, 8) => Some(Opcode::ZExtend32To64),
+                    (TCPrimType::I32, 1) => Some(Opcode::Pop { bytes: 3 }),
+                    (TCPrimType::I32, 4) => None,
+                    (TCPrimType::I32, 8) => Some(Opcode::SExtend32To64),
+
+                    (TCPrimType::U64, 1) => Some(Opcode::Pop { bytes: 7 }),
+                    (TCPrimType::U64, 4) => Some(Opcode::Pop { bytes: 4 }),
+                    (TCPrimType::U64, 8) => None,
+                    (TCPrimType::I64, 1) => Some(Opcode::Pop { bytes: 7 }),
+                    (TCPrimType::I64, 4) => Some(Opcode::Pop { bytes: 4 }),
+                    (TCPrimType::I64, 8) => None,
+
+                    (TCPrimType::Pointer { .. }, 1) => Some(Opcode::Pop { bytes: 7 }),
+                    (TCPrimType::Pointer { .. }, 4) => Some(Opcode::Pop { bytes: 4 }),
+                    (TCPrimType::Pointer { .. }, 8) => None,
+                    (_, _) => unreachable!(),
+                };
+
+                if let Some(opcode) = opcode {
+                    tagged.op = opcode;
+                    self.opcodes.push(tagged);
+                }
+            }
+
+            TCExprKind::Assign { target, value } => {
+                self.translate_expr(var_offsets, value);
+                let bytes = value.ty.repr_size();
+                tagged.op = Opcode::PushDup { bytes };
+                self.opcodes.push(tagged);
+                self.translate_assign(var_offsets, target);
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                self.opcodes.push(tagged);
+            }
+
+            TCExprKind::Deref(ptr) => {
+                self.translate_expr(var_offsets, ptr);
+                tagged.op = Opcode::Get {
+                    offset: 0,
+                    bytes: expr.ty.size().into(),
+                };
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::Ref(lvalue) => self.translate_assign(var_offsets, lvalue),
+
+            TCExprKind::Call { func, params } => {
+                self.translate_expr(var_offsets, func); // callee is sequenced before params
+
+                let rtype_size = expr.ty.repr_size();
+                tagged.op = Opcode::StackAlloc {
+                    bytes: rtype_size,
+                    symbol: META_NO_SYMBOL,
+                };
+                self.opcodes.push(tagged);
+
+                // Safety allocation to make sure varargs don't run off the stack
+                tagged.op = Opcode::StackAlloc {
+                    bytes: 0,
+                    symbol: META_NO_SYMBOL,
+                };
+                self.opcodes.push(tagged);
+
+                for (idx, param) in params.iter().rev().enumerate() {
+                    let bytes = param.ty.repr_size();
+
+                    tagged.op = Opcode::StackAlloc {
+                        bytes,
+                        symbol: META_NO_SYMBOL, // TODO this should be the parameter symbol
+                    };
+                    self.opcodes.push(tagged);
+                    self.translate_expr(var_offsets, param);
+                    tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
+                    self.opcodes.push(tagged);
+                }
+
+                // Create a pointer to the return location
+                tagged.op = Opcode::StackAlloc {
+                    bytes: 8,
+                    symbol: META_NO_SYMBOL,
+                };
+                self.opcodes.push(tagged);
+                tagged.op = Opcode::MakeTempStackSpPtr {
+                    var: params.len() as i16 * -1 - 3,
+                    offset: 0,
+                };
+                self.opcodes.push(tagged);
+                tagged.op = Opcode::PopIntoTopVar {
+                    offset: 0,
+                    bytes: 8,
+                };
+                self.opcodes.push(tagged);
+
+                tagged.op = Opcode::CallDyn;
+                self.opcodes.push(tagged);
+
+                tagged.op = Opcode::StackDealloc;
+                for _ in 0..params.len() {
+                    self.opcodes.push(tagged);
+                }
+                self.opcodes.push(tagged); // for the pointer to the return location
+                self.opcodes.push(tagged); // for the safety allocation
+
+                if rtype_size == 0 {
+                    //
+                    tagged.op = Opcode::StackDealloc;
+                    self.opcodes.push(tagged);
+                } else {
+                    tagged.op = Opcode::StackAddToTemp;
+                    self.opcodes.push(tagged);
+                }
+            }
+            x => unimplemented!("{:?}", x),
+        }
+    }
+
+    pub fn translate_assign(&mut self, var_offsets: &[i16], assign: &TCAssignTarget) {
+        let mut tagged = TaggedOpcode::new(Opcode::Ret, assign.loc);
+
+        match assign.kind {
+            TCAssignTargetKind::Ptr(expr) => {
+                self.translate_expr(var_offsets, expr);
+                if assign.offset != 0 {
+                    tagged.op = Opcode::MakeTempU64(assign.offset as u64);
+                    self.opcodes.push(tagged);
+                    tagged.op = Opcode::AddU64;
+                    self.opcodes.push(tagged);
+                }
+            }
+            TCAssignTargetKind::LocalIdent { label } => {
+                let var = var_offsets[label as usize];
+                tagged.op = Opcode::MakeTempStackFpPtr {
+                    var,
+                    offset: assign.offset,
+                };
+                self.opcodes.push(tagged);
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn translate_bin_op(&mut self, op: BinOp, op_type: TCPrimType, loc: CodeLoc) {
         let mut tagged = TaggedOpcode {
             op: Opcode::StackDealloc,
             loc,
@@ -413,12 +467,12 @@ impl Assembler {
 
             (BinOp::Gt, TCPrimType::I32) => {
                 tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                ops.push(tagged);
+                self.opcodes.push(tagged);
                 Opcode::CompLtI32
             }
             (BinOp::Gt, TCPrimType::U64) => {
                 tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                ops.push(tagged);
+                self.opcodes.push(tagged);
                 Opcode::CompLtU64
             }
 
@@ -429,12 +483,12 @@ impl Assembler {
 
             (BinOp::Geq, TCPrimType::I32) => {
                 tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                ops.push(tagged);
+                self.opcodes.push(tagged);
                 Opcode::CompLeqI32
             }
             (BinOp::Geq, TCPrimType::U64) => {
                 tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                ops.push(tagged);
+                self.opcodes.push(tagged);
                 Opcode::CompLeqU64
             }
 
@@ -455,424 +509,23 @@ impl Assembler {
 
             (op, ptype) => unreachable!("op={:?} type={:?}", op, ptype),
         };
-        ops.push(tagged);
-    }
 
-    pub fn translate_expr(&mut self, file: u32, expr: &TCExpr) -> Vec<TaggedOpcode> {
-        let mut ops = Vec::new();
-        let mut tagged = TaggedOpcode {
-            op: Opcode::StackDealloc,
-            loc: expr.loc,
-        };
-
-        match &expr.kind {
-            TCExprKind::Uninit => {
-                tagged.op = Opcode::PushUndef {
-                    bytes: expr.expr_type.repr_size(),
-                };
-                ops.push(tagged);
-            }
-            TCExprKind::I8Literal(val) => {
-                tagged.op = Opcode::MakeTempI8(*val);
-                ops.push(tagged);
-            }
-            TCExprKind::I32Literal(val) => {
-                tagged.op = Opcode::MakeTempI32(*val);
-                ops.push(tagged);
-            }
-            TCExprKind::I64Literal(val) => {
-                tagged.op = Opcode::MakeTempI64(*val);
-                ops.push(tagged);
-            }
-            TCExprKind::U64Literal(val) => {
-                tagged.op = Opcode::MakeTempU64(*val);
-                ops.push(tagged);
-            }
-            TCExprKind::StringLiteral(val) => {
-                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL); // TODO overflow here
-                let slice = self.data.get_full_var_range_mut(var);
-                let end = slice.len() - 1;
-                slice[..end].copy_from_slice(val.as_bytes());
-                slice[end] = 0;
-                tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
-                ops.push(tagged);
-            }
-            TCExprKind::LocalIdent { var_offset } => {
-                tagged.op = if expr.expr_type.is_array() {
-                    Opcode::MakeTempStackFpPtr {
-                        var: *var_offset,
-                        offset: 0,
-                    }
-                } else {
-                    Opcode::GetLocal {
-                        var: *var_offset,
-                        offset: 0,
-                        bytes: expr.expr_type.repr_size(),
-                    }
-                };
-
-                ops.push(tagged);
-            }
-
-            TCExprKind::Array(exprs) => {
-                for expr in *exprs {
-                    ops.append(&mut self.translate_expr(file, expr));
-                }
-            }
-            TCExprKind::BraceList(_) => unreachable!(),
-            TCExprKind::ParenList(exprs) => {
-                for (idx, expr) in exprs.iter().enumerate() {
-                    ops.append(&mut self.translate_expr(file, expr));
-                    let bytes = expr.expr_type.repr_size();
-
-                    if idx + 1 < exprs.len() {
-                        tagged.op = Opcode::Pop { bytes };
-                        ops.push(tagged);
-                    }
-                }
-            }
-
-            TCExprKind::BinOp {
-                op,
-                op_type,
-                left,
-                right,
-            } => {
-                ops.append(&mut self.translate_expr(file, left));
-                ops.append(&mut self.translate_expr(file, right));
-                self.translate_bin_op(*op, *op_type, &mut ops, tagged.loc);
-            }
-
-            TCExprKind::Conv { from, to, expr } => {
-                ops.append(&mut self.translate_expr(file, expr));
-                let opcode = match (from, to.size()) {
-                    (TCPrimType::U8, 1) => None,
-                    (TCPrimType::U8, 4) => Some(Opcode::ZExtend8To32),
-                    (TCPrimType::U8, 8) => Some(Opcode::ZExtend8To64),
-                    (TCPrimType::I8, 1) => None,
-                    (TCPrimType::I8, 4) => Some(Opcode::SExtend8To32),
-                    (TCPrimType::I8, 8) => Some(Opcode::SExtend8To64),
-
-                    (TCPrimType::U32, 1) => Some(Opcode::Pop { bytes: 3 }),
-                    (TCPrimType::U32, 4) => None,
-                    (TCPrimType::U32, 8) => Some(Opcode::ZExtend32To64),
-                    (TCPrimType::I32, 1) => Some(Opcode::Pop { bytes: 3 }),
-                    (TCPrimType::I32, 4) => None,
-                    (TCPrimType::I32, 8) => Some(Opcode::SExtend32To64),
-
-                    (TCPrimType::U64, 1) => Some(Opcode::Pop { bytes: 7 }),
-                    (TCPrimType::U64, 4) => Some(Opcode::Pop { bytes: 4 }),
-                    (TCPrimType::U64, 8) => None,
-                    (TCPrimType::I64, 1) => Some(Opcode::Pop { bytes: 7 }),
-                    (TCPrimType::I64, 4) => Some(Opcode::Pop { bytes: 4 }),
-                    (TCPrimType::I64, 8) => None,
-
-                    (TCPrimType::Pointer { .. }, 1) => Some(Opcode::Pop { bytes: 7 }),
-                    (TCPrimType::Pointer { .. }, 4) => Some(Opcode::Pop { bytes: 4 }),
-                    (TCPrimType::Pointer { .. }, 8) => None,
-                    (_, _) => unreachable!(),
-                };
-
-                if let Some(opcode) = opcode {
-                    tagged.op = opcode;
-                    ops.push(tagged);
-                }
-            }
-
-            TCExprKind::PostIncrU32(target) => {
-                ops.append(&mut self.translate_assign(file, target));
-                tagged.op = Opcode::PushDup { bytes: 8 };
-                ops.push(tagged);
-                let bytes = 4;
-                tagged.op = Opcode::Get { offset: 0, bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::MakeTempU32(1);
-                ops.push(tagged);
-                tagged.op = Opcode::AddU32;
-                ops.push(tagged);
-                let top = bytes * 2;
-                tagged.op = Opcode::Swap { top, bottom: 8 };
-                ops.push(tagged);
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                ops.push(tagged);
-            }
-
-            TCExprKind::PostIncrU64(target) => {
-                ops.append(&mut self.translate_assign(file, target));
-                tagged.op = Opcode::PushDup { bytes: 8 };
-                ops.push(tagged);
-                let bytes = 8;
-                tagged.op = Opcode::Get { offset: 0, bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::MakeTempU64(1);
-                ops.push(tagged);
-                tagged.op = Opcode::AddU64;
-                ops.push(tagged);
-                let top = bytes * 2;
-                tagged.op = Opcode::Swap { top, bottom: 8 };
-                ops.push(tagged);
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                ops.push(tagged);
-            }
-
-            TCExprKind::Assign { target, value } => {
-                ops.append(&mut self.translate_expr(file, value));
-                let bytes = value.expr_type.repr_size();
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-                ops.append(&mut self.translate_assign(file, target));
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                ops.push(tagged);
-            }
-
-            TCExprKind::MutAssign {
-                target,
-                value,
-                op,
-                op_type,
-            } => {
-                ops.append(&mut self.translate_assign(file, target));
-                tagged.op = Opcode::PushDup { bytes: 8 };
-                ops.push(tagged);
-
-                let bytes = target.target_type.size();
-                tagged.op = Opcode::Get { offset: 0, bytes };
-                ops.push(tagged);
-
-                ops.append(&mut self.translate_expr(file, value));
-
-                self.translate_bin_op(*op, *op_type, &mut ops, tagged.loc);
-
-                tagged.op = Opcode::PushDup { bytes };
-                ops.push(tagged);
-
-                let top = bytes * 2;
-                tagged.op = Opcode::Swap { top, bottom: 8 };
-                ops.push(tagged);
-
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                ops.push(tagged);
-            }
-
-            TCExprKind::Ternary {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                let cond_bytes = condition.expr_type.repr_size();
-                ops.append(&mut self.translate_expr(file, condition));
-
-                let mut if_ops = self.translate_expr(file, if_true);
-                let ifbr_len = if_ops.len() as u32 + 2;
-
-                tagged.op = match cond_bytes {
-                    1 => Opcode::JumpIfZero8(ifbr_len),
-                    2 => Opcode::JumpIfZero16(ifbr_len),
-                    4 => Opcode::JumpIfZero32(ifbr_len),
-                    8 => Opcode::JumpIfZero64(ifbr_len),
-                    _ => unreachable!(),
-                };
-                ops.push(tagged);
-                ops.append(&mut if_ops);
-                mem::drop(if_ops);
-
-                let mut else_ops = self.translate_expr(file, if_false);
-                let elsebr_len = else_ops.len() as u32 + 1;
-
-                tagged.op = Opcode::Jump(elsebr_len);
-                ops.push(tagged);
-                ops.append(&mut else_ops);
-            }
-
-            TCExprKind::Member { base, offset } => {
-                let base_bytes = base.expr_type.repr_size();
-                ops.append(&mut self.translate_expr(file, base));
-                let want_bytes = expr.expr_type.repr_size();
-                let top_bytes = base_bytes - want_bytes - offset;
-                tagged.op = Opcode::Pop { bytes: top_bytes };
-                ops.push(tagged);
-                tagged.op = Opcode::PopKeep {
-                    drop: *offset,
-                    keep: want_bytes,
-                };
-                ops.push(tagged);
-            }
-            &TCExprKind::PtrMember { base, offset } => {
-                let bytes = expr.expr_type.repr_size();
-                ops.append(&mut self.translate_expr(file, base));
-                if expr.expr_type.is_array() {
-                    tagged.op = Opcode::MakeTempU64(offset as u64);
-                    ops.push(tagged);
-                    tagged.op = Opcode::AddU64;
-                    ops.push(tagged);
-                } else {
-                    tagged.op = Opcode::Get {
-                        offset: offset,
-                        bytes,
-                    };
-                    ops.push(tagged);
-                }
-            }
-
-            TCExprKind::Deref(ptr) => {
-                ops.append(&mut self.translate_expr(file, ptr));
-                tagged.op = Opcode::Get {
-                    offset: 0,
-                    bytes: expr.expr_type.repr_size(),
-                };
-                ops.push(tagged);
-            }
-            TCExprKind::Ref(lvalue) => match lvalue.kind {
-                TCAssignTargetKind::LocalIdent { var_offset } => {
-                    tagged.op = Opcode::MakeTempStackFpPtr {
-                        var: var_offset,
-                        offset: 0,
-                    };
-                    ops.push(tagged);
-                }
-                TCAssignTargetKind::Ptr(expr) => {
-                    ops.append(&mut self.translate_expr(file, expr));
-                }
-            },
-
-            TCExprKind::Call {
-                func,
-                params,
-                named_count,
-            } => {
-                let rtype_size = expr.expr_type.repr_size();
-
-                tagged.op = Opcode::StackAlloc {
-                    bytes: rtype_size,
-                    symbol: META_NO_SYMBOL,
-                };
-                ops.push(tagged);
-
-                // Safety allocation to make sure varargs don't run off the stack
-                tagged.op = Opcode::StackAlloc {
-                    bytes: 0,
-                    symbol: META_NO_SYMBOL,
-                };
-                ops.push(tagged);
-
-                for (idx, param) in params.iter().rev().enumerate() {
-                    let bytes = param.expr_type.repr_size();
-
-                    tagged.op = Opcode::StackAlloc {
-                        bytes,
-                        symbol: META_NO_SYMBOL, // TODO this should be the parameter symbol
-                    };
-                    ops.push(tagged);
-                    ops.append(&mut self.translate_expr(file, param));
-                    tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
-                    ops.push(tagged);
-                }
-
-                // Create a pointer to the return location
-                // PERFORMANCE technically this isn't necessary when the function
-                // being called isn't a vararg function
-                tagged.op = Opcode::StackAlloc {
-                    bytes: 8,
-                    symbol: META_NO_SYMBOL,
-                };
-                ops.push(tagged);
-                tagged.op = Opcode::MakeTempStackSpPtr {
-                    var: params.len() as i16 * -1 - 3,
-                    offset: 0,
-                };
-                ops.push(tagged);
-                tagged.op = Opcode::PopIntoTopVar {
-                    offset: 0,
-                    bytes: 8,
-                };
-                ops.push(tagged);
-
-                #[rustfmt::skip] let link_public = LinkName { name: *func, file: n32::NULL };
-                #[rustfmt::skip] let link_static = LinkName { name: *func, file: file.into() };
-
-                let link_pos = if let Some(&link_pos) = self.func_linkage.get(&link_public) {
-                    link_pos
-                } else {
-                    self.func_linkage[&link_static]
-                };
-
-                tagged.op = Opcode::Call(link_pos);
-                ops.push(tagged);
-
-                tagged.op = Opcode::StackDealloc;
-                for _ in 0..params.len() {
-                    ops.push(tagged);
-                }
-                ops.push(tagged); // for the pointer to the return location
-                ops.push(tagged); // for the safety allocation
-
-                if rtype_size == 0 {
-                    //
-                    tagged.op = Opcode::StackDealloc;
-                    ops.push(tagged);
-                } else {
-                    tagged.op = Opcode::StackAddToTemp;
-                    ops.push(tagged);
-                }
-            }
-
-            // TODO
-            TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
-                ops.append(&mut self.translate_expr(file, ecall));
-                tagged.op = Opcode::EcallDyn;
-                ops.push(tagged);
-            }
-            TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
-                ops.append(&mut self.translate_expr(file, size));
-                ops.append(&mut self.translate_expr(file, ptr));
-
-                tagged.op = Opcode::PushDyn;
-                ops.push(tagged);
-            }
-        }
-
-        return ops;
-    }
-
-    pub fn translate_assign(&mut self, file: u32, assign: &TCAssignTarget) -> Vec<TaggedOpcode> {
-        let mut ops = Vec::new();
-        let mut tagged = TaggedOpcode {
-            op: Opcode::StackDealloc,
-            loc: assign.target_loc,
-        };
-
-        match assign.kind {
-            TCAssignTargetKind::Ptr(expr) => {
-                ops.append(&mut self.translate_expr(file, expr));
-                if assign.offset != 0 {
-                    tagged.op = Opcode::MakeTempU64(assign.offset as u64);
-                    ops.push(tagged);
-                    tagged.op = Opcode::AddU64;
-                    ops.push(tagged);
-                }
-            }
-            TCAssignTargetKind::LocalIdent { var_offset } => {
-                tagged.op = Opcode::MakeTempStackFpPtr {
-                    var: var_offset,
-                    offset: assign.offset,
-                };
-                ops.push(tagged);
-            }
-        }
-
-        return ops;
+        self.opcodes.push(tagged);
     }
 
     pub fn assemble(mut self, env: &FileDb) -> Result<Program, Error> {
         let no_main = || error!("missing main function definition");
+        let main_sym = if let Some(sym) = env.translate.get("main") {
+            *sym
+        } else {
+            return Err(no_main());
+        };
+
         let main_link_name = LinkName {
-            name: INIT_SYMS.translate["main"],
+            name: main_sym,
             file: n32::NULL,
         };
+
         let main_func_idx = self.func_linkage.get(&main_link_name).ok_or_else(no_main)?;
 
         let main_func = &self.functions[*main_func_idx as usize];
@@ -883,7 +536,6 @@ impl Assembler {
             .collect();
         let runtime_length = opcodes.len() as u32; // No overflow here because len is predefined
         opcodes.append(&mut self.opcodes);
-
         for (op_idx, op) in opcodes.iter_mut().enumerate() {
             let op_idx = op_idx as u32;
             match &mut op.op {
@@ -892,55 +544,19 @@ impl Assembler {
                     if let Some((fptr, _loc)) = function.func_header {
                         *addr = fptr + runtime_length;
                     } else {
-                        let func_loc = function.func_type.loc;
+                        let func_loc = function.decl_loc;
                         return Err(error!(
                             "couldn't find definition for function",
                             op.loc, "called here", func_loc, "declared here"
                         ));
                     }
                 }
-                Opcode::Jump(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfZero8(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfZero16(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfZero32(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfZero64(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfNotZero8(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfNotZero16(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfNotZero32(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
-                Opcode::JumpIfNotZero64(target) => {
-                    *target = op_idx.wrapping_add(*target);
-                }
                 _ => {}
             }
         }
-        let file_size = align_usize(env.size(), align_of::<HashRefSlot<u32, RuntimeStruct>>());
 
-        let type_struct_slots = self.types.len() * 2;
-        let type_structs_size = align_usize(
-            type_struct_slots * size_of::<HashRefSlot<u32, RuntimeStruct>>(),
-            align_of::<TCStructMember>(),
-        );
-        let type_members_size = align_usize(
-            self.struct_member_count * size_of::<TCStructMember>(),
-            align_of::<RuntimeVar>(),
-        );
-        let types_size = type_members_size + type_structs_size;
+        use core::mem::{align_of, replace, size_of};
+        let file_size = env.size();
 
         let symbols_size = align_usize(
             self.symbols.len() * size_of::<RuntimeVar>(),
@@ -953,36 +569,18 @@ impl Assembler {
         let vars_size = self.data.vars.len() * size_of::<Var>();
         let data_size = var_data_size + vars_size;
 
-        let total_size = file_size + types_size + symbols_size + opcodes_size + data_size;
-        let buckets = BucketListFactory::with_capacity(total_size);
+        let total_size = file_size + symbols_size + opcodes_size + data_size;
+        let buckets = BucketListFactory::with_capacity(total_size + 16);
         let mut frame = buckets.frame(total_size).unwrap();
 
-        macro_rules! type_mapper {
-            () => {
-                |(id, value)| {
-                    let mapper = |members: &Vec<_>| &*frame.add_slice(members);
-                    let runtime_struct = RuntimeStruct {
-                        members: value.members.as_ref().map(mapper),
-                        loc: value.loc,
-                        sa: value.sa,
-                    };
-
-                    (*id, runtime_struct)
-                }
-            };
-        }
-
         let files = FileDbRef::new_from_frame(&mut frame, env);
-        let types: Vec<(u32, RuntimeStruct)> = self.types.iter().map(type_mapper!()).collect();
-        let types = HashRef::new_iter(&mut frame, type_struct_slots, types.into_iter());
-        let symbols = frame.add_array(self.symbols);
+        let symbols = frame.add_array(replace(&mut self.symbols, Vec::new()));
         let ops = frame.add_array(opcodes);
         let data = self.data.write_to_ref(frame);
 
         let program = Program {
             buckets,
             files,
-            types,
             symbols,
             data,
             ops,
@@ -990,4 +588,18 @@ impl Assembler {
 
         return Ok(program);
     }
+}
+
+pub fn func_decl_mismatch(original: CodeLoc, new: CodeLoc) -> Error {
+    return error!(
+        "function declaration type doesn't match previous declaration",
+        original, "original declaration here", new, "second declaration here"
+    );
+}
+
+pub fn func_redef(original: CodeLoc, redef: CodeLoc) -> Error {
+    return error!(
+        "redefinition of function",
+        original, "original definition here", redef, "second definition here"
+    );
 }

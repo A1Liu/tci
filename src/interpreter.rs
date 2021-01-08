@@ -183,19 +183,11 @@ pub struct RuntimeVar {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct RuntimeStruct<'a> {
-    pub members: Option<&'a [TCStructMember]>,
-    pub loc: CodeLoc,
-    pub sa: SizeAlign,
-}
-
 #[derive(Serialize)]
 pub struct Program {
     #[serde(skip)]
     pub buckets: BucketListFactory,
     pub files: FileDbRef<'static>,
-    pub types: HashRef<'static, u32, RuntimeStruct<'static>>,
     pub symbols: &'static [RuntimeVar],
     pub data: VarBufferRef<'static>,
     pub ops: &'static [TaggedOpcode],
@@ -205,7 +197,6 @@ impl fmt::Debug for Program {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         fmt.debug_struct("Program")
             .field("files", &self.files)
-            .field("types", &self.types)
             .field("symbols", &self.symbols)
             .field("data", &self.data)
             .field("ops", &self.ops)

@@ -1,10 +1,5 @@
 use crate::util::*;
 
-#[derive(Debug, Clone, Copy)]
-pub struct ASTProgram<'a> {
-    pub stmts: &'a [GlobalStmt<'a>],
-}
-
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 pub enum BinOp {
     Add,
@@ -29,223 +24,339 @@ pub enum BinOp {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
+pub enum AssignOp {
+    Assign,
+    AssignAdd,
+    AssignSub,
+    AssignMul,
+    AssignDiv,
+    AssignMod,
+    AssignLShift,
+    AssignRShift,
+    AssignBitAnd,
+    AssignBitXor,
+    AssignBitOr,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 pub enum UnaryOp {
     Neg,
     BoolNot,
     BitNot,
+    PostIncr,
+    PostDecr,
+    Deref,
+    Ref,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ExprKind<'a> {
+pub enum ExprKind {
     IntLiteral(i32),
     CharLiteral(i8),
-    StringLiteral(&'a str),
-    SizeofType {
-        sizeof_type: ASTType<'a>,
-        pointer_count: u32,
-    },
-    SizeofExpr(&'a Expr<'a>),
+    StringLiteral(&'static str),
+    ParenList(&'static [Expr]),
     Ident(u32),
-    BinOp(BinOp, &'a Expr<'a>, &'a Expr<'a>),
-    UnaryOp(UnaryOp, &'a Expr<'a>),
-    Not(&'a Expr<'a>),
-    Assign(&'a Expr<'a>, &'a Expr<'a>),
-    MutAssign {
-        target: &'a Expr<'a>,
-        value: &'a Expr<'a>,
-        op: BinOp,
+    BinOp(BinOp, &'static Expr, &'static Expr),
+    Assign {
+        op: AssignOp,
+        to: &'static Expr,
+        expr: &'static Expr,
     },
+    UnaryOp(UnaryOp, &'static Expr),
     Call {
-        function: &'a Expr<'a>,
-        params: &'a [Expr<'a>],
+        function: &'static Expr,
+        params: &'static [Expr],
     },
-    Cast {
-        cast_to: ASTType<'a>,
-        pointer_count: u32,
-        cast_to_loc: CodeLoc,
-        expr: &'a Expr<'a>,
-    },
-    Member {
-        base: &'a Expr<'a>,
-        member: u32,
-    },
-    PtrMember {
-        base: &'a Expr<'a>,
-        member: u32,
-    },
-    BraceList(&'a [Expr<'a>]),
-    ParenList(&'a [Expr<'a>]),
-    PostIncr(&'a Expr<'a>),
-    PostDecr(&'a Expr<'a>),
-    Ref(&'a Expr<'a>),
-    Deref(&'a Expr<'a>),
     Ternary {
-        condition: &'a Expr<'a>,
-        if_true: &'a Expr<'a>,
-        if_false: &'a Expr<'a>,
+        condition: &'static Expr,
+        if_true: &'static Expr,
+        if_false: &'static Expr,
     },
-    Uninit,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Expr<'a> {
-    pub kind: ExprKind<'a>,
+pub struct Expr {
+    pub kind: ExprKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DeclReceiver<'a> {
-    pub pointer_count: u32,
-    pub ident: u32,
-    pub array_dims: &'a [u32],
+pub struct Declaration {
+    pub specifiers: &'static [DeclarationSpecifier],
+    pub declarators: &'static [InitDeclarator],
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct InnerStructDecl<'a> {
-    pub decl_type: ASTType<'a>,
-    pub recv: DeclReceiver<'a>,
+pub enum DeclarationSpecifierKind {
+    Extern,
+    Static,
+    Typedef,
+    TypeSpecifier(TypeSpecifier),
+    TypeQualifier(TypeQualifier),
+    Inline,   // __inline__
+    Noreturn, // _Noreturn
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DeclarationSpecifier {
+    pub kind: DeclarationSpecifierKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ParamKind<'a> {
-    StructLike {
-        decl_type: ASTType<'a>,
-        recv: DeclReceiver<'a>,
-    },
-    TypeOnly {
-        decl_type: ASTType<'a>,
-        pointer_count: u32,
-        array_dims: &'a [u32],
-    },
-    Vararg,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ParamDecl<'a> {
-    pub kind: ParamKind<'a>,
+pub struct InitDeclarator {
+    pub declarator: Declarator,
+    pub initializer: Option<Initializer>,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum StructDecl<'a> {
-    Named(u32),
-    NamedDef {
-        ident: u32,
-        members: &'a [InnerStructDecl<'a>],
-    },
-    Unnamed(&'a [InnerStructDecl<'a>]),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Decl<'a> {
-    pub recv: DeclReceiver<'a>,
-    pub loc: CodeLoc,
-    pub expr: Expr<'a>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum GlobalStmtKind<'a> {
-    Func {
-        // TODO func declaration span separate from global_stmt.span
-        return_type: ASTType<'a>,
-        pointer_count: u32,
-        ident: u32,
-        params: &'a [ParamDecl<'a>],
-        body: &'a [Stmt<'a>],
-    },
-    FuncDecl {
-        return_type: ASTType<'a>,
-        pointer_count: u32,
-        ident: u32,
-        params: &'a [ParamDecl<'a>],
-    },
-    StructDecl(StructDecl<'a>),
-    Typedef {
-        ast_type: ASTType<'a>,
-        recv: DeclReceiver<'a>,
-    },
-    Decl {
-        decl_type: ASTType<'a>,
-        decls: &'a [Decl<'a>],
-    },
-    PragmaEnableBuiltins,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct GlobalStmt<'a> {
-    pub kind: GlobalStmtKind<'a>,
-    pub loc: CodeLoc,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ASTTypeKind<'a> {
-    Struct(StructDecl<'a>),
-    Ident(u32),
+pub enum TypeSpecifier {
+    Void,
+    Char,
+    Short,
     Int,
     Long,
-    Char,
+    Float,
+    Double,
+    Signed,
     Unsigned,
-    Void,
-    LongLong,
-    UnsignedLong,
-    UnsignedLongLong,
-    UnsignedChar,
+    Struct(StructType),
+    Union(StructType),
+    Ident(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ASTType<'a> {
-    pub kind: ASTTypeKind<'a>,
-    pub is_static: bool,
+pub enum TypeQualifierKind {
+    // Const,
+    Volatile,
+    // Restrict,
+    Atomic,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeQualifier {
+    pub kind: TypeQualifierKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum StmtKind<'a> {
-    Decl {
-        decl_type: ASTType<'a>,
-        decls: &'a [Decl<'a>],
+pub struct StructType {
+    pub ident: n32,
+    pub declarations: &'static [StructField],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StructField {
+    pub specifiers: &'static [SpecifierQualifier],
+    pub declarators: &'static [StructDeclarator],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SpecifierQualifierKind {
+    TypeSpecifier(TypeSpecifier),
+    TypeQualifier(TypeQualifier),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SpecifierQualifier {
+    pub kind: SpecifierQualifierKind,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeName {
+    pub specifiers: &'static [SpecifierQualifier],
+    pub declarator: Option<Declarator>,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StructDeclarator {
+    pub declarator: Declarator,
+    pub bit_width: Option<&'static Expr>,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DeclaratorKind {
+    Abstract,
+    Identifier(u32),
+    Declarator(&'static Declarator),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Declarator {
+    pub kind: DeclaratorKind,
+    pub derived: &'static [DerivedDeclarator],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PointerQuals {
+    pub quals: &'static [TypeQualifier],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DerivedDeclaratorKind {
+    Pointer(&'static [TypeQualifier]),
+    Array(ArrayDeclarator),
+    Function(FunctionDeclarator),
+    EmptyFunction,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DerivedDeclarator {
+    pub kind: DerivedDeclaratorKind,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ArrayDeclarator {
+    pub qualifiers: &'static [TypeQualifier],
+    pub size: ArraySize,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionDeclarator {
+    pub parameters: &'static [ParameterDeclaration],
+    pub varargs: bool,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ArraySizeKind {
+    Unknown,
+    // VariableUnknown,
+    VariableExpression(&'static Expr),
+    // StaticExpression(&'static Expr),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ArraySize {
+    pub kind: ArraySizeKind,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParameterDeclaration {
+    pub specifiers: &'static [DeclarationSpecifier],
+    pub declarator: Option<Declarator>,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InitializerKind {
+    Expr(&'static Expr),
+    List(&'static [Expr]), // TODO support initializer list syntax
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Initializer {
+    pub kind: InitializerKind,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionDefinition {
+    pub specifiers: &'static [DeclarationSpecifier],
+    pub ident: u32,
+    pub pointer: &'static [PointerQuals],
+    pub params: Option<FunctionDeclarator>,
+    pub statements: Block,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlockItemKind {
+    Statement(Statement),
+    Declaration(Declaration),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BlockItem {
+    pub kind: BlockItemKind,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Block {
+    pub stmts: &'static [BlockItem],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StatementKind {
+    Labeled {
+        label: u32,
+        label_loc: CodeLoc,
+        stmt: &'static Statement,
     },
-    Expr(Expr<'a>),
-    Nop,
+    CaseLabeled {
+        case_value: Expr,
+        stmt: &'static Statement,
+    },
+    DefaultCaseLabeled(&'static Statement),
+    Goto {
+        label: u32,
+        label_loc: CodeLoc,
+    },
+    Expr(Expr),
     Ret,
-    RetVal(Expr<'a>),
+    RetVal(Expr),
     Branch {
-        if_cond: Expr<'a>,
-        if_body: Block<'a>,
-        else_body: Block<'a>,
+        if_cond: Expr,
+        if_body: &'static Statement,
+        else_body: Option<&'static Statement>,
     },
-    Block(Block<'a>),
+    Block(Block),
     For {
-        at_start: Expr<'a>,
-        condition: Expr<'a>,
-        post_expr: Expr<'a>,
-        body: Block<'a>,
+        at_start: Option<Expr>,
+        condition: Option<Expr>,
+        post_expr: Option<Expr>,
+        body: &'static Statement,
     },
     ForDecl {
-        at_start_decl_type: ASTType<'a>,
-        at_start: &'a [Decl<'a>],
-        condition: Expr<'a>,
-        post_expr: Expr<'a>,
-        body: Block<'a>,
+        decl: Declaration,
+        condition: Option<Expr>,
+        post_expr: Option<Expr>,
+        body: &'static Statement,
     },
     While {
-        condition: Expr<'a>,
-        body: Block<'a>,
+        condition: Expr,
+        body: &'static Statement,
+    },
+    DoWhile {
+        condition: Expr,
+        body: &'static Statement,
+    },
+    Switch {
+        expr: Expr,
+        body: &'static Statement,
     },
     Break,
     Continue,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Stmt<'a> {
-    pub kind: StmtKind<'a>,
+pub struct Statement {
+    pub kind: StatementKind,
     pub loc: CodeLoc,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Block<'a> {
-    pub stmts: &'a [Stmt<'a>],
+pub enum GlobalStatementKind {
+    Declaration(Declaration),
+    FunctionDefinition(FunctionDefinition),
+    Pragma(&'static str),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GlobalStatement {
+    pub kind: GlobalStatementKind,
     pub loc: CodeLoc,
 }

@@ -20,21 +20,15 @@ mod commands;
 mod filedb;
 mod interpreter;
 mod lexer;
-mod new_assembler;
-mod new_ast;
-mod new_parser;
-mod new_tc_ast;
-mod new_tc_structs;
-mod new_type_checker;
 mod parser;
 mod preprocessor;
 mod tc_ast;
+mod tc_structs;
 mod type_checker;
 
 #[cfg(test)]
 mod test;
 
-use buckets::Allocator;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
 use core::mem;
 use core::ops::Deref;
@@ -47,7 +41,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use util::*;
 
-fn new_compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
+fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
     let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
     let mut errors: Vec<Error> = Vec::new();
@@ -77,7 +71,7 @@ fn new_compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
 
     let mut trees = HashMap::new();
     for (file, toks) in processed_tokens {
-        match new_parser::parse(&toks) {
+        match parser::parse(&toks) {
             Ok(env) => std::mem::drop(trees.insert(file, env)),
             Err(err) => errors.push(err),
         }
@@ -91,7 +85,7 @@ fn new_compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
 
     let mut tu_map = HashMap::new();
     for (file, tree) in trees {
-        match new_type_checker::check_tree(env, &tree.tree) {
+        match type_checker::check_tree(env, &tree.tree) {
             Ok(tu) => std::mem::drop(tu_map.insert(file, tu)),
             Err(err) => errors.push(err),
         }
@@ -101,7 +95,7 @@ fn new_compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
         return Err(errors);
     }
 
-    let mut assembler = new_assembler::Assembler::new();
+    let mut assembler = assembler::Assembler::new();
 
     for (file, tu) in tu_map {
         match assembler.add_file(file, tu) {
@@ -116,113 +110,6 @@ fn new_compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
     };
 
     return Ok(program);
-}
-
-fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
-    let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
-    let mut buckets_begin = buckets;
-    let mut tokens = lexer::TokenDb::new();
-    let mut errors: Vec<Error> = Vec::new();
-
-    let files_list = env.vec();
-    let files = files_list.iter();
-    files.for_each(|&id| {
-        let result = lexer::lex_file(&*buckets, &mut tokens, env, id);
-        match result {
-            Err(err) => {
-                errors.push(err);
-            }
-            Ok(_) => {}
-        }
-    });
-
-    if errors.len() != 0 {
-        return Err(errors);
-    }
-
-    while let Some(n) = buckets.next() {
-        buckets = n;
-    }
-    buckets = buckets.force_next();
-
-    tokens = tokens
-        .keys()
-        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
-            Ok(toks) => {
-                if let Some(n) = buckets.next() {
-                    buckets = n;
-                }
-
-                Some((file, &*buckets.add_array(toks)))
-            }
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        })
-        .collect();
-
-    if errors.len() != 0 {
-        return Err(errors);
-    }
-
-    let mut parser = parser::Parser::new();
-    let iter = tokens.keys().filter_map(|&file| {
-        while let Some(n) = buckets.next() {
-            buckets = n;
-        }
-
-        match parser.parse_tokens(buckets, &tokens, file) {
-            Ok(x) => return Some((x, file)),
-            Err(err) => {
-                errors.push(err);
-                return None;
-            }
-        }
-    });
-    let asts: Vec<(ast::ASTProgram, u32)> = iter.collect();
-
-    while let Some(n) = buckets.next() {
-        buckets = n;
-    }
-    buckets = buckets.force_next();
-
-    let mut assembler = assembler::Assembler::new();
-    asts.into_iter().for_each(|(ast, file)| {
-        while let Some(n) = buckets.next() {
-            buckets = n;
-        }
-
-        let tfuncs = match type_checker::check_file(buckets, ast, file, env) {
-            Ok(x) => x,
-            Err(err) => {
-                errors.push(err);
-                return;
-            }
-        };
-
-        match assembler.add_file(tfuncs) {
-            Ok(()) => {}
-            Err(err) => {
-                errors.push(err);
-            }
-        }
-    });
-
-    if errors.len() != 0 {
-        return Err(errors);
-    }
-
-    let program = match assembler.assemble(&env) {
-        Ok(x) => x,
-        Err(err) => return Err(err.into()),
-    };
-
-    while let Some(b) = unsafe { buckets_begin.dealloc() } {
-        buckets_begin = b;
-    }
-
-    Ok(program)
 }
 
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {

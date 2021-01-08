@@ -1,6 +1,6 @@
 use crate::buckets::*;
 use crate::filedb::*;
-use crate::new_tc_ast::*;
+use crate::tc_ast::*;
 use crate::util::*;
 
 pub struct ContBr {

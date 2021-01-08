@@ -2,7 +2,7 @@ use crate::filedb::*;
 use crate::interpreter::Runtime;
 use crate::runtime::*;
 use crate::util::*;
-use crate::{compile, emit_err, new_compile};
+use crate::{compile, emit_err};
 use core::mem;
 use std::fs::read_to_string;
 
@@ -10,7 +10,7 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
 
-    let program = match new_compile(files) {
+    let program = match compile(files) {
         Ok(program) => program,
         Err(errs) => {
             emit_err(&errs, &files, &mut writer);

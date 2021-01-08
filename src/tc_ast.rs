@@ -1,8 +1,25 @@
-pub use crate::ast::BinOp;
+use crate::buckets::*;
 use crate::filedb::*;
 use crate::util::*;
 use serde::Serialize;
 use std::io::Write;
+
+pub use crate::ast::{BinOp, UnaryOp};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TCIdent {
+    Ident(u32),
+    // this isn't enough for statics; assembler needs to tag idents with translation unit they came from as well
+    ScopedIdent { scope: CodeLoc, ident: u32 },
+    Anonymous(CodeLoc),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TCUnaryOp {
+    Neg,
+    BoolNot,
+    BitNot,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
 pub struct SizeAlign {
@@ -22,42 +39,6 @@ pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     align: TC_UNKNOWN_ALIGN,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct TCStructMember {
-    pub decl_type: TCType,
-    pub ident: u32,
-    pub loc: CodeLoc,
-    pub offset: u32,
-    pub decl_idx: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TCStructDefnMeta {
-    pub defn_idx: u32,
-    pub loc: CodeLoc,
-    pub sa: SizeAlign,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TCStructDefn {
-    pub members: Vec<TCStructMember>,
-    pub meta: TCStructDefnMeta,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct TCStruct {
-    pub decl_idx: u32,
-    pub defn: Option<TCStructDefn>,
-    pub decl_loc: CodeLoc,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TCTypedef {
-    pub typedef: TCType,
-    pub defn_idx: u32,
-    pub loc: CodeLoc,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
 pub enum TCPrimType {
     I32, // int
@@ -66,8 +47,10 @@ pub enum TCPrimType {
     I64, // long
     I8,  // char
     U8,  // unsigned char
-    Pointer { stride_length: u32 },
+    Pointer { stride: n32 },
 }
+
+pub type TCPrimTypeDiscr = std::mem::Discriminant<TCPrimType>;
 
 impl TCPrimType {
     pub fn discriminant(&self) -> std::mem::Discriminant<TCPrimType> {
@@ -90,9 +73,70 @@ impl TCPrimType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[derive(Debug, Clone, Copy)]
+pub enum TCOpcodeKind {
+    Label(u32),
+    Goto(u32),
+    BranchGoto {
+        // A conditional goto, not checked by assembler
+        condition: TCExpr,
+        goto: u32,
+    },
+
+    ScopeBegin(HashRef<'static, u32, TCType>, u32), // points to scope end
+    ScopeEnd {
+        // points to scope beginning
+        count: u32,
+        begin: u32,
+    },
+
+    // (expr, goto)
+    Switch(&'static [(TCExpr, u32)]),
+
+    Expr(TCExpr),
+    Ret,
+    RetVal(TCExpr),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCOpcode {
+    pub kind: TCOpcodeKind,
+    pub loc: CodeLoc,
+}
+
+impl TCOpcode {
+    pub fn init_local(
+        alloc: impl Allocator<'static>,
+        label: u32,
+        kind: TCExprKind,
+        ty: TCType,
+        loc: CodeLoc,
+    ) -> TCOpcode {
+        let init_expr = TCExpr { kind, ty, loc };
+
+        let expr = TCExpr {
+            kind: TCExprKind::Assign {
+                target: TCAssignTarget {
+                    kind: TCAssignTargetKind::LocalIdent { label },
+                    defn_loc: loc,
+                    ty,
+                    loc,
+                    offset: 0,
+                },
+                value: alloc.add(init_expr),
+            },
+            ty,
+            loc,
+        };
+
+        let kind = TCOpcodeKind::Expr(expr);
+        return TCOpcode { kind, loc };
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
 #[serde(tag = "kind", content = "data")]
-pub enum TCTypeKind {
+pub enum TCTypeBase {
     I32, // int
     U32, // unsigned int
     U64, // unsigned long
@@ -100,416 +144,1085 @@ pub enum TCTypeKind {
     I8,  // char
     U8,  // unsigned char
     Void,
-    Struct { ident: u32, sa: SizeAlign },
-    AnonStruct { loc: CodeLoc, sa: SizeAlign },
-    Ident { ident: u32, sa: SizeAlign },
-    Uninit { size: u32 },
-    BraceList,
+    InternalTypedef(&'static TCType),
+    Typedef {
+        refers_to: &'static TCType,
+        typedef: (u32, CodeLoc),
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
-#[serde(tag = "kind", content = "data")]
-pub enum TCArrayKind {
-    None,
-    Fixed(u32),
-    // Fixed2d { rows: u32, cols: u32 },
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
+#[serde(tag = "modifier", content = "data")]
+pub enum TCTypeModifier {
+    Pointer, // TODO add qualifiers
+    Array(u32),
+    VariableArray,
+    BeginParam(TCType),
+    Param(TCType),
+    VarargsParam,
+    NoParams,
+    UnknownParams,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
+pub struct TCTypeRef<'a> {
+    pub base: TCTypeBase,
+    pub mods: &'a [TCTypeModifier],
+}
+
+impl<'a> TCTy for TCTypeRef<'a> {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
+    fn mods(&self) -> &[TCTypeModifier] {
+        return self.mods;
+    }
+}
+
+impl TCTypeBase {
+    fn get_typedef(&self) -> Option<&'static TCType> {
+        match self {
+            TCTypeBase::InternalTypedef(td) => Some(td),
+            TCTypeBase::Typedef { refers_to, .. } => Some(refers_to),
+            _ => None,
+        }
+    }
+}
+
+pub trait TCTy {
+    fn base(&self) -> TCTypeBase;
+    fn mods(&self) -> &[TCTypeModifier];
+
+    #[inline]
+    fn get_typedef(&self) -> Option<&'static TCType> {
+        self.base().get_typedef()
+    }
+
+    fn display(&self, files: &FileDb) -> String {
+        let mut writer = StringWriter::new();
+
+        match self.base() {
+            TCTypeBase::I8 => write!(writer, "char"),
+            TCTypeBase::U8 => write!(writer, "unsigned char"),
+            TCTypeBase::I32 => write!(writer, "int"),
+            TCTypeBase::U32 => write!(writer, "unsigned int"),
+            TCTypeBase::I64 => write!(writer, "long"),
+            TCTypeBase::U64 => write!(writer, "unsigned long"),
+            TCTypeBase::Void => write!(writer, "void"),
+            TCTypeBase::InternalTypedef(def) => write!(writer, "{}", def.display(files)), // TODO fix this
+            TCTypeBase::Typedef { typedef, .. } => {
+                write!(writer, "{}", files.symbol_to_str(typedef.0))
+            }
+        }
+        .unwrap();
+
+        return writer.to_string();
+    }
+
+    fn expand_typedef(&self, files: &FileDb) -> TCTypeOwned {
+        let mut owned = if let Some(refers_to) = self.get_typedef() {
+            let (base, mods) = (refers_to.base, Vec::from(refers_to.mods));
+            TCTypeOwned { base, mods }
+        } else {
+            let (base, mods) = (self.base(), Vec::new());
+            TCTypeOwned { base, mods }
+        };
+
+        owned.mods.extend(self.mods());
+        return owned;
+    }
+
+    fn is_void(&self) -> bool {
+        if let TCTypeBase::Void = self.base() {
+            if self.mods().len() == 0 {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn ignore_mods(&self) -> TCType {
+        let base = self.base();
+        TCType { base, mods: &[] }
+    }
+
+    fn is_function(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.is_function();
+            }
+
+            return false;
+        }
+
+        if let TCTypeModifier::NoParams = self.mods()[0] {
+            return true;
+        }
+
+        if let TCTypeModifier::UnknownParams = self.mods()[0] {
+            return true;
+        }
+
+        if let TCTypeModifier::BeginParam(_) = self.mods()[0] {
+            return true;
+        }
+
+        return false;
+    }
+
+    fn is_callable(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.is_callable();
+            }
+
+            return false;
+        }
+
+        if self.is_function() {
+            return true;
+        }
+
+        if let TCTypeModifier::Pointer = self.mods()[0] {
+            let (base, mods) = (self.base(), &self.mods()[1..]);
+
+            if (TCTypeRef { base, mods }).is_function() {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn pointer_stride(&self) -> n32 {
+        if let Some(deref) = self.deref() {
+            return deref.size();
+        }
+
+        return n32::NULL;
+    }
+
+    fn is_pointer(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.is_pointer();
+            }
+
+            return false;
+        }
+
+        return let_expr!(TCTypeModifier::Pointer = self.mods()[0])
+            || let_expr!(TCTypeModifier::Array(_) = self.mods()[0])
+            || let_expr!(TCTypeModifier::VariableArray = self.mods()[0]);
+    }
+
+    fn is_integer(&self) -> bool {
+        if self.mods().len() != 0 {
+            return false;
+        }
+
+        match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => return true,
+            TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
+            TCTypeBase::Void => return false,
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_integer(),
+            TCTypeBase::InternalTypedef(def) => return def.is_integer(),
+        }
+    }
+
+    fn is_array(&self) -> bool {
+        if self.mods().len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.is_array();
+            }
+
+            return false;
+        }
+
+        if let TCTypeModifier::Array(_) = self.mods()[0] {
+            return true;
+        }
+
+        if let TCTypeModifier::VariableArray = self.mods()[0] {
+            return true;
+        }
+
+        return false;
+    }
+
+    fn is_complete(&self) -> bool {
+        if let Some(first) = self.mods().first() {
+            match first {
+                TCTypeModifier::Pointer => return true,
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return true,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::Array(i) => return true,
+                TCTypeModifier::VariableArray => return false,
+            }
+        }
+
+        match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => return true,
+            TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
+            TCTypeBase::Void => return false,
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_complete(),
+            TCTypeBase::InternalTypedef(def) => return def.is_complete(),
+        };
+    }
+
+    fn repr_size(&self) -> u32 {
+        let mut multiplier = 1;
+        let mut is_array = false;
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    if is_array {
+                        return multiplier * 8;
+                    } else {
+                        return 8;
+                    }
+                }
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return 8,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::Array(i) => {
+                    multiplier *= i;
+                    is_array = true;
+                }
+                TCTypeModifier::VariableArray => return 8,
+            }
+        }
+
+        let base = match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => 1,
+            TCTypeBase::U32 | TCTypeBase::I32 => 4,
+            TCTypeBase::U64 | TCTypeBase::I64 => 8,
+            TCTypeBase::Void => return 0,
+            TCTypeBase::InternalTypedef(def) => def.repr_size(),
+            TCTypeBase::Typedef { refers_to, .. } => refers_to.repr_size(),
+        };
+
+        return (multiplier * base).into();
+    }
+
+    fn size(&self) -> n32 {
+        let mut multiplier = 1;
+        let mut is_array = false;
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    if is_array {
+                        return (multiplier * 8).into();
+                    } else {
+                        return 8.into();
+                    }
+                }
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return n32::NULL,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::Array(i) => {
+                    multiplier *= i;
+                    is_array = true;
+                }
+                TCTypeModifier::VariableArray => return n32::NULL,
+            }
+        }
+
+        let base = match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => 1,
+            TCTypeBase::U32 | TCTypeBase::I32 => 4,
+            TCTypeBase::U64 | TCTypeBase::I64 => 8,
+            TCTypeBase::Void => return n32::NULL,
+            TCTypeBase::InternalTypedef(def) => {
+                let size = def.size();
+                if size == n32::NULL {
+                    return size;
+                }
+
+                size.into()
+            }
+            TCTypeBase::Typedef { refers_to, .. } => {
+                let size = refers_to.size();
+                if size == n32::NULL {
+                    return size;
+                }
+
+                size.into()
+            }
+        };
+
+        return (multiplier * base).into();
+    }
+
+    /// Panics if called on an incomplete type
+    fn to_prim_type(&self) -> Option<TCPrimType> {
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    let deref = TCTypeRef {
+                        base: self.base(),
+                        mods: &self.mods()[1..],
+                    };
+
+                    let stride = deref.size();
+                    return Some(TCPrimType::Pointer { stride });
+                }
+                TCTypeModifier::Array(_) => {
+                    let deref = TCTypeRef {
+                        base: self.base(),
+                        mods: &self.mods()[1..],
+                    };
+
+                    let stride = deref.size();
+                    return Some(TCPrimType::Pointer { stride });
+                }
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => {
+                    return Some(TCPrimType::Pointer { stride: n32::NULL });
+                }
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::VariableArray => return None,
+            }
+        }
+
+        return match self.base() {
+            TCTypeBase::I8 => Some(TCPrimType::I8),
+            TCTypeBase::U8 => Some(TCPrimType::U8),
+            TCTypeBase::I32 => Some(TCPrimType::I32),
+            TCTypeBase::U32 => Some(TCPrimType::U32),
+            TCTypeBase::I64 => Some(TCPrimType::I64),
+            TCTypeBase::U64 => Some(TCPrimType::U64),
+            TCTypeBase::Void => None,
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.to_prim_type(),
+            TCTypeBase::InternalTypedef(def) => return def.to_prim_type(),
+        };
+    }
+
+    /// Panics if the type is incomplete
+    fn deref(&self) -> Option<TCTypeRef> {
+        assert!(self.is_complete());
+
+        if let Some(first) = self.mods().first() {
+            let base = self.base();
+            let mods = &self.mods()[1..];
+            let to_ret = TCTypeRef { base, mods };
+
+            match first {
+                TCTypeModifier::Pointer => {
+                    if to_ret.is_function() {
+                        let mods = self.mods();
+                        return Some(TCTypeRef { base, mods });
+                    }
+
+                    return Some(to_ret);
+                }
+                TCTypeModifier::Array(_) => return Some(to_ret),
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return None,
+                _ => unreachable!(),
+            }
+        }
+
+        if let Some(def) = self.get_typedef() {
+            return TCTy::deref(def);
+        }
+
+        return None;
+    }
+
+    fn ty_eq(l: &impl TCTy, r: &impl TCTy) -> bool {
+        let (l_base, l_mods) = (l.base(), StackLL::new(l.mods()));
+        let (r_base, r_mods) = (r.base(), StackLL::new(r.mods()));
+        return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+    }
+
+    fn ty_eq_partial<'a, 'b>(
+        l_base: TCTypeBase,
+        l_mods: &StackLL<&[TCTypeModifier]>,
+        r_base: TCTypeBase,
+        r_mods: &StackLL<&[TCTypeModifier]>,
+    ) -> bool {
+        if let Some(l_typedef) = l_base.get_typedef() {
+            if let Some(r_typedef) = r_base.get_typedef() {
+                let (l_base, l_mods) = (l_typedef.base(), l_mods.child(l_typedef.mods()));
+                let (r_base, r_mods) = (r_typedef.base(), r_mods.child(r_typedef.mods()));
+                return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+            } else {
+                let (l_base, l_mods) = (l_typedef.base(), l_mods.child(l_typedef.mods()));
+                return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+            }
+        }
+
+        if let Some(r_typedef) = r_base.get_typedef() {
+            let (r_base, r_mods) = (r_typedef.base(), r_mods.child(r_typedef.mods()));
+            return Self::ty_eq_partial(l_base, &l_mods, r_base, &r_mods);
+        }
+
+        if l_base != r_base {
+            return false;
+        }
+
+        let mut l_mods = l_mods.into_iter().map(|a| *a).flatten();
+        let mut r_mods = r_mods.into_iter().map(|a| *a).flatten();
+        loop {
+            let (l, r) = if let Some(l_mod) = l_mods.next() {
+                if let Some(r_mod) = r_mods.next() {
+                    (l_mod, r_mod)
+                } else {
+                    return false;
+                }
+            } else {
+                if let Some(r_mod) = r_mods.next() {
+                    return false;
+                } else {
+                    return true;
+                }
+            };
+
+            if l != r {
+                return false;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, Serialize)]
 pub struct TCType {
-    pub kind: TCTypeKind,
-    pub pointer_count: u32,
-    pub array_kind: TCArrayKind,
+    pub base: TCTypeBase,
+    pub mods: &'static [TCTypeModifier],
+}
+
+impl CloneInto<'static> for TCTypeBase {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self {
+        match self {
+            Self::InternalTypedef(ty) => {
+                Self::InternalTypedef(alloc.add(ty.clone_into_alloc(alloc)))
+            }
+            &Self::Typedef { refers_to, typedef } => {
+                let refers_to = alloc.add(refers_to.clone_into_alloc(alloc));
+
+                Self::Typedef { refers_to, typedef }
+            }
+            x => *self,
+        }
+    }
+}
+
+impl CloneInto<'static> for TCTypeModifier {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self {
+        match self {
+            Self::BeginParam(ty) => Self::BeginParam(ty.clone_into_alloc(alloc)),
+            Self::Param(ty) => Self::Param(ty.clone_into_alloc(alloc)),
+            _ => *self,
+        }
+    }
+}
+
+impl CloneInto<'static> for TCType {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self {
+        let mut mods = Vec::new();
+        for modifier in self.mods {
+            mods.push(modifier.clone_into_alloc(alloc));
+        }
+        let mods = alloc.add_array(mods);
+
+        return TCType {
+            base: self.base.clone_into_alloc(alloc),
+            mods,
+        };
+    }
 }
 
 impl TCType {
-    pub fn new(kind: TCTypeKind, pointer_count: u32) -> Self {
+    pub fn to_func_type_strict(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
+        if self.mods.len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.to_func_type(alloc);
+            }
+
+            return None;
+        }
+
+        let tc_func_type = match self.mods[0] {
+            TCTypeModifier::UnknownParams => TCFuncType {
+                return_type: TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                },
+                params: None,
+            },
+            TCTypeModifier::NoParams => TCFuncType {
+                return_type: TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                },
+                params: Some(TCParamType {
+                    types: &[],
+                    varargs: false,
+                }),
+            },
+            TCTypeModifier::BeginParam(param) => {
+                let mut params = vec![param];
+                let mut cursor = 1;
+                let mut varargs = false;
+
+                while cursor < self.mods.len() {
+                    match self.mods[cursor] {
+                        TCTypeModifier::Param(p) => params.push(p),
+                        TCTypeModifier::VarargsParam => varargs = true,
+                        _ => break,
+                    }
+
+                    cursor += 1;
+                }
+
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[cursor..],
+                };
+
+                let params = Some(TCParamType {
+                    types: alloc.add_array(params),
+                    varargs,
+                });
+
+                TCFuncType {
+                    return_type,
+                    params,
+                }
+            }
+            _ => return None,
+        };
+
+        return Some(tc_func_type);
+    }
+
+    pub fn to_func_type(&self, alloc: impl Allocator<'static>) -> Option<TCFuncType> {
+        if let Some(deref) = self.deref() {
+            return deref.to_func_type_strict(alloc);
+        }
+
+        return self.to_func_type_strict(alloc);
+    }
+
+    /// Panics if the type is incomplete
+    pub fn deref(&self) -> Option<TCType> {
+        assert!(self.is_complete());
+
+        if let Some(first) = self.mods.first() {
+            let base = self.base;
+            let mods = &self.mods[1..];
+            let to_ret = TCType { base, mods };
+
+            match first {
+                TCTypeModifier::Pointer => {
+                    if to_ret.is_function() {
+                        return Some(*self);
+                    }
+
+                    return Some(to_ret);
+                }
+                TCTypeModifier::Array(_) => return Some(to_ret),
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return None,
+                _ => unreachable!(),
+            }
+        }
+
+        if let Some(def) = self.get_typedef() {
+            return def.deref();
+        }
+
+        return None;
+    }
+
+    pub fn func_parts_strict(&self) -> Option<(TCType, &'static [TCTypeModifier])> {
+        if self.mods.len() == 0 {
+            if let Some(def) = self.get_typedef() {
+                return def.func_parts_strict();
+            }
+
+            return None;
+        }
+
+        let tc_func_type = match self.mods[0] {
+            TCTypeModifier::UnknownParams => {
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                };
+
+                return Some((return_type, &self.mods[..1]));
+            }
+            TCTypeModifier::NoParams => {
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[1..],
+                };
+
+                return Some((return_type, &self.mods[..1]));
+            }
+            TCTypeModifier::BeginParam(param) => {
+                let mut cursor = 1;
+
+                while cursor < self.mods.len() {
+                    match self.mods[cursor] {
+                        TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => {}
+                        _ => break,
+                    }
+
+                    cursor += 1;
+                }
+
+                let return_type = TCType {
+                    base: self.base,
+                    mods: &self.mods[cursor..],
+                };
+
+                return Some((return_type, &self.mods[..cursor]));
+            }
+            _ => return None,
+        };
+    }
+}
+
+impl PartialEq<TCType> for TCType {
+    fn eq(&self, other: &TCType) -> bool {
+        return TCType::ty_eq(self, other);
+    }
+}
+
+impl TCTy for TCType {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
+
+    fn mods(&self) -> &[TCTypeModifier] {
+        return self.mods;
+    }
+}
+
+impl TCType {
+    pub fn new(base: TCTypeBase) -> Self {
+        TCType { base, mods: &[] }
+    }
+
+    pub fn new_ptr(base: TCTypeBase) -> Self {
+        TCType {
+            base,
+            mods: &[TCTypeModifier::Pointer],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Hash)]
+pub struct TCTypeOwned {
+    pub base: TCTypeBase,
+    pub mods: Vec<TCTypeModifier>,
+}
+
+impl TCTypeOwned {
+    pub fn new(base: TCTypeBase) -> Self {
         Self {
-            kind,
-            pointer_count,
-            array_kind: TCArrayKind::None,
+            base,
+            mods: Vec::new(),
         }
     }
 
-    pub fn new_array(kind: TCTypeKind, pointer_count: u32, array_kind: TCArrayKind) -> Self {
-        Self {
-            kind,
-            pointer_count,
-            array_kind,
+    pub fn to_ref(self, alloc: impl Allocator<'static>) -> TCType {
+        TCType {
+            base: self.base,
+            mods: alloc.add_array(self.mods),
         }
     }
 
-    pub fn is_array(&self) -> bool {
-        return self.array_kind != TCArrayKind::None;
-    }
+    pub fn canonicalize(&mut self) {
+        let mut found_func = false;
 
-    pub fn is_pointer(&self) -> bool {
-        match self.array_kind {
-            TCArrayKind::None => {}
-            TCArrayKind::Fixed(_) => return true,
-        }
-
-        return self.pointer_count > 0;
-    }
-
-    pub fn rank(&self) -> u32 {
-        match self.array_kind {
-            TCArrayKind::None => {}
-            TCArrayKind::Fixed(_) => return u32::MAX,
-        }
-
-        if self.pointer_count > 0 {
-            return u32::MAX;
-        }
-
-        match self.kind {
-            TCTypeKind::U8 => return 1,
-            TCTypeKind::I8 => return 2,
-            TCTypeKind::I32 => return 9,
-            TCTypeKind::U32 => return 10,
-            TCTypeKind::I64 => return 11,
-            TCTypeKind::U64 => return 12,
-            _ => {}
-        }
-
-        return 0;
-        // https://overiq.com/c-programming-101/implicit-type-conversion-in-c/
-        // If one operand is of type long double, then the other operand will be
-        // converted to long double and then the result of the operation will be a long double.
-        // Otherwise, If one operand is of type double then the other operand will be
-        // converted to double and the result of the operation will be a double.
-        // Otherwise, If one operand is of type float then the other operand will be
-        // converted to float and the result of the operation will be a float.
-        // Otherwise, If one operand is of type unsigned long int then the other operand
-        // will be converted to unsigned long int and the result of the operation will be an unsigned long int.
-        // Otherwise, If one operand is of type long intand the other is of type unsigned
-        // int then there are two possibilities:
-        //     If long int can represent all the values of an unsigned int, the operand of
-        //     type unsigned int will be converted to long int and the result will be a long int.
-        //     Otherwise, If long int can't represent all the values of an unsigned int,
-        //     the operand of both of the operands will be converted to unsigned long int and
-        //     the result will be an unsigned long int.
-        // Otherwise, If one operand is of type long int then the other operand will be
-        // converted to long int and the result of the operation will be a long int.
-        // Otherwise, If one operand is of type unsigned int then the other operand will be
-        // converted to unsigned int and the result of the operation will be an unsigned int.
-        // Otherwise, If one operand is of type int then the other operand will be converted
-        // to int and the result of the operation will be an int.
-    }
-
-    #[inline]
-    pub fn size(&self) -> u32 {
-        let multiplier = match self.array_kind {
-            TCArrayKind::None => 1,
-            TCArrayKind::Fixed(len) => len,
-        };
-
-        if self.pointer_count > 0 {
-            return 8;
-        }
-
-        use TCTypeKind as TCTK;
-        let element_size = match self.kind {
-            TCTK::U64 | TCTK::I64 => 8,
-            TCTK::I32 | TCTK::U32 => 4,
-            TCTK::I8 | TCTK::U8 => 1,
-            TCTK::Void => 0,
-            TCTK::Struct { sa, .. } => {
-                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
-                sa.size
+        for modifier in &mut self.mods {
+            match modifier {
+                TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams
+                | TCTypeModifier::BeginParam(_) => {
+                    found_func = true;
+                }
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
+                    if found_func {
+                        *modifier = TCTypeModifier::Pointer;
+                    }
+                }
+                _ => {}
             }
-            TCTK::AnonStruct { sa, .. } => {
-                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
-                sa.size
-            }
-            TCTK::Ident { sa, .. } => {
-                debug_assert!(sa.size != TC_UNKNOWN_SIZE);
-                sa.size
-            }
-            TCTK::Uninit { size } => size,
-            TCTK::BraceList => TC_UNKNOWN_SIZE,
-        };
-
-        return element_size * multiplier;
-    }
-
-    pub fn repr_size(&self) -> u32 {
-        match self.array_kind {
-            TCArrayKind::Fixed(len) => return 8,
-            TCArrayKind::None => {}
-        }
-
-        return self.size();
-    }
-
-    #[inline]
-    pub fn align(&self) -> u32 {
-        if self.pointer_count > 0 {
-            return 8;
-        }
-
-        use TCTypeKind as TCTK;
-        match self.kind {
-            TCTK::U64 | TCTK::I64 => 8,
-            TCTK::I32 | TCTK::U32 => 4,
-            TCTK::I8 | TCTK::U8 => 1,
-            TCTK::Void => 0,
-            TCTK::Struct { sa, .. } => {
-                debug_assert!(sa != TC_UNKNOWN_SA);
-                sa.align
-            }
-            TCTK::AnonStruct { sa, .. } => {
-                debug_assert!(sa != TC_UNKNOWN_SA);
-                sa.align
-            }
-            TCTK::Ident { sa, .. } => {
-                debug_assert!(sa != TC_UNKNOWN_SA);
-                sa.align
-            }
-            TCTK::Uninit { size } => size,
-            TCTK::BraceList => TC_UNKNOWN_ALIGN,
         }
     }
 
-    pub fn display(&self, files: &FileDb) -> String {
-        let mut writer = StringWriter::new();
-        #[rustfmt::skip]
-        let result = match self.kind {
-            TCTypeKind::I32 => write!(writer, "int"),
-            TCTypeKind::U32 => write!(writer, "unsigned int"),
-            TCTypeKind::U64 => write!(writer, "unsigned long"),
-            TCTypeKind::I64 => write!(writer, "long"),
-            TCTypeKind::I8 => write!(writer, "char"),
-            TCTypeKind::U8 => write!(writer, "unsigned char"),
-            TCTypeKind::Void => write!(writer, "void"),
-            TCTypeKind::Struct { ident, .. } => write!(writer, "struct {}", files.symbol_to_str(ident)),
-            TCTypeKind::AnonStruct { .. } => write!(writer, "struct ?"),
-            TCTypeKind::Ident{ident, ..} => write!(writer, "{}", files.symbol_to_str(ident)),
-            TCTypeKind::Uninit { .. } => return "void".to_string(),
-            TCTypeKind::BraceList => return "brace_list".to_string()
-        };
-        result.unwrap();
-
-        for i in 0..self.pointer_count {
-            write!(writer, "*").unwrap();
+    pub fn canonicalize_param(&mut self) {
+        if self.is_function() {
+            self.mods.insert(0, TCTypeModifier::Pointer);
         }
 
-        match self.array_kind {
-            TCArrayKind::Fixed(len) => write!(writer, "[{}]", len).unwrap(),
-            TCArrayKind::None => {}
+        for modifier in &mut self.mods {
+            match modifier {
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
+                    *modifier = TCTypeModifier::Pointer;
+                }
+                _ => {}
+            }
         }
-
-        return writer.into_string();
     }
 }
 
-pub const VOID: TCType = TCType {
-    kind: TCTypeKind::Void,
-    pointer_count: 0,
-    array_kind: TCArrayKind::None,
-};
+impl TCTy for TCTypeOwned {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
 
-pub const BRACE_LIST: TCType = TCType {
-    kind: TCTypeKind::BraceList,
-    pointer_count: 0,
-    array_kind: TCArrayKind::None,
-};
-
-#[derive(Debug, Clone)]
-pub struct TCVar {
-    pub decl_type: TCType,
-    pub var_offset: i16, // The offset from the frame pointer for this variable
-    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+    fn mods(&self) -> &[TCTypeModifier] {
+        return &self.mods;
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct TCGlobalVar {
-    pub decl_type: TCType,
-    pub var_offset: u32, // The offset from the binary data beginning
-    pub loc: CodeLoc,    // we allow extern in include files so the file is not known apriori
+#[derive(Debug, Clone, Copy, Hash)]
+pub struct TCTypeMut<'a> {
+    pub base: TCTypeBase,
+    pub mods: &'a [TCTypeModifier],
+}
+
+impl<'a> TCTy for TCTypeMut<'a> {
+    fn base(&self) -> TCTypeBase {
+        return self.base;
+    }
+
+    fn mods(&self) -> &[TCTypeModifier] {
+        return self.mods;
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TCFuncParam {
-    pub param_type: TCType,
-    pub ident: u32,
-    pub loc: CodeLoc,
-}
-
-#[derive(Debug, Clone)]
-pub struct TCFuncType {
-    pub decl_idx: u32,
-    pub return_type: TCType,
-    pub loc: CodeLoc,
-    pub params: Vec<(TCType, CodeLoc)>,
-    pub is_static: bool,
-    pub varargs: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct TCFuncDefn<'a> {
-    pub defn_idx: u32,
-    pub loc: CodeLoc,
-    pub params: Vec<TCFuncParam>,
-    pub stmts: &'a [TCStmt<'a>],
-}
-
-#[derive(Debug, Clone)]
-pub struct TCFunc<'a> {
-    pub func_type: TCFuncType,
-    pub defn: Option<TCFuncDefn<'a>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TCAssignTargetKind<'a> {
-    LocalIdent { var_offset: i16 },
-    Ptr(&'a TCExpr<'a>),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct TCAssignTarget<'a> {
-    pub kind: TCAssignTargetKind<'a>,
-    pub defn_loc: Option<CodeLoc>,
-    pub target_loc: CodeLoc,
-    pub target_type: TCType,
-    pub offset: u32,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TCBuiltin<'a> {
+pub enum TCBuiltin {
     PushTempStack {
-        ptr: &'a TCExpr<'a>,  // always of type void*
-        size: &'a TCExpr<'a>, // always of type size_t
+        ptr: &'static TCExpr,  // always of type void*
+        size: &'static TCExpr, // always of type size_t
     },
-    Ecall(&'a TCExpr<'a>), // always of type `int`
+    Ecall(&'static TCExpr), // always of type `int`
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum TCStmtKind<'a> {
-    RetVal(TCExpr<'a>),
-    Ret,
-    Expr(TCExpr<'a>),
-    Decl {
-        symbol: u32,
-        init: TCExpr<'a>,
-    },
-    Branch {
-        cond: TCExpr<'a>,
-        if_body: TCBlock<'a>,
-        else_body: TCBlock<'a>,
-    },
-    Block(TCBlock<'a>),
-    Loop(TCBlock<'a>),
-    Break,
-    Continue,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct TCStmt<'a> {
-    pub kind: TCStmtKind<'a>,
-    pub loc: CodeLoc,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct TCBlock<'a> {
-    pub stmts: &'a [TCStmt<'a>],
-    pub loc: CodeLoc,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TCExprKind<'a> {
+pub enum TCExprKind {
     Uninit,
     I8Literal(i8),
     I32Literal(i32),
     I64Literal(i64),
     U64Literal(u64),
-    StringLiteral(&'a str),
+    StringLiteral(&'static str),
     LocalIdent {
-        var_offset: i16,
+        label: u32,
+    },
+    GlobalIdent {
+        binary_offset: u32,
+    },
+    /// `ident` isn't ever anonymous
+    FunctionIdent {
+        ident: u32,
     },
 
-    Array(&'a [TCExpr<'a>]),
-
-    BraceList(&'a [TCExpr<'a>]),
-    ParenList(&'a [TCExpr<'a>]),
+    ParenList(&'static [TCExpr]),
 
     BinOp {
         op: BinOp,
         op_type: TCPrimType,
-        left: &'a TCExpr<'a>,
-        right: &'a TCExpr<'a>,
+        left: &'static TCExpr,
+        right: &'static TCExpr,
+    },
+
+    UnaryOp {
+        op: TCUnaryOp,
+        op_type: TCPrimType,
+        operand: &'static TCExpr,
     },
 
     Conv {
         from: TCPrimType,
         to: TCPrimType,
-        expr: &'a TCExpr<'a>,
+        expr: &'static TCExpr,
     },
 
-    PostIncrU32(TCAssignTarget<'a>),
-    PostIncrU64(TCAssignTarget<'a>),
-
     Assign {
-        target: TCAssignTarget<'a>,
-        value: &'a TCExpr<'a>,
+        target: TCAssignTarget,
+        value: &'static TCExpr,
     },
 
     MutAssign {
-        target: TCAssignTarget<'a>,
-        value: &'a TCExpr<'a>,
+        target: TCAssignTarget,
+        value: &'static TCExpr,
         op: BinOp,
         op_type: TCPrimType,
     },
 
+    PostIncr {
+        incr_ty: TCPrimType,
+        value: TCAssignTarget,
+    },
+    PostDecr {
+        decr_ty: TCPrimType,
+        value: TCAssignTarget,
+    },
+
     Ternary {
-        condition: &'a TCExpr<'a>,
-        if_true: &'a TCExpr<'a>,
-        if_false: &'a TCExpr<'a>,
+        condition: &'static TCExpr,
+        if_true: &'static TCExpr,
+        if_false: &'static TCExpr,
     },
 
     Member {
-        base: &'a TCExpr<'a>,
+        base: &'static TCExpr,
         offset: u32,
     },
     PtrMember {
-        base: &'a TCExpr<'a>,
+        base: &'static TCExpr,
         offset: u32,
     },
 
-    Deref(&'a TCExpr<'a>),
-    Ref(TCAssignTarget<'a>),
+    Ref(TCAssignTarget),
+    Deref(&'static TCExpr),
 
     Call {
-        func: u32,
-        params: &'a [TCExpr<'a>],
-        named_count: u32,
+        func: &'static TCExpr,
+        params: &'static [TCExpr],
     },
-    Builtin(TCBuiltin<'a>),
+    Builtin(TCBuiltin),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TCExpr<'a> {
-    pub kind: TCExprKind<'a>,
-    pub expr_type: TCType,
+pub struct TCExpr {
+    pub kind: TCExprKind,
+    pub ty: TCType,
     pub loc: CodeLoc,
 }
 
-impl PartialEq for TCFuncType {
-    fn eq(&self, other: &Self) -> bool {
-        if self.return_type != other.return_type {
+#[derive(Debug, Clone, Copy)]
+pub enum TCAssignTargetKind {
+    LocalIdent { label: u32 },
+    GlobalIdent { binary_offset: u32 },
+    Ptr(&'static TCExpr),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCAssignTarget {
+    pub kind: TCAssignTargetKind,
+    pub defn_loc: CodeLoc,
+    pub loc: CodeLoc,
+    pub ty: TCType,
+    pub offset: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCParamType {
+    pub types: &'static [TCType],
+    pub varargs: bool,
+}
+
+impl CloneInto<'static> for TCParamType {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self::CloneOutput {
+        let mut types = Vec::new();
+        for ty in self.types {
+            types.push(ty.clone_into_alloc(alloc));
+        }
+        let (types, varargs) = (alloc.add_array(types), self.varargs);
+
+        return Self { types, varargs };
+    }
+}
+
+impl PartialEq<TCParamType> for TCParamType {
+    fn eq(&self, o: &Self) -> bool {
+        if self.varargs != o.varargs {
             return false;
         }
 
-        if self.params.len() != other.params.len() {
+        if self.types.len() != o.types.len() {
             return false;
         }
 
-        for i in 0..self.params.len() {
-            if self.params[i].0 != other.params[i].0 {
+        for (t1, t2) in self.types.iter().zip(o.types) {
+            if !TCType::ty_eq(t1, t2) {
                 return false;
             }
         }
 
         return true;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCFuncType {
+    pub return_type: TCType,
+    pub params: Option<TCParamType>,
+}
+
+impl CloneInto<'static> for TCFuncType {
+    type CloneOutput = Self;
+
+    fn clone_into_alloc(&self, alloc: &impl Allocator<'static>) -> Self::CloneOutput {
+        let return_type = self.return_type.clone_into_alloc(alloc);
+        let params = self.params.clone_into_alloc(alloc);
+
+        return Self {
+            return_type,
+            params,
+        };
+    }
+}
+
+impl PartialEq<TCFuncType> for TCFuncType {
+    fn eq(&self, other: &Self) -> bool {
+        if !TCType::ty_eq(&self.return_type, &other.return_type) {
+            return false;
+        }
+
+        return self.params == other.params;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LabelOrLoc {
+    Param(u32),      // Parameter label local to the function
+    LocalIdent(u32), // symbol label local to the function
+    StaticLoc(CodeLoc),
+}
+
+impl LabelOrLoc {
+    pub fn is_static(&self) -> bool {
+        let_expr!(LabelOrLoc::StaticLoc(_) = self)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCVar {
+    pub symbol_label: LabelOrLoc,
+    pub ty: TCType,
+    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StorageClass {
+    Extern,
+    Static,
+    Typedef,
+    Default,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TCDeclInit {
+    Extern,
+    ExternInit(TCExprKind),
+    Static(TCExprKind),
+    Default(TCExprKind),
+    DefaultUninit,
+}
+
+impl TCDeclInit {
+    pub fn is_static(&self) -> bool {
+        let_expr!(Self::Static(_) = self)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCGlobalVar {
+    pub init: TCDeclInit,
+    pub var_idx: u32,
+    pub ty: TCType,
+    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCFuncDefn {
+    pub param_count: u32,
+    pub sym_count: u32,
+    pub ops: &'static [TCOpcode],
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCFunction {
+    pub is_static: bool,
+    pub func_type: TCFuncType,
+    pub decl_loc: CodeLoc,
+    pub defn: Option<TCFuncDefn>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCParamDecl {
+    pub ty: TCType,
+    pub ident: u32,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCParamsDeclarator {
+    pub params: &'static [TCParamDecl],
+    pub varargs: bool,
+}
+
+pub struct TCFunctionDeclarator {
+    pub is_static: bool,
+    pub return_type: TCType,
+    pub ident: u32,
+    pub params: Option<TCParamsDeclarator>,
+    pub loc: CodeLoc,
+}
+
+pub struct TranslationUnit {
+    pub buckets: BucketListFactory,
+    pub typedefs: HashMap<(u32, CodeLoc), TCType>,
+    pub variables: HashMap<TCIdent, TCGlobalVar>,
+    pub functions: HashMap<u32, TCFunction>,
+}
+
+pub struct TCDecl {
+    pub ident: u32,
+    pub init: TCDeclInit,
+    pub ty: TCType,
+    pub loc: CodeLoc,
+}
+
+pub enum DeclarationResult {
+    Typedef {
+        ty: TCType,
+        ident: u32,
+        loc: CodeLoc,
+    },
+    VarDecl(Vec<TCDecl>),
+}
+
+impl Drop for TranslationUnit {
+    fn drop(&mut self) {
+        unsafe { self.buckets.dealloc() };
+    }
+}
+
+impl TranslationUnit {
+    pub fn new() -> Self {
+        Self {
+            buckets: BucketListFactory::new(),
+            typedefs: HashMap::new(),
+            variables: HashMap::new(),
+            functions: HashMap::new(),
+        }
     }
 }
