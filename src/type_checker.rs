@@ -229,10 +229,6 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
                 check_block(&mut func_locals, &mut func_out, func.statements)?;
                 func_locals.close_scope(&mut func_out);
-                func_out.ops.push(TCOpcode {
-                    kind: TCOpcodeKind::Ret,
-                    loc: decl.loc,
-                });
 
                 globals.complete_func_defn(ident, func_out)?;
             }
@@ -422,6 +418,23 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
 
             scope.close_scope(out);
             env.label(out, cb.br, body.loc);
+        }
+
+        StatementKind::Continue => {
+            if env.cont(out, stmt.loc) {
+                return Err(error!(
+                    "continue used when not in a loop",
+                    stmt.loc, "continue used here"
+                ));
+            }
+        }
+        StatementKind::Break => {
+            if env.br(out, stmt.loc) {
+                return Err(error!(
+                    "break used when not in a loop or switch",
+                    stmt.loc, "break used here"
+                ));
+            }
         }
 
         x => unimplemented!("{:#?}", x),

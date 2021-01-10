@@ -365,6 +365,58 @@ impl<'a> TypeEnv<'a> {
         return false;
     }
 
+    pub fn br(&self, env: &mut FuncEnv, loc: CodeLoc) -> bool {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+        let break_label = match self.kind {
+            TypeEnvKind::Local { break_label, .. } => break_label,
+            TypeEnvKind::LocalSwitch { break_label, .. } => break_label.into(),
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        if break_label == n32::NULL {
+            return true;
+        }
+
+        let goto: u32 = break_label.into();
+        let op = TCOpcode {
+            kind: TCOpcodeKind::Goto { goto, scope_idx },
+            loc,
+        };
+
+        env.ops.push(op);
+        return false;
+    }
+
+    pub fn cont(&self, env: &mut FuncEnv, loc: CodeLoc) -> bool {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+        let cont_label = match self.kind {
+            TypeEnvKind::Local { cont_label, .. } => cont_label,
+            TypeEnvKind::LocalSwitch { cont_label, .. } => cont_label,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        if cont_label == n32::NULL {
+            return true;
+        }
+
+        let goto: u32 = cont_label.into();
+        let op = TCOpcode {
+            kind: TCOpcodeKind::Goto { goto, scope_idx },
+            loc,
+        };
+
+        env.ops.push(op);
+        return false;
+    }
+
     pub fn goto_ifz(&self, env: &mut FuncEnv, cond: TCExpr, goto: u32, loc: CodeLoc) -> bool {
         let scope_idx = match self.kind {
             TypeEnvKind::Local { scope_idx, .. } => scope_idx,

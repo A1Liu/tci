@@ -212,16 +212,33 @@ impl Assembler {
             }
         }
 
-        for t_op in defn.ops {
+        if let TCOpcodeKind::ScopeBegin(vars, _) = defn.ops[0].kind {
+            let mut op = TaggedOpcode::new(Opcode::Ret, defn.ops[0].loc);
+
+            for (&var, &ty) in vars {
+                if var_offsets[var as usize] < 0 {
+                    continue;
+                }
+
+                op.op = Opcode::StackAlloc {
+                    bytes: ty.size().into(),
+                    symbol: META_NO_SYMBOL,
+                };
+
+                self.opcodes.push(op);
+                var_offsets[var as usize] = next_offset;
+                next_offset += 1;
+            }
+        } else {
+            panic!("idk what happened man");
+        }
+
+        for t_op in &defn.ops[1..(defn.ops.len() - 1)] {
             let mut op = TaggedOpcode::new(Opcode::Ret, t_op.loc);
 
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, _) => {
                     for (&var, &ty) in vars {
-                        if var_offsets[var as usize] < 0 {
-                            continue;
-                        }
-
                         op.op = Opcode::StackAlloc {
                             bytes: ty.size().into(),
                             symbol: META_NO_SYMBOL,
@@ -331,6 +348,21 @@ impl Assembler {
                 x => unimplemented!("{:?}", x),
             }
         }
+
+        let last = defn.ops[defn.ops.len() - 1];
+        if let TCOpcodeKind::ScopeEnd { count, begin } = last.kind {
+            let mut op = TaggedOpcode::new(Opcode::StackDealloc, last.loc);
+            op.op = Opcode::StackDealloc;
+
+            for _ in 0..(count - defn.param_count) {
+                self.opcodes.push(op);
+            }
+
+            next_offset -= count as i16;
+        } else {
+        }
+
+        self.opcodes.push(TaggedOpcode::new(Opcode::Ret, defn.loc));
     }
 
     /// inserts stack deallocs and stack allocs to solve scope problems
