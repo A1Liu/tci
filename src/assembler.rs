@@ -17,6 +17,7 @@ pub struct Assembler {
     pub opcodes: Vec<TaggedOpcode>,
     pub func_linkage: HashMap<LinkName, u32>,
     pub functions: Vec<ASMFunc>,
+    pub function_temps: Vec<u32>,
     pub data: VarBuffer,
     pub symbols: Vec<RuntimeVar>,
     pub labels: Vec<u32>,
@@ -53,8 +54,8 @@ pub struct LabelData {
     pub scope_idx: u32,
 }
 
-pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
-    return vec![
+lazy_static! {
+    pub static ref INIT_MAIN :Vec<Opcode> = vec![
         Opcode::StackAlloc {
             bytes: 4,
             symbol: META_NO_SYMBOL,
@@ -68,7 +69,8 @@ pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
             offset: 0,
             bytes: 8,
         },
-        Opcode::Call(main_idx),
+        Opcode::Ret, // Placeholder for main idx
+        Opcode::CallDyn,
         Opcode::StackDealloc,
         Opcode::GetLocal {
             var: 0,
@@ -80,6 +82,8 @@ pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
     ];
 }
 
+pub const INIT_MAIN_PLACEHOLDER_IDX: usize = 4;
+
 impl Assembler {
     pub fn new() -> Self {
         Self {
@@ -88,6 +92,7 @@ impl Assembler {
             data: VarBuffer::new(),
             func_linkage: HashMap::new(),
             functions: Vec::new(),
+            function_temps: Vec::new(),
             symbols: Vec::new(),
             labels: Vec::new(),
         }
@@ -213,9 +218,13 @@ impl Assembler {
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, _) => {
                     for (&var, &ty) in vars {
+                        if var_offsets[var as usize] < 0 {
+                            continue;
+                        }
+
                         op.op = Opcode::StackAlloc {
                             bytes: ty.size().into(),
-                            symbol: self.symbols.len() as u32,
+                            symbol: META_NO_SYMBOL,
                         };
 
                         self.opcodes.push(op);
@@ -240,6 +249,7 @@ impl Assembler {
                     next_offset -= count as i16;
                 }
                 TCOpcodeKind::Ret => {
+                    // TODO make sure stack deallocs happen
                     op.op = Opcode::Ret;
                     self.opcodes.push(op);
                 }
@@ -378,13 +388,6 @@ impl Assembler {
                 };
 
                 self.opcodes.push(tagged);
-
-                // TODO add runtime var support
-                // self.symbols.push(RuntimeVar {
-                //     symbol: *symbol,
-                //     decl_type: ty.clone_into_alloc(&*self.buckets),
-                //     loc: t_op.loc,
-                // });
             }
         }
     }
@@ -436,7 +439,8 @@ impl Assembler {
             TCExprKind::FunctionIdent { ident } => {
                 let link_name = env.link_names[ident];
                 let id = self.func_linkage[&link_name];
-                tagged.op = Opcode::MakeTempU64(id as u64);
+                self.function_temps.push(self.opcodes.len() as u32);
+                tagged.op = Opcode::MakeTempU32(id);
                 self.opcodes.push(tagged);
             }
 
@@ -452,6 +456,46 @@ impl Assembler {
                 }
             }
 
+            TCExprKind::PostIncr { incr_ty, value } => {
+                use TCPrimType::*;
+                self.translate_assign(env, value);
+                tagged.op = Opcode::PushDup { bytes: 8 };
+                self.opcodes.push(tagged);
+                let bytes: u32 = incr_ty.size() as u32;
+                tagged.op = Opcode::Get { offset: 0, bytes };
+                self.opcodes.push(tagged);
+                tagged.op = Opcode::PushDup { bytes };
+                self.opcodes.push(tagged);
+                match incr_ty {
+                    I32 | U32 => {
+                        tagged.op = Opcode::MakeTempU32(1);
+                        self.opcodes.push(tagged);
+                        tagged.op = Opcode::AddU32;
+                        self.opcodes.push(tagged);
+                    }
+                    I64 | U64 => {
+                        tagged.op = Opcode::MakeTempU64(1);
+                        self.opcodes.push(tagged);
+                        tagged.op = Opcode::AddU64;
+                        self.opcodes.push(tagged);
+                    }
+                    Pointer { stride } => {
+                        let stride: u32 = stride.into();
+                        tagged.op = Opcode::MakeTempU64(stride as u64);
+                        self.opcodes.push(tagged);
+                        tagged.op = Opcode::AddU64;
+                        self.opcodes.push(tagged);
+                    }
+                    x => unimplemented!("post incr for {:?}", x),
+                }
+
+                let top = bytes * 2;
+                tagged.op = Opcode::Swap { top, bottom: 8 };
+                self.opcodes.push(tagged);
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                self.opcodes.push(tagged);
+            }
+
             TCExprKind::BinOp {
                 op,
                 op_type,
@@ -461,6 +505,15 @@ impl Assembler {
                 self.translate_expr(env, left);
                 self.translate_expr(env, right);
                 self.translate_bin_op(*op, *op_type, tagged.loc);
+            }
+
+            TCExprKind::UnaryOp {
+                op,
+                op_type,
+                operand,
+            } => {
+                self.translate_expr(env, operand);
+                self.translate_un_op(*op, *op_type, tagged.loc);
             }
 
             TCExprKind::Conv { from, to, expr } => {
@@ -495,6 +548,37 @@ impl Assembler {
 
                 if let Some(opcode) = opcode {
                     tagged.op = opcode;
+                    self.opcodes.push(tagged);
+                }
+            }
+
+            // TODO fix this with array members
+            TCExprKind::Member { base, offset } => {
+                let base_bytes = base.ty.repr_size();
+                self.translate_expr(env, base);
+                let want_bytes = expr.ty.repr_size();
+                let top_bytes = base_bytes - want_bytes - offset;
+                tagged.op = Opcode::Pop { bytes: top_bytes };
+                self.opcodes.push(tagged);
+                tagged.op = Opcode::PopKeep {
+                    drop: *offset,
+                    keep: want_bytes,
+                };
+                self.opcodes.push(tagged);
+            }
+            &TCExprKind::PtrMember { base, offset } => {
+                let bytes = expr.ty.repr_size();
+                self.translate_expr(env, base);
+                if expr.ty.is_array() {
+                    tagged.op = Opcode::MakeTempU64(offset as u64);
+                    self.opcodes.push(tagged);
+                    tagged.op = Opcode::AddU64;
+                    self.opcodes.push(tagged);
+                } else {
+                    tagged.op = Opcode::Get {
+                        offset: offset,
+                        bytes,
+                    };
                     self.opcodes.push(tagged);
                 }
             }
@@ -585,7 +669,45 @@ impl Assembler {
                     self.opcodes.push(tagged);
                 }
             }
-            x => unimplemented!("{:?}", x),
+
+            TCExprKind::Ternary {
+                condition,
+                cond_ty,
+                if_true,
+                if_false,
+            } => {
+                let new_label = self.labels.len() as u32;
+                self.labels.push(!0);
+                self.translate_expr(env, condition);
+
+                tagged.op = match cond_ty.size() {
+                    1 => Opcode::JumpIfZero8(new_label),
+                    2 => Opcode::JumpIfZero16(new_label),
+                    4 => Opcode::JumpIfZero32(new_label),
+                    8 => Opcode::JumpIfZero64(new_label),
+                    _ => unreachable!(),
+                };
+                self.opcodes.push(tagged);
+
+                self.translate_expr(env, if_true);
+                self.labels[new_label as usize] = self.opcodes.len() as u32;
+                self.translate_expr(env, if_false);
+            }
+
+            TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
+                self.translate_expr(env, ecall);
+                tagged.op = Opcode::EcallDyn;
+                self.opcodes.push(tagged);
+            }
+            TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
+                self.translate_expr(env, size);
+                self.translate_expr(env, ptr);
+
+                tagged.op = Opcode::PushDyn;
+                self.opcodes.push(tagged);
+            }
+
+            x => unimplemented!("{:#?}", x),
         }
     }
 
@@ -608,6 +730,21 @@ impl Assembler {
                     var,
                     offset: assign.offset,
                 };
+                self.opcodes.push(tagged);
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn translate_un_op(&mut self, op: TCUnaryOp, op_type: TCPrimType, loc: CodeLoc) {
+        use TCPrimType::*;
+        use TCUnaryOp::*;
+        let mut tagged = TaggedOpcode::new(Opcode::Ret, loc);
+        match (op, op_type) {
+            (Neg, I32) => {
+                tagged.op = Opcode::MakeTempI32(-1);
+                self.opcodes.push(tagged);
+                tagged.op = Opcode::MulI32;
                 self.opcodes.push(tagged);
             }
             _ => unimplemented!(),
@@ -711,28 +848,70 @@ impl Assembler {
 
         let main_func = &self.functions[*main_func_idx as usize];
         let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
-        let mut opcodes: Vec<TaggedOpcode> = init_main_no_args(*main_func_idx)
+
+        let runtime_length = INIT_MAIN.len() as u32; // No overflow here because len is predefined
+        let main_idx = main_idx + runtime_length;
+
+        let mut opcodes: Vec<TaggedOpcode> = INIT_MAIN
             .iter()
             .map(|&op| TaggedOpcode { op, loc: main_loc })
             .collect();
-        let runtime_length = opcodes.len() as u32; // No overflow here because len is predefined
+        opcodes[INIT_MAIN_PLACEHOLDER_IDX] = TaggedOpcode {
+            op: Opcode::MakeTempU64(main_idx as u64),
+            loc: main_loc,
+        };
         opcodes.append(&mut self.opcodes);
-        for (op_idx, op) in opcodes.iter_mut().enumerate() {
-            let op_idx = op_idx as u32;
+
+        for op in opcodes.iter_mut() {
             match &mut op.op {
-                Opcode::Call(addr) => {
-                    let function = &self.functions[*addr as usize];
-                    if let Some((fptr, _loc)) = function.func_header {
-                        *addr = fptr + runtime_length;
-                    } else {
-                        let func_loc = function.decl_loc;
-                        return Err(error!(
-                            "couldn't find definition for function",
-                            op.loc, "called here", func_loc, "declared here"
-                        ));
-                    }
+                Opcode::Jump(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfZero8(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfZero16(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfZero32(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfZero64(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfNotZero8(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfNotZero16(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfNotZero32(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
+                }
+                Opcode::JumpIfNotZero64(target) => {
+                    *target = self.labels[*target as usize] + runtime_length;
                 }
                 _ => {}
+            }
+        }
+
+        for &temp in &self.function_temps {
+            let idx = temp + runtime_length;
+
+            if let Opcode::MakeTempU32(func) = opcodes[idx as usize].op {
+                let function = &self.functions[func as usize];
+                if let Some((fptr, _loc)) = function.func_header {
+                    let fptr = fptr + runtime_length;
+                    opcodes[idx as usize].op = Opcode::MakeTempU64(fptr as u64);
+                } else {
+                    let func_loc = function.decl_loc;
+                    return Err(error!(
+                        "couldn't find definition for function",
+                        opcodes[idx as usize].loc, "called here", func_loc, "declared here"
+                    ));
+                }
+            } else {
+                panic!("invariant ruined");
             }
         }
 

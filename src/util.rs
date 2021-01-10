@@ -964,6 +964,16 @@ impl Into<u32> for n32 {
     }
 }
 
+impl Into<u32> for &n32 {
+    fn into(self) -> u32 {
+        if self == &n32::NULL {
+            panic!("NullPointerException");
+        }
+
+        return self.data;
+    }
+}
+
 impl From<u32> for n32 {
     fn from(data: u32) -> Self {
         Self::new(data)

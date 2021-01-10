@@ -1242,7 +1242,7 @@ impl Memory {
         let stack_end = self.historical_data.len();
 
         self.expr_stack
-            .extend_from_slice(&self.stack.data[var.idx..(var.idx + var.len as usize)]);
+            .extend_from_slice(&self.stack.data[var.idx..]);
         self.stack.data.resize(var.idx, 0); // should always get smaller
         self.push_history(MAKind::PopStackVar {
             meta: var.meta,
@@ -1301,7 +1301,7 @@ impl Memory {
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
-                self.stack.data.len(),
+                self.expr_stack.len(),
             );
         }
 
@@ -1383,7 +1383,7 @@ impl Memory {
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
-                self.stack.data.len(),
+                self.expr_stack.len(),
             );
         }
 
@@ -1394,7 +1394,7 @@ impl Memory {
         self.historical_data.extend_from_slice(from_bytes);
         let value_end = self.historical_data.len();
 
-        self.stack.data.resize(lower, 0);
+        self.expr_stack.resize(lower, 0);
         self.push_history(MAKind::PopStack {
             value_start,
             value_end,
@@ -1412,7 +1412,7 @@ impl Memory {
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
-                self.stack.data.len(),
+                self.expr_stack.len(),
             );
         }
 
@@ -1452,7 +1452,7 @@ impl Memory {
                 "StackTooShort",
                 "tried to read {} bytes from stack when stack is only {} bytes long",
                 bytes,
-                self.stack.data.len(),
+                self.expr_stack.len(),
             );
         }
 
@@ -1481,7 +1481,7 @@ impl Memory {
                 "StackTooShort",
                 "tried to pop {} bytes from stack when stack is only {} bytes long",
                 len,
-                self.stack.data.len(),
+                self.expr_stack.len(),
             );
         }
 
@@ -1494,7 +1494,7 @@ impl Memory {
 
         let mut out = mem::MaybeUninit::uninit();
         unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
-        self.stack.data.resize(lower, 0);
+        self.expr_stack.resize(lower, 0);
         self.push_history(MAKind::PopStack {
             value_start,
             value_end,

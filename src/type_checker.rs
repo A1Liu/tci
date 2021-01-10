@@ -115,12 +115,13 @@ lazy_static! {
                 ));
             }
 
-            let void = TCType::new_ptr(TCTypeBase::Void);
+            let void_ptr = TCType::new_ptr(TCTypeBase::Void);
+            let void = TCType::new(TCTypeBase::Void);
             let uint = TCType::new(TCTypeBase::U32);
 
             let ptr = check_expr(&mut *env, &args[0])?;
-            let or_else = || param_conversion_error(void, &ptr);
-            let ptr = assign_convert(&*env, void, ptr, call_loc).ok_or_else(or_else)?;
+            let or_else = || param_conversion_error(void_ptr, &ptr);
+            let ptr = assign_convert(&*env, void_ptr, ptr, call_loc).ok_or_else(or_else)?;
 
             let size = check_expr(&mut *env, &args[1])?;
             let or_else = || param_conversion_error(uint, &size);
@@ -1598,7 +1599,7 @@ pub fn prim_unify(
     if l.ty == r.ty {
         return Ok((l, r, l_prim));
     }
-    let r_prim = l.ty.to_prim_type().ok_or_else(ptype_err(l.loc))?;
+    let r_prim = r.ty.to_prim_type().ok_or_else(ptype_err(r.loc))?;
 
     if l.ty.is_pointer() && r.ty.is_pointer() {
         // void*
