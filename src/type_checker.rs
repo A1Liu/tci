@@ -76,6 +76,9 @@ macro_rules! gen_type_decl_spec {
     };
 }
 
+type BuiltinTransform =
+    for<'a, 'b, 'c> fn(&'a mut TypeEnv<'b>, CodeLoc, &'c [Expr]) -> Result<TCExpr, Error>;
+
 lazy_static! {
     pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, TCTypeBase> = {
         let mut map: HashMap<TypeDeclSpec, TCTypeBase> = HashMap::new();
@@ -100,6 +103,61 @@ lazy_static! {
         gen_type_decl_spec!(map, U64, unsigned long long int);
 
         map
+    };
+    pub static ref BUILTINS: HashMap<&'static str, BuiltinTransform> = {
+        let mut m: HashMap<&'static str, BuiltinTransform> = HashMap::new();
+
+        m.insert("__tci_builtin_push_temp_stack", |env, call_loc, args| {
+            if args.len() != 2 {
+                return Err(error!(
+                    "wrong number of arguments to builtin function",
+                    call_loc, "called here"
+                ));
+            }
+
+            let void = TCType::new_ptr(TCTypeBase::Void);
+            let uint = TCType::new(TCTypeBase::U32);
+
+            let ptr = check_expr(&mut *env, &args[0])?;
+            let or_else = || param_conversion_error(void, &ptr);
+            let ptr = assign_convert(&*env, void, ptr, call_loc).ok_or_else(or_else)?;
+
+            let size = check_expr(&mut *env, &args[1])?;
+            let or_else = || param_conversion_error(uint, &size);
+            let size = assign_convert(&*env, uint, size, call_loc).ok_or_else(or_else)?;
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Builtin(TCBuiltin::PushTempStack {
+                    ptr: env.add(ptr),
+                    size: env.add(size),
+                }),
+                ty: void,
+                loc: call_loc,
+            });
+        });
+
+        m.insert("__tci_builtin_ecall", |env, call_loc, args| {
+            if args.len() != 1 {
+                return Err(error!(
+                    "wrong number of arguments to builtin function",
+                    call_loc, "called here"
+                ));
+            }
+
+            let uint = TCType::new(TCTypeBase::U32);
+
+            let ecall = check_expr(env, &args[0])?;
+            let or_else = || param_conversion_error(uint, &ecall);
+            let ecall = assign_convert(&*env, uint, ecall, call_loc).ok_or_else(or_else)?;
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Builtin(TCBuiltin::Ecall(&*env.add(ecall))),
+                ty: TCType::new(TCTypeBase::U64),
+                loc: call_loc,
+            });
+        });
+
+        m
     };
 }
 
@@ -168,29 +226,23 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
                     }
                 }
 
-                check_block(&mut func_locals, &mut func_out, func.statements, None, None)?;
+                check_block(&mut func_locals, &mut func_out, func.statements)?;
                 func_locals.close_scope(&mut func_out);
+                func_out.ops.push(TCOpcode {
+                    kind: TCOpcodeKind::Ret,
+                    loc: decl.loc,
+                });
 
                 globals.complete_func_defn(ident, func_out)?;
             }
-            GlobalStatementKind::Pragma(pragma) => {
-                if pragma == "tci enable_builtins" {
-                    globals.builtins_enabled = true;
-                }
-            }
+            GlobalStatementKind::Pragma(pragma) => {}
         }
     }
 
     return Ok(globals.tu());
 }
 
-pub fn check_block(
-    env: &mut TypeEnv,
-    out: &mut FuncEnv,
-    stmts: Block,
-    cont: Option<TCOpcode>,
-    br: Option<TCOpcode>,
-) -> Result<(), Error> {
+pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
     for stmt in stmts.stmts {
         match stmt.kind {
             BlockItemKind::Declaration(decl) => match check_declaration(env, decl)? {
@@ -201,20 +253,14 @@ pub fn check_block(
                 }
                 DeclarationResult::Typedef { ty, ident, loc } => env.add_typedef(ty, ident, loc),
             },
-            BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt, cont, br)?,
+            BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt)?,
         }
     }
 
     return Ok(());
 }
 
-pub fn check_stmt(
-    env: &mut TypeEnv,
-    out: &mut FuncEnv,
-    stmt: Statement,
-    cont: Option<TCOpcode>,
-    br: Option<TCOpcode>,
-) -> Result<(), Error> {
+pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Result<(), Error> {
     let mut op = TCOpcode {
         kind: TCOpcodeKind::Ret,
         loc: stmt.loc,
@@ -223,7 +269,7 @@ pub fn check_stmt(
     match stmt.kind {
         StatementKind::Block(block) => {
             let mut scope = env.child(out, block.loc);
-            check_block(&mut scope, out, block, cont, br)?;
+            check_block(&mut scope, out, block)?;
             scope.close_scope(out);
         }
         StatementKind::Expr(expr) => {
@@ -248,41 +294,30 @@ pub fn check_stmt(
             else_body,
         } => {
             let cond = check_expr(&mut *env, &if_cond)?;
-            let or_else = || condition_non_primitive(cond.ty, cond.loc);
-            let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
 
             let else_label = out.label();
 
-            out.ops.push(TCOpcode {
-                kind: TCOpcodeKind::GotoIfZero {
-                    cond,
-                    cond_ty,
-                    goto: else_label,
-                },
-                loc: cond.loc,
-            });
+            if env.goto_ifz(out, cond, else_label, cond.loc) {
+                return Err(condition_non_primitive(cond.ty, cond.loc));
+            }
 
             let mut if_scope = env.child(out, if_body.loc);
-            check_stmt(&mut if_scope, out, *if_body, cont, br)?;
+            check_stmt(&mut if_scope, out, *if_body)?;
             if_scope.close_scope(out);
 
             if let Some(else_body) = else_body {
                 let end_label = out.label();
-                op.kind = TCOpcodeKind::Goto(end_label);
-                out.ops.push(op);
 
-                op.kind = TCOpcodeKind::Label(else_label);
-                out.ops.push(op);
+                env.goto(out, end_label, stmt.loc);
+                env.label(out, else_label, stmt.loc);
 
                 let mut else_scope = env.child(out, else_body.loc);
-                check_stmt(&mut else_scope, out, *else_body, cont, br)?;
+                check_stmt(&mut else_scope, out, *else_body)?;
                 else_scope.close_scope(out);
 
-                op.kind = TCOpcodeKind::Label(end_label);
-                out.ops.push(op);
+                env.label(out, end_label, stmt.loc);
             } else {
-                op.kind = TCOpcodeKind::Label(else_label);
-                out.ops.push(op);
+                env.label(out, else_label, stmt.loc);
             }
         }
 
@@ -305,28 +340,19 @@ pub fn check_stmt(
 
             let begin = out.label();
 
-            op.kind = TCOpcodeKind::Label(begin);
-            out.ops.push(op);
+            scope.label(out, begin, body.loc);
 
             if let Some(cond) = condition {
                 let cond = check_expr(&mut scope, &cond)?;
 
-                let or_else = || condition_non_primitive(cond.ty, cond.loc);
-                let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
-
-                out.ops.push(TCOpcode {
-                    kind: TCOpcodeKind::GotoIfZero {
-                        cond,
-                        cond_ty,
-                        goto: cb.break_label,
-                    },
-                    loc: cond.loc,
-                });
+                if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+                    return Err(condition_non_primitive(cond.ty, cond.loc));
+                }
             }
 
-            check_stmt(&mut scope, out, *body, Some(cb.cont_lop), Some(cb.br_lop))?;
+            check_stmt(&mut scope, out, *body)?;
 
-            out.ops.push(cb.cont_lop);
+            scope.label(out, cb.cont, body.loc);
 
             if let Some(post) = post_expr {
                 let post = check_expr(&mut scope, &post)?;
@@ -337,11 +363,10 @@ pub fn check_stmt(
                 });
             }
 
-            op.kind = TCOpcodeKind::Goto(begin);
-            out.ops.push(op);
+            scope.goto(out, begin, body.loc);
 
             scope.close_scope(out);
-            out.ops.push(cb.br_lop);
+            env.label(out, cb.br, body.loc);
         }
         StatementKind::ForDecl {
             decl,
@@ -361,28 +386,19 @@ pub fn check_stmt(
 
             let begin = out.label();
 
-            op.kind = TCOpcodeKind::Label(begin);
-            out.ops.push(op);
+            scope.label(out, begin, body.loc);
 
             if let Some(cond) = condition {
                 let cond = check_expr(&mut scope, &cond)?;
 
-                let or_else = || condition_non_primitive(cond.ty, cond.loc);
-                let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
-
-                out.ops.push(TCOpcode {
-                    kind: TCOpcodeKind::GotoIfZero {
-                        cond,
-                        cond_ty,
-                        goto: cb.break_label,
-                    },
-                    loc: cond.loc,
-                });
+                if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+                    return Err(condition_non_primitive(cond.ty, cond.loc));
+                }
             }
 
-            check_stmt(&mut scope, out, *body, Some(cb.cont_lop), Some(cb.br_lop))?;
+            check_stmt(&mut scope, out, *body)?;
 
-            out.ops.push(cb.cont_lop);
+            scope.label(out, cb.cont, body.loc);
 
             if let Some(post) = post_expr {
                 let post = check_expr(&mut scope, &post)?;
@@ -393,11 +409,10 @@ pub fn check_stmt(
                 });
             }
 
-            op.kind = TCOpcodeKind::Goto(begin);
-            out.ops.push(op);
+            scope.goto(out, begin, body.loc);
 
             scope.close_scope(out);
-            out.ops.push(cb.br_lop);
+            env.label(out, cb.br, body.loc);
         }
 
         x => unimplemented!("{:#?}", x),
@@ -1136,6 +1151,16 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             });
         }
 
+        ExprKind::SizeofExpr(e) => {
+            let size: u32 = check_expr(&mut *env, e)?.ty.size().into();
+
+            return Ok(TCExpr {
+                kind: TCExprKind::U64Literal(size as u64),
+                ty: TCType::new(TCTypeBase::U64),
+                loc: expr.loc,
+            });
+        }
+
         ExprKind::BinOp(op, l, r) => return check_bin_op(&mut *env, op, l, r, expr.loc),
 
         ExprKind::UnaryOp(op, operand) => return check_un_op(&mut *env, op, operand, expr.loc),
@@ -1266,6 +1291,12 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
         }
 
         ExprKind::Call { function, params } => {
+            if let ExprKind::Ident(id) = function.kind {
+                if let Some(trans) = BUILTINS.get(env.files().symbol_to_str(id)) {
+                    return trans(env, expr.loc, params);
+                }
+            }
+
             let func = check_expr(&mut *env, function)?;
             let func_type = if let Some(f) = func.ty.to_func_type(&*env) {
                 f

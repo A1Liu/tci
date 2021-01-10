@@ -4,12 +4,8 @@ use crate::tc_ast::*;
 use crate::util::*;
 
 pub struct ContBr {
-    pub cont_lop: TCOpcode,
-    pub br_lop: TCOpcode,
-    pub cont_label: u32,
-    pub break_label: u32,
-    pub cont: TCOpcode,
-    pub br: TCOpcode,
+    pub cont: u32,
+    pub br: u32,
 }
 
 pub struct FuncEnv {
@@ -50,7 +46,6 @@ pub struct TypeEnv<'a> {
     pub structs: HashMap<LabelOrLoc, TCStruct>,
     pub structs_in_progress: HashMap<u32, CodeLoc>,
     pub typedefs: HashMap<u32, (&'static TCType, CodeLoc)>,
-    pub builtins_enabled: bool,
 }
 
 pub struct GlobalTypeEnv<'a> {
@@ -63,7 +58,6 @@ pub struct LocalTypeEnv<'a> {
     pub symbols: &'a HashMap<u32, TCVar>,
     pub cases: Option<&'a Vec<(TCExpr, u32)>>,
     pub typedefs: &'a HashMap<u32, (&'static TCType, CodeLoc)>,
-    pub builtins_enabled: bool,
 }
 
 impl<'a> Allocator<'static> for TypeEnv<'a> {
@@ -131,7 +125,6 @@ impl<'a> TypeEnv<'a> {
             structs: HashMap::new(),
             structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
-            builtins_enabled: false,
         }
     }
 
@@ -142,6 +135,10 @@ impl<'a> TypeEnv<'a> {
             }
             _ => unreachable!(),
         };
+    }
+
+    pub fn files(&self) -> &FileDb {
+        return &self.globals().0.files;
     }
 
     pub fn globals(&self) -> (&GlobalTypeEnv<'a>, &TypeEnv<'a>) {
@@ -188,41 +185,21 @@ impl<'a> TypeEnv<'a> {
         let cont_label = env.label();
         let break_label = env.label();
 
-        let cont_lop = TCOpcode {
-            kind: TCOpcodeKind::Label(cont_label),
-            loc,
-        };
-        let cont = TCOpcode {
-            kind: TCOpcodeKind::Goto(cont_label),
-            loc,
-        };
-        let br_lop = TCOpcode {
-            kind: TCOpcodeKind::Label(break_label),
-            loc,
-        };
-        let br = TCOpcode {
-            kind: TCOpcodeKind::Goto(break_label),
-            loc,
-        };
-
-        let cb = ContBr {
-            cont_lop,
-            cont,
-            br_lop,
-            br,
-            cont_label,
-            break_label,
-        };
-
+        let scope_idx = env.ops.len() as u32;
         let (_, global) = self.globals();
 
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
-            scope_idx: env.ops.len() as u32,
+            scope_idx,
             cont_label: cont_label.into(),
             break_label: break_label.into(),
             parent: self,
             global,
+        };
+
+        let cb = ContBr {
+            cont: cont_label,
+            br: break_label,
         };
 
         env.ops.push(TCOpcode {
@@ -235,7 +212,6 @@ impl<'a> TypeEnv<'a> {
             structs: HashMap::new(),
             structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
-            builtins_enabled: false,
         };
 
         (sel, cb)
@@ -276,11 +252,10 @@ impl<'a> TypeEnv<'a> {
             structs: HashMap::new(),
             structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
-            builtins_enabled: false,
         }
     }
 
-    pub fn switch(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, TCOpcode) {
+    pub fn switch(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, u32) {
         let cont_label = match self.kind {
             TypeEnvKind::Local { cont_label, .. } => cont_label,
             TypeEnvKind::LocalSwitch { cont_label, .. } => cont_label,
@@ -289,10 +264,6 @@ impl<'a> TypeEnv<'a> {
         let (_, global) = self.globals();
 
         let break_label = env.label();
-        let br = TCOpcode {
-            kind: TCOpcodeKind::Label(break_label),
-            loc,
-        };
 
         let kind = TypeEnvKind::LocalSwitch {
             symbols: HashMap::new(),
@@ -314,10 +285,66 @@ impl<'a> TypeEnv<'a> {
             structs: HashMap::new(),
             structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
-            builtins_enabled: false,
         };
 
-        (sel, br)
+        (sel, break_label)
+    }
+
+    pub fn label(&self, env: &mut FuncEnv, label: u32, loc: CodeLoc) {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        let op = TCOpcode {
+            kind: TCOpcodeKind::Label { label, scope_idx },
+            loc,
+        };
+
+        env.ops.push(op);
+    }
+
+    pub fn goto(&self, env: &mut FuncEnv, goto: u32, loc: CodeLoc) {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        let op = TCOpcode {
+            kind: TCOpcodeKind::Goto { goto, scope_idx },
+            loc,
+        };
+
+        env.ops.push(op);
+    }
+
+    pub fn goto_ifz(&self, env: &mut FuncEnv, cond: TCExpr, goto: u32, loc: CodeLoc) -> bool {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        let cond_ty = if let Some(ty) = cond.ty.to_prim_type() {
+            ty
+        } else {
+            return true;
+        };
+
+        let op = TCOpcode {
+            kind: TCOpcodeKind::GotoIfZero {
+                cond,
+                cond_ty,
+                goto,
+                scope_idx,
+            },
+            loc,
+        };
+
+        env.ops.push(op);
+        return false;
     }
 
     pub fn close_scope(mut self, env: &mut FuncEnv) {
@@ -392,13 +419,11 @@ impl<'a> TypeEnv<'a> {
                 symbols,
                 cases: Some(cases),
                 typedefs: &sel.typedefs,
-                builtins_enabled: sel.builtins_enabled,
             }),
             TypeEnvKind::Local { symbols, .. } => f(LocalTypeEnv {
                 symbols,
                 cases: None,
                 typedefs: &sel.typedefs,
-                builtins_enabled: sel.builtins_enabled,
             }),
         });
     }

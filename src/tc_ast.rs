@@ -73,12 +73,19 @@ impl TCPrimType {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCOpcodeKind {
-    Label(u32),
-    Goto(u32),
+    Label {
+        label: u32,
+        scope_idx: u32,
+    },
+    Goto {
+        goto: u32,
+        scope_idx: u32,
+    },
     GotoIfZero {
         cond: TCExpr,
         cond_ty: TCPrimType,
         goto: u32,
+        scope_idx: u32,
     },
 
     ScopeBegin(HashRef<'static, u32, TCType>, u32), // points to scope end
