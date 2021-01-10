@@ -279,6 +279,16 @@ rule assignment_expr() -> Expr = precedence! {
     }
 
     --
+    x:(@) [TokenKind::Slash] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Div, x, y) }
+    }
+    x:(@) [TokenKind::Star] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Mul, x, y) }
+    }
+
+    --
     // Prefix
     pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:(@) {
         let x = env.buckets.add(x);

@@ -357,9 +357,8 @@ impl Assembler {
             for _ in 0..(count - defn.param_count) {
                 self.opcodes.push(op);
             }
-
-            next_offset -= count as i16;
         } else {
+            panic!("invariant broken");
         }
 
         self.opcodes.push(TaggedOpcode::new(Opcode::Ret, defn.loc));

@@ -167,18 +167,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
     for decl in tree {
         match decl.kind {
-            GlobalStatementKind::Declaration(decl) => {
-                match check_declaration(&mut globals, decl)? {
-                    DeclarationResult::VarDecl(decls) => {
-                        for decl in &decls {
-                            globals.add_global(decl)?;
-                        }
-                    }
-                    DeclarationResult::Typedef { ty, ident, loc } => {
-                        globals.add_typedef(ty, ident, loc)
-                    }
-                }
-            }
+            GlobalStatementKind::Declaration(decl) => check_global_declaration(&mut globals, decl)?,
             GlobalStatementKind::FunctionDefinition(func) => {
                 let func_decl = check_func_defn_decl(&mut globals, &func)?;
 
@@ -242,14 +231,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
     for stmt in stmts.stmts {
         match stmt.kind {
-            BlockItemKind::Declaration(decl) => match check_declaration(env, decl)? {
-                DeclarationResult::VarDecl(decls) => {
-                    for decl in &decls {
-                        env.add_local(out, decl)?;
-                    }
-                }
-                DeclarationResult::Typedef { ty, ident, loc } => env.add_typedef(ty, ident, loc),
-            },
+            BlockItemKind::Declaration(decl) => check_local_declaration(env, out, decl)?,
             BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt)?,
         }
     }
@@ -376,14 +358,7 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             body,
         } => {
             let (mut scope, cb) = env.loop_child(out, body.loc);
-            match check_declaration(&mut scope, decl)? {
-                DeclarationResult::VarDecl(decls) => {
-                    for decl in &decls {
-                        scope.add_local(out, decl)?;
-                    }
-                }
-                DeclarationResult::Typedef { ty, ident, loc } => scope.add_typedef(ty, ident, loc),
-            }
+            check_local_declaration(&mut scope, out, decl)?;
 
             let begin = out.label();
 
@@ -1041,10 +1016,11 @@ pub fn assign_convert(
     });
 }
 
-pub fn check_declaration(
+pub fn check_local_declaration(
     locals: &mut TypeEnv,
+    out: &mut FuncEnv,
     declaration: Declaration,
-) -> Result<DeclarationResult, Error> {
+) -> Result<(), Error> {
     let (sc, base) = parse_decl_specs(locals, declaration.specifiers)?;
 
     if let StorageClass::Typedef = sc {
@@ -1052,14 +1028,14 @@ pub fn check_declaration(
         let init_declarator = &declaration.declarators[0];
         debug_assert!(init_declarator.initializer.is_none());
 
-        let (ty, id) = check_decl(locals, base, &init_declarator.declarator)?;
-        let (ty, ident) = (ty.to_ref(locals), id.into());
+        let (ty, id) = check_decl(&mut *locals, base, &init_declarator.declarator)?;
+        let (ty, ident) = (ty.to_ref(&*locals), id.into());
         let loc = declaration.loc;
 
-        return Ok(DeclarationResult::Typedef { ty, ident, loc });
+        locals.add_typedef(ty, ident, loc);
+        return Ok(());
     }
 
-    let mut decls = Vec::new();
     for decl in declaration.declarators {
         let (ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
         let ident: u32 = id.into();
@@ -1103,15 +1079,90 @@ pub fn check_declaration(
             return Err(variable_incomplete_type(ty, decl.loc));
         }
 
-        decls.push(TCDecl {
+        let tc_decl = TCDecl {
             ident,
             init,
             ty,
             loc,
-        });
+        };
+        locals.add_local(out, &tc_decl)?;
     }
 
-    return Ok(DeclarationResult::VarDecl(decls));
+    return Ok(());
+}
+
+pub fn check_global_declaration(
+    locals: &mut TypeEnv,
+    declaration: Declaration,
+) -> Result<(), Error> {
+    let (sc, base) = parse_decl_specs(locals, declaration.specifiers)?;
+
+    if let StorageClass::Typedef = sc {
+        debug_assert!(declaration.declarators.len() == 1);
+        let init_declarator = &declaration.declarators[0];
+        debug_assert!(init_declarator.initializer.is_none());
+
+        let (ty, id) = check_decl(&mut *locals, base, &init_declarator.declarator)?;
+        let (ty, ident) = (ty.to_ref(&*locals), id.into());
+        let loc = declaration.loc;
+
+        locals.add_typedef(ty, ident, loc);
+        return Ok(());
+    }
+
+    for decl in declaration.declarators {
+        let (ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
+        let ident: u32 = id.into();
+        let loc = decl.loc;
+
+        let (init, ty) = if let Some(init) = decl.initializer {
+            match init.kind {
+                InitializerKind::Expr(expr) => {
+                    let tc_expr = check_expr(&mut *locals, expr)?;
+                    let ty = ty.to_ref(&*locals);
+                    let or_else = || conversion_error(ty, decl.declarator.loc, &tc_expr);
+                    let tc_expr = assign_convert(&*locals, ty, tc_expr, decl.declarator.loc)
+                        .ok_or_else(or_else)?;
+
+                    let init = match sc {
+                        StorageClass::Extern => TCDeclInit::ExternInit(tc_expr.kind),
+                        StorageClass::Default => TCDeclInit::Default(tc_expr.kind),
+                        StorageClass::Static => TCDeclInit::Static(tc_expr.kind),
+                        StorageClass::Typedef => unreachable!(),
+                    };
+
+                    (init, ty)
+                }
+                InitializerKind::List(exprs) => {
+                    panic!("don't support initializer lists yet")
+                }
+            }
+        } else {
+            let init = match sc {
+                StorageClass::Extern => TCDeclInit::Extern,
+                StorageClass::Default => TCDeclInit::DefaultUninit,
+                StorageClass::Static => TCDeclInit::Static(TCExprKind::Uninit),
+                StorageClass::Typedef => unreachable!(),
+            };
+
+            let ty = ty.to_ref(&*locals);
+            (init, ty)
+        };
+
+        if !ty.is_complete() {
+            return Err(variable_incomplete_type(ty, decl.loc));
+        }
+
+        let tc_decl = TCDecl {
+            ident,
+            init,
+            ty,
+            loc,
+        };
+        locals.add_global(&tc_decl)?;
+    }
+
+    return Ok(());
 }
 
 pub fn eval_expr(expr: TCExpr) -> Result<TCExpr, Error> {
