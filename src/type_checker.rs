@@ -168,7 +168,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
                     }
                 }
 
-                check_block(&mut func_locals, &mut func_out, func.statements)?;
+                check_block(&mut func_locals, &mut func_out, func.statements, None, None)?;
                 func_locals.close_scope(&mut func_out);
 
                 globals.complete_func_defn(ident, func_out)?;
@@ -184,7 +184,13 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
     return Ok(globals.tu());
 }
 
-pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
+pub fn check_block(
+    env: &mut TypeEnv,
+    out: &mut FuncEnv,
+    stmts: Block,
+    cont: Option<TCOpcode>,
+    br: Option<TCOpcode>,
+) -> Result<(), Error> {
     for stmt in stmts.stmts {
         match stmt.kind {
             BlockItemKind::Declaration(decl) => match check_declaration(env, decl)? {
@@ -195,14 +201,20 @@ pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result
                 }
                 DeclarationResult::Typedef { ty, ident, loc } => env.add_typedef(ty, ident, loc),
             },
-            BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt)?,
+            BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt, cont, br)?,
         }
     }
 
     return Ok(());
 }
 
-pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Result<(), Error> {
+pub fn check_stmt(
+    env: &mut TypeEnv,
+    out: &mut FuncEnv,
+    stmt: Statement,
+    cont: Option<TCOpcode>,
+    br: Option<TCOpcode>,
+) -> Result<(), Error> {
     let mut op = TCOpcode {
         kind: TCOpcodeKind::Ret,
         loc: stmt.loc,
@@ -211,7 +223,7 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
     match stmt.kind {
         StatementKind::Block(block) => {
             let mut scope = env.child(out, block.loc);
-            check_block(&mut scope, out, block)?;
+            check_block(&mut scope, out, block, cont, br)?;
             scope.close_scope(out);
         }
         StatementKind::Expr(expr) => {
@@ -230,7 +242,165 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             out.ops.push(op);
         }
 
-        x => unimplemented!("{:?}", x),
+        StatementKind::Branch {
+            if_cond,
+            if_body,
+            else_body,
+        } => {
+            let cond = check_expr(&mut *env, &if_cond)?;
+            let or_else = || condition_non_primitive(cond.ty, cond.loc);
+            let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
+
+            let else_label = out.label();
+
+            out.ops.push(TCOpcode {
+                kind: TCOpcodeKind::GotoIfZero {
+                    cond,
+                    cond_ty,
+                    goto: else_label,
+                },
+                loc: cond.loc,
+            });
+
+            let mut if_scope = env.child(out, if_body.loc);
+            check_stmt(&mut if_scope, out, *if_body, cont, br)?;
+            if_scope.close_scope(out);
+
+            if let Some(else_body) = else_body {
+                let end_label = out.label();
+                op.kind = TCOpcodeKind::Goto(end_label);
+                out.ops.push(op);
+
+                op.kind = TCOpcodeKind::Label(else_label);
+                out.ops.push(op);
+
+                let mut else_scope = env.child(out, else_body.loc);
+                check_stmt(&mut else_scope, out, *else_body, cont, br)?;
+                else_scope.close_scope(out);
+
+                op.kind = TCOpcodeKind::Label(end_label);
+                out.ops.push(op);
+            } else {
+                op.kind = TCOpcodeKind::Label(else_label);
+                out.ops.push(op);
+            }
+        }
+
+        StatementKind::For {
+            at_start,
+            condition,
+            post_expr,
+            body,
+        } => {
+            let (mut scope, cb) = env.loop_child(out, body.loc);
+
+            if let Some(start) = at_start {
+                let start = check_expr(&mut scope, &start)?;
+
+                out.ops.push(TCOpcode {
+                    kind: TCOpcodeKind::Expr(start),
+                    loc: start.loc,
+                });
+            }
+
+            let begin = out.label();
+
+            op.kind = TCOpcodeKind::Label(begin);
+            out.ops.push(op);
+
+            if let Some(cond) = condition {
+                let cond = check_expr(&mut scope, &cond)?;
+
+                let or_else = || condition_non_primitive(cond.ty, cond.loc);
+                let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
+
+                out.ops.push(TCOpcode {
+                    kind: TCOpcodeKind::GotoIfZero {
+                        cond,
+                        cond_ty,
+                        goto: cb.break_label,
+                    },
+                    loc: cond.loc,
+                });
+            }
+
+            check_stmt(&mut scope, out, *body, Some(cb.cont_lop), Some(cb.br_lop))?;
+
+            out.ops.push(cb.cont_lop);
+
+            if let Some(post) = post_expr {
+                let post = check_expr(&mut scope, &post)?;
+
+                out.ops.push(TCOpcode {
+                    kind: TCOpcodeKind::Expr(post),
+                    loc: post.loc,
+                });
+            }
+
+            op.kind = TCOpcodeKind::Goto(begin);
+            out.ops.push(op);
+
+            scope.close_scope(out);
+            out.ops.push(cb.br_lop);
+        }
+        StatementKind::ForDecl {
+            decl,
+            condition,
+            post_expr,
+            body,
+        } => {
+            let (mut scope, cb) = env.loop_child(out, body.loc);
+            match check_declaration(&mut scope, decl)? {
+                DeclarationResult::VarDecl(decls) => {
+                    for decl in &decls {
+                        scope.add_local(out, decl)?;
+                    }
+                }
+                DeclarationResult::Typedef { ty, ident, loc } => scope.add_typedef(ty, ident, loc),
+            }
+
+            let begin = out.label();
+
+            op.kind = TCOpcodeKind::Label(begin);
+            out.ops.push(op);
+
+            if let Some(cond) = condition {
+                let cond = check_expr(&mut scope, &cond)?;
+
+                let or_else = || condition_non_primitive(cond.ty, cond.loc);
+                let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
+
+                out.ops.push(TCOpcode {
+                    kind: TCOpcodeKind::GotoIfZero {
+                        cond,
+                        cond_ty,
+                        goto: cb.break_label,
+                    },
+                    loc: cond.loc,
+                });
+            }
+
+            check_stmt(&mut scope, out, *body, Some(cb.cont_lop), Some(cb.br_lop))?;
+
+            out.ops.push(cb.cont_lop);
+
+            if let Some(post) = post_expr {
+                let post = check_expr(&mut scope, &post)?;
+
+                out.ops.push(TCOpcode {
+                    kind: TCOpcodeKind::Expr(post),
+                    loc: post.loc,
+                });
+            }
+
+            op.kind = TCOpcodeKind::Goto(begin);
+            out.ops.push(op);
+
+            scope.close_scope(out);
+            out.ops.push(cb.br_lop);
+        }
+
+        x => unimplemented!("{:#?}", x),
     }
 
     return Ok(());
@@ -1018,13 +1188,43 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             return assign_convert(&*env, ty, from, expr.loc).ok_or_else(or_else);
         }
 
+        ExprKind::Ternary {
+            condition,
+            if_true,
+            if_false,
+        } => {
+            let cond = check_expr(&mut *env, condition)?;
+            let or_else = || condition_non_primitive(cond.ty, cond.loc);
+            let cond_ty = cond.ty.to_prim_type().ok_or_else(or_else)?;
+
+            let if_true = check_expr(&mut *env, if_true)?;
+            let if_false = check_expr(&mut *env, if_false)?;
+
+            let (if_true, if_false) = if TCType::ty_eq(&if_true.ty, &if_false.ty) {
+                (if_true, if_false)
+            } else {
+                let (ift, iff, _) = prim_unify(&mut *env, if_true, if_false)?;
+                (ift, iff)
+            };
+
+            let (condition, if_true, if_false) = env.add((cond, if_true, if_false));
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Ternary {
+                    condition,
+                    cond_ty,
+                    if_true,
+                    if_false,
+                },
+                ty: if_true.ty,
+                loc: expr.loc,
+            });
+        }
+
         ExprKind::Member { base, member } => {
             let base = check_expr(&mut *env, base)?;
-            let struct_id = if let TCTypeBase::NamedStruct { ident, .. } = base.ty.base {
-                LabelOrLoc::Ident(ident)
-            } else {
-                return Err(access_field_of_primitive_type(base.ty, base.loc));
-            };
+            let or_else = || not_a_struct(base.ty, base.loc);
+            let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
 
             let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
             let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
@@ -1042,27 +1242,29 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 return Err(field_doesnt_exist(base.ty, expr.loc));
             }
         }
-        // ExprKind::PtrMember { base, member } => {
-        //     let base = check_expr(env, base)?;
+        ExprKind::PtrMember { base, member } => {
+            let base = check_expr(&mut *env, base)?;
+            let or_else = || not_a_struct_pointer(base.ty, base.loc);
+            let base_ty = base.ty.deref().ok_or_else(or_else)?;
+            let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
 
-        //     let deref_type = base.expr_type.deref(base.loc)?;
-        //     if deref_type.pointer_count != 0 {
-        //         return Err(ptr_member_of_poly_pointer(base.loc, &deref_type));
-        //     }
+            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
+            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
 
-        //     let member_info = env.check_struct_member(deref_type, base.loc, member)?;
+            if let Some(field) = member_info.get(&member) {
+                return Ok(TCExpr {
+                    ty: field.ty,
+                    loc: expr.loc,
+                    kind: TCExprKind::PtrMember {
+                        base: env.add(base),
+                        offset: field.offset,
+                    },
+                });
+            } else {
+                return Err(field_doesnt_exist(base.ty, expr.loc));
+            }
+        }
 
-        //     return Ok(TCExpr {
-        //         expr_type: member_info.decl_type,
-        //         loc: expr.loc,
-        //         kind: TCExprKind::PtrMember {
-        //             base: env.add(base),
-        //             offset: member_info.offset,
-        //         },
-        //     });
-        // }
-
-        //
         ExprKind::Call { function, params } => {
             let func = check_expr(&mut *env, function)?;
             let func_type = if let Some(f) = func.ty.to_func_type(&*env) {
@@ -1239,7 +1441,90 @@ pub fn check_bin_op(
                     ty: ptr.ty,
                 });
             }
-            BinOp::Sub => unimplemented!(),
+            BinOp::Sub => {
+                let (ptr, int) = if r.ty.is_integer() {
+                    (l, r)
+                } else if l.ty.is_integer() {
+                    (r, l)
+                } else {
+                    // pointer subtraction
+                    unimplemented!();
+                };
+
+                let ptr_prim = ptr.ty.to_prim_type().ok_or_else(ptype_err(ptr.loc))?;
+                let int_prim = int.ty.to_prim_type().ok_or_else(ptype_err(int.loc))?;
+
+                let (int, op_type) = if int_prim.signed() {
+                    let int = TCExpr {
+                        kind: TCExprKind::Conv {
+                            from: int_prim,
+                            to: TCPrimType::I64,
+                            expr: env.add(int),
+                        },
+                        ty: TCType::new(TCTypeBase::I64),
+                        loc: int.loc,
+                    };
+
+                    let elem_size = TCExpr {
+                        loc: l.loc,
+                        kind: TCExprKind::I64Literal(stride as i64),
+                        ty: TCType::new(TCTypeBase::I64),
+                    };
+
+                    let int = TCExpr {
+                        loc: int.loc,
+                        kind: TCExprKind::BinOp {
+                            op: BinOp::Mul,
+                            op_type: TCPrimType::I64,
+                            left: env.add(int),
+                            right: env.add(elem_size),
+                        },
+                        ty: TCType::new(TCTypeBase::I64),
+                    };
+
+                    (int, TCPrimType::I64)
+                } else {
+                    let int = TCExpr {
+                        kind: TCExprKind::Conv {
+                            from: int_prim,
+                            to: TCPrimType::U64,
+                            expr: env.add(int),
+                        },
+                        ty: TCType::new(TCTypeBase::U64),
+                        loc: int.loc,
+                    };
+
+                    let elem_size = TCExpr {
+                        loc: l.loc,
+                        kind: TCExprKind::U64Literal(stride as u64),
+                        ty: TCType::new(TCTypeBase::U64),
+                    };
+
+                    let int = TCExpr {
+                        loc: int.loc,
+                        kind: TCExprKind::BinOp {
+                            op: BinOp::Mul,
+                            op_type: TCPrimType::U64,
+                            left: env.add(int),
+                            right: env.add(elem_size),
+                        },
+                        ty: TCType::new(TCTypeBase::U64),
+                    };
+
+                    (int, TCPrimType::U64)
+                };
+
+                return Ok(TCExpr {
+                    kind: TCExprKind::BinOp {
+                        op: BinOp::Sub,
+                        op_type,
+                        left: env.add(ptr),
+                        right: env.add(int),
+                    },
+                    loc,
+                    ty: ptr.ty,
+                });
+            }
             _ => return Err(invalid_bin_op(&l, &r)),
         }
     }
@@ -1342,6 +1627,28 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
     match &expr.kind {
         ExprKind::Ident(id) => return env.assign_ident(*id, expr.loc),
 
+        ExprKind::Member { base, member } => {
+            let mut base = check_assign_target(&mut *env, base)?;
+            let or_else = || {
+                println!("{:#?}", base);
+                not_a_struct(base.ty, base.loc)
+            };
+            let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
+
+            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
+            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
+
+            if let Some(field) = member_info.get(&member) {
+                base.ty = field.ty;
+                base.offset += field.offset;
+                base.loc = expr.loc;
+
+                return Ok(base);
+            } else {
+                return Err(field_doesnt_exist(base.ty, expr.loc));
+            }
+        }
+
         ExprKind::UnaryOp(UnaryOp::Deref, ptr) => {
             let ptr = check_expr(&mut *env, ptr)?;
             if let TCExprKind::Ref(mut target) = ptr.kind {
@@ -1362,7 +1669,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
             });
         }
         ExprKind::BinOp(BinOp::Index, ptr, offset) => {
-            let sum = check_bin_op(&mut *env, BinOp::Index, ptr, offset, expr.loc)?;
+            let sum = check_bin_op(&mut *env, BinOp::Add, ptr, offset, expr.loc)?;
             let or_else = || error!("cannot dereference value", ptr.loc, "value found here");
             let ty = sum.ty.deref().ok_or_else(or_else)?;
 
@@ -1494,7 +1801,14 @@ pub fn bin_assign_op_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
     );
 }
 
-pub fn access_field_of_primitive_type(ty: TCType, loc: CodeLoc) -> Error {
+pub fn not_a_struct_pointer(ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "accessed expression using arrow that was not a struct pointer",
+        loc, "access happened here"
+    );
+}
+
+pub fn not_a_struct(ty: TCType, loc: CodeLoc) -> Error {
     return error!(
         "tried to access field of primitive type",
         loc, "access happened here"
@@ -1537,5 +1851,12 @@ pub fn conversion_error(ty: TCType, loc: CodeLoc, expr: &TCExpr) -> Error {
     return error!(
         "couldn't convert value to target type",
         loc, "target type found here", expr.loc, "value found here"
+    );
+}
+
+pub fn condition_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "using condition of non-primitive type",
+        loc, "condition found here"
     );
 }

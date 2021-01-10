@@ -75,9 +75,9 @@ impl TCPrimType {
 pub enum TCOpcodeKind {
     Label(u32),
     Goto(u32),
-    BranchGoto {
-        // A conditional goto, not checked by assembler
-        condition: TCExpr,
+    GotoIfZero {
+        cond: TCExpr,
+        cond_ty: TCPrimType,
         goto: u32,
     },
 
@@ -229,6 +229,23 @@ pub trait TCTy {
     #[inline]
     fn get_typedef(&self) -> Option<&'static TCType> {
         self.base().get_typedef()
+    }
+
+    fn get_struct_id_strict(&self) -> Option<LabelOrLoc> {
+        if self.mods().len() != 0 {
+            return None;
+        }
+
+        match self.base() {
+            TCTypeBase::I8 | TCTypeBase::U8 => return None,
+            TCTypeBase::I32 | TCTypeBase::U32 => return None,
+            TCTypeBase::I64 | TCTypeBase::U64 => return None,
+            TCTypeBase::Void => return None,
+            TCTypeBase::UnnamedStruct { loc, .. } => return Some(LabelOrLoc::Loc(loc)),
+            TCTypeBase::NamedStruct { ident, .. } => return Some(LabelOrLoc::Ident(ident)),
+            TCTypeBase::InternalTypedef(def) => return def.get_struct_id_strict(),
+            TCTypeBase::Typedef { refers_to, .. } => return refers_to.get_struct_id_strict(),
+        }
     }
 
     fn display(&self, files: &FileDb) -> String {
@@ -1025,6 +1042,7 @@ pub enum TCExprKind {
 
     Ternary {
         condition: &'static TCExpr,
+        cond_ty: TCPrimType,
         if_true: &'static TCExpr,
         if_false: &'static TCExpr,
     },

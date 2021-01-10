@@ -941,6 +941,17 @@ impl n32 {
 
         return Some(self.data);
     }
+
+    pub fn ok_or_else<T, F>(self, f: F) -> Result<u32, T>
+    where
+        F: FnOnce() -> T,
+    {
+        if self == Self::NULL {
+            return Err(f());
+        }
+
+        return Ok(self.data);
+    }
 }
 
 impl Into<u32> for n32 {

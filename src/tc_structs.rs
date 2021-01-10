@@ -4,8 +4,10 @@ use crate::tc_ast::*;
 use crate::util::*;
 
 pub struct ContBr {
-    pub cont_l: TCOpcode,
-    pub br_l: TCOpcode,
+    pub cont_lop: TCOpcode,
+    pub br_lop: TCOpcode,
+    pub cont_label: u32,
+    pub break_label: u32,
     pub cont: TCOpcode,
     pub br: TCOpcode,
 }
@@ -88,21 +90,35 @@ impl FuncEnv {
             decl_loc,
         };
     }
-}
 
-impl<'a> Drop for TypeEnv<'a> {
-    fn drop(&mut self) {
-        let scope_idx = match self.kind {
-            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
-            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
-            TypeEnvKind::Global { .. } => return,
-        };
+    #[inline]
+    pub fn label(&mut self) -> u32 {
+        let label = self.next_label;
+        self.next_label += 1;
+        label
+    }
 
-        if scope_idx != !0 {
-            panic!("didn't close scope");
-        }
+    #[inline]
+    pub fn symbol(&mut self) -> u32 {
+        let sym = self.next_symbol_label;
+        self.next_symbol_label += 1;
+        sym
     }
 }
+
+// impl<'a> Drop for TypeEnv<'a> {
+//     fn drop(&mut self) {
+//         let scope_idx = match self.kind {
+//             TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+//             TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+//             TypeEnvKind::Global { .. } => return,
+//         };
+//
+//         if scope_idx != !0 {
+//             panic!("didn't close scope");
+//         }
+//     }
+// }
 
 impl<'a> TypeEnv<'a> {
     pub fn global(files: &'a FileDb) -> Self {
@@ -169,11 +185,10 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn loop_child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, ContBr) {
-        let cont_label = env.next_label;
-        let break_label = env.next_label + 1;
-        env.next_label += 2;
+        let cont_label = env.label();
+        let break_label = env.label();
 
-        let cont_l = TCOpcode {
+        let cont_lop = TCOpcode {
             kind: TCOpcodeKind::Label(cont_label),
             loc,
         };
@@ -181,7 +196,7 @@ impl<'a> TypeEnv<'a> {
             kind: TCOpcodeKind::Goto(cont_label),
             loc,
         };
-        let br_l = TCOpcode {
+        let br_lop = TCOpcode {
             kind: TCOpcodeKind::Label(break_label),
             loc,
         };
@@ -191,10 +206,12 @@ impl<'a> TypeEnv<'a> {
         };
 
         let cb = ContBr {
-            cont_l,
+            cont_lop,
             cont,
-            br_l,
+            br_lop,
             br,
+            cont_label,
+            break_label,
         };
 
         let (_, global) = self.globals();
@@ -271,8 +288,7 @@ impl<'a> TypeEnv<'a> {
         };
         let (_, global) = self.globals();
 
-        let break_label = env.next_label;
-        env.next_label += 1;
+        let break_label = env.label();
         let br = TCOpcode {
             kind: TCOpcodeKind::Label(break_label),
             loc,
@@ -496,8 +512,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         let TCParamDecl { ty, ident, loc } = *param;
-        let symbol_label = LabelOrLoc::Ident(env.next_symbol_label);
-        env.next_symbol_label += 1;
+        let symbol_label = LabelOrLoc::Ident(env.symbol());
 
         let tc_var = TCVar {
             symbol_label,
@@ -534,14 +549,12 @@ impl<'a> TypeEnv<'a> {
                 (LabelOrLoc::Loc(loc), None)
             }
             TCDeclInit::DefaultUninit => {
-                let idx = env.next_symbol_label;
-                env.next_symbol_label += 1;
+                let idx = env.symbol();
 
                 (LabelOrLoc::Ident(idx), None)
             }
             TCDeclInit::Default(init) => {
-                let label = env.next_symbol_label;
-                env.next_symbol_label += 1;
+                let label = env.symbol();
 
                 (LabelOrLoc::Ident(label), Some((label, init)))
             }
