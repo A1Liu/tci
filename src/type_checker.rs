@@ -813,7 +813,12 @@ pub fn check_decl_rec(
     return Ok((tc_type, ident));
 }
 
-pub fn assign_convert(alloc: impl Allocator<'static>, ty: TCType, expr: TCExpr) -> Option<TCExpr> {
+pub fn assign_convert(
+    alloc: impl Allocator<'static>,
+    ty: TCType,
+    expr: TCExpr,
+    loc: CodeLoc,
+) -> Option<TCExpr> {
     if TCType::ty_eq(&ty, &expr.ty) {
         return Some(expr);
     }
@@ -825,7 +830,7 @@ pub fn assign_convert(alloc: impl Allocator<'static>, ty: TCType, expr: TCExpr) 
     return Some(TCExpr {
         kind: TCExprKind::Conv { from, to, expr },
         ty,
-        loc: expr.loc,
+        loc,
     });
 }
 
@@ -856,10 +861,11 @@ pub fn check_declaration(
         let (init, ty) = if let Some(init) = decl.initializer {
             match init.kind {
                 InitializerKind::Expr(expr) => {
-                    let tc_expr = check_expr(&*locals, expr)?;
+                    let tc_expr = check_expr(&mut *locals, expr)?;
                     let ty = ty.to_ref(&*locals);
                     let or_else = || conversion_error(ty, decl.declarator.loc, &tc_expr);
-                    let tc_expr = assign_convert(&*locals, ty, tc_expr).ok_or_else(or_else)?;
+                    let tc_expr = assign_convert(&*locals, ty, tc_expr, decl.declarator.loc)
+                        .ok_or_else(or_else)?;
 
                     let init = match sc {
                         StorageClass::Extern => TCDeclInit::ExternInit(tc_expr.kind),
@@ -913,7 +919,7 @@ pub fn eval_expr(expr: TCExpr) -> Result<TCExpr, Error> {
     }
 }
 
-pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
+pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
     match expr.kind {
         ExprKind::IntLiteral(val) => {
             return Ok(TCExpr {
@@ -960,23 +966,82 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             });
         }
 
-        ExprKind::BinOp(op, l, r) => return check_bin_op(env, op, l, r, expr.loc),
+        ExprKind::BinOp(op, l, r) => return check_bin_op(&mut *env, op, l, r, expr.loc),
 
-        ExprKind::UnaryOp(op, operand) => return check_un_op(env, op, operand, expr.loc),
+        ExprKind::UnaryOp(op, operand) => return check_un_op(&mut *env, op, operand, expr.loc),
 
-        // ExprKind::Member { base, member } => {
-        //     let base = check_expr(env, local_env, base)?;
-        //     let member_info = env.check_struct_member(base.expr_type, base.loc, member)?;
+        ExprKind::Assign { op, to, val } => {
+            let target = check_assign_target(&mut *env, to)?;
+            let val = check_expr(&mut *env, val)?;
 
-        //     return Ok(TCExpr {
-        //         expr_type: member_info.decl_type,
-        //         loc: expr.loc,
-        //         kind: TCExprKind::Member {
-        //             base: env.buckets.add(base),
-        //             offset: member_info.offset,
-        //         },
-        //     });
-        // }
+            if let AssignOp::MutAssign(op) = op {
+                let or_else = || bin_assign_op_non_primitive(target.ty, target.loc);
+                let op_type = target.ty.to_prim_type().ok_or_else(or_else)?;
+                let or_else = || conversion_error(target.ty, to.loc, &val);
+                let val = assign_convert(&*env, target.ty, val, expr.loc).ok_or_else(or_else)?;
+                let value = env.add(val);
+                return Ok(TCExpr {
+                    kind: TCExprKind::MutAssign {
+                        target,
+                        value,
+                        op_type,
+                        op,
+                    },
+                    ty: target.ty,
+                    loc: expr.loc,
+                });
+            } else {
+                let or_else = || conversion_error(target.ty, to.loc, &val);
+                let val = assign_convert(&*env, target.ty, val, expr.loc).ok_or_else(or_else)?;
+                let value = env.add(val);
+
+                return Ok(TCExpr {
+                    kind: TCExprKind::Assign { target, value },
+                    ty: target.ty,
+                    loc: expr.loc,
+                });
+            }
+        }
+
+        ExprKind::Cast { to, from } => {
+            let base = parse_spec_quals(&mut *env, to.specifiers)?;
+            let ty = if let Some(decl) = to.declarator {
+                let (ty, id) = check_decl(&mut *env, base, &decl)?;
+                assert!(id == n32::NULL);
+                ty.to_ref(&*env)
+            } else {
+                TCType { base, mods: &[] }
+            };
+            let from = check_expr(&mut *env, from)?;
+
+            let or_else = || conversion_error(ty, to.loc, &from);
+            return assign_convert(&*env, ty, from, expr.loc).ok_or_else(or_else);
+        }
+
+        ExprKind::Member { base, member } => {
+            let base = check_expr(&mut *env, base)?;
+            let struct_id = if let TCTypeBase::NamedStruct { ident, .. } = base.ty.base {
+                LabelOrLoc::Ident(ident)
+            } else {
+                return Err(access_field_of_primitive_type(base.ty, base.loc));
+            };
+
+            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
+            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
+
+            if let Some(field) = member_info.get(&member) {
+                return Ok(TCExpr {
+                    ty: field.ty,
+                    loc: expr.loc,
+                    kind: TCExprKind::Member {
+                        base: env.add(base),
+                        offset: field.offset,
+                    },
+                });
+            } else {
+                return Err(field_doesnt_exist(base.ty, expr.loc));
+            }
+        }
         // ExprKind::PtrMember { base, member } => {
         //     let base = check_expr(env, base)?;
 
@@ -999,8 +1064,8 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
         //
         ExprKind::Call { function, params } => {
-            let func = check_expr(env, function)?;
-            let func_type = if let Some(f) = func.ty.to_func_type(env) {
+            let func = check_expr(&mut *env, function)?;
+            let func_type = if let Some(f) = func.ty.to_func_type(&*env) {
                 f
             } else {
                 return Err(error!("can't call expression", func.loc, "expr found here"));
@@ -1019,11 +1084,12 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
                 let mut tparams = Vec::new();
                 for (idx, param) in params.iter().enumerate() {
-                    let mut expr = check_expr(env, param)?;
+                    let mut expr = check_expr(&mut *env, param)?;
                     if idx < ftype_params.types.len() {
                         let param_type = ftype_params.types[idx];
                         let or_else = || param_conversion_error(param_type, &expr);
-                        expr = assign_convert(env, param_type, expr).ok_or_else(or_else)?;
+                        expr = assign_convert(&*env, param_type, expr, expr.loc)
+                            .ok_or_else(or_else)?;
                     }
 
                     tparams.push(expr);
@@ -1053,19 +1119,19 @@ pub fn check_expr(env: &TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 loc: expr.loc,
             });
         }
-        x => panic!("{:?} is unimplemented", x),
+        x => panic!("{:#?} is unimplemented", x),
     }
 }
 
 pub fn check_bin_op(
-    env: &TypeEnv,
+    env: &mut TypeEnv,
     op: BinOp,
     l: &Expr,
     r: &Expr,
     loc: CodeLoc,
 ) -> Result<TCExpr, Error> {
     if op == BinOp::Index {
-        let sum = check_bin_op(env, BinOp::Add, l, r, loc)?;
+        let sum = check_bin_op(&mut *env, BinOp::Add, l, r, loc)?;
         let or_else = || error!("cannot dereference value", loc, "value found here");
         let ty = sum.ty.deref().ok_or_else(or_else)?;
 
@@ -1076,8 +1142,8 @@ pub fn check_bin_op(
         });
     }
 
-    let l = check_expr(env, l)?;
-    let r = check_expr(env, r)?;
+    let l = check_expr(&mut *env, l)?;
+    let r = check_expr(&mut *env, r)?;
     let ptype_err =
         |loc: CodeLoc| move || error!("couldn't do operation on value", loc, "value found here");
 
@@ -1272,12 +1338,12 @@ pub fn prim_unify(
     }
 }
 
-pub fn check_assign_target(env: &TypeEnv, expr: &Expr) -> Result<TCAssignTarget, Error> {
+pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTarget, Error> {
     match &expr.kind {
         ExprKind::Ident(id) => return env.assign_ident(*id, expr.loc),
 
         ExprKind::UnaryOp(UnaryOp::Deref, ptr) => {
-            let ptr = check_expr(env, ptr)?;
+            let ptr = check_expr(&mut *env, ptr)?;
             if let TCExprKind::Ref(mut target) = ptr.kind {
                 target.loc = expr.loc;
                 target.defn_loc = ptr.loc;
@@ -1296,7 +1362,7 @@ pub fn check_assign_target(env: &TypeEnv, expr: &Expr) -> Result<TCAssignTarget,
             });
         }
         ExprKind::BinOp(BinOp::Index, ptr, offset) => {
-            let sum = check_bin_op(env, BinOp::Index, ptr, offset, expr.loc)?;
+            let sum = check_bin_op(&mut *env, BinOp::Index, ptr, offset, expr.loc)?;
             let or_else = || error!("cannot dereference value", ptr.loc, "value found here");
             let ty = sum.ty.deref().ok_or_else(or_else)?;
 
@@ -1318,7 +1384,12 @@ pub fn check_assign_target(env: &TypeEnv, expr: &Expr) -> Result<TCAssignTarget,
     }
 }
 
-pub fn check_un_op(env: &TypeEnv, op: UnaryOp, obj: &Expr, loc: CodeLoc) -> Result<TCExpr, Error> {
+pub fn check_un_op(
+    env: &mut TypeEnv,
+    op: UnaryOp,
+    obj: &Expr,
+    loc: CodeLoc,
+) -> Result<TCExpr, Error> {
     let ptype_err =
         |loc: CodeLoc| move || error!("couldn't do operation on value", loc, "value found here");
 
@@ -1334,7 +1405,7 @@ pub fn check_un_op(env: &TypeEnv, op: UnaryOp, obj: &Expr, loc: CodeLoc) -> Resu
             });
         }
         UnaryOp::Deref => {
-            let ptr = check_expr(env, obj)?;
+            let ptr = check_expr(&mut *env, obj)?;
             let or_else = || error!("cannot dereference type", ptr.loc, "value found here");
             let ty = ptr.ty.deref().ok_or_else(or_else)?;
             return Ok(TCExpr {
@@ -1366,7 +1437,7 @@ pub fn check_un_op(env: &TypeEnv, op: UnaryOp, obj: &Expr, loc: CodeLoc) -> Resu
         }
 
         UnaryOp::BoolNot => {
-            let operand = check_expr(env, obj)?;
+            let operand = check_expr(&mut *env, obj)?;
             let op_type_o = operand.ty.to_prim_type();
             let op_type = op_type_o.ok_or_else(ptype_err(operand.loc))?;
             let operand = env.add(operand);
@@ -1382,7 +1453,7 @@ pub fn check_un_op(env: &TypeEnv, op: UnaryOp, obj: &Expr, loc: CodeLoc) -> Resu
             });
         }
         UnaryOp::Neg => {
-            let operand = check_expr(env, obj)?;
+            let operand = check_expr(&mut *env, obj)?;
             let op_type_o = operand.ty.to_prim_type();
             let op_type = op_type_o.ok_or_else(ptype_err(operand.loc))?;
             let operand = env.add(operand);
@@ -1414,6 +1485,34 @@ pub fn check_un_op(env: &TypeEnv, op: UnaryOp, obj: &Expr, loc: CodeLoc) -> Resu
             });
         }
     }
+}
+
+pub fn bin_assign_op_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "this can only be done on primitive types",
+        loc, "the type of this assignment expression is not primitive"
+    );
+}
+
+pub fn access_field_of_primitive_type(ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "tried to access field of primitive type",
+        loc, "access happened here"
+    );
+}
+
+pub fn access_incomplete_struct_type(ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "tried to access field of incomplete struct type",
+        loc, "access happened here"
+    );
+}
+
+pub fn field_doesnt_exist(ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "tried to access field that doesn't exist",
+        loc, "access happened here"
+    );
 }
 
 pub fn variable_incomplete_type(ty: TCType, loc: CodeLoc) -> Error {

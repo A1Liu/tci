@@ -26,16 +26,7 @@ pub enum BinOp {
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 pub enum AssignOp {
     Assign,
-    AssignAdd,
-    AssignSub,
-    AssignMul,
-    AssignDiv,
-    AssignMod,
-    AssignLShift,
-    AssignRShift,
-    AssignBitAnd,
-    AssignBitXor,
-    AssignBitOr,
+    MutAssign(BinOp),
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
@@ -60,21 +51,21 @@ pub enum ExprKind {
     Assign {
         op: AssignOp,
         to: &'static Expr,
-        expr: &'static Expr,
+        val: &'static Expr,
     },
     SizeofExpr(&'static Expr),
     SizeofTy(TypeName),
     Cast {
         to: TypeName,
-        expr: &'static Expr,
+        from: &'static Expr,
     },
     Member {
         member: u32,
-        expr: &'static Expr,
+        base: &'static Expr,
     },
     PtrMember {
         member: u32,
-        expr: &'static Expr,
+        base: &'static Expr,
     },
     UnaryOp(UnaryOp, &'static Expr),
     Call {

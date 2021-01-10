@@ -227,7 +227,7 @@ rule assignment_expr() -> Expr = precedence! {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
-            kind: ExprKind::Assign {op: AssignOp::Assign, to: x, expr: y }
+            kind: ExprKind::Assign {op: AssignOp::Assign, to: x, val: y }
         }
     }
 
@@ -282,7 +282,7 @@ rule assignment_expr() -> Expr = precedence! {
     // Prefix
     pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:(@) {
         let x = env.buckets.add(x);
-        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, expr: x } }
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, from: x } }
     }
     pos:position!() [TokenKind::Amp] x:(@) {
         let x = env.buckets.add(x);
@@ -327,13 +327,13 @@ rule assignment_expr() -> Expr = precedence! {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
         let x = env.buckets.add(x);
-        Expr { loc, kind: ExprKind::PtrMember { member: id, expr: x } }
+        Expr { loc, kind: ExprKind::PtrMember { member: id, base: x } }
     }
     x:(@) [TokenKind::Dot] id:ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
         let x = env.buckets.add(x);
-        Expr { loc, kind: ExprKind::Member { member: id, expr: x } }
+        Expr { loc, kind: ExprKind::Member { member: id, base: x } }
     }
 
     --
