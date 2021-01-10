@@ -719,7 +719,7 @@ impl Memory {
             in_io_buf: VecDeque::new(),
 
             callstack: Vec::new(),
-            current_func: LinkName::new(INIT_SYMS.translate["main"]),
+            current_func: LinkName::new(!0),
             fp: 1,
             pc: 0,
 
@@ -756,7 +756,7 @@ impl Memory {
             in_io_buf: VecDeque::new(),
 
             callstack: Vec::new(),
-            current_func: LinkName::new(INIT_SYMS.translate["main"]),
+            current_func: LinkName::new(!0),
             fp: 1,
             pc: 0,
 

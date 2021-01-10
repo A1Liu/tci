@@ -108,18 +108,20 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
     for decl in tree {
         match decl.kind {
-            GlobalStatementKind::Declaration(decl) => match check_declaration(&globals, decl)? {
-                DeclarationResult::VarDecl(decls) => {
-                    for decl in &decls {
-                        globals.add_global(decl)?;
+            GlobalStatementKind::Declaration(decl) => {
+                match check_declaration(&mut globals, decl)? {
+                    DeclarationResult::VarDecl(decls) => {
+                        for decl in &decls {
+                            globals.add_global(decl)?;
+                        }
+                    }
+                    DeclarationResult::Typedef { ty, ident, loc } => {
+                        globals.add_typedef(ty, ident, loc)
                     }
                 }
-                DeclarationResult::Typedef { ty, ident, loc } => {
-                    globals.add_typedef(ty, ident, loc)
-                }
-            },
+            }
             GlobalStatementKind::FunctionDefinition(func) => {
-                let func_decl = check_func_defn_decl(&globals, &func)?;
+                let func_decl = check_func_defn_decl(&mut globals, &func)?;
 
                 let base = TCTypeBase::InternalTypedef(globals.add(func_decl.return_type));
                 let mut ty = TCTypeOwned::new(base);
@@ -234,8 +236,253 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
     return Ok(());
 }
 
+pub fn parse_struct_decl(
+    locals: &mut TypeEnv,
+    fields: StructType,
+    loc: CodeLoc,
+) -> Result<TCTypeBase, Error> {
+    let (id, decls) = match fields.kind {
+        StructTypeKind::Named(id) => return Ok(locals.check_struct_decl(id, loc)),
+        StructTypeKind::NamedDecl {
+            ident,
+            declarations,
+        } => (ident.into(), declarations),
+        StructTypeKind::UnnamedDecl { declarations } => (n32::NULL, declarations),
+    };
+
+    let label = locals.open_struct_defn(id, loc)?;
+
+    let mut align = 0;
+    let mut size = 0;
+    let mut fields = HashMap::new();
+
+    for decl in &decls[..(decls.len() - 1)] {
+        let base = parse_spec_quals(&mut *locals, decl.specifiers)?;
+        if decl.declarators.len() == 0 {
+            let (loc, sa) = if let TCTypeBase::UnnamedStruct { loc, sa } = base {
+                (loc, sa)
+            } else {
+                continue;
+            };
+
+            let sa_align = sa.align.into();
+            align = core::cmp::max(align, sa_align);
+            let offset = align_u32(size, sa_align);
+            let sa_size: u32 = sa.size.into();
+            size = offset + sa_size;
+
+            for (&ident, &field) in locals.get_struct_fields(LabelOrLoc::Loc(loc)).unwrap() {
+                let mut field = field;
+                field.offset = offset;
+
+                if let Some(prev) = fields.insert(ident, field) {
+                    return Err(error!(
+                        "redeclaration of struct field",
+                        prev.loc, "previous here", field.loc, "redeclaration here"
+                    ));
+                }
+            }
+
+            continue;
+        }
+
+        for &declarator in decl.declarators {
+            // add field
+            let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
+            let ident: u32 = id.into();
+            let decl_loc = declarator.loc;
+
+            let sa_size = ty.size();
+            if sa_size == n32::NULL {
+                return Err(error!(
+                    "declared struct member of incomplete type",
+                    decl_loc, "declared here"
+                ));
+            }
+
+            let ty = ty.to_ref(&*locals);
+            let sa_size: u32 = sa_size.into();
+            let sa_align: u32 = ty.align().into();
+
+            align = core::cmp::max(align, sa_align);
+            let offset = align_u32(size, sa_align);
+            size = offset + sa_size;
+
+            let field = TCStructField { ty, offset, loc };
+            if let Some(prev) = fields.insert(ident, field) {
+                return Err(error!(
+                    "redeclaration of struct field",
+                    prev.loc, "previous here", field.loc, "redeclaration here"
+                ));
+            }
+        }
+    }
+
+    let decl = *decls.last().unwrap();
+    let base = parse_spec_quals(&mut *locals, decl.specifiers)?;
+    if decl.declarators.len() == 0 {
+        if let TCTypeBase::UnnamedStruct { loc, sa } = base {
+            let sa_align = sa.align.into();
+            align = core::cmp::max(align, sa_align);
+            let offset = align_u32(size, sa_align);
+            let sa_size: u32 = sa.size.into();
+            size = offset + sa_size;
+
+            for (&ident, &field) in locals.get_struct_fields(LabelOrLoc::Loc(loc)).unwrap() {
+                let mut field = field;
+                field.offset = offset;
+
+                if let Some(prev) = fields.insert(ident, field) {
+                    return Err(error!(
+                        "redeclaration of struct field",
+                        prev.loc, "previous here", field.loc, "redeclaration here"
+                    ));
+                }
+            }
+        }
+    } else {
+        for &declarator in &decl.declarators[..(decl.declarators.len() - 1)] {
+            // add field
+            let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
+            let ident: u32 = id.into();
+            let decl_loc = declarator.loc;
+
+            let sa_size = ty.size();
+            if sa_size == n32::NULL {
+                return Err(error!(
+                    "declared struct member of incomplete type",
+                    decl_loc, "declared here"
+                ));
+            }
+
+            let ty = ty.to_ref(&*locals);
+            let sa_size: u32 = sa_size.into();
+            let sa_align: u32 = ty.align().into();
+
+            align = core::cmp::max(align, sa_align);
+            let offset = align_u32(size, sa_align);
+            size = offset + sa_size;
+
+            let field = TCStructField { ty, offset, loc };
+            if let Some(prev) = fields.insert(ident, field) {
+                return Err(error!(
+                    "redeclaration of struct field",
+                    prev.loc, "previous here", field.loc, "redeclaration here"
+                ));
+            }
+        }
+
+        let declarator = *decl.declarators.last().unwrap();
+        let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
+        let ident: u32 = id.into();
+        let decl_loc = declarator.loc;
+
+        let sa_size = ty.size();
+        if sa_size == n32::NULL && !ty.is_array() {
+            return Err(error!(
+                "declared struct member of incomplete type",
+                decl_loc, "declared here"
+            ));
+        }
+
+        let ty = ty.to_ref(&*locals);
+        let sa_size: u32 = sa_size.into();
+        let sa_align: u32 = ty.align().into();
+
+        align = core::cmp::max(align, sa_align);
+        let offset = align_u32(size, sa_align);
+        size = offset + sa_size;
+
+        let field = TCStructField { ty, offset, loc };
+        if let Some(prev) = fields.insert(ident, field) {
+            return Err(error!(
+                "redeclaration of struct field",
+                prev.loc, "previous here", field.loc, "redeclaration here"
+            ));
+        }
+    }
+
+    let size = align_u32(size, align);
+
+    let sa = SizeAlign {
+        size: size.into(),
+        align: align.into(),
+    };
+    return locals.close_struct_defn(label, sa, fields);
+}
+
+pub fn parse_spec_quals(
+    locals: &mut TypeEnv,
+    spec_quals: &[SpecifierQualifier],
+) -> Result<TCTypeBase, Error> {
+    let mut ds = TypeDeclSpec::new();
+
+    for spec_qual in spec_quals {
+        // use crate::new_ast::TypeQualifier as TyQual;
+        use crate::ast::TypeSpecifier as TySpec;
+        use SpecifierQualifierKind::*;
+        match spec_qual.kind {
+            TypeQualifier(qual) => {}
+
+            TypeSpecifier(TySpec::Ident(id)) => {
+                let ty = locals.check_typedef(id, spec_qual.loc)?;
+                return Ok(ty);
+            }
+            TypeSpecifier(TySpec::Union(fields)) => {
+                unimplemented!()
+            }
+            TypeSpecifier(TySpec::Struct(fields)) => {
+                return parse_struct_decl(&mut *locals, fields, spec_qual.loc)
+            }
+
+            TypeSpecifier(TySpec::Void) => {
+                return Ok(TCTypeBase::Void);
+            }
+
+            TypeSpecifier(TySpec::Char) => {
+                ds.char = ds.char.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Short) => {
+                ds.short = ds.short.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Int) => {
+                ds.int = ds.int.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Long) => {
+                ds.long = ds.long.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Signed) => {
+                ds.signed = ds.signed.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Unsigned) => {
+                ds.unsigned = ds.unsigned.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Float) => {
+                ds.float = ds.float.saturating_add(1);
+            }
+            TypeSpecifier(TySpec::Double) => {
+                ds.double = ds.double.saturating_add(1);
+            }
+        }
+    }
+
+    let begin = spec_quals[0].loc;
+    let end = spec_quals.last().unwrap().loc;
+
+    let or_else = || {
+        error!(
+            "incorrect type specifiers",
+            l_from(begin, end),
+            "specifiers found here"
+        )
+    };
+    let base = *CORRECT_TYPES.get(&ds).ok_or_else(or_else)?;
+
+    return Ok(base);
+}
+
 pub fn parse_decl_specs(
-    locals: &TypeEnv,
+    locals: &mut TypeEnv,
     decl_specs: &[DeclarationSpecifier],
 ) -> Result<(StorageClass, TCTypeBase), Error> {
     let mut sc = StorageClass::Default;
@@ -264,6 +511,13 @@ pub fn parse_decl_specs(
                 let ty = locals.check_typedef(id, decl_spec.loc)?;
                 return Ok((sc, ty));
             }
+            TypeSpecifier(TySpec::Union(fields)) => {
+                unimplemented!()
+            }
+            TypeSpecifier(TySpec::Struct(fields)) => {
+                return Ok((sc, parse_struct_decl(&mut *locals, fields, decl_spec.loc)?))
+            }
+
             TypeSpecifier(TySpec::Void) => {
                 return Ok((sc, TCTypeBase::Void));
             }
@@ -292,8 +546,6 @@ pub fn parse_decl_specs(
             TypeSpecifier(TySpec::Double) => {
                 ds.double = ds.double.saturating_add(1);
             }
-
-            _ => unreachable!(),
         }
     }
 
@@ -313,7 +565,7 @@ pub fn parse_decl_specs(
 }
 
 pub fn check_func_defn_decl(
-    locals: &TypeEnv,
+    locals: &mut TypeEnv,
     decl: &FunctionDefinition,
 ) -> Result<TCFunctionDeclarator, Error> {
     let (sc, base) = parse_decl_specs(locals, decl.specifiers)?;
@@ -355,7 +607,7 @@ pub fn check_func_defn_decl(
 
     return Ok(TCFunctionDeclarator {
         is_static: let_expr!(StorageClass::Static = sc),
-        return_type: rtype.to_ref(locals),
+        return_type: rtype.to_ref(&*locals),
         ident: decl.ident,
         params: Some(TCParamsDeclarator {
             params: locals.add_array(out),
@@ -366,7 +618,7 @@ pub fn check_func_defn_decl(
 }
 
 pub fn check_decl(
-    locals: &TypeEnv,
+    locals: &mut TypeEnv,
     base: TCTypeBase,
     decl: &Declarator,
 ) -> Result<(TCTypeOwned, n32), Error> {
@@ -427,13 +679,13 @@ pub fn check_decl(
 }
 
 pub fn check_param_types(
-    locals: &TypeEnv,
+    locals: &mut TypeEnv,
     params: &[ParameterDeclaration],
 ) -> Result<Vec<(TCType, n32)>, Error> {
     let param = params[0];
-    let (sc, param_base) = parse_decl_specs(locals, param.specifiers)?;
+    let (sc, param_base) = parse_decl_specs(&mut *locals, param.specifiers)?;
     let (mut param_type, id) = if let Some(decl) = param.declarator {
-        let (tc_type, id) = check_decl(locals, param_base, &decl)?;
+        let (tc_type, id) = check_decl(&mut *locals, param_base, &decl)?;
         (tc_type, id)
     } else {
         (TCTypeOwned::new(param_base), n32::NULL)
@@ -453,15 +705,15 @@ pub fn check_param_types(
     }
 
     param_type.canonicalize_param();
-    let param_type = param_type.to_ref(locals);
+    let param_type = param_type.to_ref(&*locals);
 
     let mut out = Vec::new();
     out.push((param_type, id));
 
     for param in &params[1..] {
-        let (sc, base) = parse_decl_specs(locals, param.specifiers)?;
+        let (sc, base) = parse_decl_specs(&mut *locals, param.specifiers)?;
         let (mut param_type, id) = if let Some(decl) = param.declarator {
-            let (tc_type, id) = check_decl(locals, param_base, &decl)?;
+            let (tc_type, id) = check_decl(&mut *locals, base, &decl)?;
             (tc_type, id)
         } else {
             (TCTypeOwned::new(param_base), n32::NULL)
@@ -479,7 +731,7 @@ pub fn check_param_types(
         }
 
         param_type.canonicalize_param();
-        let param_type = param_type.to_ref(locals);
+        let param_type = param_type.to_ref(&*locals);
         out.push((param_type, id));
     }
 
@@ -487,7 +739,7 @@ pub fn check_param_types(
 }
 
 pub fn check_decl_rec(
-    locals: &TypeEnv,
+    locals: &mut TypeEnv,
     base: TCTypeBase,
     decl: &Declarator,
 ) -> Result<(TCTypeOwned, n32), Error> {
@@ -578,7 +830,7 @@ pub fn assign_convert(alloc: impl Allocator<'static>, ty: TCType, expr: TCExpr) 
 }
 
 pub fn check_declaration(
-    locals: &TypeEnv,
+    locals: &mut TypeEnv,
     declaration: Declaration,
 ) -> Result<DeclarationResult, Error> {
     let (sc, base) = parse_decl_specs(locals, declaration.specifiers)?;
@@ -597,17 +849,17 @@ pub fn check_declaration(
 
     let mut decls = Vec::new();
     for decl in declaration.declarators {
-        let (ty, id) = check_decl(locals, base, &decl.declarator)?;
+        let (ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
         let ident: u32 = id.into();
         let loc = decl.loc;
 
         let (init, ty) = if let Some(init) = decl.initializer {
             match init.kind {
                 InitializerKind::Expr(expr) => {
-                    let tc_expr = check_expr(locals, expr)?;
-                    let ty = ty.to_ref(locals);
+                    let tc_expr = check_expr(&*locals, expr)?;
+                    let ty = ty.to_ref(&*locals);
                     let or_else = || conversion_error(ty, decl.declarator.loc, &tc_expr);
-                    let tc_expr = assign_convert(locals, ty, tc_expr).ok_or_else(or_else)?;
+                    let tc_expr = assign_convert(&*locals, ty, tc_expr).ok_or_else(or_else)?;
 
                     let init = match sc {
                         StorageClass::Extern => TCDeclInit::ExternInit(tc_expr.kind),
@@ -630,7 +882,7 @@ pub fn check_declaration(
                 StorageClass::Typedef => unreachable!(),
             };
 
-            let ty = ty.to_ref(locals);
+            let ty = ty.to_ref(&*locals);
             (init, ty)
         };
 

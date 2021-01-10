@@ -822,13 +822,6 @@ where
             }
         }
     }
-
-    pub fn iter(&self) -> HashRefIter<'a, K, V> {
-        HashRefIter {
-            slots: self.slots,
-            slot_idx: 0,
-        }
-    }
 }
 
 pub struct HashRefIter<'a, Key, Value>
@@ -861,6 +854,40 @@ where
     }
 }
 
+impl<'a, K, V, State> IntoIterator for &HashRef<'a, K, V, State>
+where
+    K: Eq + Hash + Copy,
+    V: Copy,
+    State: BuildHasher,
+{
+    type Item = (&'a K, &'a V);
+    type IntoIter = HashRefIter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        HashRefIter {
+            slots: self.slots,
+            slot_idx: 0,
+        }
+    }
+}
+
+impl<'a, K, V, State> IntoIterator for HashRef<'a, K, V, State>
+where
+    K: Eq + Hash + Copy,
+    V: Copy,
+    State: BuildHasher,
+{
+    type Item = (&'a K, &'a V);
+    type IntoIter = HashRefIter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        HashRefIter {
+            slots: self.slots,
+            slot_idx: 0,
+        }
+    }
+}
+
 impl<'a, Key, Value, State> fmt::Debug for HashRef<'a, Key, Value, State>
 where
     Key: Eq + Hash + Copy + fmt::Debug,
@@ -868,7 +895,7 @@ where
     State: BuildHasher,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        fmt.debug_map().entries(self.iter()).finish()
+        fmt.debug_map().entries(self.into_iter()).finish()
     }
 }
 
@@ -883,7 +910,7 @@ where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(self.len()))?;
-        for (key, value) in self.iter() {
+        for (key, value) in self {
             map.serialize_entry(key, value)?;
         }
         map.end()
@@ -905,6 +932,14 @@ impl n32 {
         }
 
         Self { data }
+    }
+
+    pub fn opt(self) -> Option<u32> {
+        if self.data == Self::NULL.data {
+            return None;
+        }
+
+        return Some(self.data);
     }
 }
 

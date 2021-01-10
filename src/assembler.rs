@@ -154,7 +154,7 @@ impl Assembler {
 
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, scope_end) => {
-                    for (&var, &ty) in vars.iter() {
+                    for (&var, &ty) in vars {
                         op.op = Opcode::StackAlloc {
                             bytes: ty.size().into(),
                             symbol: self.symbols.len() as u32,

@@ -118,22 +118,6 @@ lazy_static! {
 
         m
     };
-    pub static ref INIT_SYMS: InitSyms = {
-        let mut names = Vec::new();
-        let mut translate = HashMap::new();
-
-        macro_rules! add_sym {
-            ($arg:expr) => {
-                let begin = names.len() as u32;
-                names.push($arg);
-                translate.insert($arg, begin);
-            };
-        }
-
-        add_sym!("main");
-
-        InitSyms { names, translate }
-    };
 }
 
 pub const NO_SYMBOL: u32 = !0;
@@ -238,7 +222,6 @@ impl FileDbSlim {
     }
 
     pub fn remove_id(&mut self, file: u32) -> bool {
-        let file = file - 1;
         let file_slot = self.files.get_mut(file as usize);
         let file_slot = match file_slot {
             Some(f) => f,
@@ -280,7 +263,7 @@ impl FileDbSlim {
             self.garbage_size += file_slot.size();
             self.size -= file_slot.size();
             *file_slot = file;
-            return *file_idx + 1;
+            return *file_idx;
         }
 
         let file_idx = if let Some(file_idx) = self.empty_slots.pop() {
@@ -294,7 +277,7 @@ impl FileDbSlim {
         self.size += file.size();
         self.files[file_idx as usize] = Some(file);
         self.file_names.insert(file._name, file_idx);
-        return file_idx + 1;
+        return file_idx;
     }
 }
 

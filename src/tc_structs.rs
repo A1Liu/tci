@@ -45,6 +45,8 @@ pub enum TypeEnvKind<'a> {
 
 pub struct TypeEnv<'a> {
     pub kind: TypeEnvKind<'a>,
+    pub structs: HashMap<LabelOrLoc, TCStruct>,
+    pub structs_in_progress: HashMap<u32, CodeLoc>,
     pub typedefs: HashMap<u32, (&'static TCType, CodeLoc)>,
     pub builtins_enabled: bool,
 }
@@ -110,6 +112,8 @@ impl<'a> TypeEnv<'a> {
                 files,
                 next_var: 0,
             }),
+            structs: HashMap::new(),
+            structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
             builtins_enabled: false,
         }
@@ -211,6 +215,8 @@ impl<'a> TypeEnv<'a> {
 
         let sel = Self {
             kind,
+            structs: HashMap::new(),
+            structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
             builtins_enabled: false,
         };
@@ -250,6 +256,8 @@ impl<'a> TypeEnv<'a> {
 
         Self {
             kind,
+            structs: HashMap::new(),
+            structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
             builtins_enabled: false,
         }
@@ -287,6 +295,8 @@ impl<'a> TypeEnv<'a> {
 
         let sel = Self {
             kind,
+            structs: HashMap::new(),
+            structs_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
             builtins_enabled: false,
         };
@@ -319,11 +329,11 @@ impl<'a> TypeEnv<'a> {
 
         let (scope_end, capa) = (env.ops.len() as u32, symbols.len() * 3 / 2);
         let symbols = symbols.iter().filter_map(|(_, v)| match v.symbol_label {
-            LabelOrLoc::Param(id) => Some((id, v.ty)),
-            LabelOrLoc::LocalIdent(id) => Some((id, v.ty)),
-            LabelOrLoc::StaticLoc(_) => None,
+            LabelOrLoc::Ident(id) => Some((id, v.ty)),
+            LabelOrLoc::Loc(_) => None,
         });
         let symbols = HashRef::new_iter(&self, capa, symbols);
+
         env.ops[scope_idx as usize].kind = TCOpcodeKind::ScopeBegin(symbols, scope_end);
         env.ops.push(TCOpcode {
             kind: TCOpcodeKind::ScopeEnd {
@@ -377,6 +387,94 @@ impl<'a> TypeEnv<'a> {
         });
     }
 
+    pub fn open_struct_defn(&mut self, id: n32, decl_loc: CodeLoc) -> Result<LabelOrLoc, Error> {
+        if id == n32::NULL {
+            let (defn, sa) = (None, TC_UNKNOWN_SA);
+            let tc_struct = TCStruct { defn, sa, decl_loc };
+            let prev = self.structs.insert(LabelOrLoc::Loc(decl_loc), tc_struct);
+            assert!(prev.is_none());
+
+            return Ok(LabelOrLoc::Loc(decl_loc));
+        } else {
+            let prev = self.structs_in_progress.insert(id.into(), decl_loc);
+            if let Some(prev) = prev {
+                return Err(error!(
+                    "nested redefinition of struct",
+                    prev, "previous definition here", decl_loc, "new definition here"
+                ));
+            }
+
+            return Ok(LabelOrLoc::Ident(id.into()));
+        }
+    }
+
+    pub fn close_struct_defn(
+        &mut self,
+        id: LabelOrLoc,
+        sa: SizeAlign,
+        fields: HashMap<u32, TCStructField>,
+    ) -> Result<TCTypeBase, Error> {
+        debug_assert!(sa.size != n32::NULL);
+        debug_assert!(sa.align != n32::NULL);
+
+        let fields = HashRef::new(&*self, &fields);
+
+        let ident = match id {
+            LabelOrLoc::Ident(ident) => ident,
+            LabelOrLoc::Loc(loc) => {
+                let tc_struct = self.structs.get_mut(&id).unwrap();
+                tc_struct.defn = Some(TCStructDefn { fields, loc });
+                tc_struct.sa = sa;
+                return Ok(TCTypeBase::UnnamedStruct { loc, sa });
+            }
+        };
+
+        let loc = self.structs_in_progress.remove(&ident).unwrap();
+        let defn = Some(TCStructDefn { fields, loc });
+        match self.structs.entry(id) {
+            Entry::Vacant(v) => {
+                let decl_loc = loc;
+                v.insert(TCStruct { defn, sa, decl_loc });
+            }
+            Entry::Occupied(mut o) => {
+                if let Some(defn) = o.get().defn {
+                    return Err(error!(
+                        "redefinition of struct",
+                        defn.loc, "previous defninition here", loc, "redefinition here"
+                    ));
+                }
+
+                o.get_mut().defn = defn;
+                o.get_mut().sa = sa;
+            }
+        }
+
+        return Ok(TCTypeBase::NamedStruct { ident, sa });
+    }
+
+    pub fn check_struct_decl(&mut self, ident: u32, decl_loc: CodeLoc) -> TCTypeBase {
+        match self.structs.entry(LabelOrLoc::Ident(ident)) {
+            Entry::Occupied(o) => {
+                let sa = o.get().sa;
+                return TCTypeBase::NamedStruct { ident, sa };
+            }
+            Entry::Vacant(v) => {
+                let (defn, sa) = (None, TC_UNKNOWN_SA);
+                v.insert(TCStruct { defn, sa, decl_loc });
+
+                return TCTypeBase::NamedStruct { ident, sa };
+            }
+        }
+    }
+
+    pub fn get_struct_fields(
+        &self,
+        id: LabelOrLoc,
+    ) -> Option<HashRef<'static, u32, TCStructField>> {
+        let opt = self.search_scopes(|env| env.structs.get(&id).map(|a| a.defn));
+        return opt.flatten().map(|d| d.fields);
+    }
+
     pub fn check_typedef(&self, ident: u32, loc: CodeLoc) -> Result<TCTypeBase, Error> {
         if let Some((ty, td_loc)) = self.search_scopes(|sel| sel.typedefs.get(&ident).map(|a| *a)) {
             return Ok(TCTypeBase::Typedef {
@@ -398,7 +496,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         let TCParamDecl { ty, ident, loc } = *param;
-        let symbol_label = LabelOrLoc::Param(env.next_symbol_label);
+        let symbol_label = LabelOrLoc::Ident(env.next_symbol_label);
         env.next_symbol_label += 1;
 
         let tc_var = TCVar {
@@ -433,19 +531,19 @@ impl<'a> TypeEnv<'a> {
                 global_env.tu.variables.insert(global_ident, global_var);
                 global_env.next_var += 1;
 
-                (LabelOrLoc::StaticLoc(loc), None)
+                (LabelOrLoc::Loc(loc), None)
             }
             TCDeclInit::DefaultUninit => {
                 let idx = env.next_symbol_label;
                 env.next_symbol_label += 1;
 
-                (LabelOrLoc::LocalIdent(idx), None)
+                (LabelOrLoc::Ident(idx), None)
             }
             TCDeclInit::Default(init) => {
                 let label = env.next_symbol_label;
                 env.next_symbol_label += 1;
 
-                (LabelOrLoc::LocalIdent(label), Some((label, init)))
+                (LabelOrLoc::Ident(label), Some((label, init)))
             }
         };
 
@@ -484,7 +582,7 @@ impl<'a> TypeEnv<'a> {
             return Err(mismatched_return_types(prev.get().loc, decl.loc));
         }
 
-        let prev_static = prev.get().symbol_label.is_static();
+        let prev_static = prev.get().symbol_label.is_loc();
         let is_static = decl.init.is_static();
 
         if prev_static && !is_static {
@@ -498,6 +596,7 @@ impl<'a> TypeEnv<'a> {
         } else if params[0] != TCTypeModifier::UnknownParams {
             prev.get_mut().ty = decl.ty;
             prev.get_mut().loc = decl.loc;
+            prev.get_mut().symbol_label = symbol_label;
             // TODO this stupid motherfucking language allows functions to be declared in
             // a local scope but still requires a global definition
         }
@@ -562,6 +661,7 @@ impl<'a> TypeEnv<'a> {
             let prev_func = global_env.tu.functions.get_mut(&decl.ident).unwrap();
             prev.get_mut().ty = decl.ty;
             prev.get_mut().loc = decl.loc;
+            prev.get_mut().init = decl.init;
 
             let mut param_types = Vec::new();
             let mut varargs = false;
@@ -579,6 +679,7 @@ impl<'a> TypeEnv<'a> {
 
             prev_func.func_type.params = Some(params);
             prev_func.decl_loc = decl.loc;
+            prev_func.is_static = is_static;
         }
 
         return Ok(());
@@ -623,21 +724,14 @@ impl<'a> TypeEnv<'a> {
         // search locals
         if let Some(tc_var) = self.search_local_scopes(|sel| sel.symbols.get(&ident).map(|a| *a)) {
             match tc_var.symbol_label {
-                LabelOrLoc::Param(label) => {
+                LabelOrLoc::Ident(label) => {
                     return Ok(TCExpr {
                         kind: TCExprKind::LocalIdent { label },
                         ty: tc_var.ty,
                         loc,
                     });
                 }
-                LabelOrLoc::LocalIdent(label) => {
-                    return Ok(TCExpr {
-                        kind: TCExprKind::LocalIdent { label },
-                        ty: tc_var.ty,
-                        loc,
-                    });
-                }
-                LabelOrLoc::StaticLoc(scope) => {
+                LabelOrLoc::Loc(scope) => {
                     let (global_env, _) = self.globals();
                     let global_var =
                         global_env.tu.variables[&TCIdent::ScopedIdent { scope, ident }];
@@ -690,7 +784,7 @@ impl<'a> TypeEnv<'a> {
             }
 
             match tc_var.symbol_label {
-                LabelOrLoc::Param(label) => {
+                LabelOrLoc::Ident(label) => {
                     return Ok(TCAssignTarget {
                         kind: TCAssignTargetKind::LocalIdent { label },
                         defn_loc: tc_var.loc,
@@ -699,16 +793,7 @@ impl<'a> TypeEnv<'a> {
                         offset: 0,
                     });
                 }
-                LabelOrLoc::LocalIdent(label) => {
-                    return Ok(TCAssignTarget {
-                        kind: TCAssignTargetKind::LocalIdent { label },
-                        defn_loc: tc_var.loc,
-                        ty: tc_var.ty,
-                        loc,
-                        offset: 0,
-                    });
-                }
-                LabelOrLoc::StaticLoc(scope) => {
+                LabelOrLoc::Loc(scope) => {
                     let (global_env, _) = self.globals();
                     let global_var =
                         global_env.tu.variables[&TCIdent::ScopedIdent { scope, ident }];

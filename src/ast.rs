@@ -62,6 +62,20 @@ pub enum ExprKind {
         to: &'static Expr,
         expr: &'static Expr,
     },
+    SizeofExpr(&'static Expr),
+    SizeofTy(TypeName),
+    Cast {
+        to: TypeName,
+        expr: &'static Expr,
+    },
+    Member {
+        member: u32,
+        expr: &'static Expr,
+    },
+    PtrMember {
+        member: u32,
+        expr: &'static Expr,
+    },
     UnaryOp(UnaryOp, &'static Expr),
     Call {
         function: &'static Expr,

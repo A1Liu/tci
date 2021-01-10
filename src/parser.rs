@@ -7,30 +7,24 @@ use std::cell::RefCell;
 pub struct ParseEnv {
     pub symbol_is_type: RefCell<Vec<HashMap<u32, bool>>>, // true is type
     pub locs: Vec<CodeLoc>,
-    pub buckets_begin: BucketListRef<'static>,
-    pub buckets: BucketListRef<'static>,
+    pub buckets: BucketListFactory,
     pub tree: Vec<GlobalStatement>,
 }
 
 impl Drop for ParseEnv {
     fn drop(&mut self) {
-        while let Some(b) = unsafe { self.buckets_begin.dealloc() } {
-            self.buckets_begin = b;
-        }
+        unsafe { self.buckets.dealloc() };
     }
 }
 
 impl ParseEnv {
     pub fn new(toks: &[Token]) -> Self {
-        let buckets = BucketList::new();
-
         Self {
             // TODO This is a hack to work around stuff in rust-peg
             symbol_is_type: RefCell::new(vec![HashMap::new()]),
             locs: toks.iter().map(|tok| tok.loc).collect(),
-            buckets_begin: buckets,
             tree: Vec::new(),
-            buckets,
+            buckets: BucketListFactory::new(),
         }
     }
 
@@ -156,6 +150,13 @@ rule list_ge1_n<E>(a: rule<E>, b: rule<E>) -> (Vec<E>, CodeLoc) = v:list_010(<b(
 
 rule scoped<E>(e: rule<E>) -> E = ({ env.enter_scope(); }) e:e()? {? env.leave_scope(); e.ok_or("") }
 
+rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[TokenKind::Pragma(_)] {
+    match n[0] {
+        TokenKind::Pragma(n) => (n, env.locs[pos]),
+        _ => unreachable!(),
+    }
+}
+
 rule ident() -> (u32, CodeLoc) = pos:position!() n:$[TokenKind::Ident(_)] {
     match n[0] {
         TokenKind::Ident(n) => (n, env.locs[pos]),
@@ -213,16 +214,43 @@ rule atom() -> Expr =
             loc,
         }
     } /
-    pos:position!() [TokenKind::LParen] v:cs1(<expr()>) pos2:position!() [TokenKind::RParen] {
-        let (v, loc) = v;
+    pos:position!() [TokenKind::LParen] e:expr() pos2:position!() [TokenKind::RParen] {
         Expr {
-            kind: ExprKind::ParenList(env.buckets.add_array(v)),
+            kind: e.kind,
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     }
 
 
-rule expr() -> Expr = precedence! {
+rule assignment_expr() -> Expr = precedence! {
+    x:@ [TokenKind::Eq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::Assign, to: x, expr: y }
+        }
+    }
+
+    --
+    x:@ [TokenKind::Question] e:expr() [TokenKind::Colon] y:(@) {
+        let (x, e, y) = env.buckets.add((x, e, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Ternary { condition: x, if_true: e, if_false: y }
+        }
+    }
+
+    --
+    x:(@) [TokenKind::EqEq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Eq, x, y) }
+    }
+    x:(@) [TokenKind::Neq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Neq, x, y) }
+    }
+
+    --
     x:(@) [TokenKind::Gt] y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Gt, x, y) }
@@ -239,6 +267,7 @@ rule expr() -> Expr = precedence! {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Leq, x, y) }
     }
+
     --
     x:(@) [TokenKind::Plus] y:@ {
         let (x, y) = env.buckets.add((x, y));
@@ -248,8 +277,33 @@ rule expr() -> Expr = precedence! {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Sub, x, y) }
     }
+
     --
-    x:(@) [TokenKind::LParen] c:cs0(<expr()>) pos:position!() [TokenKind::RParen] {
+    // Prefix
+    pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:(@) {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, expr: x } }
+    }
+    pos:position!() [TokenKind::Amp] x:(@) {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Ref, x)  }
+    }
+    pos:position!() [TokenKind::Star] x:(@) {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Deref, x)  }
+    }
+    pos:position!() [TokenKind::Sizeof] x:(@) {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::SizeofExpr(x)  }
+    }
+    pos:position!() [TokenKind::Dash] x:(@) {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Neg, x)  }
+    }
+
+    --
+    // Postfix
+    x:(@) [TokenKind::LParen] c:cs0(<assignment_expr()>) pos:position!() [TokenKind::RParen] {
         let (c, _) = c;
         let loc = l_from(x.loc, env.locs[pos]);
         let function = env.buckets.add(x);
@@ -264,11 +318,39 @@ rule expr() -> Expr = precedence! {
         let loc = l_from(x.loc, env.locs[pos]);
         Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostIncr, env.buckets.add(x)) }
     }
+    x:(@) [TokenKind::LBracket] y:expr() pos:position!() [TokenKind::RBracket] {
+        let loc = l_from(x.loc, env.locs[pos]);
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc, kind: ExprKind::BinOp(BinOp::Index, x, y) }
+    }
+    x:(@) [TokenKind::Arrow] id:ident() {
+        let (id, loc) = id;
+        let loc = l_from(x.loc, loc);
+        let x = env.buckets.add(x);
+        Expr { loc, kind: ExprKind::PtrMember { member: id, expr: x } }
+    }
+    x:(@) [TokenKind::Dot] id:ident() {
+        let (id, loc) = id;
+        let loc = l_from(x.loc, loc);
+        let x = env.buckets.add(x);
+        Expr { loc, kind: ExprKind::Member { member: id, expr: x } }
+    }
+
     --
     n:atom() { n }
 }
 
-rule assignment_expression() -> Expr = expr()
+rule expr() -> Expr = list:cs1(<assignment_expr()>) { // TODO alllocations!
+    let (list, loc) = list;
+    if list.len() == 1 {
+        list[0]
+    }else {
+        Expr {
+            kind: ExprKind::ParenList(env.buckets.add_array(list)),
+            loc,
+        }
+    }
+}
 
 pub rule declaration() -> Declaration = d:declaration1() [TokenKind::Semicolon] {
     Declaration {
@@ -636,7 +718,7 @@ rule array_declarator() -> ArrayDeclarator =
             loc,
         }
     } /
-    q:list0(<type_qualifier()>) e:assignment_expression() {
+    q:list0(<type_qualifier()>) e:assignment_expr() {
         let (q, mut begin_loc) = q;
         if begin_loc == NO_FILE {
             begin_loc = e.loc;
@@ -805,7 +887,7 @@ rule abstract_array_declarator() -> ArrayDeclarator =
             loc,
         }
     } /
-    q:list0(<type_qualifier()>) e:assignment_expression() {
+    q:list0(<type_qualifier()>) e:assignment_expr() {
         let (q, loc) = q;
 
         ArrayDeclarator {
@@ -851,7 +933,7 @@ rule typedef_name0() -> (u32, CodeLoc) = i:ident() {?
 }
 
 rule initializer() -> Initializer =
-    e:assignment_expression() {
+    e:assignment_expr() {
         Initializer {
             kind: InitializerKind::Expr(env.buckets.add(e)),
             loc: e.loc,
@@ -1034,14 +1116,14 @@ rule do_while_statement() -> Statement =
 
 rule for_statement() -> Statement =
     pos:position!() [TokenKind::For] [TokenKind::LParen] a:expr()? [TokenKind::Semicolon] b:expr()?
-    [TokenKind::Semicolon] c:expr()? [TokenKind::RParen] s:statement() {
+    [TokenKind::Semicolon] e:expr()? [TokenKind::RParen] s:statement() {
         let loc = l_from(env.locs[pos], s.loc);
 
         Statement {
             kind: StatementKind::For {
                 at_start: a,
                 condition: b,
-                post_expr: c,
+                post_expr: e,
                 body: env.buckets.add(s),
             },
             loc,
@@ -1129,6 +1211,14 @@ rule external_declaration() -> GlobalStatement =
         GlobalStatement {
             loc: d.loc,
             kind: GlobalStatementKind::FunctionDefinition(d),
+        }
+    } /
+    p:pragma() {
+        let (pragma, loc) = p;
+
+        GlobalStatement {
+            kind: GlobalStatementKind::Pragma(pragma),
+            loc,
         }
     }
 

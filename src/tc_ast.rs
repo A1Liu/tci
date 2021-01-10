@@ -23,20 +23,18 @@ pub enum TCUnaryOp {
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
 pub struct SizeAlign {
-    pub size: u32,
-    pub align: u32,
+    pub size: n32,
+    pub align: n32,
 }
 
 pub fn sa(size: u32, align: u32) -> SizeAlign {
+    let (size, align) = (size.into(), align.into());
     SizeAlign { size, align }
 }
 
-pub const TC_UNKNOWN_SIZE: u32 = !0;
-pub const TC_UNKNOWN_ALIGN: u32 = !0;
-pub const TC_UNKNOWN_ARRAY_SIZE: u32 = 0;
 pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
-    size: TC_UNKNOWN_SIZE,
-    align: TC_UNKNOWN_ALIGN,
+    size: n32::NULL,
+    align: n32::NULL,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
@@ -144,11 +142,47 @@ pub enum TCTypeBase {
     I8,  // char
     U8,  // unsigned char
     Void,
+    NamedStruct {
+        ident: u32,
+        sa: SizeAlign,
+    },
+    UnnamedStruct {
+        loc: CodeLoc,
+        sa: SizeAlign,
+    },
     InternalTypedef(&'static TCType),
     Typedef {
         refers_to: &'static TCType,
         typedef: (u32, CodeLoc),
     },
+}
+
+impl TCTypeBase {
+    pub fn size(&self) -> n32 {
+        match self {
+            TCTypeBase::I8 | TCTypeBase::U8 => 1.into(),
+            TCTypeBase::U32 | TCTypeBase::I32 => 4.into(),
+            TCTypeBase::U64 | TCTypeBase::I64 => 8.into(),
+            TCTypeBase::Void => return n32::NULL,
+            TCTypeBase::NamedStruct { sa, .. } => sa.size,
+            TCTypeBase::UnnamedStruct { sa, .. } => sa.size,
+            TCTypeBase::InternalTypedef(def) => def.size(),
+            TCTypeBase::Typedef { refers_to, .. } => refers_to.size(),
+        }
+    }
+
+    pub fn align(&self) -> n32 {
+        match self {
+            TCTypeBase::I8 | TCTypeBase::U8 => 1.into(),
+            TCTypeBase::U32 | TCTypeBase::I32 => 4.into(),
+            TCTypeBase::U64 | TCTypeBase::I64 => 8.into(),
+            TCTypeBase::Void => return n32::NULL,
+            TCTypeBase::NamedStruct { sa, .. } => sa.align,
+            TCTypeBase::UnnamedStruct { sa, .. } => sa.align,
+            TCTypeBase::InternalTypedef(def) => def.align(),
+            TCTypeBase::Typedef { refers_to, .. } => refers_to.align(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
@@ -208,6 +242,8 @@ pub trait TCTy {
             TCTypeBase::I64 => write!(writer, "long"),
             TCTypeBase::U64 => write!(writer, "unsigned long"),
             TCTypeBase::Void => write!(writer, "void"),
+            TCTypeBase::NamedStruct { .. } => write!(writer, "struct"),
+            TCTypeBase::UnnamedStruct { .. } => write!(writer, "struct"),
             TCTypeBase::InternalTypedef(def) => write!(writer, "{}", def.display(files)), // TODO fix this
             TCTypeBase::Typedef { typedef, .. } => {
                 write!(writer, "{}", files.symbol_to_str(typedef.0))
@@ -325,6 +361,7 @@ pub trait TCTy {
             TCTypeBase::I8 | TCTypeBase::U8 => return true,
             TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
             TCTypeBase::Void => return false,
+            TCTypeBase::NamedStruct { .. } | TCTypeBase::UnnamedStruct { .. } => return false,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_integer(),
             TCTypeBase::InternalTypedef(def) => return def.is_integer(),
         }
@@ -367,6 +404,8 @@ pub trait TCTy {
             TCTypeBase::I8 | TCTypeBase::U8 => return true,
             TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
             TCTypeBase::Void => return false,
+            TCTypeBase::NamedStruct { sa, .. } => return sa.size != n32::NULL,
+            TCTypeBase::UnnamedStruct { sa, .. } => return sa.size != n32::NULL,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_complete(),
             TCTypeBase::InternalTypedef(def) => return def.is_complete(),
         };
@@ -401,11 +440,29 @@ pub trait TCTy {
             TCTypeBase::U32 | TCTypeBase::I32 => 4,
             TCTypeBase::U64 | TCTypeBase::I64 => 8,
             TCTypeBase::Void => return 0,
+            TCTypeBase::NamedStruct { sa, .. } => sa.size.into(),
+            TCTypeBase::UnnamedStruct { sa, .. } => sa.size.into(),
             TCTypeBase::InternalTypedef(def) => def.repr_size(),
             TCTypeBase::Typedef { refers_to, .. } => refers_to.repr_size(),
         };
 
         return (multiplier * base).into();
+    }
+
+    fn align(&self) -> n32 {
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => return 8.into(),
+                TCTypeModifier::BeginParam(_)
+                | TCTypeModifier::NoParams
+                | TCTypeModifier::UnknownParams => return n32::NULL,
+                TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
+                TCTypeModifier::Array(i) => {}
+                TCTypeModifier::VariableArray => {}
+            }
+        }
+
+        return self.base().align();
     }
 
     fn size(&self) -> n32 {
@@ -432,28 +489,11 @@ pub trait TCTy {
             }
         }
 
-        let base = match self.base() {
-            TCTypeBase::I8 | TCTypeBase::U8 => 1,
-            TCTypeBase::U32 | TCTypeBase::I32 => 4,
-            TCTypeBase::U64 | TCTypeBase::I64 => 8,
-            TCTypeBase::Void => return n32::NULL,
-            TCTypeBase::InternalTypedef(def) => {
-                let size = def.size();
-                if size == n32::NULL {
-                    return size;
-                }
-
-                size.into()
-            }
-            TCTypeBase::Typedef { refers_to, .. } => {
-                let size = refers_to.size();
-                if size == n32::NULL {
-                    return size;
-                }
-
-                size.into()
-            }
-        };
+        let base = self.base().size();
+        if base == n32::NULL {
+            return base;
+        }
+        let base: u32 = base.into();
 
         return (multiplier * base).into();
     }
@@ -498,6 +538,8 @@ pub trait TCTy {
             TCTypeBase::I64 => Some(TCPrimType::I64),
             TCTypeBase::U64 => Some(TCPrimType::U64),
             TCTypeBase::Void => None,
+            TCTypeBase::NamedStruct { .. } => None,
+            TCTypeBase::UnnamedStruct { .. } => None,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.to_prim_type(),
             TCTypeBase::InternalTypedef(def) => return def.to_prim_type(),
         };
@@ -1099,16 +1141,15 @@ impl PartialEq<TCFuncType> for TCFuncType {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LabelOrLoc {
-    Param(u32),      // Parameter label local to the function
-    LocalIdent(u32), // symbol label local to the function
-    StaticLoc(CodeLoc),
+    Ident(u32), // symbol label local to the function
+    Loc(CodeLoc),
 }
 
 impl LabelOrLoc {
-    pub fn is_static(&self) -> bool {
-        let_expr!(LabelOrLoc::StaticLoc(_) = self)
+    pub fn is_loc(&self) -> bool {
+        let_expr!(LabelOrLoc::Loc(_) = self)
     }
 }
 
@@ -1199,6 +1240,26 @@ pub struct TCDecl {
     pub init: TCDeclInit,
     pub ty: TCType,
     pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCStructField {
+    pub ty: TCType,
+    pub offset: u32,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCStructDefn {
+    pub fields: HashRef<'static, u32, TCStructField>,
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCStruct {
+    pub defn: Option<TCStructDefn>,
+    pub sa: SizeAlign,
+    pub decl_loc: CodeLoc,
 }
 
 pub enum DeclarationResult {
