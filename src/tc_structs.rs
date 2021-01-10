@@ -182,6 +182,12 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn loop_child(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, ContBr) {
+        let parent_scope = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
         let cont_label = env.label();
         let break_label = env.label();
 
@@ -203,7 +209,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
             loc,
         });
 
@@ -231,6 +237,12 @@ impl<'a> TypeEnv<'a> {
             } => (cont_label, break_label.into()),
             TypeEnvKind::Global(_) => (n32::NULL, n32::NULL),
         };
+        let parent_scope = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => !0,
+        };
+
         let (_, global) = self.globals();
 
         let kind = TypeEnvKind::Local {
@@ -243,7 +255,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
             loc,
         });
 
@@ -261,6 +273,12 @@ impl<'a> TypeEnv<'a> {
             TypeEnvKind::LocalSwitch { cont_label, .. } => cont_label,
             _ => unreachable!(),
         };
+        let parent_scope = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => !0,
+        };
+
         let (_, global) = self.globals();
 
         let break_label = env.label();
@@ -276,7 +294,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), !0),
+            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
             loc,
         });
 
@@ -318,6 +336,33 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(op);
+    }
+
+    pub fn goto_ifnz(&self, env: &mut FuncEnv, cond: TCExpr, goto: u32, loc: CodeLoc) -> bool {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        let cond_ty = if let Some(ty) = cond.ty.to_prim_type() {
+            ty
+        } else {
+            return true;
+        };
+
+        let op = TCOpcode {
+            kind: TCOpcodeKind::GotoIfNotZero {
+                cond,
+                cond_ty,
+                goto,
+                scope_idx,
+            },
+            loc,
+        };
+
+        env.ops.push(op);
+        return false;
     }
 
     pub fn goto_ifz(&self, env: &mut FuncEnv, cond: TCExpr, goto: u32, loc: CodeLoc) -> bool {
@@ -377,7 +422,12 @@ impl<'a> TypeEnv<'a> {
         });
         let symbols = HashRef::new_iter(&self, capa, symbols);
 
-        env.ops[scope_idx as usize].kind = TCOpcodeKind::ScopeBegin(symbols, scope_end);
+        if let TCOpcodeKind::ScopeBegin(syms, _) = &mut env.ops[scope_idx as usize].kind {
+            *syms = symbols;
+        } else {
+            panic!("scope_idx pointed to wrong opcode")
+        }
+
         env.ops.push(TCOpcode {
             kind: TCOpcodeKind::ScopeEnd {
                 count: symbols.len() as u32,
@@ -750,6 +800,7 @@ impl<'a> TypeEnv<'a> {
         func.defn = Some(TCFuncDefn {
             ops: global_env.tu.buckets.add_array(env.ops),
             sym_count: env.next_symbol_label,
+            label_count: env.next_label,
             param_count,
             loc: env.decl_loc,
         });
@@ -788,13 +839,11 @@ impl<'a> TypeEnv<'a> {
         let (global_env, _) = self.globals();
         if let Some(global_var) = global_env.tu.variables.get(&TCIdent::Ident(ident)) {
             if global_var.ty.is_function() {
-                if let TCDeclInit::Default(kind) = global_var.init {
-                    return Ok(TCExpr {
-                        kind,
-                        ty: global_var.ty,
-                        loc,
-                    });
-                }
+                return Ok(TCExpr {
+                    kind: TCExprKind::FunctionIdent { ident },
+                    ty: global_var.ty,
+                    loc,
+                });
             }
 
             let binary_offset = global_var.var_idx;

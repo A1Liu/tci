@@ -82,6 +82,14 @@ pub enum TCOpcodeKind {
         scope_idx: u32,
     },
     GotoIfZero {
+        // unchecked by assembler; cannot cross scopes
+        cond: TCExpr,
+        cond_ty: TCPrimType,
+        goto: u32,
+        scope_idx: u32,
+    },
+    GotoIfNotZero {
+        // unchecked by assembler; cannot cross scopes
         cond: TCExpr,
         cond_ty: TCPrimType,
         goto: u32,
@@ -1220,6 +1228,7 @@ pub struct TCGlobalVar {
 pub struct TCFuncDefn {
     pub param_count: u32,
     pub sym_count: u32,
+    pub label_count: u32,
     pub ops: &'static [TCOpcode],
     pub loc: CodeLoc,
 }

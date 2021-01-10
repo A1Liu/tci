@@ -19,18 +19,38 @@ pub struct Assembler {
     pub functions: Vec<ASMFunc>,
     pub data: VarBuffer,
     pub symbols: Vec<RuntimeVar>,
+    pub labels: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ASMEnv<'a> {
     var_offsets: &'a [i16],
-    binary_offsets: &'a HashMap<u32, u32>,
+    binary_offsets: &'a [u32],
+    link_names: &'a HashMap<u32, LinkName>,
+}
+
+pub fn asm_env<'a>(
+    var_offsets: &'a [i16],
+    binary_offsets: &'a [u32],
+    link_names: &'a HashMap<u32, LinkName>,
+) -> ASMEnv<'a> {
+    ASMEnv {
+        var_offsets,
+        binary_offsets,
+        link_names,
+    }
 }
 
 impl Drop for Assembler {
     fn drop(&mut self) {
         unsafe { self.buckets.dealloc() };
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LabelData {
+    pub new_label: u32,
+    pub scope_idx: u32,
 }
 
 pub fn init_main_no_args(main_idx: u32) -> Vec<Opcode> {
@@ -69,6 +89,7 @@ impl Assembler {
             func_linkage: HashMap::new(),
             functions: Vec::new(),
             symbols: Vec::new(),
+            labels: Vec::new(),
         }
     }
 
@@ -77,6 +98,19 @@ impl Assembler {
 
         let mut link_names = HashMap::new();
         let mut defns = Vec::new();
+        let mut binary_offsets = Vec::with_capacity(tu.variables.len());
+        unsafe { binary_offsets.set_len(tu.variables.len()) };
+
+        for (_, &global_var) in tu.variables.iter() {
+            if global_var.ty.is_function() {
+                binary_offsets[global_var.var_idx as usize] = !0; // TODO idk man wtf do i do about this?
+                continue;
+            }
+
+            let size = global_var.ty.size().into();
+            let var = self.data.add_var(size, META_NO_SYMBOL); // TODO add symbol
+            binary_offsets[global_var.var_idx as usize] = var;
+        }
 
         for (ident, tc_func) in std::mem::replace(&mut tu.functions, HashMap::new()) {
             let link_name = if tc_func.is_static {
@@ -128,7 +162,7 @@ impl Assembler {
                 loc: defn.loc,
             });
 
-            self.add_function(&link_names, &defn);
+            self.add_function(&binary_offsets, &link_names, &defn);
             let header = &mut self.functions[self.func_linkage[&link_name] as usize].func_header;
             *header = Some((opcode, defn.loc));
         }
@@ -136,24 +170,48 @@ impl Assembler {
         return Ok(());
     }
 
-    pub fn add_function(&mut self, link_names: &HashMap<u32, LinkName>, defn: &TCFuncDefn) {
+    pub fn add_function(
+        &mut self,
+        binary_offsets: &[u32],
+        link_names: &HashMap<u32, LinkName>,
+        defn: &TCFuncDefn,
+    ) {
         if defn.ops.len() < 2 {
             unreachable!()
         }
 
         let jumps: Vec<u32> = Vec::new();
+        // maps symbols to variable offsets
         let mut var_offsets: Vec<i16> = (0..defn.sym_count).map(|_| i16::MAX).collect();
-        let mut next_offset = 0;
+        let mut next_offset = 0; // where should the next variable be allocated (relative to fp)?
+        let mut labels: Vec<LabelData> = Vec::with_capacity(defn.label_count as usize);
+        unsafe { labels.set_len(defn.label_count as usize) };
 
         for idx in 0..defn.param_count {
             var_offsets[idx as usize] = -(idx as i16) - 2;
         }
 
         for t_op in defn.ops {
+            match t_op.kind {
+                TCOpcodeKind::Label { label, scope_idx } => {
+                    let new_label = self.labels.len() as u32;
+                    self.labels.push(!0);
+                    let label_data = LabelData {
+                        new_label,
+                        scope_idx,
+                    };
+
+                    labels[label as usize] = label_data;
+                }
+                _ => {}
+            }
+        }
+
+        for t_op in defn.ops {
             let mut op = TaggedOpcode::new(Opcode::Ret, t_op.loc);
 
             match t_op.kind {
-                TCOpcodeKind::ScopeBegin(vars, scope_end) => {
+                TCOpcodeKind::ScopeBegin(vars, _) => {
                     for (&var, &ty) in vars {
                         op.op = Opcode::StackAlloc {
                             bytes: ty.size().into(),
@@ -186,7 +244,8 @@ impl Assembler {
                     self.opcodes.push(op);
                 }
                 TCOpcodeKind::RetVal(val) => {
-                    self.translate_expr(&var_offsets, &val);
+                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    self.translate_expr(env, &val);
 
                     op.op = Opcode::GetLocal {
                         var: -1,
@@ -203,18 +262,134 @@ impl Assembler {
                     self.opcodes.push(op);
                 }
                 TCOpcodeKind::Expr(expr) => {
-                    self.translate_expr(&var_offsets, &expr);
+                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    self.translate_expr(env, &expr);
 
                     let bytes = expr.ty.repr_size();
                     op.op = Opcode::Pop { bytes };
                     self.opcodes.push(op);
                 }
-                _ => {}
+
+                TCOpcodeKind::Label { label, .. } => {
+                    let new_label = labels[label as usize].new_label;
+                    self.labels[new_label as usize] = self.opcodes.len() as u32;
+                }
+                TCOpcodeKind::Goto { goto, scope_idx } => {
+                    let label = labels[goto as usize];
+                    self.solve_scope_difference(defn.ops, scope_idx, label.scope_idx, t_op.loc);
+                    op.op = Opcode::Jump(label.new_label);
+                    self.opcodes.push(op);
+                }
+                TCOpcodeKind::GotoIfZero {
+                    cond,
+                    cond_ty,
+                    goto,
+                    scope_idx,
+                } => {
+                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    self.translate_expr(env, &cond);
+
+                    let new_label = labels[goto as usize].new_label;
+                    op.op = match cond_ty.size() {
+                        1 => Opcode::JumpIfZero8(new_label),
+                        2 => Opcode::JumpIfZero16(new_label),
+                        4 => Opcode::JumpIfZero32(new_label),
+                        8 => Opcode::JumpIfZero64(new_label),
+                        _ => unreachable!(),
+                    };
+                    self.opcodes.push(op);
+                }
+                TCOpcodeKind::GotoIfNotZero {
+                    cond,
+                    cond_ty,
+                    goto,
+                    scope_idx,
+                } => {
+                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    self.translate_expr(env, &cond);
+
+                    let new_label = labels[goto as usize].new_label;
+                    op.op = match cond_ty.size() {
+                        1 => Opcode::JumpIfNotZero8(new_label),
+                        2 => Opcode::JumpIfNotZero16(new_label),
+                        4 => Opcode::JumpIfNotZero32(new_label),
+                        8 => Opcode::JumpIfNotZero64(new_label),
+                        _ => unreachable!(),
+                    };
+                    self.opcodes.push(op);
+                }
+                x => unimplemented!("{:?}", x),
             }
         }
     }
 
-    pub fn translate_expr(&mut self, var_offsets: &[i16], expr: &TCExpr) {
+    /// inserts stack deallocs and stack allocs to solve scope problems
+    pub fn solve_scope_difference(
+        &mut self,
+        ops: &[TCOpcode],
+        mut goto_scope: u32,
+        mut label_scope: u32,
+        loc: CodeLoc,
+    ) {
+        let mut goto_scopes = Vec::new();
+        let mut label_scopes = Vec::new();
+
+        while goto_scope != !0 {
+            if let TCOpcodeKind::ScopeBegin(vars, parent) = ops[goto_scope as usize].kind {
+                goto_scopes.push((goto_scope, vars));
+                goto_scope = parent;
+            } else {
+                panic!("scope_idx pointed to wrong opcode")
+            }
+        }
+
+        while label_scope != !0 {
+            if let TCOpcodeKind::ScopeBegin(vars, parent) = ops[label_scope as usize].kind {
+                label_scopes.push((label_scope, vars));
+                label_scope = parent;
+            } else {
+                panic!("scope_idx pointed to wrong opcode")
+            }
+        }
+
+        while let Some((g, l)) = goto_scopes.last().zip(label_scopes.last()) {
+            let (goto, _) = g;
+            let (label, _) = l;
+            if goto != label {
+                break;
+            }
+
+            goto_scopes.pop();
+            label_scopes.pop();
+        }
+
+        let mut tagged = TaggedOpcode::new(Opcode::StackDealloc, loc);
+        for (_, scope) in goto_scopes {
+            for _ in 0..scope.len() {
+                self.opcodes.push(tagged);
+            }
+        }
+
+        for (_, scope) in label_scopes.into_iter().rev() {
+            for (&var, &ty) in scope {
+                tagged.op = Opcode::StackAlloc {
+                    bytes: ty.size().into(),
+                    symbol: META_NO_SYMBOL,
+                };
+
+                self.opcodes.push(tagged);
+
+                // TODO add runtime var support
+                // self.symbols.push(RuntimeVar {
+                //     symbol: *symbol,
+                //     decl_type: ty.clone_into_alloc(&*self.buckets),
+                //     loc: t_op.loc,
+                // });
+            }
+        }
+    }
+
+    pub fn translate_expr(&mut self, env: ASMEnv, expr: &TCExpr) {
         let mut tagged = TaggedOpcode::new(Opcode::Ret, expr.loc);
 
         match &expr.kind {
@@ -245,7 +420,7 @@ impl Assembler {
                 self.opcodes.push(tagged);
             }
             TCExprKind::LocalIdent { label } => {
-                let var = var_offsets[*label as usize];
+                let var = env.var_offsets[*label as usize];
                 tagged.op = if expr.ty.is_array() {
                     Opcode::MakeTempStackFpPtr { var, offset: 0 }
                 } else {
@@ -258,10 +433,16 @@ impl Assembler {
 
                 self.opcodes.push(tagged);
             }
+            TCExprKind::FunctionIdent { ident } => {
+                let link_name = env.link_names[ident];
+                let id = self.func_linkage[&link_name];
+                tagged.op = Opcode::MakeTempU64(id as u64);
+                self.opcodes.push(tagged);
+            }
 
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
-                    self.translate_expr(var_offsets, expr);
+                    self.translate_expr(env, expr);
                     let bytes = expr.ty.repr_size();
 
                     if idx + 1 < exprs.len() {
@@ -277,13 +458,13 @@ impl Assembler {
                 left,
                 right,
             } => {
-                self.translate_expr(var_offsets, left);
-                self.translate_expr(var_offsets, right);
+                self.translate_expr(env, left);
+                self.translate_expr(env, right);
                 self.translate_bin_op(*op, *op_type, tagged.loc);
             }
 
             TCExprKind::Conv { from, to, expr } => {
-                self.translate_expr(var_offsets, expr);
+                self.translate_expr(env, expr);
                 let opcode = match (from, to.size()) {
                     (TCPrimType::U8, 1) => None,
                     (TCPrimType::U8, 4) => Some(Opcode::ZExtend8To32),
@@ -319,27 +500,27 @@ impl Assembler {
             }
 
             TCExprKind::Assign { target, value } => {
-                self.translate_expr(var_offsets, value);
+                self.translate_expr(env, value);
                 let bytes = value.ty.repr_size();
                 tagged.op = Opcode::PushDup { bytes };
                 self.opcodes.push(tagged);
-                self.translate_assign(var_offsets, target);
+                self.translate_assign(env, target);
                 tagged.op = Opcode::Set { offset: 0, bytes };
                 self.opcodes.push(tagged);
             }
 
             TCExprKind::Deref(ptr) => {
-                self.translate_expr(var_offsets, ptr);
+                self.translate_expr(env, ptr);
                 tagged.op = Opcode::Get {
                     offset: 0,
                     bytes: expr.ty.size().into(),
                 };
                 self.opcodes.push(tagged);
             }
-            TCExprKind::Ref(lvalue) => self.translate_assign(var_offsets, lvalue),
+            TCExprKind::Ref(lvalue) => self.translate_assign(env, lvalue),
 
             TCExprKind::Call { func, params } => {
-                self.translate_expr(var_offsets, func); // callee is sequenced before params
+                self.translate_expr(env, func); // callee is sequenced before params
 
                 let rtype_size = expr.ty.repr_size();
                 tagged.op = Opcode::StackAlloc {
@@ -363,7 +544,7 @@ impl Assembler {
                         symbol: META_NO_SYMBOL, // TODO this should be the parameter symbol
                     };
                     self.opcodes.push(tagged);
-                    self.translate_expr(var_offsets, param);
+                    self.translate_expr(env, param);
                     tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
                     self.opcodes.push(tagged);
                 }
@@ -408,12 +589,12 @@ impl Assembler {
         }
     }
 
-    pub fn translate_assign(&mut self, var_offsets: &[i16], assign: &TCAssignTarget) {
+    pub fn translate_assign(&mut self, env: ASMEnv, assign: &TCAssignTarget) {
         let mut tagged = TaggedOpcode::new(Opcode::Ret, assign.loc);
 
         match assign.kind {
             TCAssignTargetKind::Ptr(expr) => {
-                self.translate_expr(var_offsets, expr);
+                self.translate_expr(env, expr);
                 if assign.offset != 0 {
                     tagged.op = Opcode::MakeTempU64(assign.offset as u64);
                     self.opcodes.push(tagged);
@@ -422,7 +603,7 @@ impl Assembler {
                 }
             }
             TCAssignTargetKind::LocalIdent { label } => {
-                let var = var_offsets[label as usize];
+                let var = env.var_offsets[label as usize];
                 tagged.op = Opcode::MakeTempStackFpPtr {
                     var,
                     offset: assign.offset,
@@ -507,7 +688,7 @@ impl Assembler {
             (BinOp::BoolAnd, TCPrimType::I8) => Opcode::BitAndI8,
             (BinOp::BoolOr, TCPrimType::I8) => Opcode::BitOrI8,
 
-            (op, ptype) => unreachable!("op={:?} type={:?}", op, ptype),
+            (op, ptype) => unimplemented!("op={:?} type={:?}", op, ptype),
         };
 
         self.opcodes.push(tagged);

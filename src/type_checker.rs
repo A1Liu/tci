@@ -344,10 +344,14 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
 
             if let Some(cond) = condition {
                 let cond = check_expr(&mut scope, &cond)?;
+                let pass_goto = out.label();
 
-                if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+                if scope.goto_ifnz(out, cond, pass_goto, cond.loc) {
                     return Err(condition_non_primitive(cond.ty, cond.loc));
                 }
+
+                scope.goto(out, cb.br, cond.loc);
+                scope.label(out, pass_goto, cond.loc);
             }
 
             check_stmt(&mut scope, out, *body)?;
@@ -390,10 +394,14 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
 
             if let Some(cond) = condition {
                 let cond = check_expr(&mut scope, &cond)?;
+                let pass_goto = out.label();
 
-                if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+                if scope.goto_ifnz(out, cond, pass_goto, cond.loc) {
                     return Err(condition_non_primitive(cond.ty, cond.loc));
                 }
+
+                scope.goto(out, cb.br, cond.loc);
+                scope.label(out, pass_goto, cond.loc);
             }
 
             check_stmt(&mut scope, out, *body)?;
