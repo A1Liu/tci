@@ -263,6 +263,7 @@ pub trait TCTy {
         }
     }
 
+    // TODO make this nicer
     fn display(&self, files: &FileDb) -> String {
         let mut writer = StringWriter::new();
 
@@ -274,14 +275,57 @@ pub trait TCTy {
             TCTypeBase::I64 => write!(writer, "long"),
             TCTypeBase::U64 => write!(writer, "unsigned long"),
             TCTypeBase::Void => write!(writer, "void"),
-            TCTypeBase::NamedStruct { .. } => write!(writer, "struct"),
-            TCTypeBase::UnnamedStruct { .. } => write!(writer, "struct"),
+            TCTypeBase::NamedStruct { ident, .. } => {
+                write!(writer, "struct {}", files.symbol_to_str(ident))
+            }
+            TCTypeBase::UnnamedStruct { .. } => write!(writer, "anonymous struct"),
             TCTypeBase::InternalTypedef(def) => write!(writer, "{}", def.display(files)), // TODO fix this
             TCTypeBase::Typedef { typedef, .. } => {
                 write!(writer, "{}", files.symbol_to_str(typedef.0))
             }
         }
         .unwrap();
+
+        let mut is_func: Option<()> = None;
+        for modifier in self.mods() {
+            match modifier {
+                TCTypeModifier::Pointer => {
+                    is_func.take().map(|_| write!(writer, ")"));
+                    write!(writer, "*")
+                }
+                TCTypeModifier::Array(dim) => {
+                    is_func.take().map(|_| write!(writer, ")"));
+                    write!(writer, "[{}]", dim)
+                }
+                TCTypeModifier::VariableArray => {
+                    is_func.take().map(|_| write!(writer, ")"));
+                    write!(writer, "[]")
+                }
+                TCTypeModifier::BeginParam(ty) => {
+                    if is_func.replace(()).is_some() {
+                        write!(writer, ")({}", ty.display(files))
+                    } else {
+                        write!(writer, "({}", ty.display(files))
+                    }
+                }
+                TCTypeModifier::Param(ty) => {
+                    write!(writer, ", {}", ty.display(files))
+                }
+                TCTypeModifier::NoParams => {
+                    is_func.take().map(|_| write!(writer, ")"));
+                    write!(writer, "(void)")
+                }
+                TCTypeModifier::VarargsParam => {
+                    is_func.take().map(|_| write!(writer, ")"));
+                    write!(writer, ", ...")
+                }
+                TCTypeModifier::UnknownParams => {
+                    is_func.take().map(|_| write!(writer, ")"));
+                    write!(writer, "()")
+                }
+            }
+            .unwrap();
+        }
 
         return writer.to_string();
     }
@@ -538,7 +582,6 @@ pub trait TCTy {
         return (multiplier * base).into();
     }
 
-    /// Panics if called on an incomplete type
     fn to_prim_type(&self) -> Option<TCPrimType> {
         for modifier in self.mods() {
             match modifier {
@@ -551,7 +594,7 @@ pub trait TCTy {
                     let stride = deref.size();
                     return Some(TCPrimType::Pointer { stride });
                 }
-                TCTypeModifier::Array(_) => {
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => {
                     let deref = TCTypeRef {
                         base: self.base(),
                         mods: &self.mods()[1..],
@@ -566,7 +609,6 @@ pub trait TCTy {
                     return Some(TCPrimType::Pointer { stride: n32::NULL });
                 }
                 TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
-                TCTypeModifier::VariableArray => return None,
             }
         }
 
@@ -799,8 +841,6 @@ impl TCType {
 
     /// Panics if the type is incomplete
     pub fn deref(&self) -> Option<TCType> {
-        assert!(self.is_complete());
-
         if let Some(first) = self.mods.first() {
             let base = self.base;
             let mods = &self.mods[1..];
@@ -814,7 +854,7 @@ impl TCType {
 
                     return Some(to_ret);
                 }
-                TCTypeModifier::Array(_) => return Some(to_ret),
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => return Some(to_ret),
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
                 | TCTypeModifier::UnknownParams => return None,

@@ -438,6 +438,14 @@ pub fn parse_struct_decl(
     let mut size = 0;
     let mut fields = HashMap::new();
 
+    if decls.len() == 0 {
+        let sa = SizeAlign {
+            size: size.into(),
+            align: align.into(),
+        };
+        return locals.close_struct_defn(label, sa, fields);
+    }
+
     for decl in &decls[..(decls.len() - 1)] {
         let base = parse_spec_quals(&mut *locals, decl.specifiers)?;
         if decl.declarators.len() == 0 {
@@ -559,12 +567,16 @@ pub fn parse_struct_decl(
         let ident: u32 = id.into();
         let decl_loc = declarator.loc;
 
-        let sa_size = ty.size();
-        if sa_size == n32::NULL && !ty.is_array() {
-            return Err(error!(
-                "declared struct member of incomplete type",
-                decl_loc, "declared here"
-            ));
+        let mut sa_size = ty.size();
+        if sa_size == n32::NULL {
+            if !ty.is_array() {
+                return Err(error!(
+                    "declared struct member of incomplete type",
+                    decl_loc, "declared here"
+                ));
+            }
+
+            sa_size = 0.into();
         }
 
         let ty = ty.to_ref(&*locals);
@@ -898,18 +910,16 @@ pub fn check_param_types(
             let (tc_type, id) = check_decl(&mut *locals, base, &decl)?;
             (tc_type, id)
         } else {
-            (TCTypeOwned::new(param_base), n32::NULL)
+            (TCTypeOwned::new(base), n32::NULL)
         };
 
         debug_assert!(let_expr!(StorageClass::Default = sc));
 
-        if let TCTypeBase::Void = param_type.base {
-            if param_type.mods.len() == 0 {
-                return Err(error!(
-                    "cannot have a parameter of type void",
-                    param.loc, "parameter found here"
-                ));
-            }
+        if param_type.is_void() {
+            return Err(error!(
+                "cannot have a parameter of type void",
+                param.loc, "parameter found here"
+            ));
         }
 
         param_type.canonicalize_param();
@@ -1197,10 +1207,27 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             });
         }
 
+        ExprKind::SizeofTy(ast_ty) => {
+            let base = parse_spec_quals(&mut *env, ast_ty.specifiers)?;
+            let ty = if let Some(decl) = ast_ty.declarator {
+                let (ty, id) = check_decl(&mut *env, base, &decl)?;
+                assert!(id == n32::NULL);
+                ty.to_ref(&*env)
+            } else {
+                TCType { base, mods: &[] }
+            };
+
+            let size = ty.size().unwrap_or_else(|| ty.repr_size());
+
+            return Ok(TCExpr {
+                kind: TCExprKind::U64Literal(size as u64),
+                ty: TCType::new(TCTypeBase::U64),
+                loc: expr.loc,
+            });
+        }
         ExprKind::SizeofExpr(e) => {
             let expr = check_expr(&mut *env, e)?;
-            println!("{:?}", expr.ty);
-            let size: u32 = expr.ty.size().into();
+            let size = expr.ty.size().unwrap_or_else(|| expr.ty.repr_size());
 
             return Ok(TCExpr {
                 kind: TCExprKind::U64Literal(size as u64),
@@ -1296,7 +1323,8 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
         ExprKind::Member { base, member } => {
             let base = check_expr(&mut *env, base)?;
-            let or_else = || not_a_struct(base.ty, base.loc);
+
+            let or_else = || not_a_struct(env.files(), base.ty, base.loc);
             let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
 
             let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
@@ -1317,9 +1345,9 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
         }
         ExprKind::PtrMember { base, member } => {
             let base = check_expr(&mut *env, base)?;
-            let or_else = || not_a_struct_pointer(base.ty, base.loc);
+            let or_else = || not_a_struct_pointer(env.files(), base.ty, base.loc);
             let base_ty = base.ty.deref().ok_or_else(or_else)?;
-            let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
+            let struct_id = base_ty.get_struct_id_strict().ok_or_else(or_else)?;
 
             let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
             let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
@@ -1400,7 +1428,6 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 loc: expr.loc,
             });
         }
-        x => panic!("{:#?} is unimplemented", x),
     }
 }
 
@@ -1428,7 +1455,7 @@ pub fn check_bin_op(
     let ptype_err =
         |loc: CodeLoc| move || error!("couldn't do operation on value", loc, "value found here");
 
-    if l.ty.is_pointer() || r.ty.is_pointer() {
+    if l.ty.is_pointer() || l.ty.is_array() || r.ty.is_pointer() || r.ty.is_array() {
         // allowed operations are addition w/ integer, subtraction w/ integer/pointer
         let stride = l.ty.pointer_stride();
         if stride == n32::NULL {
@@ -1708,10 +1735,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
 
         ExprKind::Member { base, member } => {
             let mut base = check_assign_target(&mut *env, base)?;
-            let or_else = || {
-                println!("{:#?}", base);
-                not_a_struct(base.ty, base.loc)
-            };
+            let or_else = || not_a_struct(env.files(), base.ty, base.loc);
             let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
 
             let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
@@ -1723,6 +1747,27 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
                 base.loc = expr.loc;
 
                 return Ok(base);
+            } else {
+                return Err(field_doesnt_exist(base.ty, expr.loc));
+            }
+        }
+        ExprKind::PtrMember { base, member } => {
+            let base = check_expr(&mut *env, base)?;
+            let or_else = || not_a_struct_pointer(env.files(), base.ty, base.loc);
+            let base_ty = base.ty.deref().ok_or_else(or_else)?;
+            let struct_id = base_ty.get_struct_id_strict().ok_or_else(or_else)?;
+
+            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
+            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
+
+            if let Some(field) = member_info.get(&member) {
+                return Ok(TCAssignTarget {
+                    kind: TCAssignTargetKind::Ptr(env.add(base)),
+                    offset: field.offset,
+                    ty: field.ty,
+                    defn_loc: base.loc,
+                    loc: expr.loc,
+                });
             } else {
                 return Err(field_doesnt_exist(base.ty, expr.loc));
             }
@@ -1880,17 +1925,19 @@ pub fn bin_assign_op_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
     );
 }
 
-pub fn not_a_struct_pointer(ty: TCType, loc: CodeLoc) -> Error {
+pub fn not_a_struct_pointer(files: &FileDb, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
         "accessed expression using arrow that was not a struct pointer",
-        loc, "access happened here"
+        loc,
+        format!("access happened here (type is {})", ty.display(files))
     );
 }
 
-pub fn not_a_struct(ty: TCType, loc: CodeLoc) -> Error {
+pub fn not_a_struct(files: &FileDb, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
-        "tried to access field of primitive type",
-        loc, "access happened here"
+        "tried to access field of non-struct type",
+        loc,
+        format!("access happened here (type is {})", ty.display(files))
     );
 }
 

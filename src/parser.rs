@@ -42,10 +42,12 @@ impl ParseEnv {
                 return *symbol;
             }
         }
+
         false
     }
 
     pub fn handle_declarator(&self, mut declarator: &Declarator, is_type: bool) {
+        // TODO handle redeclaration of type as identifier
         loop {
             match declarator.kind {
                 DeclaratorKind::Abstract => return,
@@ -58,11 +60,11 @@ impl ParseEnv {
         }
     }
 
-    pub fn add_symbol(&self, sym: u32, is_type: bool) {
+    pub fn add_symbol(&self, sym: u32, is_type: bool) -> Option<bool> {
         let mut raii_borrow = self.symbol_is_type.borrow_mut();
         let scope_o = raii_borrow.last_mut();
         let scope = scope_o.expect("at least one scope should be always present");
-        scope.insert(sym, is_type);
+        return scope.insert(sym, is_type);
     }
 }
 
@@ -157,16 +159,31 @@ rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[TokenKind::Pragma
     }
 }
 
-rule ident() -> (u32, CodeLoc) = pos:position!() n:$[TokenKind::Ident(_)] {
+rule raw_ident() -> (u32, CodeLoc) = pos:position!() n:$[TokenKind::Ident(_)] {
     match n[0] {
         TokenKind::Ident(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
 
+rule ident() -> (u32, CodeLoc) = i:raw_ident() {?
+    if !env.is_typename(i.0) {
+        Ok(i)
+    } else {
+        Err("<ident>")
+    }
+}
+
 rule int() -> (i32, CodeLoc) = pos:position!() n:$[TokenKind::IntLiteral(_)] {
     match n[0] {
         TokenKind::IntLiteral(n) => (n, env.locs[pos]),
+        _ => unreachable!(),
+    }
+}
+
+rule char() -> (i8, CodeLoc) = pos:position!() n:$[TokenKind::CharLiteral(_)] {
+    match n[0] {
+        TokenKind::CharLiteral(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
@@ -202,6 +219,14 @@ rule constant_expr() -> Expr =
             kind: ExprKind::StringLiteral(n),
             loc,
         }
+    } /
+    n:char() {
+        let (n, loc) = n;
+
+        Expr {
+            kind: ExprKind::CharLiteral(n),
+            loc,
+        }
     }
 
 rule atom() -> Expr =
@@ -219,6 +244,10 @@ rule atom() -> Expr =
             kind: e.kind,
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
+    } /
+    pos:position!() [TokenKind::Sizeof] [TokenKind::LParen]
+    t:type_name() pos2:position!() [TokenKind::RParen] {
+        Expr { loc: l_from(env.locs[pos], env.locs[pos2]), kind: ExprKind::SizeofTy(t)  }
     }
 
 
@@ -289,29 +318,37 @@ rule assignment_expr() -> Expr = precedence! {
     }
 
     --
-    // Prefix
-    pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:(@) {
+    n:prefix_expr() { n }
+    n:cast_expr() { n }
+}
+
+rule cast_expr() -> Expr =
+    pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, from: x } }
-    }
-    pos:position!() [TokenKind::Amp] x:(@) {
+    } /
+    prefix_expr()
+
+rule prefix_expr() -> Expr =
+    pos:position!() [TokenKind::Amp] x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Ref, x)  }
-    }
-    pos:position!() [TokenKind::Star] x:(@) {
+    } /
+    pos:position!() [TokenKind::Star] x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Deref, x)  }
-    }
-    pos:position!() [TokenKind::Sizeof] x:(@) {
+    } /
+    pos:position!() [TokenKind::Sizeof] x:prefix_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::SizeofExpr(x)  }
-    }
-    pos:position!() [TokenKind::Dash] x:(@) {
+    } /
+    pos:position!() [TokenKind::Dash] x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Neg, x)  }
-    }
+    } /
+    postfix_expr()
 
-    --
+rule postfix_expr() -> Expr = precedence! {
     // Postfix
     x:(@) [TokenKind::LParen] c:cs0(<assignment_expr()>) pos:position!() [TokenKind::RParen] {
         let (c, _) = c;
@@ -333,13 +370,13 @@ rule assignment_expr() -> Expr = precedence! {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc, kind: ExprKind::BinOp(BinOp::Index, x, y) }
     }
-    x:(@) [TokenKind::Arrow] id:ident() {
+    x:(@) [TokenKind::Arrow] id:raw_ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
         let x = env.buckets.add(x);
         Expr { loc, kind: ExprKind::PtrMember { member: id, base: x } }
     }
-    x:(@) [TokenKind::Dot] id:ident() {
+    x:(@) [TokenKind::Dot] id:raw_ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
         let x = env.buckets.add(x);
@@ -522,7 +559,7 @@ rule storage_class_typedef() -> DeclarationSpecifier =
 
 rule type_specifier_unique() -> TypeSpecifier =
     [TokenKind::Void] { TypeSpecifier::Void } /
-    pos:position!() [TokenKind::Struct] id:ident()? declarations:struct_body() {
+    pos:position!() [TokenKind::Struct] id:raw_ident()? declarations:struct_body() {
         let (declarations, loc) = declarations;
 
         if let Some((ident, _)) = id {
@@ -542,7 +579,7 @@ rule type_specifier_unique() -> TypeSpecifier =
             })
         }
     } /
-    pos:position!() [TokenKind::Union]  id:ident()? declarations:struct_body() {
+    pos:position!() [TokenKind::Union]  id:raw_ident()? declarations:struct_body() {
         let (declarations, loc) = declarations;
 
         if let Some((ident, _)) = id {
@@ -562,7 +599,7 @@ rule type_specifier_unique() -> TypeSpecifier =
             })
         }
     } /
-    pos:position!() [TokenKind::Struct] id:ident() {
+    pos:position!() [TokenKind::Struct] id:raw_ident() {
         let (id, loc) = id;
 
         TypeSpecifier::Struct(StructType {
@@ -570,7 +607,7 @@ rule type_specifier_unique() -> TypeSpecifier =
             loc: l_from(env.locs[pos], loc),
         })
     } /
-    pos:position!() [TokenKind::Union] id:ident() {
+    pos:position!() [TokenKind::Union] id:raw_ident() {
         let (id, loc) = id;
 
         TypeSpecifier::Union(StructType {
@@ -681,7 +718,7 @@ rule declarator() -> Declarator
 }
 
 rule direct_declarator() -> Declarator =
-    pos:position!() i:ident() {
+    pos:position!() i:raw_ident() {
         Declarator {
             kind: DeclaratorKind::Identifier(i.0),
             derived: &[],
@@ -717,18 +754,7 @@ rule derived_declarator() -> DerivedDeclarator  =
     }
 
 rule array_declarator() -> ArrayDeclarator =
-    q:list0(<type_qualifier()>) {
-        let (q, loc) = q;
-        ArrayDeclarator {
-            qualifiers: env.buckets.add_array(q),
-            size: ArraySize {
-                kind: ArraySizeKind::Unknown,
-                loc,
-            },
-            loc,
-        }
-    } /
-    q:list0(<type_qualifier()>) e:assignment_expr() {
+    q:list0(<type_qualifier()>) e:constant_expr() {
         let (q, mut begin_loc) = q;
         if begin_loc == NO_FILE {
             begin_loc = e.loc;
@@ -741,6 +767,17 @@ rule array_declarator() -> ArrayDeclarator =
                kind: ArraySizeKind::VariableExpression(env.buckets.add(e)),
             },
             loc: l_from(begin_loc, e.loc),
+        }
+    } /
+    q:list0(<type_qualifier()>) {
+        let (q, loc) = q;
+        ArrayDeclarator {
+            qualifiers: env.buckets.add_array(q),
+            size: ArraySize {
+                kind: ArraySizeKind::Unknown,
+                loc,
+            },
+            loc,
         }
     }
 
@@ -934,7 +971,7 @@ rule abstract_function_declarator() -> FunctionDeclarator =
 
 rule typedef_name() -> (u32, CodeLoc) = quiet! { typedef_name0() } / expected!("<typedef_name>")
 
-rule typedef_name0() -> (u32, CodeLoc) = i:ident() {?
+rule typedef_name0() -> (u32, CodeLoc) = i:raw_ident() {?
     if env.is_typename(i.0) {
         Ok(i)
     } else {
@@ -985,7 +1022,7 @@ pub rule statement() -> Statement =
 ////
 
 rule labeled_statement() -> Statement =
-    i:ident() [TokenKind::Colon] s:statement() {
+    i:raw_ident() [TokenKind::Colon] s:statement() {
         let (i, loc) = i;
         Statement {
             loc: l_from(loc, s.loc),
@@ -1160,7 +1197,7 @@ rule for_statement() -> Statement =
 ////
 
 rule jump_statement() -> Statement =
-    pos:position!() [TokenKind::Goto] i:ident() pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [TokenKind::Goto] i:raw_ident() pos2:position!() [TokenKind::Semicolon] {
         let (i, label_loc) = i;
         let loc = l_from(env.locs[pos], env.locs[pos2]);
         Statement {

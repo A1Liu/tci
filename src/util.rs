@@ -952,6 +952,25 @@ impl n32 {
 
         return Ok(self.data);
     }
+
+    pub fn unwrap_or(self, f: u32) -> u32 {
+        if self == Self::NULL {
+            return f;
+        }
+
+        return self.data;
+    }
+
+    pub fn unwrap_or_else<F>(self, f: F) -> u32
+    where
+        F: FnOnce() -> u32,
+    {
+        if self == Self::NULL {
+            return f();
+        }
+
+        return self.data;
+    }
 }
 
 impl Into<u32> for n32 {

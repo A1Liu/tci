@@ -596,18 +596,14 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn check_struct_decl(&mut self, ident: u32, decl_loc: CodeLoc) -> TCTypeBase {
-        match self.structs.entry(LabelOrLoc::Ident(ident)) {
-            Entry::Occupied(o) => {
-                let sa = o.get().sa;
-                return TCTypeBase::NamedStruct { ident, sa };
-            }
-            Entry::Vacant(v) => {
-                let (defn, sa) = (None, TC_UNKNOWN_SA);
-                v.insert(TCStruct { defn, sa, decl_loc });
-
-                return TCTypeBase::NamedStruct { ident, sa };
-            }
+        let label = LabelOrLoc::Ident(ident);
+        if let Some(sa) = self.search_scopes(|te| te.structs.get(&label).map(|a| a.sa)) {
+            return TCTypeBase::NamedStruct { ident, sa };
         }
+
+        let (defn, sa) = (None, TC_UNKNOWN_SA);
+        self.structs.insert(label, TCStruct { defn, sa, decl_loc });
+        return TCTypeBase::NamedStruct { ident, sa };
     }
 
     pub fn get_struct_fields(

@@ -23,7 +23,7 @@ int main() {
 
   printf("%d\n", file3->ident);
   printf("sizeof FileId is %ld\n", sizeof(struct FileId));
-  printf("sizeof file3.ident is %ld\n", sizeof file3.ident);
+  printf("sizeof file3.ident is %ld\n", sizeof file3->ident);
   printf("location is {%d, %d}\n", location_of(&file2).length,
          location_of(&file2).cursor);
   file3->ident = 13;
