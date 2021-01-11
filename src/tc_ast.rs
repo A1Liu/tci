@@ -299,6 +299,14 @@ pub trait TCTy {
         return owned;
     }
 
+    fn to_ty_owned(&self) -> TCTypeOwned {
+        let mods = self.mods().iter().map(|a| *a).collect();
+        TCTypeOwned {
+            base: self.base(),
+            mods,
+        }
+    }
+
     fn is_void(&self) -> bool {
         if let TCTypeBase::Void = self.base() {
             if self.mods().len() == 0 {
@@ -579,8 +587,6 @@ pub trait TCTy {
 
     /// Panics if the type is incomplete
     fn deref(&self) -> Option<TCTypeRef> {
-        assert!(self.is_complete());
-
         if let Some(first) = self.mods().first() {
             let base = self.base();
             let mods = &self.mods()[1..];
@@ -595,7 +601,7 @@ pub trait TCTy {
 
                     return Some(to_ret);
                 }
-                TCTypeModifier::Array(_) => return Some(to_ret),
+                TCTypeModifier::Array(_) | TCTypeModifier::VariableArray => return Some(to_ret),
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
                 | TCTypeModifier::UnknownParams => return None,
@@ -957,6 +963,25 @@ impl TCTypeOwned {
             }
         }
     }
+
+    pub fn array_mod(&mut self) -> Option<&mut TCTypeModifier> {
+        if self.mods.len() == 0 {
+            if let Some(ty) = self.base.get_typedef() {
+                let mut mods: Vec<_> = ty.mods.iter().map(|a| *a).collect();
+                mods.append(&mut self.mods);
+                self.mods = mods;
+                return self.array_mod();
+            }
+
+            return None;
+        }
+
+        match &mut self.mods[0] {
+            x @ TCTypeModifier::VariableArray => return Some(x),
+            x @ TCTypeModifier::Array(_) => return Some(x),
+            _ => return None,
+        }
+    }
 }
 
 impl TCTy for TCTypeOwned {
@@ -1013,6 +1038,10 @@ pub enum TCExprKind {
         ident: u32,
     },
 
+    ArrayInit {
+        elems: &'static [TCExprKind],
+        elem_ty: TCType,
+    },
     ParenList(&'static [TCExpr]),
 
     BinOp {

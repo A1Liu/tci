@@ -654,7 +654,13 @@ impl<'a> TypeEnv<'a> {
         return Ok(());
     }
 
-    pub fn add_local(&mut self, env: &mut FuncEnv, decl: &TCDecl) -> Result<(), Error> {
+    pub fn add_var(&mut self, env: Option<&mut FuncEnv>, decl: &TCDecl) -> Result<(), Error> {
+        let env = if let Some(env) = env {
+            env
+        } else {
+            return Self::add_global(self.globals_mut(), decl);
+        };
+
         let TCDecl { init, ident, .. } = *decl;
         let TCDecl { ty, loc, .. } = *decl;
 
@@ -741,15 +747,15 @@ impl<'a> TypeEnv<'a> {
             // a local scope but still requires a global definition
         }
 
+        if let Some((label, init_expr)) = init_expr {
+            let op = TCOpcode::init_local(self, label, init_expr, ty, loc);
+            env.ops.push(op);
+        }
+
         return Ok(());
     }
 
-    pub fn add_global(&mut self, decl: &TCDecl) -> Result<(), Error> {
-        let global_env = match &mut self.kind {
-            TypeEnvKind::Global(g) => g,
-            _ => unreachable!(),
-        };
-
+    pub fn add_global(global_env: &mut GlobalTypeEnv, decl: &TCDecl) -> Result<(), Error> {
         let global_ident = TCIdent::Ident(decl.ident);
         let global_var = TCGlobalVar {
             init: decl.init,

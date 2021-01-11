@@ -475,6 +475,17 @@ impl Assembler {
                 self.opcodes.push(tagged);
             }
 
+            TCExprKind::ArrayInit { elems, elem_ty } => {
+                let mut elem = TCExpr {
+                    kind: TCExprKind::Uninit,
+                    ty: *elem_ty,
+                    loc: expr.loc,
+                };
+                for &expr_kind in elems.iter() {
+                    elem.kind = expr_kind;
+                    self.translate_expr(env, &elem);
+                }
+            }
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
                     self.translate_expr(env, expr);
@@ -616,7 +627,7 @@ impl Assembler {
 
             TCExprKind::Assign { target, value } => {
                 self.translate_expr(env, value);
-                let bytes = value.ty.repr_size();
+                let bytes = target.ty.size().into();
                 tagged.op = Opcode::PushDup { bytes };
                 self.opcodes.push(tagged);
                 self.translate_assign(env, target);
@@ -707,22 +718,27 @@ impl Assembler {
                 if_true,
                 if_false,
             } => {
-                let new_label = self.labels.len() as u32;
+                let else_label = self.labels.len() as u32;
+                self.labels.push(!0);
+                let end_label = self.labels.len() as u32;
                 self.labels.push(!0);
                 self.translate_expr(env, condition);
 
                 tagged.op = match cond_ty.size() {
-                    1 => Opcode::JumpIfZero8(new_label),
-                    2 => Opcode::JumpIfZero16(new_label),
-                    4 => Opcode::JumpIfZero32(new_label),
-                    8 => Opcode::JumpIfZero64(new_label),
+                    1 => Opcode::JumpIfZero8(else_label),
+                    2 => Opcode::JumpIfZero16(else_label),
+                    4 => Opcode::JumpIfZero32(else_label),
+                    8 => Opcode::JumpIfZero64(else_label),
                     _ => unreachable!(),
                 };
                 self.opcodes.push(tagged);
 
                 self.translate_expr(env, if_true);
-                self.labels[new_label as usize] = self.opcodes.len() as u32;
+                tagged.op = Opcode::Jump(end_label);
+                self.opcodes.push(tagged);
+                self.labels[else_label as usize] = self.opcodes.len() as u32;
                 self.translate_expr(env, if_false);
+                self.labels[end_label as usize] = self.opcodes.len() as u32;
             }
 
             TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {

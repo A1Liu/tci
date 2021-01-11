@@ -958,7 +958,7 @@ rule initializer() -> Initializer =
         }
     }
 
-rule initializer_list_item() -> Expr = expr()
+rule initializer_list_item() -> Expr = assignment_expr()
 
 pub rule statement() -> Statement =
     labeled_statement() /

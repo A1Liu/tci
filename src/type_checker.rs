@@ -167,7 +167,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 
     for decl in tree {
         match decl.kind {
-            GlobalStatementKind::Declaration(decl) => check_global_declaration(&mut globals, decl)?,
+            GlobalStatementKind::Declaration(decl) => check_declaration(&mut globals, None, decl)?,
             GlobalStatementKind::FunctionDefinition(func) => {
                 let func_decl = check_func_defn_decl(&mut globals, &func)?;
 
@@ -205,7 +205,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
                     ident,
                     loc: decl.loc,
                 };
-                globals.add_global(&decl)?;
+                globals.add_var(None, &decl)?;
 
                 let mut func_out = FuncEnv::new(func_decl.return_type, func_decl.loc);
                 let mut func_locals = globals.child(&mut func_out, decl.loc);
@@ -231,7 +231,7 @@ pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<Translatio
 pub fn check_block(env: &mut TypeEnv, out: &mut FuncEnv, stmts: Block) -> Result<(), Error> {
     for stmt in stmts.stmts {
         match stmt.kind {
-            BlockItemKind::Declaration(decl) => check_local_declaration(env, out, decl)?,
+            BlockItemKind::Declaration(decl) => check_declaration(env, Some(out), decl)?,
             BlockItemKind::Statement(stmt) => check_stmt(env, out, stmt)?,
         }
     }
@@ -358,7 +358,7 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             body,
         } => {
             let (mut scope, cb) = env.loop_child(out, body.loc);
-            check_local_declaration(&mut scope, out, decl)?;
+            check_declaration(&mut scope, Some(out), decl)?;
 
             let begin = out.label();
 
@@ -1016,9 +1016,9 @@ pub fn assign_convert(
     });
 }
 
-pub fn check_local_declaration(
+pub fn check_declaration(
     locals: &mut TypeEnv,
-    out: &mut FuncEnv,
+    mut out: Option<&mut FuncEnv>,
     declaration: Declaration,
 ) -> Result<(), Error> {
     let (sc, base) = parse_decl_specs(locals, declaration.specifiers)?;
@@ -1037,7 +1037,7 @@ pub fn check_local_declaration(
     }
 
     for decl in declaration.declarators {
-        let (ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
+        let (mut ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
         let ident: u32 = id.into();
         let loc = decl.loc;
 
@@ -1059,8 +1059,55 @@ pub fn check_local_declaration(
 
                     (init, ty)
                 }
+
+                // Simple form of initializer lists
                 InitializerKind::List(exprs) => {
-                    panic!("don't support initializer lists yet")
+                    let or_else = || {
+                        error!(
+                            "initializer lists not supported for anything but 1D arrays",
+                            init.loc, "initializer list used here"
+                        )
+                    };
+
+                    let deref = ty.deref().map(|a| a.to_ty_owned());
+                    let array_mod = ty.array_mod().ok_or_else(or_else)?;
+                    let elem_ty = deref.unwrap().to_ref(&*locals);
+
+                    let mut tc_exprs = Vec::new();
+                    for expr in exprs {
+                        let tc_expr = check_expr(&mut *locals, expr)?;
+                        let or_else = || conversion_error(elem_ty, decl.declarator.loc, &tc_expr);
+                        let tc_expr =
+                            assign_convert(&*locals, elem_ty, tc_expr, decl.declarator.loc)
+                                .ok_or_else(or_else)?;
+                        tc_exprs.push(tc_expr.kind);
+                    }
+
+                    let array_init = match array_mod {
+                        TCTypeModifier::Array(arr) => {
+                            tc_exprs.resize(*arr as usize, TCExprKind::Uninit);
+                            let elems = locals.add_array(tc_exprs);
+
+                            TCExprKind::ArrayInit { elems, elem_ty }
+                        }
+                        x @ TCTypeModifier::VariableArray => {
+                            *x = TCTypeModifier::Array(tc_exprs.len() as u32); // TODO overflow
+                            let elems = locals.add_array(tc_exprs);
+
+                            TCExprKind::ArrayInit { elems, elem_ty }
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    let init = match sc {
+                        StorageClass::Extern => TCDeclInit::ExternInit(array_init),
+                        StorageClass::Default => TCDeclInit::Default(array_init),
+                        StorageClass::Static => TCDeclInit::Static(array_init),
+                        StorageClass::Typedef => unreachable!(),
+                    };
+
+                    let ty = ty.to_ref(&*locals);
+                    (init, ty)
                 }
             }
         } else {
@@ -1085,81 +1132,7 @@ pub fn check_local_declaration(
             ty,
             loc,
         };
-        locals.add_local(out, &tc_decl)?;
-    }
-
-    return Ok(());
-}
-
-pub fn check_global_declaration(
-    locals: &mut TypeEnv,
-    declaration: Declaration,
-) -> Result<(), Error> {
-    let (sc, base) = parse_decl_specs(locals, declaration.specifiers)?;
-
-    if let StorageClass::Typedef = sc {
-        debug_assert!(declaration.declarators.len() == 1);
-        let init_declarator = &declaration.declarators[0];
-        debug_assert!(init_declarator.initializer.is_none());
-
-        let (ty, id) = check_decl(&mut *locals, base, &init_declarator.declarator)?;
-        let (ty, ident) = (ty.to_ref(&*locals), id.into());
-        let loc = declaration.loc;
-
-        locals.add_typedef(ty, ident, loc);
-        return Ok(());
-    }
-
-    for decl in declaration.declarators {
-        let (ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
-        let ident: u32 = id.into();
-        let loc = decl.loc;
-
-        let (init, ty) = if let Some(init) = decl.initializer {
-            match init.kind {
-                InitializerKind::Expr(expr) => {
-                    let tc_expr = check_expr(&mut *locals, expr)?;
-                    let ty = ty.to_ref(&*locals);
-                    let or_else = || conversion_error(ty, decl.declarator.loc, &tc_expr);
-                    let tc_expr = assign_convert(&*locals, ty, tc_expr, decl.declarator.loc)
-                        .ok_or_else(or_else)?;
-
-                    let init = match sc {
-                        StorageClass::Extern => TCDeclInit::ExternInit(tc_expr.kind),
-                        StorageClass::Default => TCDeclInit::Default(tc_expr.kind),
-                        StorageClass::Static => TCDeclInit::Static(tc_expr.kind),
-                        StorageClass::Typedef => unreachable!(),
-                    };
-
-                    (init, ty)
-                }
-                InitializerKind::List(exprs) => {
-                    panic!("don't support initializer lists yet")
-                }
-            }
-        } else {
-            let init = match sc {
-                StorageClass::Extern => TCDeclInit::Extern,
-                StorageClass::Default => TCDeclInit::DefaultUninit,
-                StorageClass::Static => TCDeclInit::Static(TCExprKind::Uninit),
-                StorageClass::Typedef => unreachable!(),
-            };
-
-            let ty = ty.to_ref(&*locals);
-            (init, ty)
-        };
-
-        if !ty.is_complete() {
-            return Err(variable_incomplete_type(ty, decl.loc));
-        }
-
-        let tc_decl = TCDecl {
-            ident,
-            init,
-            ty,
-            loc,
-        };
-        locals.add_global(&tc_decl)?;
+        locals.add_var(out.as_deref_mut(), &tc_decl)?;
     }
 
     return Ok(());
@@ -1225,7 +1198,9 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
         }
 
         ExprKind::SizeofExpr(e) => {
-            let size: u32 = check_expr(&mut *env, e)?.ty.size().into();
+            let expr = check_expr(&mut *env, e)?;
+            println!("{:?}", expr.ty);
+            let size: u32 = expr.ty.size().into();
 
             return Ok(TCExpr {
                 kind: TCExprKind::U64Literal(size as u64),
