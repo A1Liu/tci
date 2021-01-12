@@ -34,7 +34,7 @@ export default function NavBar() {
 
   return (
     <NavBarDiv>
-      <div className="pb-5 ml-2">
+      <div>
         <input
           style={{ display: "none" }}
           type="file"
@@ -43,11 +43,7 @@ export default function NavBar() {
           onChange={handleOnChange}
         />
 
-        <UploadButton
-          className="bg-blue-600 hover:bg-blue-800 text-white py-1 px-2 rounded"
-          type="button"
-          onClick={handleOnClick}
-        >
+        <UploadButton type="button" onClick={handleOnClick}>
           Upload a File
         </UploadButton>
       </div>

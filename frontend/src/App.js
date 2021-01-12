@@ -1,49 +1,73 @@
-import "./tailwind.css";
 import "./Split.css";
+
 import SplitPane from "react-split-pane";
+import styled from "styled-components";
+
+import BasicEditor from "./components/Editor";
 import NavBar from "./components/NavBar";
 import Terminal from "./components/Terminal";
-import BasicEditor from "./components/Editor";
 
 function App() {
   return (
     <div>
-      <ul className="flex h-10 px-2 py-2 bg-gray-800 border-b border-gray-600">
-        <li className="mr-6">
-          <a className="text-blue-500 hover:text-white font-sans" href="/">
-            TCI
-          </a>
-        </li>
-      </ul>
+      <NameBox>
+        <Name href="/"> TCI </Name>
+      </NameBox>
+
       <NavBar />
-      <div className="flex min-h-screen flex-wrap ">
-        <div className="md:w-full">
-          <div className="flex md:flex-row flex-wrap">
-            <SplitPane
-              split="vertical"
-              defaultSize="50%"
-              minSize={200}
-              maxSize={-200}
-              style={{ width: "100%", height: "100%" }}
-            >
-              <div
-                style={{ width: "100%", height: "100%" }}
-                className="w-full md:w-1/2 text-center border-r border-gray-800"
-              >
-                <BasicEditor />
-              </div>
-              <div
-                style={{ width: "100%", height: "100%" }}
-                className="h-screen w-full md:w-1/2 text-center border-solid"
-              >
-                <Terminal />
-              </div>
-            </SplitPane>
-          </div>
+
+      <SplitPane
+        split="vertical"
+        defaultSize="50%"
+        minSize={200}
+        maxSize={-200}
+        style={{
+          width: "100%",
+          height: "100%",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            height: "100%",
+          }}
+        >
+          <BasicEditor />
         </div>
-      </div>
+
+        <div style={{ width: "100%", height: "100%" }}>
+          <Terminal />
+        </div>
+      </SplitPane>
     </div>
   );
 }
+
+const NameBox = styled.div`
+  display: flex;
+  height: 2.5rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  --bg-opacity: 1;
+  background-color: #424242;
+  background-color: rgba(66, 66, 66, var(--bg-opacity));
+  border-bottom-width: 1px;
+  --border-opacity: 1;
+  border-color: #757575;
+  border-color: rgba(117, 117, 117, var(--border-opacity));
+`;
+
+const Name = styled.a`
+  --text-opacity: 1;
+  color: #4299e1;
+  color: rgba(66, 153, 225, var(--text-opacity));
+  &:hover {
+    --text-opacity: 1;
+    color: #fff;
+    color: rgba(255, 255, 255, var(--text-opacity));
+  }
+`;
 
 export default App;

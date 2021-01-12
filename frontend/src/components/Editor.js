@@ -130,39 +130,34 @@ const BasicEditor = () => {
 
   return (
     <div style={{ height: "100%" }}>
-      <div className="h-10 w-full flex">
-        <div className="bg-gray-800 w-full text-white">
-          <nav className="flex flex-row w-full overflow-auto">
-            {Object.keys(files).map((name, index) => {
-              const changeTab = () => {
-                if (name !== currentFile.current) {
-                  const session = monacoRef.current.editor;
-                  if (marker.current !== undefined) {
-                    session.setModelMarkers(editor.getModel(), currentFile, []);
-                    marker.current = undefined;
-                  }
+      <EditorNav>
+        {Object.keys(files).map((name, index) => {
+          const changeTab = () => {
+            if (name !== currentFile.current) {
+              const session = monacoRef.current.editor;
+              if (marker.current !== undefined) {
+                session.setModelMarkers(editor.getModel(), currentFile, []);
+                marker.current = undefined;
+              }
 
-                  currentFile.current = name;
-                  setRerender(rerender + 1);
-                }
-              };
+              currentFile.current = name;
+              setRerender(rerender + 1);
+            }
+          };
 
-              return (
-                <EditorTab
-                  key={name}
-                  index={index}
-                  dispatch={dispatch}
-                  file={name}
-                  currentFile={currentFile.current}
-                  setCurrentFile={changeTab}
-                />
-              );
-            })}
-          </nav>
-        </div>
-      </div>
+          return (
+            <EditorTab
+              key={name}
+              index={index}
+              dispatch={dispatch}
+              file={name}
+              currentFile={currentFile.current}
+              setCurrentFile={changeTab}
+            />
+          );
+        })}
+      </EditorNav>
 
-      <div className="neutral" />
       <ControlledEditor
         height="100%"
         theme="dark"
@@ -183,6 +178,19 @@ const BasicEditor = () => {
     </div>
   );
 };
+
+const EditorNav = styled.nav`
+  --bg-opacity: 1;
+  background-color: #424242;
+  background-color: rgba(66, 66, 66, var(--bg-opacity));
+  width: 100%;
+  --text-opacity: 1;
+  color: #fff;
+  color: rgba(255, 255, 255, var(--text-opacity));
+  display: flex;
+  flex-direction: row;
+  overflow: auto;
+`;
 
 const EditorTabDiv = styled.div`
   display: flex;
