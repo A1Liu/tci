@@ -1,5 +1,4 @@
-
-int printf(char *format, ...);
+#include <stdio.h>
 
 int main() {
   int target = 0, *hello = &target, *goodbye = &target;

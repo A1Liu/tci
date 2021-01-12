@@ -1,2059 +1,1418 @@
 use crate::ast::*;
-use crate::buckets::BucketListRef;
+use crate::buckets::*;
 use crate::lexer::*;
 use crate::util::*;
-use core::slice;
-use std::collections::HashMap;
+use std::cell::RefCell;
 
-pub type AstDb<'a> = HashMap<u32, &'a [GlobalStmt<'a>]>;
-
-#[derive(Hash, PartialEq, Eq)]
-pub struct TypeDeclSpec {
-    unsigned: u8,
-    long: u8,
-    short: u8,
-    char: u8,
-    int: u8,
-    float: u8,
-    signed: u8,
-    double: u8,
-    void: u8,
+pub struct ParseEnv {
+    pub symbol_is_type: RefCell<Vec<HashMap<u32, bool>>>, // true is type
+    pub locs: Vec<CodeLoc>,
+    pub buckets: BucketListFactory,
+    pub tree: Vec<GlobalStatement>,
 }
 
-impl TypeDeclSpec {
-    pub fn new() -> Self {
-        TypeDeclSpec {
-            unsigned: 0,
-            long: 0,
-            short: 0,
-            char: 0,
-            int: 0,
-            float: 0,
-            signed: 0,
-            double: 0,
-            void: 0,
+impl Drop for ParseEnv {
+    fn drop(&mut self) {
+        unsafe { self.buckets.dealloc() };
+    }
+}
+
+impl ParseEnv {
+    pub fn new(toks: &[Token]) -> Self {
+        Self {
+            // TODO This is a hack to work around stuff in rust-peg
+            symbol_is_type: RefCell::new(vec![HashMap::new()]),
+            locs: toks.iter().map(|tok| tok.loc).collect(),
+            tree: Vec::new(),
+            buckets: BucketListFactory::new(),
         }
     }
-}
 
-macro_rules! gen_type_decl_spec {
-    ($( $ident:ident )* ) => {{
-        let mut decl = TypeDeclSpec::new();
-
-        $(
-            gen_type_decl_spec!(@INCR_CORRECT, decl, $ident);
-        )*
-        decl
-    }};
-    (@INCR_CORRECT, $decl:expr, void) => {
-        $decl.void += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, unsigned) => {
-        $decl.unsigned += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, long) => {
-        $decl.long += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, short) => {
-        $decl.short += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, char) => {
-        $decl.char += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, int) => {
-        $decl.int += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, float) => {
-        $decl.float += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, signed) => {
-        $decl.signed += 1;
-    };
-    (@INCR_CORRECT, $decl:expr, double) => {
-        $decl.double += 1;
-    };
-}
-
-lazy_static! {
-    pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, ASTTypeKind<'static>> = {
-        let mut map = HashMap::new();
-        map.insert(gen_type_decl_spec!(int), ASTTypeKind::Int);
-        map.insert(gen_type_decl_spec!(long), ASTTypeKind::Long);
-        map.insert(gen_type_decl_spec!(char), ASTTypeKind::Char);
-        map.insert(gen_type_decl_spec!(void), ASTTypeKind::Void);
-        map.insert(gen_type_decl_spec!(signed char), ASTTypeKind::Char);
-        map.insert(gen_type_decl_spec!(unsigned), ASTTypeKind::Unsigned);
-
-        map.insert(
-            gen_type_decl_spec!(unsigned char),
-            ASTTypeKind::UnsignedChar,
-        );
-
-        map.insert(gen_type_decl_spec!(long int), ASTTypeKind::Long);
-        map.insert(gen_type_decl_spec!(long long int), ASTTypeKind::LongLong);
-        map.insert(gen_type_decl_spec!(long long), ASTTypeKind::LongLong);
-
-        map.insert(gen_type_decl_spec!(unsigned int), ASTTypeKind::Unsigned);
-        map.insert(
-            gen_type_decl_spec!(unsigned long),
-            ASTTypeKind::UnsignedLong,
-        );
-        map.insert(
-            gen_type_decl_spec!(unsigned long int),
-            ASTTypeKind::UnsignedLong,
-        );
-        map.insert(
-            gen_type_decl_spec!(unsigned long long),
-            ASTTypeKind::UnsignedLongLong,
-        );
-        map.insert(
-            gen_type_decl_spec!(unsigned long long int),
-            ASTTypeKind::UnsignedLongLong,
-        );
-        map
-    };
-}
-
-pub struct Parser<'b> {
-    pub db: AstDb<'b>,
-}
-
-pub fn peek_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
-    return Some(*tokens.get(*current)?);
-}
-
-pub fn peek2_o<'a>(tokens: &[Token<'a>], current: &usize) -> Option<Token<'a>> {
-    return Some(*tokens.get(*current + 1)?);
-}
-
-pub fn peek<'a>(tokens: &[Token<'a>], current: &usize) -> Result<Token<'a>, Error> {
-    let map_err = || error!("expected token");
-    peek_o(tokens, current).ok_or_else(map_err)
-}
-
-pub fn pop<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
-    let tok = peek(tokens, current)?;
-    *current += 1;
-    Ok(tok)
-}
-
-/// True if the parse is about to see a type, false otherwise
-pub fn peek_type_or_expr<'a>(tokens: &'a [Token<'a>], current: usize) -> Result<bool, Error> {
-    let tok = peek(tokens, &current)?;
-    match tok.kind {
-        TokenKind::TypeIdent(_) => return Ok(true),
-        TokenKind::Int | TokenKind::Long => return Ok(true),
-        TokenKind::Unsigned | TokenKind::Signed => return Ok(true),
-        TokenKind::Float | TokenKind::Double => return Ok(true),
-        TokenKind::Char | TokenKind::Struct | TokenKind::Void => return Ok(true),
-        _ => return Ok(false),
-    }
-}
-
-impl<'b> Parser<'b> {
-    pub fn new() -> Self {
-        Self { db: HashMap::new() }
+    pub fn enter_scope(&self) {
+        self.symbol_is_type.borrow_mut().push(HashMap::new());
     }
 
-    pub fn parse_tokens<'a>(
-        &mut self,
-        buckets: BucketListRef<'b>,
-        token_db: &TokenDb<'a>,
-        file: u32,
-    ) -> Result<ASTProgram<'b>, Error> {
-        if let Some(stmts) = self.db.get(&file) {
-            return Ok(ASTProgram { stmts });
+    pub fn leave_scope(&self) {
+        self.symbol_is_type.borrow_mut().pop().unwrap();
+    }
+
+    pub fn is_typename(&self, ident: u32) -> bool {
+        for scope in self.symbol_is_type.borrow().iter().rev() {
+            if let Some(symbol) = scope.get(&ident) {
+                return *symbol;
+            }
         }
 
-        let mut parser = Parser::new();
-        let mut parse_result = Vec::new();
-        parser.parse_tokens_rec(buckets, token_db, file, &mut parse_result)?;
-        let stmts = buckets.add_array(parse_result);
-        let prev = self.db.insert(file, stmts);
-        debug_assert!(prev.is_none());
-        return Ok(ASTProgram { stmts });
+        false
     }
 
-    pub fn parse_tokens_rec<'a>(
-        &mut self,
-        mut buckets: BucketListRef<'b>,
-        tdb: &TokenDb<'a>,
-        file: u32,
-        parse_result: &mut Vec<GlobalStmt<'b>>,
-    ) -> Result<(), Error> {
-        let tokens = tdb[&file];
-        let mut current = 0;
-
+    pub fn handle_declarator(&self, mut declarator: &Declarator, is_type: bool) {
+        // TODO handle redeclaration of type as identifier
         loop {
-            if peek_o(tokens, &mut current).is_none() {
-                break;
-            }
-
-            self.parse_global_decls(buckets, tdb, tokens, &mut current, parse_result)?;
-
-            while let Some(next) = buckets.next() {
-                buckets = next;
-            }
-        }
-
-        return Ok(());
-    }
-
-    #[inline]
-    pub fn parse_expr<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        return self.parse_assignment(buckets, tokens, current);
-    }
-
-    pub fn parse_assignment<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let left = self.parse_ternary(buckets, tokens, current)?;
-        match peek(tokens, current)?.kind {
-            TokenKind::Eq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    kind: ExprKind::Assign(left, right),
-                });
-            }
-            TokenKind::PlusEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::Add,
-                    },
-                });
-            }
-            TokenKind::DashEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::Sub,
-                    },
-                });
-            }
-            TokenKind::StarEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::Mul,
-                    },
-                });
-            }
-            TokenKind::SlashEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::Div,
-                    },
-                });
-            }
-            TokenKind::PercentEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::Mod,
-                    },
-                });
-            }
-            TokenKind::LtLtEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::LShift,
-                    },
-                });
-            }
-            TokenKind::GtGtEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::RShift,
-                    },
-                });
-            }
-            TokenKind::AmpEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::BitAnd,
-                    },
-                });
-            }
-            TokenKind::CaretEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::BitXor,
-                    },
-                });
-            }
-            TokenKind::LineEq => {
-                pop(tokens, current).unwrap();
-                let right = self.parse_assignment(buckets, tokens, current)?;
-                let (right, left) = buckets.add((right, left));
-                return Ok(Expr {
-                    loc: l_from(left.loc, right.loc),
-                    //Not sure if I should create new ExprKind or modify Assign
-                    kind: ExprKind::MutAssign {
-                        target: left,
-                        value: right,
-                        op: BinOp::BitOr,
-                    },
-                });
-            }
-            _ => {
-                return Ok(left);
+            match declarator.kind {
+                DeclaratorKind::Abstract => return,
+                DeclaratorKind::Identifier(i) => {
+                    self.add_symbol(i, is_type);
+                    break;
+                }
+                DeclaratorKind::Declarator(d) => declarator = d,
             }
         }
     }
 
-    pub fn parse_ternary<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let condition = self.parse_bool_or(buckets, tokens, current)?;
+    pub fn add_symbol(&self, sym: u32, is_type: bool) -> Option<bool> {
+        let mut raii_borrow = self.symbol_is_type.borrow_mut();
+        let scope_o = raii_borrow.last_mut();
+        let scope = scope_o.expect("at least one scope should be always present");
+        return scope.insert(sym, is_type);
+    }
+}
 
-        let question_tok = peek(tokens, current)?;
-        if question_tok.kind != TokenKind::Question {
-            return Ok(condition);
+#[inline]
+pub fn concat<E>(mut a: Vec<E>, b: Vec<E>) -> Vec<E> {
+    a.extend(b);
+    return a;
+}
+
+pub fn parse(toks: &[Token<'static>]) -> Result<ParseEnv, Error> {
+    let mut parser = ParseEnv::new(toks);
+    let toks: Vec<_> = toks.iter().map(|tok| tok.kind).collect();
+    match c_parser::translation_unit(&toks, &mut parser) {
+        Ok(tree) => {
+            parser.tree = tree;
         }
-
-        pop(tokens, current).unwrap();
-
-        let if_true = self.parse_expr(buckets, tokens, current)?;
-
-        let colon_tok = pop(tokens, current)?;
-        if colon_tok.kind != TokenKind::Colon {
+        Err(err) => {
             return Err(error!(
-                "expected ':' token, got something else instead",
-                colon_tok.loc,
-                format!(
-                    "this was interpreted as {:?} when it should be a ':'",
-                    colon_tok
-                ),
-                question_tok.loc,
-                "expected ':' because of matching '?' here"
+                &format!("expected set: {}", err.expected),
+                parser.locs[err.location],
+                format!("unexpected token '{:?}' found here", toks[err.location])
             ));
         }
+    }
 
-        let if_false = self.parse_bool_or(buckets, tokens, current)?;
+    return Ok(parser);
+}
 
-        let condition = buckets.add(condition);
-        let if_true = buckets.add(if_true);
-        let if_false = buckets.add(if_false);
+peg::parser! {
 
-        return Ok(Expr {
-            loc: l_from(condition.loc, if_false.loc),
-            kind: ExprKind::Ternary {
-                condition,
-                if_true,
-                if_false,
+// Translated from https://github.com/vickenty/lang-c/blob/master/grammar.rustpeg
+pub grammar c_parser(env: &ParseEnv) for [TokenKind<'static>] {
+
+rule list0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x()*) pos2:position!() {
+    if pos == pos2 {
+        (v, NO_FILE)
+    } else {
+        (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
+    }
+}
+
+rule list1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x()+) pos2:position!() {
+    (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
+}
+
+rule cs0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ** [TokenKind::Comma]) pos2:position!() {
+    if pos == pos2 {
+        (v, NO_FILE)
+    } else {
+        (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
+    }
+}
+
+rule cs1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ++ [TokenKind::Comma]) pos2:position!() {
+    (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
+}
+
+rule list_010<E>(b: rule<E>, s: rule<E>, a: rule<E>) -> (Vec<E>, CodeLoc) =
+    before:list0(<b()>) pos:position!() single:s() after:list0(<a()>)
+{
+    let (mut before, mut begin_loc) = before;
+    let (mut after, mut end_loc) = after;
+    let single_loc = env.locs[pos];
+    if begin_loc == NO_FILE {
+        begin_loc = single_loc;
+    }
+
+    if end_loc == NO_FILE {
+        end_loc = single_loc;
+    }
+
+    let loc = l_from(begin_loc, end_loc);
+
+    let mut before = before;
+    before.push(single);
+    before.extend(after);
+    (before, loc)
+}
+
+// A list containing *exactly* one element of a, and any of b.
+rule list_eq1_n<E>(a: rule<E>, b: rule<E>) -> (Vec<E>,  CodeLoc) = v:list_010(<b()>,<a()>, <b()>)
+
+// A list containing *at least* one element of a, and any of b.
+rule list_ge1_n<E>(a: rule<E>, b: rule<E>) -> (Vec<E>, CodeLoc) = v:list_010(<b()>, <a()>, <a() / b()>)
+
+rule scoped<E>(e: rule<E>) -> E = ({ env.enter_scope(); }) e:e()? {? env.leave_scope(); e.ok_or("") }
+
+rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[TokenKind::Pragma(_)] {
+    match n[0] {
+        TokenKind::Pragma(n) => (n, env.locs[pos]),
+        _ => unreachable!(),
+    }
+}
+
+rule raw_ident() -> (u32, CodeLoc) = pos:position!() n:$[TokenKind::Ident(_)] {
+    match n[0] {
+        TokenKind::Ident(n) => (n, env.locs[pos]),
+        _ => unreachable!(),
+    }
+}
+
+rule ident() -> (u32, CodeLoc) = i:raw_ident() {?
+    if !env.is_typename(i.0) {
+        Ok(i)
+    } else {
+        Err("<ident>")
+    }
+}
+
+rule int() -> (i32, CodeLoc) = pos:position!() n:$[TokenKind::IntLiteral(_)] {
+    match n[0] {
+        TokenKind::IntLiteral(n) => (n, env.locs[pos]),
+        _ => unreachable!(),
+    }
+}
+
+rule char() -> (i8, CodeLoc) = pos:position!() n:$[TokenKind::CharLiteral(_)] {
+    match n[0] {
+        TokenKind::CharLiteral(n) => (n, env.locs[pos]),
+        _ => unreachable!(),
+    }
+}
+
+rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([TokenKind::StringLiteral(_)]+) pos2:position!() {
+    let mut string = String::new();
+    let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+    for token in n {
+        let s = match token {
+            TokenKind::StringLiteral(s) => s,
+            _ => unreachable!(),
+        };
+
+        string.push_str(s);
+    }
+
+    (env.buckets.add_str(&string), loc)
+}
+
+rule constant_expr() -> Expr =
+    n:int() {
+        let (n, loc) = n;
+
+        Expr {
+            kind: ExprKind::IntLiteral(n),
+            loc,
+        }
+    } /
+    n:string() {
+        let (n, loc) = n;
+
+        Expr {
+            kind: ExprKind::StringLiteral(n),
+            loc,
+        }
+    } /
+    n:char() {
+        let (n, loc) = n;
+
+        Expr {
+            kind: ExprKind::CharLiteral(n),
+            loc,
+        }
+    }
+
+rule atom() -> Expr =
+    constant_expr() /
+    n:ident() {
+        let (n, loc) = n;
+
+        Expr {
+            kind: ExprKind::Ident(n),
+            loc,
+        }
+    } /
+    pos:position!() [TokenKind::LParen] e:expr() pos2:position!() [TokenKind::RParen] {
+        Expr {
+            kind: e.kind,
+            loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
+    } /
+    pos:position!() [TokenKind::Sizeof] [TokenKind::LParen]
+    t:type_name() pos2:position!() [TokenKind::RParen] {
+        Expr { loc: l_from(env.locs[pos], env.locs[pos2]), kind: ExprKind::SizeofTy(t)  }
+    }
+
+
+rule assignment_expr() -> Expr = precedence! {
+    x:@ [TokenKind::Eq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::Assign, to: x, val: y }
+        }
+    }
+
+    x:@ [TokenKind::PlusEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Add), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::DashEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Sub), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::StarEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mul), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::SlashEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Div), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::PercentEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mod), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::LtLtEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::LShift), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::GtGtEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::RShift), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::AmpEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitAnd), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::CaretEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitXor), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::LineEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitOr), to: x, val: y }
+        }
+    }
+
+    --
+    x:@ [TokenKind::Question] e:expr() [TokenKind::Colon] y:(@) {
+        let (x, e, y) = env.buckets.add((x, e, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Ternary { condition: x, if_true: e, if_false: y }
+        }
+    }
+
+    --
+    x:(@) [TokenKind::LineLine] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolOr, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::AmpAmp] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolAnd, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Line] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitOr, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Caret] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitXor, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Amp] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitAnd, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::EqEq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Eq, x, y) }
+    }
+    x:(@) [TokenKind::Neq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Neq, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Gt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Gt, x, y) }
+    }
+    x:(@) [TokenKind::Geq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Geq, x, y) }
+    }
+    x:(@) [TokenKind::Lt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Lt, x, y) }
+    }
+    x:(@) [TokenKind::Leq] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Leq, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::LtLt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::LShift, x, y) }
+    }
+    x:(@) [TokenKind::GtGt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::RShift, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Plus] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Add, x, y) }
+    }
+    x:(@) [TokenKind::Dash] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Sub, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Slash] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Div, x, y) }
+    }
+    x:(@) [TokenKind::Star] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Mul, x, y) }
+    }
+
+    --
+    n:prefix_expr() { n }
+    n:cast_expr() { n }
+}
+
+rule cast_expr() -> Expr =
+    pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, from: x } }
+    } /
+    prefix_expr()
+
+rule prefix_expr() -> Expr =
+    pos:position!() [TokenKind::Amp] x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Ref, x)  }
+    } /
+    pos:position!() [TokenKind::Star] x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Deref, x)  }
+    } /
+    pos:position!() [TokenKind::Sizeof] x:prefix_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::SizeofExpr(x)  }
+    } /
+    pos:position!() [TokenKind::Dash] x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Neg, x)  }
+    } /
+    postfix_expr()
+
+rule postfix_expr() -> Expr = precedence! {
+    // Postfix
+    x:(@) [TokenKind::LParen] c:cs0(<assignment_expr()>) pos:position!() [TokenKind::RParen] {
+        let (c, _) = c;
+        let loc = l_from(x.loc, env.locs[pos]);
+        let function = env.buckets.add(x);
+        let params = env.buckets.add_array(c);
+        Expr { loc, kind: ExprKind::Call { function, params } }
+    }
+    x:(@) pos:position!() [TokenKind::DashDash] {
+        let loc = l_from(x.loc, env.locs[pos]);
+        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostDecr, env.buckets.add(x)) }
+    }
+    x:(@) pos:position!() [TokenKind::PlusPlus] {
+        let loc = l_from(x.loc, env.locs[pos]);
+        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostIncr, env.buckets.add(x)) }
+    }
+    x:(@) [TokenKind::LBracket] y:expr() pos:position!() [TokenKind::RBracket] {
+        let loc = l_from(x.loc, env.locs[pos]);
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc, kind: ExprKind::BinOp(BinOp::Index, x, y) }
+    }
+    x:(@) [TokenKind::Arrow] id:raw_ident() {
+        let (id, loc) = id;
+        let loc = l_from(x.loc, loc);
+        let x = env.buckets.add(x);
+        Expr { loc, kind: ExprKind::PtrMember { member: id, base: x } }
+    }
+    x:(@) [TokenKind::Dot] id:raw_ident() {
+        let (id, loc) = id;
+        let loc = l_from(x.loc, loc);
+        let x = env.buckets.add(x);
+        Expr { loc, kind: ExprKind::Member { member: id, base: x } }
+    }
+
+    --
+    n:atom() { n }
+}
+
+rule expr() -> Expr = list:cs1(<assignment_expr()>) { // TODO alllocations!
+    let (list, loc) = list;
+    if list.len() == 1 {
+        list[0]
+    }else {
+        Expr {
+            kind: ExprKind::ParenList(env.buckets.add_array(list)),
+            loc,
+        }
+    }
+}
+
+pub rule declaration() -> Declaration = d:declaration1() [TokenKind::Semicolon] {
+    Declaration {
+        loc: d.2,
+        specifiers: env.buckets.add_array(d.0),
+        declarators: env.buckets.add_array(d.1),
+    }
+}
+
+rule declaration_seq<E, T>(h: rule<(Vec<E>, CodeLoc)>, t: rule<(Vec<E>, Vec<T>, CodeLoc)>)
+    -> (Vec<E>, Vec<T>, CodeLoc) = head:h() tail:t()
+{
+    (concat(head.0, tail.0), tail.1, l_from(head.1, tail.2))
+}
+
+rule declaration1() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
+    declaration_seq(<decl_specs_unique()>, <declaration2()>)
+
+rule declaration2() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
+    declaration_seq(<declaration_typedef()>, <declaration_typedef_tail()>) /
+    declaration_seq(<declaration_unique_type()>, <declaration_tail(<decl_specs_unique()>)>) /
+    declaration_seq(<declaration_nonunique_type()>, <declaration_tail(<decl_specs_nonunique()>)>)
+
+
+// What can follow a type specifier keyword or typename in a declaration
+rule declaration_tail(s: rule<(Vec<DeclarationSpecifier>, CodeLoc)>)
+    -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
+    declaration_seq(<s()>, <declaration_tail1(<s()>)>)
+
+rule declaration_tail1(s: rule<(Vec<DeclarationSpecifier>, CodeLoc)>)
+    -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
+    declaration_seq(<declaration_typedef()>, <declaration_typedef_tail1(<s()>)>) /
+    d:declaration_init_declarators() { (Vec::new(), d.0, d.1) }
+
+// What can follow a typedef keyword
+rule declaration_typedef_tail() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
+    declaration_seq(<decl_specs_unique()>, <declaration_typedef_tail0()>)
+
+rule declaration_typedef_tail0() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc) =
+    declaration_seq(<declaration_unique_type()>, <declaration_typedef_tail1(<decl_specs_unique()>)>) /
+    declaration_seq(<declaration_nonunique_type()>, <declaration_typedef_tail1(<decl_specs_nonunique()>)>)
+
+// What can follow after typedef + type name
+rule declaration_typedef_tail1(s: rule<(Vec<DeclarationSpecifier>, CodeLoc)>)
+    -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc)
+    = s:s() d:declaration_type_declarators() { (s.0, d.0, l_from(s.1, d.1)) }
+
+rule declaration_unique_type() -> (Vec<DeclarationSpecifier>, CodeLoc) =
+    n:decl_spec_unique_type0() { (vec![ n ], n.loc) }
+
+rule declaration_nonunique_type() -> (Vec<DeclarationSpecifier>, CodeLoc) =
+    n:decl_spec_nonunique_type0() { (vec![ n ], n.loc) }
+
+rule decl_specs() -> (Vec<DeclarationSpecifier>, CodeLoc) =
+    s:decl_specs_unique() t:decl_specs_tail() { (concat(s.0, t.0), l_from(s.1, t.1)) }
+
+rule decl_specs_tail() -> (Vec<DeclarationSpecifier>, CodeLoc) =
+    t:declaration_unique_type() s:decl_specs_unique() { (concat(t.0, s.0), l_from(t.1, s.1)) } /
+    t:declaration_nonunique_type() s:decl_specs_nonunique() { (concat(t.0, s.0), l_from(t.1, s.1)) }
+
+rule decl_specs_unique() -> (Vec<DeclarationSpecifier>, CodeLoc) = list0(<decl_spec_nontype()>)
+
+rule decl_specs_nonunique() -> (Vec<DeclarationSpecifier>, CodeLoc) =
+    list0(<decl_spec_nontype() / decl_spec_nonunique_type0()>)
+
+rule decl_spec_nontype() -> DeclarationSpecifier =
+    s:storage_class_specifier() { s } /
+    s:type_qualifier() {
+        DeclarationSpecifier {
+            kind: DeclarationSpecifierKind::TypeQualifier(s),
+            loc: s.loc,
+        }
+    }
+    // s:function_specifier() { s }
+
+rule declaration_typedef() -> (Vec<DeclarationSpecifier>, CodeLoc) =
+    s:declaration_typedef0() { (vec![ s ], s.loc) }
+
+rule declaration_typedef0() -> DeclarationSpecifier =
+    s:storage_class_typedef() { s }
+
+rule decl_spec_unique_type0() -> DeclarationSpecifier =
+    pos:position!() s:type_specifier_unique() pos2:position!()
+{
+    DeclarationSpecifier {
+        loc: l_from(env.locs[pos], env.locs[pos2 - 1]),
+        kind: DeclarationSpecifierKind::TypeSpecifier(s)
+    }
+}
+
+rule decl_spec_nonunique_type0() -> DeclarationSpecifier = pos:position!() s:type_specifier_nonunique() {
+    DeclarationSpecifier { loc: env.locs[pos], kind: DeclarationSpecifierKind::TypeSpecifier(s) }
+}
+
+rule declaration_init_declarators() -> (Vec<InitDeclarator>, CodeLoc) = cs0(<init_declarator()>)
+
+rule declaration_type_declarators() -> (Vec<InitDeclarator>, CodeLoc) = cs0(<type_declarator()>)
+
+rule init_declarator() -> InitDeclarator = d:init_declarator_declarator() i:init_declarator_init()?  {
+    let loc = if let Some(i) = i {
+        l_from(d.loc, i.loc)
+    } else {
+        d.loc
+    };
+
+    InitDeclarator {
+        loc,
+        declarator: d,
+        initializer: i,
+    }
+}
+
+rule init_declarator_declarator() -> Declarator =
+    d:declarator() {
+        env.handle_declarator(&d, false);
+        d
+    }
+
+rule init_declarator_init() -> Initializer = [TokenKind::Eq] i:initializer() { i }
+
+rule type_declarator() -> InitDeclarator = d:declarator() {
+    env.handle_declarator(&d, true);
+    InitDeclarator {
+        loc: d.loc,
+        declarator: d,
+        initializer: None,
+    }
+}
+
+////
+// 6.7.1 Storage-class specifiers
+////
+
+rule storage_class_specifier() -> DeclarationSpecifier =
+    pos:position!() [TokenKind::Extern] {
+        DeclarationSpecifier {
+            kind: DeclarationSpecifierKind::Extern,
+            loc: env.locs[pos],
+        }
+    } /
+    pos:position!() [TokenKind::Static] {
+        DeclarationSpecifier {
+            kind: DeclarationSpecifierKind::Static,
+            loc: env.locs[pos],
+        }
+    }
+
+rule storage_class_typedef() -> DeclarationSpecifier =
+    pos:position!() [TokenKind::Typedef] {
+        DeclarationSpecifier {
+            kind: DeclarationSpecifierKind::Typedef,
+            loc: env.locs[pos],
+        }
+    }
+
+////
+// 6.7.2 Type specifiers
+////
+
+rule type_specifier_unique() -> TypeSpecifier =
+    [TokenKind::Void] { TypeSpecifier::Void } /
+    pos:position!() [TokenKind::Struct] id:raw_ident()? declarations:struct_body() {
+        let (declarations, loc) = declarations;
+
+        if let Some((ident, _)) = id {
+            TypeSpecifier::Struct(StructType {
+                kind: StructTypeKind::NamedDecl {
+                    ident,
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        } else {
+            TypeSpecifier::Struct(StructType {
+                kind: StructTypeKind::UnnamedDecl {
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        }
+    } /
+    pos:position!() [TokenKind::Union]  id:raw_ident()? declarations:struct_body() {
+        let (declarations, loc) = declarations;
+
+        if let Some((ident, _)) = id {
+            TypeSpecifier::Union(StructType {
+                kind: StructTypeKind::NamedDecl {
+                    ident,
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        } else {
+            TypeSpecifier::Union(StructType {
+                kind: StructTypeKind::UnnamedDecl {
+                    declarations,
+                },
+                loc: l_from(env.locs[pos], loc),
+            })
+        }
+    } /
+    pos:position!() [TokenKind::Struct] id:raw_ident() {
+        let (id, loc) = id;
+
+        TypeSpecifier::Struct(StructType {
+            kind: StructTypeKind::Named(id),
+            loc: l_from(env.locs[pos], loc),
+        })
+    } /
+    pos:position!() [TokenKind::Union] id:raw_ident() {
+        let (id, loc) = id;
+
+        TypeSpecifier::Union(StructType {
+            kind: StructTypeKind::Named(id),
+            loc: l_from(env.locs[pos], loc),
+        })
+    } /
+    t:typedef_name() {
+        let (t, loc) = t;
+        TypeSpecifier::Ident(t)
+    }
+
+
+rule struct_body() -> (&'static [StructField], CodeLoc) =
+    pos:position!() [TokenKind::LBrace] d:list0(<struct_field()>)
+    pos2:position!() [TokenKind::RBrace] {
+        let (d, _) = d;
+        let d = env.buckets.add_array(d);
+
+        (d, l_from(env.locs[pos], env.locs[pos2]))
+    }
+
+rule struct_field() -> StructField =
+    s:specifier_qualifiers() d:cs0(<struct_declarator()>)
+    pos2:position!() [TokenKind::Semicolon] {
+        let (s, loc) = s;
+        let (d, _) = d;
+        StructField {
+            specifiers: env.buckets.add_array(s),
+            declarators: env.buckets.add_array(d),
+            loc: l_from(loc, env.locs[pos2]),
+        }
+    }
+
+rule struct_declarator() -> StructDeclarator =
+    d:declarator() {
+        StructDeclarator {
+            declarator: d,
+            loc: d.loc,
+        }
+    }
+
+rule type_specifier_nonunique() -> TypeSpecifier =
+    pos:position!() [TokenKind::Char] { TypeSpecifier::Char } /
+    pos:position!() [TokenKind::Short] { TypeSpecifier::Short } /
+    pos:position!() [TokenKind::Int] { TypeSpecifier::Int } /
+    pos:position!() [TokenKind::Long] { TypeSpecifier::Long } /
+    pos:position!() [TokenKind::Float] { TypeSpecifier::Float } /
+    pos:position!() [TokenKind::Double] { TypeSpecifier::Double } /
+    pos:position!() [TokenKind::Signed] { TypeSpecifier::Signed } /
+    pos:position!() [TokenKind::Unsigned] { TypeSpecifier::Unsigned }
+
+rule specifier_qualifiers() -> (Vec<SpecifierQualifier>, CodeLoc) =
+    list_eq1_n(<specifier_qualifier_unique_type0()>, <specifier_qualifier_qualifier0()>) /
+    list_ge1_n(<specifier_qualifier_nonunique_type0()>, <specifier_qualifier_qualifier0()>)
+
+rule specifier_qualifier_unique_type0() -> SpecifierQualifier =
+    pos:position!() s:type_specifier_unique() pos2:position!()
+{
+    SpecifierQualifier {
+        kind: SpecifierQualifierKind::TypeSpecifier(s),
+        loc: l_from(env.locs[pos], env.locs[pos2 - 1]),
+    }
+}
+
+rule specifier_qualifier_nonunique_type0() -> SpecifierQualifier = pos:position!() s:type_specifier_nonunique()
+{
+    SpecifierQualifier {
+        kind: SpecifierQualifierKind::TypeSpecifier(s),
+        loc: env.locs[pos],
+    }
+}
+
+rule specifier_qualifier_qualifier0() -> SpecifierQualifier = q:type_qualifier() {
+    SpecifierQualifier {
+        kind: SpecifierQualifierKind::TypeQualifier(q),
+        loc: q.loc,
+    }
+}
+
+rule type_qualifier() -> TypeQualifier =
+    pos:position!() [TokenKind::Volatile] {
+        TypeQualifier {
+            kind: TypeQualifierKind::Volatile,
+            loc: env.locs[pos],
+        }
+    }
+
+rule declarator() -> Declarator
+    = pointer:list0(<pointer()>) decl:direct_declarator() derived:list0(<derived_declarator()>)
+{
+    let (mut pointer, mut begin_loc) = pointer;
+    if begin_loc == NO_FILE {
+        begin_loc = decl.loc;
+    }
+
+    let (derived, mut end_loc) = derived;
+    if end_loc == NO_FILE {
+        end_loc = decl.loc;
+    }
+
+    let mut decl = decl;
+    let loc = l_from(begin_loc, end_loc);
+
+    decl.derived = env.buckets.add_array(concat(derived, pointer));
+    decl.loc = loc;
+    decl
+}
+
+rule direct_declarator() -> Declarator =
+    pos:position!() i:raw_ident() {
+        Declarator {
+            kind: DeclaratorKind::Identifier(i.0),
+            derived: &[],
+            loc: i.1,
+        }
+    } /
+    pos:position!() [TokenKind::LParen] d:declarator() pos2:position!() [TokenKind::RParen] {
+        Declarator {
+           kind: DeclaratorKind::Declarator(env.buckets.add(d)),
+           derived: &[],
+           loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
+    }
+
+rule derived_declarator() -> DerivedDeclarator  =
+    pos:position!() [TokenKind::LBracket] a:array_declarator() pos2:position!() [TokenKind::RBracket] {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::Array(a),
+            loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
+    } /
+    f:scoped(<function_declarator()>) {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::Function(f),
+            loc: f.loc,
+        }
+    } /
+    pos:position!() [TokenKind::LParen] pos2:position!() [TokenKind::RParen] {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::EmptyFunction,
+            loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
+    }
+
+rule array_declarator() -> ArrayDeclarator =
+    q:list0(<type_qualifier()>) e:constant_expr() {
+        let (q, mut begin_loc) = q;
+        if begin_loc == NO_FILE {
+            begin_loc = e.loc;
+        }
+
+        ArrayDeclarator {
+            qualifiers: env.buckets.add_array(q),
+            size: ArraySize{
+               loc: e.loc,
+               kind: ArraySizeKind::VariableExpression(env.buckets.add(e)),
             },
-        });
-    }
-
-    pub fn parse_bool_or<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_bool_and(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::LineLine => {
-                    pop(tokens, current).unwrap();
-
-                    let right = self.parse_bool_and(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::BoolOr, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+            loc: l_from(begin_loc, e.loc),
+        }
+    } /
+    q:list0(<type_qualifier()>) {
+        let (q, loc) = q;
+        ArrayDeclarator {
+            qualifiers: env.buckets.add_array(q),
+            size: ArraySize {
+                kind: ArraySizeKind::Unknown,
+                loc,
+            },
+            loc,
         }
     }
 
-    pub fn parse_bool_and<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_bit_or(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::AmpAmp => {
-                    pop(tokens, current).unwrap();
+rule function_declarator() -> FunctionDeclarator =
+    pos:position!() [TokenKind::LParen] params:cs1(<parameter_declaration()>)
+    varargs:([TokenKind::Comma] [TokenKind::DotDotDot])? pos2:position!() [TokenKind::RParen]
+    {
+        let (params, mut loc) = params;
+        let varargs = varargs.is_some();
+        loc = l_from(env.locs[pos], env.locs[pos2]);
 
-                    let right = self.parse_bit_or(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::BoolAnd, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+        FunctionDeclarator {
+            parameters: env.buckets.add_array(params),
+            varargs,
+            loc,
         }
     }
 
-    pub fn parse_bit_or<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_bit_xor(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::Line => {
-                    pop(tokens, current).unwrap();
+rule pointer() -> DerivedDeclarator = pos:position!() [TokenKind::Star] q:list0(<type_qualifier()>) {
+    let (q, mut end_loc) = q;
+    let loc = env.locs[pos];
+    if end_loc == NO_FILE {
+        end_loc = loc;
+    }
 
-                    let right = self.parse_bit_xor(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+    let loc = l_from(loc, end_loc);
+    DerivedDeclarator {
+        kind: DerivedDeclaratorKind::Pointer(env.buckets.add_array(q)),
+        loc,
+    }
+}
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::BitOr, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+rule pointer_quals() -> PointerQuals = pos:position!() [TokenKind::Star] q:list0(<type_qualifier()>) {
+    let (q, mut end_loc) = q;
+    let loc = env.locs[pos];
+    if end_loc == NO_FILE {
+        end_loc = loc;
+    }
+
+    let loc = l_from(loc, end_loc);
+    PointerQuals {
+        quals: env.buckets.add_array(q),
+        loc,
+    }
+}
+
+
+rule parameter_declaration() -> ParameterDeclaration = s:decl_specs() d:parameter_declarator()
+{
+    let (specs, mut loc) = s;
+    if let Some(decl) = d {
+        loc = l_from(loc, decl.loc);
+    }
+
+    ParameterDeclaration {
+        specifiers: env.buckets.add_array(specs),
+        declarator: d,
+        loc,
+    }
+}
+
+
+rule parameter_declarator() -> Option<Declarator> =
+    d:declarator() {
+        env.handle_declarator(&d, false);
+        Some(d)
+    } /
+    d:abstract_declarator() { Some(d) } /
+    { None }
+
+
+rule type_name() -> TypeName = s:specifier_qualifiers() d:abstract_declarator()? {
+    let (sqs, mut loc) = s;
+
+    if let Some(d) = d {
+        loc = l_from(loc, d.loc);
+    }
+
+    TypeName {
+        specifiers: env.buckets.add_array(sqs),
+        declarator: d,
+        loc,
+    }
+}
+
+// rule function_specifiers
+
+rule abstract_declarator() -> Declarator =
+    p:list0(<pointer()>) k:direct_abstract_declarator() d:list0(<derived_abstract_declarator()>) {
+        let (mut p, begin_loc) = p;
+        let (d, end_loc) = d;
+        let loc = l_from(begin_loc, k.loc);
+        let loc = l_from(loc, end_loc);
+
+        let mut declarator = k;
+        declarator.loc = loc;
+        declarator.derived = env.buckets.add_array(concat(d, p));
+        declarator
+    } /
+    p:list0(<pointer()>) d:list1(<derived_abstract_declarator()>) {
+        let (p, begin_loc) = p;
+        let (d, end_loc) = d;
+        let loc = l_from(begin_loc, end_loc);
+
+        Declarator {
+            kind: DeclaratorKind::Abstract,
+            derived: env.buckets.add_array(concat(d, p)),
+            loc,
+        }
+    } /
+    p:list1(<pointer()>) {
+        let (p, loc) = p;
+
+        Declarator {
+            kind: DeclaratorKind::Abstract,
+            derived: env.buckets.add_array(p),
+            loc,
         }
     }
 
-    pub fn parse_bit_xor<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_bit_and(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::Caret => {
-                    pop(tokens, current).unwrap();
+rule direct_abstract_declarator() -> Declarator =
+    pos:position!() [TokenKind::LParen] d:abstract_declarator() pos2:position!() [TokenKind::RParen]
+{
+    Declarator {
+        kind: DeclaratorKind::Declarator(env.buckets.add(d)),
+        derived: &[],
+        loc: l_from(env.locs[pos], env.locs[pos2]),
+    }
+}
 
-                    let right = self.parse_bit_and(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::BitXor, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+rule derived_abstract_declarator() -> DerivedDeclarator =
+    pos:position!() [TokenKind::LBracket] a:abstract_array_declarator() pos2:position!() [TokenKind::RBracket] {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::Array(a),
+            loc: l_from(env.locs[pos], env.locs[pos2]),
+        }
+    } /
+    pos:position!() [TokenKind::LParen] a:abstract_function_declarator() pos2:position!() [TokenKind::RParen] {
+        DerivedDeclarator {
+            kind: DerivedDeclaratorKind::Function(a),
+            loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     }
 
-    pub fn parse_bit_and<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_equality(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::Amp => {
-                    pop(tokens, current).unwrap();
+rule abstract_array_declarator() -> ArrayDeclarator =
+    q:list0(<type_qualifier()>) {
+        let (q, loc) = q;
+        ArrayDeclarator {
+            qualifiers: env.buckets.add_array(q),
+            size: ArraySize {
+                kind: ArraySizeKind::Unknown,
+                loc,
+            },
+            loc,
+        }
+    } /
+    q:list0(<type_qualifier()>) e:assignment_expr() {
+        let (q, loc) = q;
 
-                    let right = self.parse_equality(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::BitAnd, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+        ArrayDeclarator {
+            qualifiers: env.buckets.add_array(q),
+            size: ArraySize {
+                kind: ArraySizeKind::VariableExpression(env.buckets.add(e)),
+                loc: e.loc,
+            },
+            loc: l_from(loc, e.loc),
         }
     }
 
-    pub fn parse_equality<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_comparison(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::EqEq => {
-                    pop(tokens, current).unwrap();
+rule abstract_function_declarator() -> FunctionDeclarator =
+    p:cs1(<parameter_declaration()>) pos:position!() varargs:([TokenKind::Comma] [TokenKind::DotDotDot])? {
+        let (p, mut loc) = p;
+        let varargs = varargs.is_some();
+        if varargs {
+            loc = l_from(loc, env.locs[pos + 1]);
+        }
 
-                    let right = self.parse_comparison(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Eq, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Neq => {
-                    pop(tokens, current).unwrap();
-
-                    let right = self.parse_comparison(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Neq, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+        FunctionDeclarator {
+            parameters: env.buckets.add_array(p),
+            varargs,
+            loc,
+        }
+    } /
+    pos:position!() {
+        FunctionDeclarator {
+            parameters: &[],
+            varargs: false,
+            loc: env.locs[pos],
         }
     }
 
-    pub fn parse_comparison<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_shift(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::Lt => {
-                    pop(tokens, current).unwrap();
+rule typedef_name() -> (u32, CodeLoc) = quiet! { typedef_name0() } / expected!("<typedef_name>")
 
-                    let right = self.parse_shift(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+rule typedef_name0() -> (u32, CodeLoc) = i:raw_ident() {?
+    if env.is_typename(i.0) {
+        Ok(i)
+    } else {
+        Err("<unused>")
+    }
+}
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Lt, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Leq => {
-                    pop(tokens, current).unwrap();
-
-                    let right = self.parse_shift(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Leq, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Gt => {
-                    pop(tokens, current).unwrap();
-
-                    let right = self.parse_shift(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Gt, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Geq => {
-                    pop(tokens, current).unwrap();
-
-                    let right = self.parse_shift(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Geq, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+rule initializer() -> Initializer =
+    e:assignment_expr() {
+        Initializer {
+            kind: InitializerKind::Expr(env.buckets.add(e)),
+            loc: e.loc,
+        }
+    } /
+    pos:position!() [TokenKind::LBrace] i:cs1(<initializer_list_item()>)
+    [TokenKind::Comma]? pos2:position!() [TokenKind::RBrace]
+    {
+        Initializer {
+            kind: InitializerKind::List(env.buckets.add_array(i.0)),
+            loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     }
 
-    pub fn parse_shift<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_add(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::GtGt => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_add(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+rule initializer_list_item() -> Expr = assignment_expr()
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::RShift, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::LtLt => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_add(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::LShift, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+pub rule statement() -> Statement =
+    labeled_statement() /
+    b:scoped(<compound_statement()>) {
+        Statement {
+            kind: StatementKind::Block(b),
+            loc: b.loc,
+        }
+    } /
+    expression_statement() /
+    scoped(<selection_statement()>) /
+    scoped(<iteration_statement()>) /
+    jump_statement() /
+    pos:position!() [TokenKind::Semicolon] {
+        let loc = env.locs[pos];
+        Statement {
+            kind: StatementKind::Block(Block { stmts: &[], loc }),
+            loc,
         }
     }
 
-    pub fn parse_add<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_multiply(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::Plus => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_multiply(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+////
+// 6.8.1 Labeled statements
+////
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Add, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Dash => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_multiply(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
-
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Sub, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
+rule labeled_statement() -> Statement =
+    i:raw_ident() [TokenKind::Colon] s:statement() {
+        let (i, loc) = i;
+        Statement {
+            loc: l_from(loc, s.loc),
+            kind: StatementKind::Labeled {
+                label: i,
+                label_loc: loc,
+                stmt: env.buckets.add(s),
             }
+        }
+    } /
+    pos:position!() [TokenKind::Case] i:constant_expr() s:statement() {
+        Statement {
+            loc: l_from(env.locs[pos], s.loc),
+            kind: StatementKind::CaseLabeled {
+                case_value: i,
+                stmt: env.buckets.add(s),
+            }
+        }
+    } /
+    pos:position!() [TokenKind::Default] [TokenKind::Colon] s:statement() {
+        Statement {
+            loc: l_from(env.locs[pos], s.loc),
+            kind: StatementKind::DefaultCaseLabeled(env.buckets.add(s))
         }
     }
 
-    pub fn parse_multiply<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut expr = self.parse_prefix(buckets, tokens, current)?;
-        loop {
-            let start_loc = expr.loc;
-            match peek(tokens, current)?.kind {
-                TokenKind::Slash => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_prefix(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+////
+// 6.8.2 Compound statement
+////
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Div, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Star => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_prefix(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+rule compound_statement() -> Block =
+    pos:position!() [TokenKind::LBrace] b:list0(<block_item()>) pos2:position!() [TokenKind::RBrace]
+{
+    let (block, loc) = b;
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Mul, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                TokenKind::Percent => {
-                    pop(tokens, current).unwrap();
-                    let right = self.parse_prefix(buckets, tokens, current)?;
-                    let end_loc = right.loc;
-                    let left = buckets.add(expr);
-                    let right = buckets.add(right);
+    Block{
+        stmts: env.buckets.add_array(block),
+        loc: l_from(env.locs[pos], env.locs[pos2]),
+    }
+}
 
-                    expr = Expr {
-                        kind: ExprKind::BinOp(BinOp::Mod, left, right),
-                        loc: l_from(start_loc, end_loc),
-                    };
-                }
-                _ => return Ok(expr),
-            }
+rule block_item() -> BlockItem =
+    d:declaration() {
+        BlockItem {
+            kind: BlockItemKind::Declaration(d),
+            loc: d.loc,
+        }
+    } /
+    s:statement() {
+        BlockItem {
+            kind: BlockItemKind::Statement(s),
+            loc: s.loc,
         }
     }
 
-    pub fn parse_prefix<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let tok = peek(tokens, current)?;
-        match tok.kind {
-            TokenKind::Sizeof => {
-                pop(tokens, current).unwrap();
+////
+// 6.8.3 Expression and null statements
+////
 
-                let lparen_tok = peek(tokens, current)?;
-                if lparen_tok.kind == TokenKind::LParen {
-                    pop(tokens, current).unwrap();
+rule expression_statement() -> Statement = e:expr() [TokenKind::Semicolon] {
+    Statement {
+        loc: e.loc,
+        kind: StatementKind::Expr(e),
+    }
+}
 
-                    if peek_type_or_expr(tokens, *current)? {
-                        let sizeof_type = self.parse_type_prefix(buckets, tokens, current)?;
-                        let mut pointer_count = 0;
-                        while peek(tokens, current)?.kind == TokenKind::Star {
-                            pointer_count += 1;
-                            pop(tokens, current).unwrap();
-                        }
+////
+// 6.8.4 Selection statement
+////
 
-                        let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc)?;
-                        return Ok(Expr {
-                            kind: ExprKind::SizeofType {
-                                sizeof_type,
-                                pointer_count,
-                            },
-                            loc: l_from(tok.loc, rparen_loc),
-                        });
-                    }
+rule selection_statement() -> Statement =
+    pos:position!() [TokenKind::If] [TokenKind::LParen] e:expr()
+    [TokenKind::RParen] a:statement() b:else_statement()?
+    {
+        let mut loc = l_from(env.locs[pos], a.loc);
+        if let Some(else_stmt) = b {
+            loc = l_from(loc, else_stmt.loc);
+        }
 
-                    let target = self.parse_expr(buckets, tokens, current)?;
-                    let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc)?;
-                    let target = buckets.add(target);
-                    return Ok(Expr {
-                        loc: l_from(tok.loc, rparen_loc),
-                        kind: ExprKind::SizeofExpr(target),
-                    });
-                }
+        Statement {
+            kind: StatementKind::Branch {
+                if_cond: e,
+                if_body: env.buckets.add(a),
+                else_body: env.buckets.add(b).as_ref(),
+            },
+            loc,
+        }
+    } /
+    pos:position!() [TokenKind::Switch] [TokenKind::LParen] e:expr() [TokenKind::RParen] a:statement() {
+        let mut loc = l_from(env.locs[pos], a.loc);
 
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::SizeofExpr(target),
-                });
-            }
-
-            TokenKind::Amp => {
-                pop(tokens, current).unwrap();
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::Ref(target),
-                });
-            }
-            TokenKind::Star => {
-                pop(tokens, current).unwrap();
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::Deref(target),
-                });
-            }
-
-            TokenKind::Bang => {
-                pop(tokens, current).unwrap();
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::UnaryOp(UnaryOp::BoolNot, target),
-                });
-            }
-            TokenKind::Tilde => {
-                pop(tokens, current).unwrap();
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::UnaryOp(UnaryOp::BitNot, target),
-                });
-            }
-            TokenKind::Dash => {
-                pop(tokens, current).unwrap();
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-                return Ok(Expr {
-                    loc: l_from(tok.loc, target.loc),
-                    kind: ExprKind::UnaryOp(UnaryOp::Neg, target),
-                });
-            }
-
-            TokenKind::LParen => {
-                let (lparen, cast_to) = match peek_type_or_expr(tokens, *current + 1) {
-                    Ok(true) => {
-                        let lparen = pop(tokens, current).unwrap();
-                        let ast_type = self.parse_type_prefix(buckets, tokens, current)?;
-                        (lparen, ast_type)
-                    }
-                    _ => return self.parse_postfix(buckets, tokens, current),
-                };
-
-                let mut pointer_count: u32 = 0;
-                while peek(tokens, current)?.kind == TokenKind::Star {
-                    pop(tokens, current).unwrap();
-                    pointer_count += 1;
-                }
-
-                let end_loc = expect_rparen(tokens, current, lparen.loc)?;
-
-                let target = self.parse_prefix(buckets, tokens, current)?;
-                let target = buckets.add(target);
-
-                return Ok(Expr {
-                    loc: l_from(lparen.loc, target.loc),
-                    kind: ExprKind::Cast {
-                        cast_to,
-                        cast_to_loc: l_from(lparen.loc, end_loc),
-                        pointer_count,
-                        expr: target,
-                    },
-                });
-            }
-            _ => return self.parse_postfix(buckets, tokens, current),
+        Statement {
+            kind: StatementKind::Switch {
+                expr: e,
+                body: env.buckets.add(a),
+            },
+            loc,
         }
     }
 
-    pub fn parse_postfix<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let mut operand = self.parse_atom(buckets, tokens, current)?;
-        let start_loc = operand.loc;
+rule else_statement() -> Statement = [TokenKind::Else] s:statement() { s }
 
-        loop {
-            match peek(tokens, current)?.kind {
-                TokenKind::LParen => {
-                    pop(tokens, current).unwrap();
-                    let mut params = Vec::new();
-                    let rparen_tok = peek(tokens, current)?;
+////
+// 6.8.5 Iteration statement
+////
 
-                    if rparen_tok.kind != TokenKind::RParen {
-                        let param = self.parse_expr(buckets, tokens, current)?;
-                        params.push(param);
-                        let mut comma_tok = peek(tokens, current)?;
+rule iteration_statement() -> Statement =
+    s:while_statement() { s } /
+    s:do_while_statement() { s } /
+    s:for_statement() { s }
 
-                        while comma_tok.kind == TokenKind::Comma {
-                            pop(tokens, current).unwrap();
-                            params.push(self.parse_expr(buckets, tokens, current)?);
-                            comma_tok = peek(tokens, current)?;
-                        }
+rule while_statement() -> Statement =
+    pos:position!() [TokenKind::While] [TokenKind::LParen] e:expr() [TokenKind::RParen] s:statement() {
+        let loc = l_from(env.locs[pos], s.loc);
 
-                        if comma_tok.kind != TokenKind::RParen {
-                            return Err(error!(
-                                "unexpected token when parsing end of function declaration",
-                                params.pop().unwrap().loc,
-                                "interpreted as parameter declaration".to_string(),
-                                comma_tok.loc,
-                                format!("interpreted as {:?}", comma_tok)
-                            ));
-                        }
-                    }
-
-                    let end_loc = pop(tokens, current).unwrap().loc;
-                    let params = buckets.add_array(params);
-                    operand = Expr {
-                        loc: l_from(start_loc, end_loc),
-                        kind: ExprKind::Call {
-                            function: buckets.add(operand),
-                            params,
-                        },
-                    };
-                }
-                TokenKind::PlusPlus => {
-                    operand = Expr {
-                        kind: ExprKind::PostIncr(buckets.add(operand)),
-                        loc: l_from(start_loc, pop(tokens, current).unwrap().loc),
-                    };
-                }
-                TokenKind::DashDash => {
-                    operand = Expr {
-                        kind: ExprKind::PostDecr(buckets.add(operand)),
-                        loc: l_from(start_loc, pop(tokens, current)?.loc),
-                    };
-                }
-                TokenKind::LBracket => {
-                    let lbracket = pop(tokens, current).unwrap();
-                    let index = self.parse_expr(buckets, tokens, current)?;
-                    let rbracket_tok = expect_rbracket(tokens, current, lbracket.loc)?;
-
-                    let loc = l_from(start_loc, rbracket_tok.loc);
-
-                    operand = Expr {
-                        kind: ExprKind::BinOp(
-                            BinOp::Index,
-                            buckets.add(operand),
-                            buckets.add(index),
-                        ),
-                        loc,
-                    };
-                }
-                TokenKind::Arrow => {
-                    pop(tokens, current).unwrap();
-
-                    let (member, loc) = expect_any_ident(tokens, current)?;
-
-                    operand = Expr {
-                        kind: ExprKind::PtrMember {
-                            base: buckets.add(operand),
-                            member,
-                        },
-                        loc: l_from(start_loc, loc),
-                    };
-                }
-                TokenKind::Dot => {
-                    pop(tokens, current).unwrap();
-
-                    let (member, loc) = expect_any_ident(tokens, current)?;
-
-                    operand = Expr {
-                        kind: ExprKind::Member {
-                            base: buckets.add(operand),
-                            member,
-                        },
-                        loc: l_from(start_loc, loc),
-                    };
-                }
-                _ => return Ok(operand),
-            }
+        Statement {
+            kind: StatementKind::While {
+                condition: e,
+                body: env.buckets.add(s),
+            },
+            loc,
         }
     }
 
-    pub fn parse_atom<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Expr<'b>, Error> {
-        let tok = pop(tokens, current)?;
-        match tok.kind {
-            TokenKind::Ident(i) => {
-                return Ok(Expr {
-                    kind: ExprKind::Ident(i),
-                    loc: tok.loc,
-                })
-            }
-            TokenKind::IntLiteral(i) => {
-                return Ok(Expr {
-                    kind: ExprKind::IntLiteral(i),
-                    loc: tok.loc,
-                })
-            }
-            TokenKind::CharLiteral(c) => {
-                return Ok(Expr {
-                    kind: ExprKind::CharLiteral(c),
-                    loc: tok.loc,
-                })
-            }
-            TokenKind::StringLiteral(string) => {
-                let mut string = string.to_string();
-                let mut end_loc = tok.loc;
-                while let TokenKind::StringLiteral(tstr) = peek(tokens, current)?.kind {
-                    string.push_str(tstr);
-                    end_loc = l_from(end_loc, pop(tokens, current).unwrap().loc);
-                }
+rule do_while_statement() -> Statement =
+    pos:position!() [TokenKind::Do] s:statement() [TokenKind::While] [TokenKind::LParen]
+    e:expr() [TokenKind::RParen] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
 
-                return Ok(Expr {
-                    kind: ExprKind::StringLiteral(buckets.add_str(&string)),
-                    loc: l_from(tok.loc, end_loc),
-                });
-            }
-            TokenKind::LBrace => {
-                let start_loc = tok.loc;
-                let mut expr = self.parse_expr(buckets, tokens, current)?;
-                let mut expr_list = Vec::new();
-                while peek(tokens, current)?.kind == TokenKind::Comma {
-                    expr_list.push(expr);
-                    pop(tokens, current).unwrap();
-                    expr = self.parse_expr(buckets, tokens, current)?;
-                }
-
-                let end_loc = expect_rbrace(tokens, current, tok.loc)?;
-
-                if expr_list.len() == 0 {
-                    return Ok(expr);
-                } else {
-                    expr_list.push(expr);
-                    return Ok(Expr {
-                        kind: ExprKind::BraceList(buckets.add_array(expr_list)),
-                        loc: l_from(start_loc, end_loc),
-                    });
-                }
-            }
-            TokenKind::LParen => {
-                let start_loc = tok.loc;
-                let mut expr = self.parse_expr(buckets, tokens, current)?;
-                let mut expr_list = Vec::new();
-                while peek(tokens, current)?.kind == TokenKind::Comma {
-                    expr_list.push(expr);
-                    pop(tokens, current).unwrap();
-                    expr = self.parse_expr(buckets, tokens, current)?;
-                }
-
-                let end_loc = expect_rparen(tokens, current, tok.loc)?;
-
-                if expr_list.len() == 0 {
-                    return Ok(expr);
-                } else {
-                    expr_list.push(expr);
-                    return Ok(Expr {
-                        kind: ExprKind::ParenList(buckets.add_array(expr_list)),
-                        loc: l_from(start_loc, end_loc),
-                    });
-                }
-            }
-            _ => return Err(unexpected_token("expression", &tok)),
+        Statement {
+            kind: StatementKind::DoWhile {
+                condition: e,
+                body: env.buckets.add(s),
+            },
+            loc,
         }
     }
 
-    fn parse_brackets<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Option<(&'b [u32], CodeLoc)>, Error> {
-        let start_loc = peek(tokens, current)?.loc;
-        let mut end_loc = start_loc;
-        let mut array_dims = Vec::new();
-        while peek(tokens, current)?.kind == TokenKind::LBracket {
-            let lbracket_tok = pop(tokens, current).unwrap();
-            let rbracket_tok = peek(tokens, current)?;
+rule for_statement() -> Statement =
+    pos:position!() [TokenKind::For] [TokenKind::LParen] a:expr()? [TokenKind::Semicolon] b:expr()?
+    [TokenKind::Semicolon] e:expr()? [TokenKind::RParen] s:statement() {
+        let loc = l_from(env.locs[pos], s.loc);
 
-            if rbracket_tok.kind == TokenKind::RBracket {
-                pop(tokens, current).unwrap();
-                array_dims.push(0);
-                end_loc = rbracket_tok.loc;
-                continue;
-            }
-
-            let expr = self.parse_expr(buckets, tokens, current)?;
-            match   expr.kind{
-                ExprKind::IntLiteral(value) => {
-                    if value <= 0 {
-                        return Err(error!(
-                            "array dimension value must be at least 1",
-                            expr.loc, "invalid array dimension found here"
-                        ));
-                    }
-
-                    array_dims.push(value as u32);
-                }
-                _ => {
-                    return Err(error!(
-                        "TCI currently doesn't accept anything but integer literals as array dimensions",
-                        expr.loc, "non-conforming expression found here"
-                    ))
-                }
-            }
-
-            let rbracket_tok = expect_rbracket(tokens, current, lbracket_tok.loc)?;
-            end_loc = rbracket_tok.loc;
+        Statement {
+            kind: StatementKind::For {
+                at_start: a,
+                condition: b,
+                post_expr: e,
+                body: env.buckets.add(s),
+            },
+            loc,
         }
-        if array_dims.len() == 0 {
-            return Ok(None);
-        }
+    } /
+    pos:position!() [TokenKind::For] [TokenKind::LParen] a:declaration() b:expr()?
+    [TokenKind::Semicolon] c:expr()? [TokenKind::RParen] s:statement() {
+        let loc = l_from(env.locs[pos], s.loc);
 
-        let array_dims = buckets.add_array(array_dims);
-        return Ok(Some((array_dims, l_from(start_loc, end_loc))));
+        Statement {
+            kind: StatementKind::ForDecl {
+                decl: a,
+                condition: b,
+                post_expr: c,
+                body: env.buckets.add(s),
+            },
+            loc,
+        }
     }
 
-    fn parse_decl_receiver<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<DeclReceiver<'b>, Error> {
-        let mut pointer_count = 0;
-        let loc = peek(tokens, current)?.loc;
-        while peek(tokens, current)?.kind == TokenKind::Star {
-            pointer_count += 1;
-            pop(tokens, current).unwrap();
+
+////
+// 6.8.6 Jump statements
+////
+
+rule jump_statement() -> Statement =
+    pos:position!() [TokenKind::Goto] i:raw_ident() pos2:position!() [TokenKind::Semicolon] {
+        let (i, label_loc) = i;
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+        Statement {
+            kind: StatementKind::Goto {
+                label: i,
+                label_loc,
+            },
+            loc
         }
+    } /
+    pos:position!() [TokenKind::Continue] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
 
-        let (ident, end_loc) = expect_any_ident(tokens, current)?;
-
-        if let Some((array_dims, end_loc)) = self.parse_brackets(buckets, tokens, current)? {
-            return Ok(DeclReceiver {
-                loc: l_from(loc, end_loc),
-                ident,
-                pointer_count,
-                array_dims,
-            });
+        Statement {
+            kind: StatementKind::Continue,
+            loc
         }
+    } /
+    pos:position!() [TokenKind::Break] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
 
-        return Ok(DeclReceiver {
-            loc: l_from(loc, end_loc),
+        Statement {
+            kind: StatementKind::Break,
+            loc
+        }
+    } /
+    pos:position!() [TokenKind::Return] pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::Ret,
+            loc
+        }
+    } /
+    pos:position!() [TokenKind::Return] e:expr() pos2:position!() [TokenKind::Semicolon] {
+        let loc = l_from(env.locs[pos], env.locs[pos2]);
+
+        Statement {
+            kind: StatementKind::RetVal(e),
+            loc
+        }
+    }
+
+////
+// 6.9 External definitions
+////
+
+pub rule translation_unit() -> Vec<GlobalStatement> = d:external_declaration()*
+
+rule external_declaration() -> GlobalStatement =
+    d:declaration() {
+        GlobalStatement {
+            loc: d.loc,
+            kind: GlobalStatementKind::Declaration(d),
+        }
+    } /
+    d:scoped(<function_definition()>) {
+        GlobalStatement {
+            loc: d.loc,
+            kind: GlobalStatementKind::FunctionDefinition(d),
+        }
+    } /
+    p:pragma() {
+        let (pragma, loc) = p;
+
+        GlobalStatement {
+            kind: GlobalStatementKind::Pragma(pragma),
+            loc,
+        }
+    }
+
+rule function_definition() -> FunctionDefinition =
+    a:decl_specs() pointer:list0(<pointer_quals()>) id:ident()
+    f:function_declarator() d:compound_statement() {
+        let (a, begin_loc) = a;
+        let (ident, _) = id;
+        let (pointer, _) = pointer;
+
+        let loc = l_from(begin_loc, d.loc);
+        FunctionDefinition {
+            specifiers: env.buckets.add_array(a),
+            pointer: env.buckets.add_array(pointer),
             ident,
-            pointer_count,
-            array_dims: &[],
-        });
-    }
-
-    fn parse_simple_decl<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Decl<'b>, Error> {
-        let recv = self.parse_decl_receiver(buckets, tokens, current)?;
-
-        let tok = peek(tokens, current)?;
-        let expr = if tok.kind == TokenKind::Eq {
-            pop(tokens, current).unwrap();
-            self.parse_expr(buckets, tokens, current)?
-        } else {
-            Expr {
-                kind: ExprKind::Uninit,
-                loc: recv.loc,
-            }
-        };
-
-        return Ok(Decl {
-            recv,
-            loc: l_from(recv.loc, expr.loc),
-            expr,
-        });
-    }
-
-    fn parse_inner_struct_decl(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &[Token],
-        current: &mut usize,
-    ) -> Result<InnerStructDecl<'b>, Error> {
-        let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
-
-        let recv = self.parse_decl_receiver(buckets, tokens, current)?;
-
-        return Ok(InnerStructDecl {
-            loc: l_from(decl_type.loc, recv.loc),
-            decl_type,
-            recv,
-        });
-    }
-
-    fn parse_param_decl<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<ParamDecl<'b>, Error> {
-        let vararg_tok = peek(tokens, current)?;
-        if vararg_tok.kind == TokenKind::DotDotDot {
-            pop(tokens, current).unwrap();
-            return Ok(ParamDecl {
-                kind: ParamKind::Vararg,
-                loc: vararg_tok.loc,
-            });
+            params: Some(f),
+            statements: d,
+            loc,
         }
+    } /
+    a:decl_specs() pointer:list0(<pointer_quals()>) id:ident()
+    [TokenKind::LParen] [TokenKind::RParen] d:compound_statement() {
+        let (a, begin_loc) = a;
+        let (ident, _) = id;
+        let (pointer, _) = pointer;
 
-        let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
-        let decl_recv_start_loc = peek(tokens, current)?.loc;
-        let mut end_loc = decl_type.loc;
-
-        let mut pointer_count = 0;
-        while peek(tokens, current)?.kind == TokenKind::Star {
-            pointer_count += 1;
-            end_loc = pop(tokens, current).unwrap().loc;
-        }
-
-        let ident = if let TokenKind::Ident(ident) = peek(tokens, current)?.kind {
-            end_loc = pop(tokens, current).unwrap().loc;
-            Some(ident)
-        } else {
-            None
-        };
-
-        let array_dims =
-            if let Some((ad, ad_loc)) = self.parse_brackets(buckets, tokens, current)? {
-                end_loc = ad_loc;
-                ad
-            } else {
-                &[]
-            };
-
-        match ident {
-            None => {
-                return Ok(ParamDecl {
-                    kind: ParamKind::TypeOnly {
-                        decl_type: decl_type,
-                        pointer_count,
-                        array_dims,
-                    },
-                    loc: l_from(decl_type.loc, end_loc),
-                })
-            }
-            Some(ident) => {
-                return Ok(ParamDecl {
-                    kind: ParamKind::StructLike {
-                        decl_type: decl_type,
-                        recv: DeclReceiver {
-                            ident,
-                            pointer_count,
-                            loc: l_from(decl_recv_start_loc, end_loc),
-                            array_dims,
-                        },
-                    },
-                    loc: l_from(decl_type.loc, end_loc),
-                });
-            }
+        let loc = l_from(begin_loc, d.loc);
+        FunctionDefinition {
+            specifiers: env.buckets.add_array(a),
+            pointer: env.buckets.add_array(pointer),
+            ident,
+            params: None,
+            statements: d,
+            loc,
         }
     }
 
-    fn parse_multi_decl<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<(Vec<Decl<'b>>, Decl<'b>), Error> {
-        let mut decl = self.parse_simple_decl(buckets, tokens, current)?;
-        let mut tok = peek(tokens, current)?;
-        let mut decls = Vec::new();
-
-        while tok.kind == TokenKind::Comma {
-            pop(tokens, current).unwrap();
-            decls.push(decl);
-            decl = self.parse_simple_decl(buckets, tokens, current)?;
-            tok = peek(tokens, current)?;
-        }
-
-        return Ok((decls, decl));
-    }
-
-    pub fn parse_global_decls<'a>(
-        &mut self,
-        buckets: BucketListRef<'b>,
-        token_db: &TokenDb<'a>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-        decls: &mut Vec<GlobalStmt<'b>>,
-    ) -> Result<(), Error> {
-        macro_rules! ret_stmt {
-            ($stmt:expr) => {
-                decls.push($stmt);
-                return Ok(());
-            };
-        }
-
-        let decl_type = match peek(tokens, current)?.kind {
-            TokenKind::Typedef => {
-                let typedef_tok = pop(tokens, current).unwrap();
-                let ast_type = self.parse_type_prefix(buckets, tokens, current)?;
-                let recv = self.parse_decl_receiver(buckets, tokens, current)?;
-                eat_semicolon(tokens, current)?;
-                ret_stmt!(GlobalStmt {
-                    kind: GlobalStmtKind::Typedef { ast_type, recv },
-                    loc: l_from(typedef_tok.loc, recv.loc)
-                });
-            }
-            TokenKind::Pragma(value) => {
-                let loc = pop(tokens, current).unwrap().loc;
-                let kind = self.parse_pragma(value);
-
-                if let Some(kind) = kind {
-                    ret_stmt!(GlobalStmt { kind, loc });
-                }
-
-                return Ok(());
-            }
-            _ => self.parse_type_prefix(buckets, tokens, current)?,
-        };
-
-        let semicolon_tok = peek(tokens, current)?;
-        if semicolon_tok.kind == TokenKind::Semicolon {
-            if let ASTTypeKind::Struct(decl) = decl_type.kind {
-                pop(tokens, current).unwrap();
-                ret_stmt!(GlobalStmt {
-                    kind: GlobalStmtKind::StructDecl(decl),
-                    loc: decl_type.loc,
-                });
-            }
-
-            return Err(error!(
-                "declared a primitive data type",
-                decl_type.loc, "declared a primitive datatype here"
-            ));
-        }
-
-        let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
-        let tok = pop(tokens, current)?;
-
-        if decls.len() > 0 {
-            expect_semicolon(&tok)?;
-            let end_loc = decl.loc;
-            decls.push(decl);
-            ret_stmt!(GlobalStmt {
-                loc: l_from(decl_type.loc, end_loc),
-                kind: GlobalStmtKind::Decl {
-                    decl_type,
-                    decls: buckets.add_array(decls),
-                },
-            });
-        }
-
-        if let ExprKind::Uninit = decl.expr.kind {
-        } else {
-            expect_semicolon(&tok)?;
-            let end_loc = decl.loc;
-            decls.push(decl);
-            ret_stmt!(GlobalStmt {
-                loc: l_from(decl_type.loc, end_loc),
-                kind: GlobalStmtKind::Decl {
-                    decl_type,
-                    decls: buckets.add_array(decls),
-                },
-            });
-        }
-
-        if tok.kind == TokenKind::Semicolon {
-            let end_loc = decl.loc;
-            decls.push(decl);
-            ret_stmt!(GlobalStmt {
-                loc: l_from(decl_type.loc, end_loc),
-                kind: GlobalStmtKind::Decl {
-                    decl_type,
-                    decls: buckets.add_array(decls),
-                },
-            });
-        }
-
-        if tok.kind != TokenKind::LParen {
-            return Err(unexpected_token("function declaration", &tok));
-        }
-
-        let mut params = Vec::new();
-        let rparen_tok = peek(tokens, current)?;
-        if rparen_tok.kind != TokenKind::RParen {
-            params.push(self.parse_param_decl(buckets, tokens, current)?);
-            let mut comma_tok = peek(tokens, current)?;
-            while comma_tok.kind == TokenKind::Comma {
-                pop(tokens, current).unwrap();
-                params.push(self.parse_param_decl(buckets, tokens, current)?);
-                comma_tok = peek(tokens, current)?;
-            }
-
-            if comma_tok.kind != TokenKind::RParen {
-                return Err(unexpected_token("end of function declaration", &comma_tok));
-            }
-        }
-
-        let end_loc = pop(tokens, current).unwrap().loc;
-        let params = buckets.add_array(params);
-        let end_decl_tok = pop(tokens, current)?;
-        if end_decl_tok.kind == TokenKind::Semicolon {
-            ret_stmt!(GlobalStmt {
-                loc: l_from(decl_type.loc, end_loc),
-                kind: GlobalStmtKind::FuncDecl {
-                    pointer_count: decl.recv.pointer_count,
-                    return_type: decl_type,
-                    ident: decl.recv.ident,
-                    params,
-                },
-            });
-        }
-
-        if end_decl_tok.kind != TokenKind::LBrace {
-            return Err(error!(
-                "unexpected token when parsing ending of function declaration",
-                l_from(decl_type.loc, end_loc),
-                "this was parsed as a function declaration".to_string(),
-                end_decl_tok.loc,
-                "expected a ';' or '{' here".to_string()
-            ));
-        }
-
-        let mut body = Vec::new();
-        while peek(tokens, current)?.kind != TokenKind::RBrace {
-            body.push(self.parse_stmt(buckets, tokens, current)?);
-        }
-        let _tok = pop(tokens, current).unwrap();
-
-        let body = buckets.add_array(body);
-        ret_stmt!(GlobalStmt {
-            // TODO change end_loc to tok.loc and add header_loc field to func
-            loc: l_from(decl_type.loc, end_loc),
-            kind: GlobalStmtKind::Func {
-                return_type: decl_type,
-                pointer_count: decl.recv.pointer_count,
-                ident: decl.recv.ident,
-                params,
-                body,
-            },
-        });
-    }
-
-    pub fn parse_block<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Block<'b>, Error> {
-        match peek(tokens, current)?.kind {
-            TokenKind::LBrace => {
-                let start_loc = pop(tokens, current)?.loc;
-
-                let mut stmts = Vec::new();
-                while peek(tokens, current)?.kind != TokenKind::RBrace {
-                    stmts.push(self.parse_stmt(buckets, tokens, current)?);
-                }
-                let end_loc = pop(tokens, current)?.loc;
-
-                if stmts.len() == 1 {
-                    if let StmtKind::Block(block) = stmts[0].kind {
-                        return Ok(block);
-                    } else {
-                        return Ok(Block {
-                            stmts: buckets.add_array(stmts),
-                            loc: l_from(start_loc, end_loc),
-                        });
-                    }
-                } else {
-                    return Ok(Block {
-                        stmts: buckets.add_array(stmts),
-                        loc: l_from(start_loc, end_loc),
-                    });
-                }
-            }
-            _ => {
-                let stmt = self.parse_stmt(buckets, tokens, current)?;
-                return Ok(Block {
-                    loc: stmt.loc,
-                    stmts: slice::from_ref(buckets.add(stmt)),
-                });
-            }
-        }
-    }
-
-    pub fn parse_stmt<'a>(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &'a [Token<'a>],
-        current: &mut usize,
-    ) -> Result<Stmt<'b>, Error> {
-        if peek_type_or_expr(tokens, *current)? {
-            let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
-            let start_loc = decl_type.loc;
-            let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
-            let end_loc = decl.loc;
-            decls.push(decl);
-            eat_semicolon(tokens, current)?;
-
-            return Ok(Stmt {
-                loc: l_from(start_loc, end_loc),
-                kind: StmtKind::Decl {
-                    decl_type,
-                    decls: buckets.add_array(decls),
-                },
-            });
-        }
-
-        let tok = peek(tokens, current)?;
-        match &tok.kind {
-            TokenKind::For => {
-                let start_loc = pop(tokens, current).unwrap().loc;
-
-                let lparen_tok = expect_lparen(tokens, current)?;
-
-                let (first_part, semi_tok) = if peek_type_or_expr(tokens, *current)? {
-                    let decl_type = self.parse_type_prefix(buckets, tokens, current)?;
-                    let (mut decls, decl) = self.parse_multi_decl(buckets, tokens, current)?;
-                    decls.push(decl);
-                    let semi = eat_semicolon(tokens, current)?;
-                    (Ok((decl_type, decls)), semi)
-                } else if peek(tokens, current)?.kind == TokenKind::Semicolon {
-                    let semi = eat_semicolon(tokens, current).unwrap();
-                    let expr = Expr {
-                        kind: ExprKind::Uninit,
-                        loc: l(lparen_tok.loc.end, semi.loc.start, semi.loc.file),
-                    };
-                    (Err(expr), semi)
-                } else {
-                    let expr = self.parse_expr(buckets, tokens, current)?;
-                    let semi = eat_semicolon(tokens, current)?;
-                    (Err(expr), semi)
-                };
-
-                let (condition, semi2) = match peek(tokens, current)?.kind {
-                    TokenKind::Semicolon => {
-                        let semi2 = eat_semicolon(tokens, current).unwrap();
-                        let expr = Expr {
-                            kind: ExprKind::IntLiteral(1),
-                            loc: l(semi_tok.loc.end, semi2.loc.start, semi2.loc.file),
-                        };
-                        (expr, semi2)
-                    }
-                    _ => {
-                        let expr = self.parse_expr(buckets, tokens, current)?;
-                        let semi2 = eat_semicolon(tokens, current)?;
-                        (expr, semi2)
-                    }
-                };
-
-                let mut post_exprs = Vec::new();
-                if TokenKind::RParen != peek(tokens, current)?.kind {
-                    post_exprs.push(self.parse_expr(buckets, tokens, current)?);
-                    while TokenKind::RParen != peek(tokens, current)?.kind {
-                        expect_comma(tokens, current)?;
-                        post_exprs.push(self.parse_expr(buckets, tokens, current)?);
-                    }
-                }
-
-                let rparen_loc = expect_rparen(tokens, current, lparen_tok.loc).unwrap();
-
-                let body = self.parse_block(buckets, tokens, current)?;
-
-                let post_exprs = buckets.add_array(post_exprs);
-                let post_expr = Expr {
-                    kind: ExprKind::ParenList(post_exprs),
-                    loc: l(semi2.loc.end, rparen_loc.start, rparen_loc.file),
-                };
-
-                match first_part {
-                    Ok((decl_type, decls)) => {
-                        return Ok(Stmt {
-                            loc: l_from(start_loc, body.loc),
-                            kind: StmtKind::ForDecl {
-                                at_start_decl_type: decl_type,
-                                at_start: buckets.add_array(decls),
-                                condition,
-                                post_expr,
-                                body,
-                            },
-                        });
-                    }
-                    Err(at_start) => {
-                        return Ok(Stmt {
-                            loc: l_from(start_loc, body.loc),
-                            kind: StmtKind::For {
-                                at_start,
-                                condition,
-                                post_expr,
-                                body,
-                            },
-                        })
-                    }
-                }
-            }
-
-            TokenKind::Semicolon => {
-                return Ok(Stmt {
-                    kind: StmtKind::Nop,
-                    loc: pop(tokens, current).unwrap().loc,
-                });
-            }
-
-            TokenKind::If => {
-                let start_loc = pop(tokens, current).unwrap().loc;
-
-                let lparen_tok = expect_lparen(tokens, current)?;
-                let if_cond = self.parse_expr(buckets, tokens, current)?;
-                expect_rparen(tokens, current, lparen_tok.loc)?;
-
-                let if_body = self.parse_block(buckets, tokens, current)?;
-
-                if peek(tokens, current)?.kind != TokenKind::Else {
-                    return Ok(Stmt {
-                        loc: l_from(start_loc, if_body.loc),
-                        kind: StmtKind::Branch {
-                            else_body: Block {
-                                stmts: buckets.add_slice(&[]),
-                                loc: l(if_body.loc.end, if_body.loc.end, if_body.loc.file),
-                            },
-                            if_cond,
-                            if_body,
-                        },
-                    });
-                }
-
-                pop(tokens, current).unwrap();
-                let else_body = self.parse_block(buckets, tokens, current)?;
-
-                return Ok(Stmt {
-                    loc: l_from(tok.loc, else_body.loc),
-                    kind: StmtKind::Branch {
-                        if_cond,
-                        if_body,
-                        else_body,
-                    },
-                });
-            }
-
-            TokenKind::LBrace => {
-                let block = self.parse_block(buckets, tokens, current)?;
-                if block.stmts.len() == 0 {
-                    return Ok(Stmt {
-                        kind: StmtKind::Nop,
-                        loc: block.loc,
-                    });
-                } else {
-                    return Ok(Stmt {
-                        loc: block.loc,
-                        kind: StmtKind::Block(block),
-                    });
-                }
-            }
-
-            TokenKind::Return => {
-                pop(tokens, current).unwrap();
-
-                if peek(tokens, current)?.kind == TokenKind::Semicolon {
-                    pop(tokens, current).unwrap();
-                    return Ok(Stmt {
-                        kind: StmtKind::Ret,
-                        loc: tok.loc,
-                    });
-                }
-
-                let expr = self.parse_expr(buckets, tokens, current)?;
-                eat_semicolon(tokens, current)?;
-
-                return Ok(Stmt {
-                    loc: l_from(tok.loc, expr.loc),
-                    kind: StmtKind::RetVal(expr),
-                });
-            }
-
-            TokenKind::Break => {
-                pop(tokens, current).unwrap();
-                eat_semicolon(tokens, current)?;
-
-                return Ok(Stmt {
-                    kind: StmtKind::Break,
-                    loc: tok.loc,
-                });
-            }
-            TokenKind::Continue => {
-                pop(tokens, current).unwrap();
-                eat_semicolon(tokens, current)?;
-
-                return Ok(Stmt {
-                    kind: StmtKind::Continue,
-                    loc: tok.loc,
-                });
-            }
-
-            _ => {
-                let expr = self.parse_expr(buckets, tokens, current)?;
-                eat_semicolon(tokens, current)?;
-
-                return Ok(Stmt {
-                    loc: expr.loc,
-                    kind: StmtKind::Expr(expr),
-                });
-            }
-        }
-    }
-
-    fn parse_type_prefix(
-        &self,
-        buckets: BucketListRef<'b>,
-        tokens: &[Token],
-        current: &mut usize,
-    ) -> Result<ASTType<'b>, Error> {
-        let mut tok = peek(tokens, current)?;
-        match tok.kind {
-            TokenKind::Int | TokenKind::Void | TokenKind::Char => {}
-            TokenKind::Long | TokenKind::Unsigned => {}
-            TokenKind::TypeIdent(ident) => {
-                pop(tokens, current).unwrap();
-
-                return Ok(ASTType {
-                    kind: ASTTypeKind::Ident(ident),
-                    loc: tok.loc,
-                });
-            }
-            TokenKind::Struct => {
-                pop(tokens, current).unwrap();
-
-                let start_loc = tok.loc;
-                if let Some((ident, ident_loc)) = any_ident_o(tokens, current) {
-                    let end_loc = ident_loc;
-
-                    if peek(tokens, current)?.kind == TokenKind::LBrace {
-                        pop(tokens, current).unwrap();
-
-                        let mut decls = Vec::new();
-                        while peek(tokens, current)?.kind != TokenKind::RBrace {
-                            decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
-                            eat_semicolon(tokens, current)?;
-                        }
-                        // parse as type definition
-                        let end_loc = pop(tokens, current).unwrap().loc;
-                        let members = &*buckets.add_array(decls);
-
-                        return Ok(ASTType {
-                            kind: ASTTypeKind::Struct(StructDecl::NamedDef { ident, members }),
-                            loc: l_from(start_loc, end_loc),
-                        });
-                    }
-
-                    return Ok(ASTType {
-                        kind: ASTTypeKind::Struct(StructDecl::Named(ident)),
-                        loc: l_from(start_loc, end_loc),
-                    });
-                } else {
-                    expect_lbrace(tokens, current)?;
-                    let mut decls = Vec::new();
-                    while peek(tokens, current)?.kind != TokenKind::RBrace {
-                        decls.push(self.parse_inner_struct_decl(buckets, tokens, current)?);
-                        eat_semicolon(tokens, current)?;
-                    }
-
-                    let end_loc = pop(tokens, current).unwrap().loc;
-                    let members = &*buckets.add_array(decls);
-
-                    return Ok(ASTType {
-                        kind: ASTTypeKind::Struct(StructDecl::Unnamed(members)),
-                        loc: l_from(start_loc, end_loc),
-                    });
-                }
-            }
-            _ => return Err(unexpected_token("type", &tok)),
-        }
-
-        let start_loc = tok.loc;
-        let mut end_loc = start_loc;
-        let mut decl_spec = TypeDeclSpec::new();
-
-        loop {
-            match tok.kind {
-                TokenKind::Int => decl_spec.int += 1,
-                TokenKind::Void => decl_spec.void += 1,
-                TokenKind::Char => decl_spec.char += 1,
-                TokenKind::Long => decl_spec.long += 1,
-                TokenKind::Unsigned => decl_spec.unsigned += 1,
-                TokenKind::Signed => decl_spec.signed += 1,
-                TokenKind::Float => decl_spec.float += 1,
-                TokenKind::Double => decl_spec.double += 1,
-                _ => break,
-            }
-
-            end_loc = pop(tokens, current).unwrap().loc;
-            tok = peek(tokens, current)?;
-        }
-
-        let kind = if let Some(kind) = CORRECT_TYPES.get(&decl_spec) {
-            *kind
-        } else {
-            return Err(error!(
-                "Incorrect declaration specifier",
-                l_from(start_loc, end_loc),
-                format!("this is invalid")
-            ));
-        };
-
-        return Ok(ASTType {
-            kind,
-            loc: l_from(start_loc, end_loc),
-        });
-    }
-
-    pub fn parse_pragma<'a>(&self, pragma: &str) -> Option<GlobalStmtKind<'a>> {
-        match pragma {
-            "tci enable_builtins" => return Some(GlobalStmtKind::PragmaEnableBuiltins),
-            _ => return None,
-        }
-    }
 }
-
-pub fn unexpected_token(parsing_what: &str, tok: &Token) -> Error {
-    return error!(
-        &format!("unexpected token while parsing {}", parsing_what),
-        tok.loc,
-        format!("this was interpreted as {:?}", tok)
-    );
-}
-
-pub fn any_ident_o<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Option<(u32, CodeLoc)> {
-    let tok = peek_o(tokens, current)?;
-    if let TokenKind::Ident(id) = tok.kind {
-        pop(tokens, current).unwrap();
-        return Some((id, tok.loc));
-    } else if let TokenKind::TypeIdent(id) = tok.kind {
-        pop(tokens, current).unwrap();
-        return Some((id, tok.loc));
-    } else {
-        None
-    }
-}
-
-pub fn expect_any_ident<'a>(
-    tokens: &'a [Token<'a>],
-    current: &mut usize,
-) -> Result<(u32, CodeLoc), Error> {
-    let tok = pop(tokens, current)?;
-    if let TokenKind::Ident(id) = tok.kind {
-        return Ok((id, tok.loc));
-    } else if let TokenKind::TypeIdent(id) = tok.kind {
-        return Ok((id, tok.loc));
-    } else {
-        return Err(error!(
-            "expected identifier token, got something else instead",
-            tok.loc,
-            format!(
-                "this was interpreted as {:?} when it should be an identifier",
-                tok
-            )
-        ));
-    }
-}
-
-pub fn expect_type_ident<'a>(
-    tokens: &'a [Token<'a>],
-    current: &mut usize,
-) -> Result<(u32, CodeLoc), Error> {
-    let tok = pop(tokens, current)?;
-    if let TokenKind::TypeIdent(id) = tok.kind {
-        return Ok((id, tok.loc));
-    } else {
-        return Err(error!(
-            "expected type identifier token, got something else instead",
-            tok.loc,
-            format!(
-                "this was interpreted as {:?} when it should be a type identifier",
-                tok
-            )
-        ));
-    }
-}
-
-pub fn expect_ident<'a>(
-    tokens: &'a [Token<'a>],
-    current: &mut usize,
-) -> Result<(u32, CodeLoc), Error> {
-    let tok = pop(tokens, current)?;
-    if let TokenKind::Ident(id) = tok.kind {
-        return Ok((id, tok.loc));
-    } else {
-        return Err(error!(
-            "expected identifier token, got something else instead",
-            tok.loc,
-            format!(
-                "this was interpreted as {:?} when it should be an identifier",
-                tok
-            )
-        ));
-    }
-}
-
-pub fn expect_rbracket<'a>(
-    tokens: &[Token<'a>],
-    current: &mut usize,
-    lbracket_loc: CodeLoc,
-) -> Result<Token<'a>, Error> {
-    let tok = pop(tokens, current)?;
-    if tok.kind != TokenKind::RBracket {
-        return Err(error!(
-            "expected ']' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a ']'", tok),
-            lbracket_loc,
-            "expected ']' because of matching '[' here"
-        ));
-    }
-    return Ok(tok);
-}
-
-pub fn expect_lbrace<'a>(tokens: &[Token<'a>], current: &mut usize) -> Result<(), Error> {
-    let tok = pop(tokens, current)?;
-    if tok.kind != TokenKind::LBrace {
-        return Err(error!(
-            "expected '{' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a '{{'", tok)
-        ));
-    }
-    return Ok(());
-}
-
-pub fn expect_rbrace<'a>(
-    tokens: &'a [Token<'a>],
-    current: &mut usize,
-    matching_tok: CodeLoc,
-) -> Result<CodeLoc, Error> {
-    let tok = pop(tokens, current)?;
-    if tok.kind != TokenKind::RBrace {
-        return Err(error!(
-            "expected '}' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a '}}'", tok),
-            matching_tok,
-            "matching left brace here".to_string()
-        ));
-    }
-    return Ok(tok.loc);
-}
-
-pub fn expect_rparen<'a>(
-    tokens: &'a [Token<'a>],
-    current: &mut usize,
-    matching_tok: CodeLoc,
-) -> Result<CodeLoc, Error> {
-    let tok = pop(tokens, current)?;
-    if tok.kind != TokenKind::RParen {
-        return Err(error!(
-            "expected ')' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a ')'", tok),
-            matching_tok,
-            "matching left paren here".to_string()
-        ));
-    }
-    return Ok(tok.loc);
-}
-
-pub fn expect_lparen<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
-    let tok = pop(tokens, current)?;
-    if tok.kind != TokenKind::LParen {
-        return Err(error!(
-            "expected '(' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a '('", tok)
-        ));
-    }
-    return Ok(tok);
-}
-
-pub fn expect_comma<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
-    let tok = pop(tokens, current)?;
-    if tok.kind != TokenKind::Comma {
-        return Err(error!(
-            "expected ',' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a ','", tok)
-        ));
-    }
-    return Ok(tok);
-}
-
-pub fn eat_semicolon<'a>(tokens: &'a [Token<'a>], current: &mut usize) -> Result<Token<'a>, Error> {
-    let tok = pop(tokens, current)?;
-    expect_semicolon(&tok)?;
-    return Ok(tok);
-}
-
-pub fn expect_semicolon(tok: &Token) -> Result<(), Error> {
-    if tok.kind != TokenKind::Semicolon {
-        return Err(error!(
-            "expected ';' token, got something else instead",
-            tok.loc,
-            format!("this was interpreted as {:?} when it should be a ';'", tok)
-        ));
-    }
-    return Ok(());
 }

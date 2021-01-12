@@ -45,5 +45,6 @@ better error messages and more runtime diagnostic tools.
   nice error messages.
 - TCI uses [`embedded-websocket`](https://github.com/ninjasource/embedded-websocket)
   to do handle websocket connections
+- TCI uses [`lang-c`](https://github.com/vickenty/lang-c) to handle parsing the C language
 
 

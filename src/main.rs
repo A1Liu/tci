@@ -11,16 +11,19 @@ mod net_io;
 #[macro_use]
 mod runtime;
 
+// mod clang;
+
 mod assembler;
 mod ast;
 mod buckets;
-mod clang;
 mod commands;
 mod filedb;
 mod interpreter;
 mod lexer;
 mod parser;
 mod preprocessor;
+mod tc_ast;
+mod tc_structs;
 mod type_checker;
 
 #[cfg(test)]
@@ -35,113 +38,78 @@ use interpreter::Program;
 use net_io::WebServerError;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use util::*;
 
-fn compile(env: &mut FileDb) -> Result<Program<'static>, Vec<Error>> {
-    let mut buckets = buckets::BucketList::with_capacity(2 * env.size());
-    let mut buckets_begin = buckets;
+fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
+    let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
     let mut errors: Vec<Error> = Vec::new();
 
     let files_list = env.vec();
     let files = files_list.iter();
     files.for_each(|&id| {
-        let result = lexer::lex_file(buckets, &mut tokens, env, id);
+        let result = lexer::lex_file(&*buckets, &mut tokens, env, id);
         match result {
-            Err(err) => {
-                errors.push(err);
-            }
+            Err(err) => errors.push(err),
             Ok(_) => {}
         }
     });
 
     if errors.len() != 0 {
+        unsafe { buckets.dealloc() };
         return Err(errors);
     }
 
-    while let Some(n) = buckets.next() {
-        buckets = n;
+    let mut processed_tokens = HashMap::new();
+    for &file in tokens.keys() {
+        match preprocessor::preprocess_file(&tokens, file) {
+            Ok(toks) => std::mem::drop(processed_tokens.insert(file, toks)),
+            Err(err) => errors.push(err),
+        }
     }
-    buckets = buckets.force_next();
 
-    tokens = tokens
-        .keys()
-        .filter_map(|&file| match preprocessor::preprocess_file(&tokens, file) {
-            Ok(toks) => {
-                if let Some(n) = buckets.next() {
-                    buckets = n;
-                }
+    let mut trees = HashMap::new();
+    for (file, toks) in processed_tokens {
+        match parser::parse(&toks) {
+            Ok(env) => std::mem::drop(trees.insert(file, env)),
+            Err(err) => errors.push(err),
+        }
+    }
 
-                Some((file, &*buckets.add_array(toks)))
-            }
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        })
-        .collect();
+    unsafe { buckets.dealloc() };
 
     if errors.len() != 0 {
         return Err(errors);
     }
 
-    let mut parser = parser::Parser::new();
-    let iter = tokens.keys().filter_map(|&file| {
-        while let Some(n) = buckets.next() {
-            buckets = n;
+    let mut tu_map = HashMap::new();
+    for (file, tree) in trees {
+        match type_checker::check_tree(env, &tree.tree) {
+            Ok(tu) => std::mem::drop(tu_map.insert(file, tu)),
+            Err(err) => errors.push(err),
         }
-
-        match parser.parse_tokens(buckets, &tokens, file) {
-            Ok(x) => return Some(x),
-            Err(err) => {
-                errors.push(err);
-                return None;
-            }
-        }
-    });
-    let asts: Vec<ast::ASTProgram> = iter.collect();
-
-    while let Some(n) = buckets.next() {
-        buckets = n;
     }
-    buckets = buckets.force_next();
+
+    if errors.len() != 0 {
+        return Err(errors);
+    }
 
     let mut assembler = assembler::Assembler::new();
-    asts.into_iter().for_each(|ast| {
-        while let Some(n) = buckets.next() {
-            buckets = n;
+
+    for (file, tu) in tu_map {
+        match assembler.add_file(file, tu) {
+            Ok(_) => {}
+            Err(err) => return Err(vec![err]),
         }
-
-        let tfuncs = match type_checker::check_file(buckets, ast, env) {
-            Ok(x) => x,
-            Err(err) => {
-                errors.push(err);
-                return;
-            }
-        };
-
-        match assembler.add_file(tfuncs) {
-            Ok(()) => {}
-            Err(err) => {
-                errors.push(err);
-            }
-        }
-    });
-
-    if errors.len() != 0 {
-        return Err(errors);
     }
 
-    let program = match assembler.assemble(&env) {
+    let program = match assembler.assemble(env) {
         Ok(x) => x,
-        Err(err) => return Err(err.into()),
+        Err(err) => return Err(vec![err]),
     };
 
-    while let Some(b) = unsafe { buckets_begin.dealloc() } {
-        buckets_begin = b;
-    }
-
-    Ok(program)
+    return Ok(program);
 }
 
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {

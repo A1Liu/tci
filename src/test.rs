@@ -18,10 +18,12 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
             panic!();
         }
     };
+
     mem::drop(files);
-    for (idx, op) in program.ops.iter().enumerate() {
-        println!("op {}: {:?}", idx, op);
-    }
+
+    // for (idx, op) in program.ops.iter().enumerate() {
+    //     println!("op {}: {:?}", idx, op.op);
+    // }
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
@@ -91,7 +93,7 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
 
     let mut runtime = Runtime::new(program, StringArray::new());
     let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
-    for (idx, op) in program.ops.iter().enumerate() {
+    for (idx, op) in runtime.program.ops.iter().enumerate() {
         println!("op {}: {:?}", idx, op);
     }
 
@@ -132,16 +134,16 @@ macro_rules! gen_test_should_succeed {
 
 }
 
-macro_rules! gen_test_runtime_should_fail {
-    ( $( ($ident:ident, $expr:expr ) ),* ) => {
-        $(
-            #[test]
-            fn $ident() {
-                test_file_runtime_should_fail(concat!("test/", stringify!($ident), ".c"), $expr);
-            }
-        )*
-    };
-}
+// macro_rules! gen_test_runtime_should_fail {
+//     ( $( ($ident:ident, $expr:expr ) ),* ) => {
+//         $(
+//             #[test]
+//             fn $ident() {
+//                 test_file_runtime_should_fail(concat!("test/", stringify!($ident), ".c"), $expr);
+//             }
+//         )*
+//     };
+// }
 
 gen_test_should_succeed!(
     hello_world,
@@ -156,7 +158,8 @@ gen_test_should_succeed!(
     assign_operators,
     exit,
     ("dyn_array_ptr/", dyn_array_ptr, main),
-    ("arrays/", arrays, main)
+    ("arrays/", arrays, main),
+    ("statics/", statics, main)
 );
 
-gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
+// gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

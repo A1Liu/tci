@@ -1,6 +1,10 @@
 #define INLINE_LEN 4
 
 typedef struct {
+} void_;
+
+typedef struct {
+  void_ unused;
   char data[];
 } * StringData;
 
@@ -11,4 +15,4 @@ typedef struct {
 } String;
 
 String string_new(char *);
-char *string_data(String);
+char *string_data(String *);

@@ -21,10 +21,10 @@ String string_new(char *value) {
   return str;
 }
 
-char *string_data(String str) {
-  if (str.size < INLINE_LEN) {
-    return str._inline;
+char *string_data(String *str) {
+  if (str->size < INLINE_LEN) {
+    return str->_inline;
   } else {
-    return str.data;
+    return &str->data->data[0];
   }
 }

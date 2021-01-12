@@ -10,6 +10,8 @@ use std::io;
 use std::sync::*;
 
 pub use lazy_static::lazy_static;
+pub use std::collections::hash_map::Entry;
+pub use std::collections::HashMap;
 
 #[allow(unused_macros)]
 macro_rules! debug {
@@ -147,6 +149,14 @@ impl Into<ops::Range<usize>> for CodeLoc {
 
 #[inline]
 pub fn l_from(loc1: CodeLoc, loc2: CodeLoc) -> CodeLoc {
+    if loc1 == NO_FILE {
+        return loc2;
+    }
+
+    if loc2 == NO_FILE {
+        return loc1;
+    }
+
     debug_assert_eq!(loc1.file, loc2.file);
     l(loc1.start, loc2.end, loc1.file)
 }
@@ -665,16 +675,21 @@ impl BuildHasher for DetState {
     }
 }
 
-pub enum HashRefSlot<Key, Value> {
+#[derive(Clone, Copy)]
+pub enum HashRefSlot<Key, Value>
+where
+    Key: Copy,
+    Value: Copy,
+{
     Some(Key, Value),
     None,
-    // TODO add Tomb variant and remove operation?
 }
 
 #[derive(Clone, Copy)]
 pub struct HashRef<'a, Key, Value, State = DetState>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Copy,
+    Value: Copy,
     State: BuildHasher,
 {
     pub slots: &'a [HashRefSlot<Key, Value>],
@@ -682,22 +697,57 @@ where
     pub state: State,
 }
 
-impl<'a, Key, Value> HashRef<'a, Key, Value, DetState>
+impl<'a, K, V> HashRef<'a, K, V, DetState>
 where
-    Key: Eq + Hash + Clone,
-    Value: Clone,
+    K: Eq + Hash + Copy,
+    V: Copy,
 {
-    pub fn new<I>(frame: &mut Frame<'a>, capacity: usize, data: I) -> Self
+    pub fn new(frame: impl Allocator<'a>, data: &HashMap<K, V>) -> Self {
+        return Self::with_state(frame, data, DetState);
+    }
+
+    pub fn new_iter<I>(frame: impl Allocator<'a>, capa: usize, data: I) -> Self
     where
-        I: Iterator<Item = (Key, Value)>,
+        I: Iterator<Item = (K, V)>,
     {
-        let slots = frame
-            .build_array(capacity, |_idx| HashRefSlot::None)
-            .unwrap();
+        return Self::with_state_iter(frame, capa, data, DetState);
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            slots: &[],
+            size: 0,
+            state: DetState,
+        }
+    }
+}
+
+impl<'a, K, V, State> HashRef<'a, K, V, State>
+where
+    K: Eq + Hash + Copy,
+    V: Copy,
+    State: BuildHasher,
+{
+    pub fn with_state(frame: impl Allocator<'a>, data: &HashMap<K, V>, state: State) -> Self {
+        let capa = data.len() * 3 / 2;
+        return Self::with_state_iter(frame, capa, data.iter().map(|(&k, &v)| (k, v)), state);
+    }
+
+    pub fn with_state_iter<I>(frame: impl Allocator<'a>, capa: usize, data: I, state: State) -> Self
+    where
+        I: Iterator<Item = (K, V)>,
+    {
+        let slots = frame.build_array(capa, |_idx| HashRefSlot::None).unwrap();
         let mut size = 0;
-        let state = DetState;
 
         for (key, value) in data {
+            if size == capa {
+                panic!(
+                    "allocated too little capacity for size (size = capacity = {})",
+                    size
+                );
+            }
+
             let mut hasher = state.build_hasher();
             key.hash(&mut hasher);
             let mut slot_idx = hasher.finish() as usize % slots.len();
@@ -721,21 +771,11 @@ where
                 slot_idx += 1;
                 slot_idx = slot_idx % slots.len();
             }
-
-            if size == capacity {
-                panic!("why are you inserting more keys than this HashRef can hold?");
-            }
         }
 
         Self { slots, size, state }
     }
-}
 
-impl<'a, Key, Value, State> HashRef<'a, Key, Value, State>
-where
-    Key: Eq + Hash,
-    State: BuildHasher,
-{
     #[inline]
     pub fn len(&self) -> usize {
         return self.size;
@@ -746,9 +786,9 @@ where
         return self.slots.len();
     }
 
-    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&Value>
+    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&V>
     where
-        Key: Borrow<Q>,
+        K: Borrow<Q>,
         Q: Hash + Eq,
     {
         let mut hasher = self.state.build_hasher();
@@ -782,23 +822,21 @@ where
             }
         }
     }
-
-    pub fn iter(&self) -> HashRefIter<'a, Key, Value> {
-        HashRefIter {
-            slots: self.slots,
-            slot_idx: 0,
-        }
-    }
 }
 
-pub struct HashRefIter<'a, Key, Value> {
+pub struct HashRefIter<'a, Key, Value>
+where
+    Key: Copy,
+    Value: Copy,
+{
     pub slots: &'a [HashRefSlot<Key, Value>],
     pub slot_idx: usize,
 }
 
 impl<'a, Key, Value> Iterator for HashRefIter<'a, Key, Value>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Copy,
+    Value: Copy,
 {
     type Item = (&'a Key, &'a Value);
 
@@ -816,21 +854,55 @@ where
     }
 }
 
+impl<'a, K, V, State> IntoIterator for &HashRef<'a, K, V, State>
+where
+    K: Eq + Hash + Copy,
+    V: Copy,
+    State: BuildHasher,
+{
+    type Item = (&'a K, &'a V);
+    type IntoIter = HashRefIter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        HashRefIter {
+            slots: self.slots,
+            slot_idx: 0,
+        }
+    }
+}
+
+impl<'a, K, V, State> IntoIterator for HashRef<'a, K, V, State>
+where
+    K: Eq + Hash + Copy,
+    V: Copy,
+    State: BuildHasher,
+{
+    type Item = (&'a K, &'a V);
+    type IntoIter = HashRefIter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        HashRefIter {
+            slots: self.slots,
+            slot_idx: 0,
+        }
+    }
+}
+
 impl<'a, Key, Value, State> fmt::Debug for HashRef<'a, Key, Value, State>
 where
-    Key: Eq + Hash + fmt::Debug,
-    Value: fmt::Debug,
+    Key: Eq + Hash + Copy + fmt::Debug,
+    Value: fmt::Debug + Copy,
     State: BuildHasher,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        fmt.debug_map().entries(self.iter()).finish()
+        fmt.debug_map().entries(self.into_iter()).finish()
     }
 }
 
 impl<'a, Key, Value, State> Serialize for HashRef<'a, Key, Value, State>
 where
-    Key: Eq + Hash + Serialize,
-    Value: Serialize,
+    Key: Eq + Hash + Copy + Serialize,
+    Value: Copy + Serialize,
     State: BuildHasher,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -838,7 +910,7 @@ where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(self.len()))?;
-        for (key, value) in self.iter() {
+        for (key, value) in self {
             map.serialize_entry(key, value)?;
         }
         map.end()
@@ -846,7 +918,7 @@ where
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct n32 {
     pub data: u32,
 }
@@ -861,11 +933,59 @@ impl n32 {
 
         Self { data }
     }
+
+    pub fn opt(self) -> Option<u32> {
+        if self.data == Self::NULL.data {
+            return None;
+        }
+
+        return Some(self.data);
+    }
+
+    pub fn ok_or_else<T, F>(self, f: F) -> Result<u32, T>
+    where
+        F: FnOnce() -> T,
+    {
+        if self == Self::NULL {
+            return Err(f());
+        }
+
+        return Ok(self.data);
+    }
+
+    pub fn unwrap_or(self, f: u32) -> u32 {
+        if self == Self::NULL {
+            return f;
+        }
+
+        return self.data;
+    }
+
+    pub fn unwrap_or_else<F>(self, f: F) -> u32
+    where
+        F: FnOnce() -> u32,
+    {
+        if self == Self::NULL {
+            return f();
+        }
+
+        return self.data;
+    }
 }
 
 impl Into<u32> for n32 {
     fn into(self) -> u32 {
         if self == Self::NULL {
+            panic!("NullPointerException");
+        }
+
+        return self.data;
+    }
+}
+
+impl Into<u32> for &n32 {
+    fn into(self) -> u32 {
+        if self == &n32::NULL {
             panic!("NullPointerException");
         }
 
@@ -953,4 +1073,65 @@ impl<F: FnOnce()> Drop for Defer<F> {
 
 pub fn defer<F: FnOnce()>(f: F) -> Defer<F> {
     return Defer { f: Some(f) };
+}
+
+macro_rules! let_expr {
+    ($left:pat = $right:expr) => {{
+        if let $left = $right {
+            true
+        } else {
+            false
+        }
+    }};
+}
+
+pub struct StackLL<'a, E> {
+    pub parent: Option<&'a StackLL<'a, E>>,
+    pub item: E,
+}
+
+impl<'a, E> StackLL<'a, E> {
+    pub fn new(item: E) -> Self {
+        Self { parent: None, item }
+    }
+
+    pub fn get(&self) -> &E {
+        &self.item
+    }
+
+    pub fn child<'b>(&'b self, item: E) -> StackLL<'b, E>
+    where
+        'a: 'b,
+    {
+        StackLL {
+            parent: Some(self),
+            item,
+        }
+    }
+}
+
+pub struct StackLLIter<'a, 'b, E>
+where
+    'b: 'a,
+{
+    pub ll: Option<&'a StackLL<'b, E>>,
+}
+
+impl<'a, 'b, E> Iterator for StackLLIter<'a, 'b, E> {
+    type Item = &'a E;
+    fn next(&mut self) -> Option<&'a E> {
+        let ll = self.ll?;
+        let item = &ll.item;
+        self.ll = ll.parent;
+        return Some(item);
+    }
+}
+
+impl<'a, 'b, E> IntoIterator for &'a StackLL<'b, E> {
+    type Item = &'a E;
+    type IntoIter = StackLLIter<'a, 'b, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        StackLLIter { ll: Some(self) }
+    }
 }

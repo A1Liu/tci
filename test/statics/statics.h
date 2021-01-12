@@ -1,0 +1,1 @@
+void public_function();

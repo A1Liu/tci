@@ -8,7 +8,7 @@ int main() {
 
   String a = string_new("hello!!");
   printf("String has inline size of: %ld\n", sizeof(a));
-  printf("String of length %d: %s\n", a.size, string_data(a));
+  printf("String of length %d: %s\n", a.size, string_data(&a));
 
   return 0;
 }
