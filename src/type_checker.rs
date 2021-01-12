@@ -1247,6 +1247,27 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             if let AssignOp::MutAssign(op) = op {
                 let or_else = || bin_assign_op_non_primitive(target.ty, target.loc);
                 let op_type = target.ty.to_prim_type().ok_or_else(or_else)?;
+
+                if op == BinOp::LShift || op == BinOp::RShift {
+                    if !target.ty.is_integer() || !val.ty.is_integer() {
+                        return Err(invalid_bin_op_assign(&target, &val));
+                    }
+
+                    let op_type = target.ty.to_prim_type().unwrap();
+                    let or_else = || bitshift_conversion_error(env.files(), &val);
+                    let val = assign_convert(&*env, TCType::new(TCTypeBase::I8), val, expr.loc)
+                        .ok_or_else(or_else)?;
+
+                    let (value, ty) = (env.add(val), target.ty);
+
+                    #[rustfmt::skip]
+                    return Ok(TCExpr {
+                        kind: TCExprKind::MutAssign { target, value, op_type, op },
+                        ty: target.ty,
+                        loc: expr.loc,
+                    });
+                }
+
                 let or_else = || conversion_error(target.ty, to.loc, &val);
                 let val = assign_convert(&*env, target.ty, val, expr.loc).ok_or_else(or_else)?;
                 let value = env.add(val);
@@ -1457,15 +1478,6 @@ pub fn check_bin_op(
 
     if l.ty.is_pointer() || l.ty.is_array() || r.ty.is_pointer() || r.ty.is_array() {
         // allowed operations are addition w/ integer, subtraction w/ integer/pointer
-        let stride = l.ty.pointer_stride();
-        if stride == n32::NULL {
-            return Err(error!(
-                "cannot perform arithmetic on pointer type",
-                l.loc, "pointer found here"
-            ));
-        }
-
-        let stride: u32 = stride.into();
 
         match op {
             BinOp::Add => {
@@ -1476,6 +1488,16 @@ pub fn check_bin_op(
                 } else {
                     return Err(invalid_bin_op(&l, &r));
                 };
+
+                let stride = ptr.ty.pointer_stride();
+                if stride == n32::NULL {
+                    return Err(error!(
+                        "cannot perform arithmetic on pointer type",
+                        l.loc, "pointer found here"
+                    ));
+                }
+
+                let stride: u32 = stride.into();
 
                 let ptr_prim = ptr.ty.to_prim_type().ok_or_else(ptype_err(ptr.loc))?;
                 let int_prim = int.ty.to_prim_type().ok_or_else(ptype_err(int.loc))?;
@@ -1551,11 +1573,60 @@ pub fn check_bin_op(
                 let (ptr, int) = if r.ty.is_integer() {
                     (l, r)
                 } else if l.ty.is_integer() {
-                    (r, l)
+                    return Err(error!(
+                        "can't subtract a pointer from an integer",
+                        l.loc, "integer here", r.loc, "pointer here"
+                    ));
                 } else {
                     // pointer subtraction
-                    unimplemented!();
+                    let f = env.files();
+                    let or_else = |e: TCExpr| move || ptr_to_incomplete_type(f, e.ty, e.loc);
+                    let l_stride = l.ty.pointer_stride().ok_or_else(or_else(l))?;
+                    let r_stride = r.ty.pointer_stride().ok_or_else(or_else(r))?;
+                    if l_stride != r_stride {
+                        let (l_td, r_td) = (l.ty.display(f), r.ty.display(f));
+                        return Err(error!(
+                            "pointer subtraction performed on pointers to types of different sizes",
+                            l.loc,
+                            format!("this has the type `{}` (size={})", l_td, l_stride),
+                            r.loc,
+                            format!("this has the type `{}` (size={})", r_td, r_stride)
+                        ));
+                    }
+
+                    let (left, right) = (env.add(l), env.add(r));
+                    let (op, op_type) = (BinOp::Sub, TCPrimType::U64);
+                    let ty = TCType::new(TCTypeBase::U64);
+
+                    #[rustfmt::skip]
+                    let sub = TCExpr {
+                        kind: TCExprKind::BinOp { op, op_type, left, right },
+                        ty,
+                        loc,
+                    };
+
+                    let divisor = TCExpr {
+                        kind: TCExprKind::U64Literal(l_stride as u64),
+                        ty,
+                        loc,
+                    };
+
+                    let (left, right) = (env.add(sub), env.add(divisor));
+
+                    #[rustfmt::skip]
+                    let result = TCExpr {
+                        kind: TCExprKind::BinOp { op: BinOp::Div, op_type, left, right },
+                        ty,
+                        loc,
+                    };
+
+                    return Ok(result);
                 };
+
+                let stride = ptr.ty.pointer_stride();
+                if stride == n32::NULL {}
+
+                let stride: u32 = stride.into();
 
                 let ptr_prim = ptr.ty.to_prim_type().ok_or_else(ptype_err(ptr.loc))?;
                 let int_prim = int.ty.to_prim_type().ok_or_else(ptype_err(int.loc))?;
@@ -1631,11 +1702,32 @@ pub fn check_bin_op(
                     ty: ptr.ty,
                 });
             }
+            BinOp::Eq => {}
             _ => return Err(invalid_bin_op(&l, &r)),
         }
     }
 
+    if op == BinOp::LShift || op == BinOp::RShift {
+        if !l.ty.is_integer() || !r.ty.is_integer() {
+            return Err(invalid_bin_op(&l, &r));
+        }
+
+        let op_type = l.ty.to_prim_type().unwrap();
+        let or_else = || bitshift_conversion_error(env.files(), &r);
+        let r = assign_convert(&*env, TCType::new(TCTypeBase::I8), r, loc).ok_or_else(or_else)?;
+
+        let (left, right, ty) = (env.add(l), env.add(r), l.ty);
+
+        #[rustfmt::skip]
+        return Ok(TCExpr {
+            kind: TCExprKind::BinOp { op, op_type, left, right },
+            loc,
+            ty,
+        });
+    }
+
     let (left, right, op_type) = prim_unify(env, l, r)?;
+
     let ty = match op {
         BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => TCType::new(TCTypeBase::I8),
         BinOp::Eq | BinOp::Neq => TCType::new(TCTypeBase::I8),
@@ -1966,6 +2058,13 @@ pub fn invalid_bin_op(l: &TCExpr, r: &TCExpr) -> Error {
     );
 }
 
+pub fn invalid_bin_op_assign(l: &TCAssignTarget, r: &TCExpr) -> Error {
+    return error!(
+        "invalid operands to binary expression",
+        l.loc, "left hand side", r.loc, "right hand side"
+    );
+}
+
 pub fn param_conversion_error(ty: TCType, expr: &TCExpr) -> Error {
     return error!(
         "couldn't convert value to parameter type",
@@ -1984,5 +2083,19 @@ pub fn condition_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
     return error!(
         "using condition of non-primitive type",
         loc, "condition found here"
+    );
+}
+
+pub fn ptr_to_incomplete_type(files: &FileDb, ty: TCType, loc: CodeLoc) -> Error {
+    return error!(
+        "cannot perform arithmetic on pointer type",
+        loc, "pointer found here"
+    );
+}
+
+pub fn bitshift_conversion_error(files: &FileDb, expr: &TCExpr) -> Error {
+    return error!(
+        "couldn't use value as bitshift size",
+        expr.loc, "value found here"
     );
 }

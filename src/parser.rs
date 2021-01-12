@@ -260,6 +260,77 @@ rule assignment_expr() -> Expr = precedence! {
         }
     }
 
+    x:@ [TokenKind::PlusEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Add), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::DashEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Sub), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::StarEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mul), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::SlashEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Div), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::PercentEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mod), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::LtLtEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::LShift), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::GtGtEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::RShift), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::AmpEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitAnd), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::CaretEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitXor), to: x, val: y }
+        }
+    }
+    x:@ [TokenKind::LineEq] y:(@) {
+        let (x, y) = env.buckets.add((x, y));
+        Expr {
+            loc: l_from(x.loc, y.loc),
+            kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitOr), to: x, val: y }
+        }
+    }
+
     --
     x:@ [TokenKind::Question] e:expr() [TokenKind::Colon] y:(@) {
         let (x, e, y) = env.buckets.add((x, e, y));
@@ -267,6 +338,36 @@ rule assignment_expr() -> Expr = precedence! {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Ternary { condition: x, if_true: e, if_false: y }
         }
+    }
+
+    --
+    x:(@) [TokenKind::LineLine] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolOr, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::AmpAmp] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolAnd, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Line] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitOr, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Caret] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitXor, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::Amp] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitAnd, x, y) }
     }
 
     --
@@ -295,6 +396,16 @@ rule assignment_expr() -> Expr = precedence! {
     x:(@) [TokenKind::Leq] y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Leq, x, y) }
+    }
+
+    --
+    x:(@) [TokenKind::LtLt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::LShift, x, y) }
+    }
+    x:(@) [TokenKind::GtGt] y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::RShift, x, y) }
     }
 
     --

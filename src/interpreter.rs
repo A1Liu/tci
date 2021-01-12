@@ -719,6 +719,10 @@ impl<Stdin: IStdin> Runtime<Stdin> {
             Opcode::CallDyn => {
                 let func: u64 = u64::from_le(self.memory.pop_stack()?);
 
+                if func > self.program.ops.len() as u64 {
+                    println!("{:?}", self.memory.expr_stack);
+                }
+
                 let func_name = match self.program.ops[func as usize].op {
                     Opcode::Func(name) => name,
                     op => panic!("found function header {:?} (this is an error in tci)", op),

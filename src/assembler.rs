@@ -635,6 +635,35 @@ impl Assembler {
                 self.opcodes.push(tagged);
             }
 
+            TCExprKind::MutAssign {
+                target,
+                value,
+                op,
+                op_type,
+            } => {
+                self.translate_assign(env, target);
+                tagged.op = Opcode::PushDup { bytes: 8 };
+                self.opcodes.push(tagged);
+
+                let bytes = target.ty.repr_size();
+                tagged.op = Opcode::Get { offset: 0, bytes };
+                self.opcodes.push(tagged);
+
+                self.translate_expr(env, value);
+
+                self.translate_bin_op(*op, *op_type, tagged.loc);
+
+                tagged.op = Opcode::PushDup { bytes };
+                self.opcodes.push(tagged);
+
+                let top = bytes * 2;
+                tagged.op = Opcode::Swap { top, bottom: 8 };
+                self.opcodes.push(tagged);
+
+                tagged.op = Opcode::Set { offset: 0, bytes };
+                self.opcodes.push(tagged);
+            }
+
             TCExprKind::Deref(ptr) => {
                 self.translate_expr(env, ptr);
                 tagged.op = Opcode::Get {
