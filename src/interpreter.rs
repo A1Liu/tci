@@ -7,10 +7,8 @@ use core::fmt;
 use core::future::Future;
 use core::pin::Pin;
 use serde::Serialize;
-use smol::io::AsyncReadExt;
 use std::convert::TryInto;
 use std::io::Write;
-use std::marker::PhantomData;
 use std::ops::{BitAnd, BitOr, BitXor};
 
 /// Exit the program with an error code
@@ -212,9 +210,6 @@ impl Drop for Program {
 
 pub type IFuture = Pin<Box<dyn Future<Output = RuntimeDiagnostic> + Send>>;
 
-pub trait IStdin: AsyncReadExt + Unpin + Send {}
-impl<T> IStdin for T where T: AsyncReadExt + Unpin + Send {}
-
 #[derive(Debug, Serialize)]
 pub struct RuntimeDiagnostic {
     pub callstack: u32,
@@ -224,21 +219,19 @@ pub struct RuntimeDiagnostic {
     pub status: RuntimeStatus,
 }
 
-pub struct Runtime<Stdin: IStdin> {
+pub struct Runtime {
     pub memory: Memory,
     pub args: StringArray,
     pub program: Program,
-    pub phantom: PhantomData<Stdin>,
 }
 
-impl<Stdin: IStdin> Runtime<Stdin> {
+impl Runtime {
     pub fn new(program: Program, args: StringArray) -> Self {
         let memory = Memory::new_with_binary(program.data);
         return Self {
             args,
             memory,
             program,
-            phantom: PhantomData,
         };
     }
 
@@ -252,29 +245,27 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         }
     }
 
-    pub fn run(&mut self, mut io: impl Write, stdin: &mut Stdin) -> RuntimeDiagnostic {
-        return smol::block_on(async {
-            loop {
-                let ret = self.run_op(stdin).await;
+    pub fn run(&mut self, mut io: impl Write) -> RuntimeDiagnostic {
+        loop {
+            let ret = self.run_op();
 
-                for event in self.memory.events() {
-                    let string = event.to_string();
-                    write!(io, "{}", string).unwrap();
-                }
-
-                if let RuntimeStatus::Running = ret {
-                    continue;
-                }
-
-                return self.diagnostic();
+            for event in self.memory.events() {
+                let string = event.to_string();
+                write!(io, "{}", string).unwrap();
             }
-        });
+
+            if let RuntimeStatus::Running = ret {
+                continue;
+            }
+
+            return self.diagnostic();
+        }
     }
 
-    pub async fn run_op_count(&mut self, mut count: u32, stdin: &mut Stdin) -> RuntimeDiagnostic {
+    pub fn run_op_count(&mut self, mut count: u32) -> RuntimeDiagnostic {
         let callstack_len = self.memory.callstack.len();
         while count > 0 {
-            let ret = self.run_op(stdin).await;
+            let ret = self.run_op();
             if let RuntimeStatus::Running = ret {
                 count -= 1;
                 continue;
@@ -286,16 +277,15 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         return self.diagnostic();
     }
 
-    pub async fn run_count_or_until(
+    pub fn run_count_or_until(
         &mut self,
         mut count: u32,
         pc: u32,
         stack_size: u16,
-        stdin: &mut Stdin,
     ) -> RuntimeDiagnostic {
         let stack_size = stack_size as usize;
         while stack_size <= self.memory.callstack.len() && count > 0 && self.memory.pc != pc {
-            let ret = self.run_op(stdin).await;
+            let ret = self.run_op();
             if let RuntimeStatus::Running = ret {
                 count -= 1;
                 continue;
@@ -332,14 +322,14 @@ impl<Stdin: IStdin> Runtime<Stdin> {
         return true;
     }
 
-    pub async fn run_op(&mut self, stdin: &mut Stdin) -> RuntimeStatus {
+    pub fn run_op(&mut self) -> RuntimeStatus {
         match self.memory.status {
             RuntimeStatus::Running => {}
             _ => return self.memory.status.clone(),
         }
 
         let tag = self.memory.pc;
-        let ret = self.run_op_internal(stdin).await;
+        let ret = self.run_op_internal();
         if let Err(err) = ret {
             let loc = self.program.ops[self.memory.pc as usize].loc;
             self.memory
@@ -351,7 +341,7 @@ impl<Stdin: IStdin> Runtime<Stdin> {
     }
 
     #[inline]
-    pub async fn run_op_internal(&mut self, stdin: &mut Stdin) -> Result<(), IError> {
+    pub fn run_op_internal(&mut self) -> Result<(), IError> {
         let op = self.program.ops[self.memory.pc as usize];
         // write!(self.io.log(), "op: {:?}\n", op.op)
         // .map_err(|err| error!("WriteFailed", "failed to write to logs ({})", err))?;
@@ -831,11 +821,7 @@ impl<Stdin: IStdin> Runtime<Stdin> {
     }
 }
 
-pub fn printf<Stdin: IStdin>(
-    sel: &mut Runtime<Stdin>,
-    format_ptr: VarPointer,
-    args: usize,
-) -> Result<i32, IError> {
+pub fn printf(sel: &mut Runtime, format_ptr: VarPointer, args: usize) -> Result<i32, IError> {
     let mut out = StringWriter::new();
     let args = args as u16;
     let result = printf_internal(sel, format_ptr, args, &mut out);
@@ -848,8 +834,8 @@ pub fn printf<Stdin: IStdin>(
 }
 
 #[allow(unused_assignments)] // TODO remove this when we make this fully standard compliant
-pub fn printf_internal<Stdin: IStdin>(
-    sel: &mut Runtime<Stdin>,
+pub fn printf_internal(
+    sel: &mut Runtime,
     format_ptr: VarPointer,
     mut current_offset: u16,
     mut out: &mut StringWriter,

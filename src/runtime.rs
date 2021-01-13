@@ -3,7 +3,6 @@ use crate::filedb::*;
 use crate::util::*;
 use core::{fmt, mem};
 use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
-use smol::io::AsyncReadExt;
 use std::collections::VecDeque;
 use std::io;
 use std::io::Write;
@@ -988,21 +987,6 @@ impl Memory {
         self.history_index += 1;
     }
 
-    pub async fn read_stdin(
-        &mut self,
-        limit: usize,
-        stdin: impl AsyncReadExt + Unpin,
-    ) -> Result<Vec<u8>, IError> {
-        self.check_mutate()?;
-
-        if self.in_io_buf.len() == 0 {
-            smol::io::copy(stdin.take(limit as u64), MemoryStdin { memory: self }).await?;
-        }
-
-        let limit = std::cmp::min(limit, self.in_io_buf.len());
-        return Ok(self.in_io_buf.drain(..limit).collect());
-    }
-
     /// Returns a pointer to a variable matching criteria set by F, only looking
     /// in the current scope
     pub fn search_stack<F>(&self, mut f: F) -> Option<VarPointer>
@@ -1817,25 +1801,6 @@ impl<'a> Write for MemoryStdin<'a> {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
-    }
-}
-
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use smol::io::AsyncWrite;
-impl<'a> AsyncWrite for MemoryStdin<'a> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        return Poll::Ready(self.write(buf));
-    }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        return Poll::Ready(Ok(()));
-    }
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        return Poll::Ready(Ok(()));
     }
 }
 

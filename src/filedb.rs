@@ -560,9 +560,7 @@ impl<'a> Files<'a> for FileDbRef<'a> {
     }
 }
 
-#[cfg(target_os = "macos")]
-const PATH_SEP: u8 = b'/';
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 const PATH_SEP: u8 = b'/';
 #[cfg(target_os = "windows")]
 const PATH_SEP: u8 = b'\\';

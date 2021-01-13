@@ -62,21 +62,21 @@ impl From<WriteEvent> for CommandResult {
 }
 
 #[derive(IntoStaticStr)] // LMAO this name
-pub enum CommandEngineState<Stdin: IStdin> {
+pub enum CommandEngineState {
     Blocked {
-        runtime: Runtime<Stdin>,
+        runtime: Runtime,
         continuation: IFuture,
     },
-    Running(Runtime<Stdin>),
+    Running(Runtime),
     NotRunning,
 }
 
-pub struct CommandEngine<Stdin: IStdin> {
-    state: CommandEngineState<Stdin>,
+pub struct CommandEngine {
+    state: CommandEngineState,
     files: FileDbSlim,
 }
 
-impl<Stdin: IStdin> CommandEngine<Stdin> {
+impl CommandEngine {
     pub fn new() -> Self {
         Self {
             state: CommandEngineState::NotRunning,
@@ -84,7 +84,7 @@ impl<Stdin: IStdin> CommandEngine<Stdin> {
         }
     }
 
-    pub async fn run_command(&mut self, command: Command, stdin: &mut Stdin) -> Vec<CommandResult> {
+    pub fn run_command(&mut self, command: Command) -> Vec<CommandResult> {
         let mut messages = Vec::new();
         macro_rules! ret {
             ($expr:expr) => {{
@@ -152,7 +152,7 @@ impl<Stdin: IStdin> CommandEngine<Stdin> {
                             break;
                         }
 
-                        let ret = runtime.run_op(stdin).await;
+                        let ret = runtime.run_op();
 
                         for event in runtime.memory.events() {
                             messages.push(event.into());
@@ -179,7 +179,7 @@ impl<Stdin: IStdin> CommandEngine<Stdin> {
                     ret!(CommandResult::Status(runtime.diagnostic()));
                 }
                 Command::RunCount(count) => {
-                    let ret = runtime.run_op_count(count, stdin).await;
+                    let ret = runtime.run_op_count(count);
 
                     for event in runtime.memory.events() {
                         messages.push(event.into());
