@@ -36,14 +36,65 @@ use util::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum InMessage {
+    Files(HashMap<String, String>),
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum OutMessage {
+    FileIds(HashMap<u32, String>),
+    InvalidInput(String),
+}
+
 #[wasm_bindgen]
-pub async fn run(enq: Func, deq: Func, wait: Func) -> Result<JsValue, JsValue> {
-    enq.call1(&JsValue::UNDEFINED, &JsValue::FALSE)?;
+pub async fn run(send: Func, recv: Func, wait: Func) -> Result<JsValue, JsValue> {
+    use InMessage as In;
+    use OutMessage as Out;
 
-    let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
-    JsFuture::from(promise).await?;
+    let send = move |mes: Out| -> Result<(), JsValue> {
+        let mut writer = StringWriter::new();
+        serde_json::to_writer(&mut writer, &mes).unwrap();
+        send.call1(&JsValue::UNDEFINED, &JsValue::from_str(&writer.to_string()))?;
+        return Ok(());
+    };
 
-    return Ok(JsValue::FALSE);
+    let recv = || -> Result<Option<In>, JsValue> {
+        let value = recv.call0(&JsValue::UNDEFINED)?;
+        if value.is_undefined() || value.is_null() {
+            return Ok(None);
+        }
+
+        let string = if let Some(s) = value.as_string() {
+            s
+        } else {
+            send(Out::InvalidInput("didn't get a string".to_string()))?;
+            return Ok(None);
+        };
+
+        let out = match serde_json::from_slice(string.as_bytes()) {
+            Ok(o) => o,
+            Err(e) => {
+                send(Out::InvalidInput(format!("invalid input `{}`", string)))?;
+                return Ok(None);
+            }
+        };
+
+        return Ok(Some(out));
+    };
+
+    loop {
+        if let Some(input) = recv()? {
+            match input {
+                In::Files(files) => {}
+            }
+        }
+
+        let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
+        JsFuture::from(promise).await?;
+    }
 }
 
 fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {

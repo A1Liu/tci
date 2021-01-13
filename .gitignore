@@ -1,4 +1,8 @@
-/target
 /codespan-reporting/target
+/.build
 a.out
 /letsencrypt
+/dist
+/pkg
+/node_modules
+/.cache
