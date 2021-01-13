@@ -32,6 +32,17 @@ use filedb::FileDb;
 use interpreter::Program;
 use std::collections::HashMap;
 use util::*;
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+extern "C" {
+    fn alert(s: &str);
+}
+
+#[wasm_bindgen]
+pub fn greet() {
+    alert("Hello!");
+}
 
 fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
     let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
