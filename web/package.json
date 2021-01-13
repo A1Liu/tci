@@ -26,8 +26,8 @@
     "web-vitals": "^1.0.1"
   },
   "devDependencies": {
-    "parcel-bundler": "^1.12.4",
-    "parcel-plugin-wasm.rs": "^1.3.0"
+    "parcel-bundler": "1.x",
+    "parcel-plugin-wasm-pack": "^6.0.1"
   },
   "browserslist": {
     "production": [

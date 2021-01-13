@@ -191,8 +191,7 @@ const store = createStore(
 
 const worker = new Worker("./worker.js");
 worker.onmessage = (e) => console.log(e.data);
-setTimeout(() => worker.postMessage("hello"), 1000);
-
+// setTimeout(() => worker.postMessage("hello"), 1000);
 
 store.dispatch(connect("wss://tci.a1liu.com"));
 // store.dispatch(connect("ws://localhost:4000"));

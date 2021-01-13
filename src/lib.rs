@@ -30,18 +30,20 @@ use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColo
 use core::mem;
 use filedb::FileDb;
 use interpreter::Program;
+use js_sys::{Function as Func, Promise};
 use std::collections::HashMap;
 use util::*;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
 
 #[wasm_bindgen]
-extern "C" {
-    fn alert(s: &str);
-}
+pub async fn run(enq: Func, deq: Func, wait: Func) -> Result<JsValue, JsValue> {
+    enq.call1(&JsValue::UNDEFINED, &JsValue::FALSE)?;
 
-#[wasm_bindgen]
-pub fn greet() {
-    alert("Hello!");
+    let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
+    JsFuture::from(promise).await?;
+
+    return Ok(JsValue::FALSE);
 }
 
 fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
