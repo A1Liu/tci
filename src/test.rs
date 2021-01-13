@@ -27,7 +27,7 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
 
     let mut runtime = Runtime::new(program, StringArray::new());
 
-    let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
+    let diag = runtime.run(&mut writer);
     let code = match diag.status {
         RuntimeStatus::Exited(code) => code,
         RuntimeStatus::ErrorExited(err) => {
@@ -92,7 +92,7 @@ fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
     mem::drop(files);
 
     let mut runtime = Runtime::new(program, StringArray::new());
-    let diag = runtime.run(&mut writer, &mut smol::io::repeat(0));
+    let diag = runtime.run(&mut writer);
     for (idx, op) in runtime.program.ops.iter().enumerate() {
         println!("op {}: {:?}", idx, op);
     }
@@ -115,20 +115,20 @@ macro_rules! gen_test_should_succeed {
             #[test]
             fn $name() {
                 let mut files = FileDb::new(true);
-                files.add_from_fs(concat!("test/", $folder, stringify!($name), ".c")).unwrap();
+                files.add_from_fs(concat!("clib/test/", $folder, stringify!($name), ".c")).unwrap();
                 $(
-                files.add_from_fs(concat!("test/", $folder, stringify!($ident), ".c")).unwrap();
+                files.add_from_fs(concat!("clib/test/", $folder, stringify!($ident), ".c")).unwrap();
                 )*
 
-                test_file_should_succeed(&mut files,concat!("test/", $folder, stringify!($name), ".c.out"));
+                test_file_should_succeed(&mut files,concat!("clib/test/", $folder, stringify!($name), ".c.out"));
             }
     };
     (@S, $ident:ident) => {
             #[test]
             fn $ident() {
                 let mut files = FileDb::new(true);
-                files.add_from_fs(concat!("test/", stringify!($ident), ".c")).unwrap();
-                test_file_should_succeed(&mut files,concat!("test/", stringify!($ident), ".c.out"));
+                files.add_from_fs(concat!("clib/test/", stringify!($ident), ".c")).unwrap();
+                test_file_should_succeed(&mut files,concat!("clib/test/", stringify!($ident), ".c.out"));
             }
     };
 
