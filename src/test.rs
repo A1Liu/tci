@@ -115,20 +115,20 @@ macro_rules! gen_test_should_succeed {
             #[test]
             fn $name() {
                 let mut files = FileDb::new(true);
-                files.add_from_fs(concat!("clib/test/", $folder, stringify!($name), ".c")).unwrap();
+                files.add_from_fs(concat!("lib/test/", $folder, stringify!($name), ".c")).unwrap();
                 $(
-                files.add_from_fs(concat!("clib/test/", $folder, stringify!($ident), ".c")).unwrap();
+                files.add_from_fs(concat!("lib/test/", $folder, stringify!($ident), ".c")).unwrap();
                 )*
 
-                test_file_should_succeed(&mut files,concat!("clib/test/", $folder, stringify!($name), ".c.out"));
+                test_file_should_succeed(&mut files,concat!("lib/test/", $folder, stringify!($name), ".c.out"));
             }
     };
     (@S, $ident:ident) => {
             #[test]
             fn $ident() {
                 let mut files = FileDb::new(true);
-                files.add_from_fs(concat!("clib/test/", stringify!($ident), ".c")).unwrap();
-                test_file_should_succeed(&mut files,concat!("clib/test/", stringify!($ident), ".c.out"));
+                files.add_from_fs(concat!("lib/test/", stringify!($ident), ".c")).unwrap();
+                test_file_should_succeed(&mut files,concat!("lib/test/", stringify!($ident), ".c.out"));
             }
     };
 

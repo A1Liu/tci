@@ -94,8 +94,8 @@ lazy_static! {
         let mut m = HashMap::new();
         macro_rules! sys_lib {
             ($file:literal) => {{
-                let header: &[u8] = include_bytes!(concat!("../clib/header/", $file));
-                let lib: &[u8] = include_bytes!(concat!("../clib/impl/", $file));
+                let header: &[u8] = include_bytes!(concat!("../lib/header/", $file));
+                let lib: &[u8] = include_bytes!(concat!("../lib/impl/", $file));
                 let lib_file: &str = concat!("/libs/", $file);
                 m.insert(
                     $file,

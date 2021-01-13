@@ -1,4 +1,4 @@
-/codespan-reporting/target
+/lib/codespan-reporting/target
 /.build
 a.out
 /letsencrypt
