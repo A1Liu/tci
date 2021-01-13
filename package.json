@@ -26,7 +26,7 @@
   "devDependencies": {
     "@babel/core": "^7.12.10",
     "parcel-bundler": "1.x",
-    "parcel-plugin-wasm-pack": "^6.0.1"
+    "parcel-plugin-wasm-pack": "file:./lib/parcel-plugin-wasm-pack"
   },
   "browserslist": [
     "last 5 chrome version",

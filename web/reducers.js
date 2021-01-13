@@ -18,6 +18,8 @@ const initialState = {
 const appReducer = (state = initialState, action) => {
   const { type, payload } = action;
 
+  console.log(action);
+
   switch (type) {
     case "SetFile": {
       const files = { ...state.files };
