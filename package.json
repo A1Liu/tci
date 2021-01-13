@@ -8,7 +8,7 @@
   "private": false,
   "scripts": {
     "start": "parcel web/index.html --out-dir .dist",
-    "build": "parcel build src/index.html --no-source-maps --out-dir .dist"
+    "build": "parcel build web/index.html --no-source-maps --out-dir .dist"
   },
   "dependencies": {
     "@giantmachines/redux-websocket": "^1.4.0",
