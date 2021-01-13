@@ -1,4 +1,5 @@
-import React, { useRef, useState } from "react";
+import { h } from "preact";
+import { useRef, useState } from "preact/hooks";
 import { useDispatch, useSelector } from "react-redux";
 import styled from "styled-components";
 import { ControlledEditor, monaco } from "@monaco-editor/react";

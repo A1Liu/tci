@@ -1,4 +1,5 @@
-import React, { useRef } from "react";
+import { h } from "preact";
+import { useRef } from "preact/hooks";
 import { useDispatch } from "react-redux";
 import styled from "styled-components";
 
