@@ -24,7 +24,6 @@
     "web-vitals": "^1.0.1"
   },
   "devDependencies": {
-    "@babel/core": "^7.12.10",
     "parcel-bundler": "1.x",
     "parcel-plugin-wasm-pack": "file:./lib/parcel-plugin-wasm-pack"
   },

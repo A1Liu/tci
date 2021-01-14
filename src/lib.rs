@@ -26,12 +26,13 @@ mod type_checker;
 #[cfg(test)]
 mod test;
 
-use codespan_reporting::term::termcolor::{ColorChoice, StandardStream, WriteColor};
-use core::mem;
+use codespan_reporting::term::termcolor::WriteColor;
 use filedb::FileDb;
-use interpreter::Program;
+use interpreter::{Program, Runtime};
 use js_sys::{Function as Func, Promise};
+use runtime::RuntimeStatus;
 use std::collections::HashMap;
+use std::io::Write;
 use util::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -39,18 +40,25 @@ use wasm_bindgen_futures::JsFuture;
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum InMessage {
-    Files(HashMap<String, String>),
+    Sources(HashMap<String, String>),
 }
 
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum OutMessage {
     FileIds(HashMap<u32, String>),
+    CompileError {
+        rendered: String,
+        errors: Vec<Error>,
+    },
     InvalidInput(String),
+    JumpTo(CodeLoc),
+    Debug(String),
+    Stdout(String),
 }
 
 #[wasm_bindgen]
-pub async fn run(send: Func, recv: Func, wait: Func) -> Result<JsValue, JsValue> {
+pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
     use InMessage as In;
     use OutMessage as Out;
 
@@ -85,11 +93,75 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<JsValue, JsValue>
         return Ok(Some(out));
     };
 
+    macro_rules! debug {
+        ($str:literal, $( $val:expr ),* ) => {{
+            send(Out::Debug( format!($str, $( $val ),*) ))?;
+        }};
+    }
+
+    let mut runtime = None;
     loop {
-        if let Some(input) = recv()? {
+        while let Some(input) = recv()? {
             match input {
-                In::Files(files) => {}
+                In::Sources(input_files) => {
+                    use std::path::Path;
+
+                    let mut files = FileDb::new(false);
+                    let mut out = HashMap::new();
+                    for (name, contents) in input_files {
+                        let file_id = if Path::new(&name).is_relative() {
+                            let real_path = Path::new("/").join(&name);
+                            let path = real_path.to_str().unwrap();
+                            files.add(path, &contents).unwrap()
+                        } else {
+                            files.add(&name, &contents).unwrap()
+                        };
+
+                        out.insert(file_id, name);
+                    }
+
+                    debug!("files: {:?}", files.file_names);
+                    send(Out::FileIds(out))?;
+
+                    let program = match compile(&mut files) {
+                        Ok(p) => p,
+                        Err(errors) => {
+                            let mut writer = StringWriter::new();
+                            emit_err(&errors, &files, &mut writer);
+                            let rendered = writer.to_string();
+                            send(Out::CompileError { rendered, errors })?;
+                            continue;
+                        }
+                    };
+
+                    runtime = Some(Runtime::new(program, StringArray::new()));
+                }
             }
+        }
+
+        if let Some(runtime) = runtime.as_mut() {
+            let diag = runtime.run_op_count(100);
+
+            let mut io = StringWriter::new();
+            for event in runtime.memory.events() {
+                let string = event.to_string();
+                write!(io, "{}", string).unwrap();
+            }
+
+            let string = io.to_string();
+            if string != "" {
+                send(Out::Stdout(string))?;
+            }
+
+            match diag.status {
+                RuntimeStatus::Exited(_) | RuntimeStatus::ErrorExited(_) => {
+                    let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
+                    JsFuture::from(promise).await?;
+                    continue;
+                }
+                _ => {}
+            }
+            send(Out::JumpTo(diag.loc))?;
         }
 
         let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
@@ -173,50 +245,4 @@ fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
     for err in errs {
         codespan_reporting::term::emit(writer, &config, files, &err.diagnostic()).unwrap();
     }
-}
-
-fn run_from_args(args: Vec<String>) -> ! {
-    let args: Vec<String> = std::env::args().collect();
-
-    let writer = StandardStream::stderr(ColorChoice::Always);
-
-    let mut files = FileDb::new(true);
-    for arg in args.iter().skip(1) {
-        files.add_from_fs(&arg).unwrap();
-    }
-    mem::drop(args);
-
-    let program = match compile(&mut files) {
-        Ok(program) => program,
-        Err(errs) => {
-            let config = codespan_reporting::term::Config::default();
-            for err in errs {
-                codespan_reporting::term::emit(
-                    &mut writer.lock(),
-                    &config,
-                    &files,
-                    &err.diagnostic(),
-                )
-                .unwrap();
-            }
-            std::process::exit(1);
-        }
-    };
-
-    mem::drop(files);
-
-    let mut runtime = interpreter::Runtime::new(program, StringArray::new());
-    let diag = runtime.run(std::io::stdout());
-    let code = match diag.status {
-        runtime::RuntimeStatus::Exited(code) => code,
-        _ => panic!(),
-    };
-
-    std::process::exit(code);
-}
-
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-
-    run_from_args(args);
 }

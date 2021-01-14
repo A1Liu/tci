@@ -672,6 +672,7 @@ impl MemoryAction {
 pub enum RuntimeStatus {
     Running,
     Exited(i32),
+    Blocked,
     ErrorExited(IError),
 }
 

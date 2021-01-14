@@ -10,7 +10,7 @@ export default function NavBar() {
   const next = () => dispatch({ type: "DebugNext" });
   const prev = () => dispatch({ type: "DebugPrev" });
 
-  const handleOnClick = (event) => {
+  const uploadFileTrigger = (event) => {
     event.preventDefault();
     hiddenFileInput.current.click();
   };
@@ -26,10 +26,10 @@ export default function NavBar() {
     });
   };
 
-  const handleOnChange = async (event) => {
+  const uploadFile = async (event) => {
     Object.values(event.target.files).forEach(async (file) => {
       const data = await readFile(file);
-      dispatch({ type: "AddFile", payload: { path: file.name, data } });
+      dispatch({ type: "SetFile", payload: { path: file.name, data } });
     });
   };
 
@@ -41,10 +41,10 @@ export default function NavBar() {
           type="file"
           multiple
           ref={hiddenFileInput}
-          onChange={handleOnChange}
+          onChange={uploadFile}
         />
 
-        <UploadButton type="button" onClick={handleOnClick}>
+        <UploadButton type="button" onClick={uploadFileTrigger}>
           Upload a File
         </UploadButton>
       </div>

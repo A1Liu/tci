@@ -1,8 +1,8 @@
+import { ControlledEditor, monaco } from "@monaco-editor/react";
 import { h } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { useDispatch, useSelector } from "react-redux";
 import styled from "styled-components";
-import { ControlledEditor, monaco } from "@monaco-editor/react";
 
 const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
   return (
@@ -27,121 +27,53 @@ const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
 const BasicEditor = () => {
   const dispatch = useDispatch();
   const files = useSelector((state) => state.files);
-  const debugging = useSelector((state) => state.debugging);
   const currentCodeLoc = useSelector((state) => state.currentCodeLoc);
-  const message = useSelector((state) => state.message);
-  const fileNames = useSelector((state) => state.fileNames);
 
   const codeLocRef = useRef(undefined);
   const codeLocChanged = codeLocRef.current !== currentCodeLoc;
   codeLocRef.current = currentCodeLoc;
 
-  const editor = useRef(undefined);
+  const editorRef = useRef(undefined);
   const monacoRef = useRef(undefined);
-  const marker = useRef(undefined);
-  const currentFile = useRef(undefined);
-  const [rerender, setRerender] = useState(0);
+  const [currentFile, setCurrentFile] = useState(undefined);
 
   const onValueChange = (ev, content) => {
-    if (currentFile.current !== undefined)
+    if (currentFile !== undefined)
       dispatch({
-        type: "EditFile",
-        payload: { path: currentFile.current, data: content },
+        type: "SetFile",
+        payload: { path: currentFile, data: content },
       });
   };
 
   const setupEditor = () => {
-    if (currentFile.current === undefined) {
+    if (currentFile === undefined) {
       const keys = Object.keys(files);
       if (keys.length === 0) return;
 
-      [currentFile.current] = keys;
-      return;
+      return setCurrentFile(keys[0]);
     }
 
-    if (files[currentFile.current] === undefined) {
+    if (files[currentFile] === undefined) {
       const keys = Object.keys(files);
       const f = keys.length === 0 ? undefined : keys[keys.length - 1];
-      currentFile.current = f;
+      return setCurrentFile(f);
     }
 
-    if (editor.current === undefined) return;
-
-    const model = editor.current.getModel();
-
-    if (!debugging) {
-      if (marker.current !== undefined) {
-        monacoRef.current.editor.setModelMarkers(model, currentFile, []);
-        marker.current = undefined;
-      }
-
-      return;
-    }
-
-    if (!codeLocChanged) return;
-    if (currentCodeLoc === undefined) {
-      if (marker.current !== undefined) {
-        monacoRef.current.editor.setModelMarkers(model, currentFile, []);
-        marker.current = undefined;
-      }
-
-      return;
-    }
-
-    const nextFile = fileNames[currentCodeLoc.file];
-    if (nextFile !== currentFile.current) {
-      currentFile.current = undefined;
-      model.setValue(files[nextFile]);
-      currentFile.current = nextFile;
-    }
-
-    const { lineNumber: rowStart, column: columnStart } = model.getPositionAt(
-      currentCodeLoc.start
-    );
-    const { lineNumber: rowEnd, column: columnEnd } = model.getPositionAt(
-      currentCodeLoc.end
-    );
-
-    if (marker.current !== undefined)
-      monacoRef.current.editor.setModelMarkers(model, currentFile, []);
-
-    marker.current = 1;
-
-    // Severities: Hint=1, Info=2, Warning=4, Error=8;
-    monacoRef.current.editor.setModelMarkers(model, currentFile, [
-      {
-        startLineNumber: rowStart,
-        startColumn: columnStart,
-        endLineNumber: rowEnd,
-        endColumn: columnEnd,
-        message: message?.message ?? "current position",
-        code: message?.short_name ?? "",
-        severity: message?.message ? 5 : 2,
-      },
-    ]);
+    return undefined;
   };
 
   setupEditor();
 
   const [code, readOnly] =
-    currentFile.current === undefined
-      ? ["", true]
-      : [files[currentFile.current], false];
+    currentFile === undefined ? ["", true] : [files[currentFile], false];
 
   return (
     <div style={{ height: "100%" }}>
       <EditorNav>
         {Object.keys(files).map((name, index) => {
           const changeTab = () => {
-            if (name !== currentFile.current) {
-              const session = monacoRef.current.editor;
-              if (marker.current !== undefined) {
-                session.setModelMarkers(editor.getModel(), currentFile, []);
-                marker.current = undefined;
-              }
-
-              currentFile.current = name;
-              setRerender(rerender + 1);
+            if (name !== currentFile) {
+              setCurrentFile(name);
             }
           };
 
@@ -151,7 +83,7 @@ const BasicEditor = () => {
               index={index}
               dispatch={dispatch}
               file={name}
-              currentFile={currentFile.current}
+              currentFile={currentFile}
               setCurrentFile={changeTab}
             />
           );
@@ -167,12 +99,12 @@ const BasicEditor = () => {
         options={{
           readOnly,
         }}
-        editorDidMount={(_, editorRef) => {
+        editorDidMount={(_, ref) => {
           monaco.init().then((ref) => {
             monacoRef.current = ref;
           });
 
-          editor.current = editorRef;
+          editorRef.current = ref;
         }}
       />
     </div>

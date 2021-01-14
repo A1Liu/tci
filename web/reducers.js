@@ -35,7 +35,7 @@ const appReducer = (state = initialState, action) => {
     case "Compiled":
       return { ...state, terminal: "" };
     case "Compile":
-      return { ...state };
+      return { ...state, terminal: "" };
     case "CompileError":
       return { ...state, terminal: payload.rendered };
     default:
@@ -53,7 +53,7 @@ const tciMiddleware = (store) => {
 
     switch (type) {
       case "Compile":
-        worker.postMessage(action);
+        worker.postMessage({ type: "Sources", payload: files });
         return next(action);
       default:
         return next(action);
