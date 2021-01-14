@@ -1,5 +1,11 @@
-/frontend/node_modules
-/frontend/src/index.css
-/target
 /.git
+/lib/codespan-reporting/target
+/lib/parcel-plugin-wasm-pack/node_modules
+/.build
+/.dist
+/a.out
+/letsencrypt
+/pkg
+/node_modules
+/.cache
 

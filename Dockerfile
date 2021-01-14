@@ -1,41 +1,37 @@
-FROM node:latest as react-build
-WORKDIR /usr/src/app
-COPY frontend/package.json frontend/yarn.lock ./
-RUN yarn install --pure-lockfile
-COPY frontend/postcss.config.js ./
-COPY frontend/public/ ./public/
-COPY frontend/src/ ./src/
-RUN yarn build
+FROM node:latest as build
 
-FROM silkeh/clang:11 as cargo-build
+WORKDIR /usr/src/app
+ENV USER=tci
 
 RUN apt-get update
 RUN apt-get install -y curl build-essential
-
-WORKDIR /usr/src/app
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN apt-get install zlib1g-dev libtinfo-dev libxml2-dev -y
 
-ENV USER=tci
-RUN $HOME/.cargo/bin/cargo init
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup target add wasm32-unknown-unknown
+RUN cargo install wasm-pack
 
-COPY codespan-reporting/ ./codespan-reporting/
-COPY embedded-websocket/ ./embedded-websocket/
+COPY .cargo/ ./.cargo/
+COPY lib/parcel-plugin-wasm-pack/ ./lib/parcel-plugin-wasm-pack/
+COPY lib/codespan-reporting/ ./lib/codespan-reporting/
+
+COPY package.json yarn.lock ./
+RUN yarn install --pure-lockfile
+RUN cargo init --lib
+
 COPY Cargo.toml Cargo.lock ./
-RUN $HOME/.cargo/bin/cargo build --release
+RUN cargo build --release --target wasm32-unknown-unknown
+RUN rm ./.build/wasm32-unknown-unknown/release/deps/tci*
 
-COPY --from=react-build /usr/src/app/build ./frontend/build/
-COPY includes/ ./includes/
-COPY libs/ ./libs/
+COPY lib/ ./lib/
 COPY src/ ./src/
+COPY web/ ./web/
+RUN yarn build
 
-RUN rm ./target/release/deps/tci*
-RUN $HOME/.cargo/bin/cargo build --release
+FROM python:3-alpine
+WORKDIR /usr/src/app
+COPY --from=build /usr/src/app/.dist ./.dist/
 
-
-FROM silkeh/clang:11
-COPY --from=cargo-build /usr/src/app/target/release/tci /bin/tci
-
-EXPOSE 4000
-ENTRYPOINT ["/bin/tci"]
+EXPOSE 1234
+ENTRYPOINT ["python3", "-m", "http.server", "--directory", ".dist", "1234"]

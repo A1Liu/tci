@@ -16,7 +16,7 @@ services:
       - "--providers.docker.exposedbydefault=false"
 
       - "--entrypoints.web.address=:80"
-      - "--entrypoints.web2.address=:4000"
+      - "--entrypoints.web2.address=:1234"
       - "--entrypoints.websecure.address=:443"
 
       - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
@@ -25,7 +25,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "4000:4000"
+      - "1234:1234"
       # The Web UI (enabled by --api.insecure=true)
       - "8080:8080"
     volumes:
@@ -43,14 +43,14 @@ services:
       - "traefik.http.routers.tci-https.rule=Host(`tci.a1liu.com`)"
       - "traefik.http.routers.tci-https.service=tci-https"
       - "traefik.http.routers.tci-https.entrypoints=websecure"
-      - "traefik.http.services.tci-https.loadbalancer.server.port=4000"
+      - "traefik.http.services.tci-https.loadbalancer.server.port=1234"
       - "traefik.http.routers.tci-https.tls.certresolver=mytlschallenge"
 
         #HTTP
       - "traefik.http.routers.tci-http.rule=Host(`tci.a1liu.com`, `localhost`)"
       - "traefik.http.routers.tci-http.service=tci-http"
       - "traefik.http.routers.tci-http.entrypoints=web,web2"
-      - "traefik.http.services.tci-http.loadbalancer.server.port=4000"
+      - "traefik.http.services.tci-http.loadbalancer.server.port=1234"
 
   watchtower:
     image: v2tec/watchtower
