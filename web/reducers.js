@@ -18,9 +18,10 @@ const initialState = {
 const appReducer = (state = initialState, action) => {
   const { type, payload } = action;
 
-  console.log(action);
-
   switch (type) {
+    case "Debug":
+      console.log(payload);
+      return state;
     case "SetFile": {
       const files = { ...state.files };
       files[payload.path] = payload.data;

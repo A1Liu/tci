@@ -93,6 +93,13 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         return Ok(Some(out));
     };
 
+    let wait = |timeout: u32| -> Result<JsFuture, JsValue> {
+        let timeout = JsValue::from_f64(timeout as f64);
+        let promise = Promise::from(wait.call1(&JsValue::UNDEFINED, &timeout)?);
+        return Ok(JsFuture::from(promise));
+    };
+
+    #[allow(unused_macros)]
     macro_rules! debug {
         ($str:literal, $( $val:expr ),* ) => {{
             send(Out::Debug( format!($str, $( $val ),*) ))?;
@@ -120,7 +127,6 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                         out.insert(file_id, name);
                     }
 
-                    debug!("files: {:?}", files.file_names);
                     send(Out::FileIds(out))?;
 
                     let program = match compile(&mut files) {
@@ -155,8 +161,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
 
             match diag.status {
                 RuntimeStatus::Exited(_) | RuntimeStatus::ErrorExited(_) => {
-                    let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
-                    JsFuture::from(promise).await?;
+                    wait(0)?.await?;
                     continue;
                 }
                 _ => {}
@@ -164,8 +169,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
             send(Out::JumpTo(diag.loc))?;
         }
 
-        let promise = Promise::from(wait.call0(&JsValue::UNDEFINED)?);
-        JsFuture::from(promise).await?;
+        wait(1)?.await?;
     }
 }
 
