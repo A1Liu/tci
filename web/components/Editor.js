@@ -35,28 +35,28 @@ const BasicEditor = () => {
 
   const editorRef = useRef(undefined);
   const monacoRef = useRef(undefined);
-  const [currentFile, setCurrentFile] = useState(undefined);
+  const file = useRef(undefined);
 
   const onValueChange = (ev, content) => {
-    if (currentFile !== undefined)
+    if (file.current !== undefined)
       dispatch({
         type: "SetFile",
-        payload: { path: currentFile, data: content },
+        payload: { path: file.current, data: content },
       });
   };
 
   const setupEditor = () => {
-    if (currentFile === undefined) {
+    if (file.current === undefined) {
       const keys = Object.keys(files);
       if (keys.length === 0) return;
 
-      return setCurrentFile(keys[0]);
+      return file.current = keys[0];
     }
 
-    if (files[currentFile] === undefined) {
+    if (files[file.current] === undefined) {
       const keys = Object.keys(files);
       const f = keys.length === 0 ? undefined : keys[keys.length - 1];
-      return setCurrentFile(f);
+      file.current = f;
     }
 
     return undefined;
@@ -65,15 +65,15 @@ const BasicEditor = () => {
   setupEditor();
 
   const [code, readOnly] =
-    currentFile === undefined ? ["", true] : [files[currentFile], false];
+    file.current === undefined ? ["", true] : [files[file.current], false];
 
   return (
     <div style={{ height: "100%" }}>
       <EditorNav>
         {Object.keys(files).map((name, index) => {
           const changeTab = () => {
-            if (name !== currentFile) {
-              setCurrentFile(name);
+            if (name !== file.current) {
+              file.current = name;
             }
           };
 
@@ -83,7 +83,7 @@ const BasicEditor = () => {
               index={index}
               dispatch={dispatch}
               file={name}
-              currentFile={currentFile}
+              currentFile={file.current}
               setCurrentFile={changeTab}
             />
           );
