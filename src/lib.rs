@@ -140,7 +140,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         }
 
         if let Some(runtime) = runtime.as_mut() {
-            let diag = runtime.run_op_count(100);
+            let diag = runtime.run_op_count(5000);
 
             let mut io = StringWriter::new();
             for event in runtime.memory.events() {
