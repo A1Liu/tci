@@ -1,8 +1,10 @@
-/lib/codespan-reporting/target
 /.build
 /.dist
-a.out
-/letsencrypt
-/pkg
-/node_modules
 /.cache
+/.pkg
+
+/lib/codespan-reporting/target
+/letsencrypt
+/node_modules
+
+a.out

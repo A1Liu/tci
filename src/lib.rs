@@ -94,13 +94,26 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
 
     #[allow(unused_macros)]
     macro_rules! debug {
+        ($str:literal) => {{
+            #[cfg(debug_assertions)]
+            send(Out::Debug( format!($str) ))?;
+        }};
         ($str:literal, $( $val:expr ),* ) => {{
+            #[cfg(debug_assertions)]
+            send(Out::Debug( format!($str, $( $val ),*) ))?;
+        }};
+        (@LOG, $str:literal) => {{
+            send(Out::Debug( format!($str) ))?;
+        }};
+        (@LOG, $str:literal, $( $val:expr ),* ) => {{
             send(Out::Debug( format!($str, $( $val ),*) ))?;
         }};
     }
 
     // let mut runtime = None;
     loop {
+        debug!("running another iteration of loop...");
+
         while let Some(input) = recv()? {
             match input {
                 In::Sources(input_files) => {
@@ -162,7 +175,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         //     send(Out::JumpTo(diag.loc))?;
         // }
 
-        wait(1)?.await?;
+        wait(0)?.await?;
     }
 }
 
