@@ -17,6 +17,7 @@ pub struct Memory {
     pub current_func: LinkName,
     pub fp: u16,
     pub pc: VarPointer,
+    pub loc: CodeLoc,
 }
 
 impl Memory {
@@ -32,6 +33,7 @@ impl Memory {
 
             callstack: Vec::new(),
             current_func: LinkName::new(!0),
+            loc: NO_FILE,
             fp: 1,
             pc: VarPointer::new_binary(0, 0),
         }
@@ -44,21 +46,41 @@ impl Memory {
         self.current_func = frame.name;
         self.fp = frame.fp;
         self.pc = frame.pc;
+        self.loc = frame.loc;
 
         return Ok(());
     }
 
-    pub fn call(&mut self, new_pc: VarPointer, name: LinkName, loc: CodeLoc) {
-        self.callstack
-            .push(CallFrame::new(self.current_func, loc, self.fp, self.pc));
+    pub fn call(&mut self, new_pc: VarPointer) -> Result<(), IError> {
+        self.callstack.push(CallFrame::new(
+            self.current_func,
+            self.loc,
+            self.fp,
+            self.pc,
+        ));
 
-        self.current_func = name;
+        let func: Opcode = self.read_pc()?;
+        if func != Opcode::Func {
+            return Err(ierror!(
+                "InvalidCall",
+                "called code is not a function (this is an error in TCI)"
+            ));
+        }
+
+        self.current_func = self.read_pc()?;
+        self.loc = self.read_pc()?;
         self.fp = self.stack.len() as u16 + 1;
         self.pc = new_pc;
+
+        return Ok(());
     }
 
     pub fn jump(&mut self, pc: VarPointer) {
         self.pc = pc;
+    }
+
+    pub fn set_loc(&mut self, loc: CodeLoc) {
+        self.loc = loc;
     }
 
     pub fn read_pc<T: Copy>(&mut self) -> Result<T, IError> {
@@ -92,6 +114,28 @@ impl Memory {
         let mut out = mem::MaybeUninit::uninit();
         unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
         return Ok(unsafe { out.assume_init() });
+    }
+
+    pub fn add_stack_var(&mut self, len: u32) -> VarPointer {
+        let stack_len = self.stack_data.len();
+        self.stack_data.resize(stack_len + len as usize, 0);
+        self.stack.push(Var::new(self.stack.len(), ()));
+        return VarPointer::new_stack(self.stack.len() as u16, 0);
+    }
+
+    pub fn add_heap_var(&mut self, len: u32) -> VarPointer {
+        let data_len = self.shared_data.len();
+        self.shared_data.resize(data_len + len as usize, 0);
+        self.heap.push(Var::new(self.heap.len(), ()));
+        return VarPointer::new_heap(self.heap.len() as u32, 0);
+    }
+
+    pub fn pop_stack_var(&mut self) -> Result<(), IError> {
+        let or_else = || empty_stack();
+        let var = self.stack.pop().ok_or_else(or_else)?;
+        self.stack_data.resize(var.idx, 0);
+
+        return Ok(());
     }
 
     pub fn read<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
@@ -250,7 +294,7 @@ impl Memory {
 
         let stack_len = self.expr_stack.len();
         let new_stack_len = stack_len - len as usize;
-        let or_else = move || stack_too_short(stack_len, len as usize);
+        let or_else = move || expr_stack_too_short(stack_len, len as usize);
         let from_bytes = self.expr_stack.get(new_stack_len..).ok_or_else(or_else)?;
         to_bytes.copy_from_slice(from_bytes);
 
@@ -261,7 +305,7 @@ impl Memory {
     pub fn pop_bytes(&mut self, len: u32) -> Result<(), IError> {
         let (len, stack_len) = (len as usize, self.expr_stack.len());
         if stack_len < len {
-            return Err(stack_too_short(stack_len, len));
+            return Err(expr_stack_too_short(stack_len, len));
         }
 
         self.expr_stack.resize(stack_len - len, 0);
@@ -271,7 +315,7 @@ impl Memory {
     pub fn swap_bytes(&mut self, top_bytes: u32, bottom_bytes: u32) -> Result<(), IError> {
         let (top_bytes, bottom_bytes) = (top_bytes as usize, bottom_bytes as usize);
         let (len, stack_len) = (top_bytes + bottom_bytes, self.expr_stack.len());
-        let or_else = move || stack_too_short(stack_len, len);
+        let or_else = move || expr_stack_too_short(stack_len, len);
 
         let slice_o = self.expr_stack.get_mut((stack_len - len)..);
         slice_o.ok_or_else(or_else)?.rotate_left(bottom_bytes);
@@ -284,7 +328,7 @@ impl Memory {
         self.expr_stack.reserve(bytes);
         unsafe { self.expr_stack.set_len(new_len) };
 
-        let or_else = move || stack_too_short(stack_len, bytes);
+        let or_else = move || expr_stack_too_short(stack_len, bytes);
         let slice = self.expr_stack.get_mut((stack_len - 2 * bytes)..);
         let (from, to) = slice.ok_or_else(or_else)?.split_at_mut(bytes);
         to.copy_from_slice(from);
@@ -294,7 +338,7 @@ impl Memory {
 
     pub fn pop<T: Copy>(&mut self) -> Result<T, IError> {
         let (len, stack_len) = (mem::size_of::<T>(), self.expr_stack.len());
-        let or_else = move || stack_too_short(stack_len, len);
+        let or_else = move || expr_stack_too_short(stack_len, len);
         let slice = self.expr_stack.get_mut((stack_len - len)..);
         let from_bytes = slice.ok_or_else(or_else)?;
 
@@ -330,11 +374,18 @@ pub fn invalid_offset(valid_len: u32, ptr: VarPointer, len: u32) -> IError {
     );
 }
 
-pub fn stack_too_short(stack_len: usize, popped_len: usize) -> IError {
+pub fn expr_stack_too_short(stack_len: usize, popped_len: usize) -> IError {
     return ierror!(
         "StackTooShort",
-        "tried to read {} bytes from stack when stack is only {} bytes long (this is an error in TCI)",
+        "tried to read {} bytes from stack buffer that is {} bytes long (this is an error in TCI)",
         popped_len,
         stack_len,
+    );
+}
+
+pub fn empty_stack() -> IError {
+    return ierror!(
+        "StackTooShort",
+        "tried to pop from an empty stack (this is an error in TCI)"
     );
 }

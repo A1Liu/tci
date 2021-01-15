@@ -4,6 +4,29 @@ use super::types::*;
 use crate::util::*;
 use core::mem;
 use std::io::Write;
+use std::ops::{BitAnd, BitOr, BitXor};
+
+/// Exit the program with an error code
+pub const ECALL_EXIT: u32 = 0;
+
+/// Get the number of arguments in the program.
+pub const ECALL_ARGC: u32 = 1;
+
+/// Get zero-indexed command line argument. Takes in a single int as a parameter,
+/// and pushes a pointer to the string on the heap as the result.
+pub const ECALL_ARGV: u32 = 2;
+
+/// Returns whether or not the given pointer is safe
+pub const ECALL_IS_SAFE: u32 = 3;
+
+/// Returns a pointer to a buffer on the heap of the specified size.
+pub const ECALL_HEAP_ALLOC: u32 = 4;
+
+/// Throws an IError object up the callstack
+pub const ECALL_THROW_ERROR: u32 = 5;
+
+/// Calls Printf
+pub const ECALL_PRINTF: u32 = 6;
 
 #[derive(Debug)]
 pub struct Kernel {
@@ -19,13 +42,444 @@ impl Kernel {
         }
     }
 
+    pub fn run_op_internal(&mut self) -> Result<(), IError> {
+        let opcode: Opcode = self.memory.read_pc()?;
+
+        match opcode {
+            Opcode::Func => {
+                // this opcode is handled by Memory
+                return Err(ierror!(
+                    "InvalidOpcode",
+                    "Found Func opcode (this is an error in TCI)"
+                ));
+            }
+            Opcode::Loc => {
+                let loc = self.memory.read_pc()?;
+                self.memory.set_loc(loc);
+            }
+            Opcode::StackAlloc => {
+                let bytes: u32 = self.memory.read_pc()?;
+                self.memory.add_stack_var(bytes);
+            }
+            Opcode::StackDealloc => {
+                self.memory.pop_stack_var()?;
+            }
+            Opcode::MakeI8 => {
+                let val: i8 = self.memory.read_pc()?;
+                self.memory.push(val);
+            }
+            Opcode::MakeI32 => {
+                let val: i32 = self.memory.read_pc()?;
+                self.memory.push(val.to_le());
+            }
+            Opcode::MakeU32 => {
+                let val: u32 = self.memory.read_pc()?;
+                self.memory.push(val.to_le());
+            }
+            Opcode::MakeI64 => {
+                let val: i64 = self.memory.read_pc()?;
+                self.memory.push(val.to_le());
+            }
+            Opcode::MakeU64 => {
+                let val: u64 = self.memory.read_pc()?;
+                self.memory.push(val.to_le());
+            }
+            Opcode::MakeF32 => {
+                let val: f32 = self.memory.read_pc()?;
+                self.memory.push(val);
+            }
+            Opcode::MakeF64 => {
+                let val: f64 = self.memory.read_pc()?;
+                self.memory.push(val);
+            }
+            Opcode::MakeBinaryPtr => {
+                let var = self.memory.read_pc()?;
+                let offset = self.memory.read_pc()?;
+                self.memory.push(VarPointer::new_binary(var, offset));
+            }
+            Opcode::MakeSp => {
+                let var_offset: i16 = self.memory.read_pc()?;
+                let stack_len = self.memory.stack.len() as u16;
+                let var = (stack_len as i16 + var_offset) as u16;
+
+                self.memory.push(VarPointer::new_stack(var, 0));
+            }
+            Opcode::MakeFp => {
+                let var_offset: i16 = self.memory.read_pc()?;
+                let var = (self.memory.fp as i16 + var_offset) as u16;
+
+                self.memory.push(VarPointer::new_stack(var, 0));
+            }
+
+            Opcode::Pop => {
+                let bytes = self.memory.read_pc()?;
+                self.memory.pop_bytes(bytes)?;
+            }
+            Opcode::Swap => {
+                let top_bytes = self.memory.read_pc()?;
+                let bottom_bytes = self.memory.read_pc()?;
+                self.memory.swap_bytes(top_bytes, bottom_bytes)?;
+            }
+            Opcode::Dup => {
+                let bytes = self.memory.read_pc()?;
+                self.memory.dup_bytes(bytes)?;
+            }
+            Opcode::PushDyn => {
+                let ptr: VarPointer = self.memory.pop()?;
+                let size = u32::from_le(self.memory.pop()?);
+                self.memory.read_bytes_to_stack(ptr, size)?;
+            }
+
+            Opcode::SExtend8To16 => {
+                let val = self.memory.pop::<i8>()?;
+                self.memory.push((val as i16).to_le());
+            }
+            Opcode::SExtend8To32 => {
+                let val = self.memory.pop::<i8>()?;
+                self.memory.push((val as i32).to_le());
+            }
+            Opcode::SExtend8To64 => {
+                let val = self.memory.pop::<i8>()?;
+                self.memory.push((val as i64).to_le());
+            }
+            Opcode::SExtend16To32 => {
+                let val = i16::from_le(self.memory.pop()?);
+                self.memory.push((val as i32).to_le());
+            }
+            Opcode::SExtend16To64 => {
+                let val = i16::from_le(self.memory.pop()?);
+                self.memory.push((val as i64).to_le());
+            }
+            Opcode::SExtend32To64 => {
+                let val = i32::from_le(self.memory.pop()?);
+                self.memory.push((val as i64).to_le());
+            }
+
+            Opcode::ZExtend8To16 => {
+                let val = self.memory.pop::<u8>()?;
+                self.memory.push((val as u16).to_le());
+            }
+            Opcode::ZExtend8To32 => {
+                let val = self.memory.pop::<u8>()?;
+                self.memory.push((val as u32).to_le());
+            }
+            Opcode::ZExtend8To64 => {
+                let val = self.memory.pop::<u8>()?;
+                self.memory.push((val as u64).to_le());
+            }
+            Opcode::ZExtend16To32 => {
+                let val = u16::from_le(self.memory.pop()?);
+                self.memory.push((val as u32).to_le());
+            }
+            Opcode::ZExtend16To64 => {
+                let val = u16::from_le(self.memory.pop()?);
+                self.memory.push((val as u64).to_le());
+            }
+            Opcode::ZExtend32To64 => {
+                let val = u32::from_le(self.memory.pop()?);
+                self.memory.push((val as u64).to_le());
+            }
+
+            Opcode::Get => {
+                let bytes = self.memory.read_pc()?;
+                let ptr: VarPointer = self.memory.pop()?;
+                self.memory.read_bytes_to_stack(ptr, bytes)?;
+            }
+            Opcode::Set => {
+                let bytes = self.memory.read_pc()?;
+                let ptr: VarPointer = self.memory.pop()?;
+                self.memory.dup_bytes(bytes)?;
+                self.memory.write_bytes_from_stack(ptr, bytes)?;
+            }
+
+            Opcode::AddU32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_add(word2).to_le());
+            }
+            Opcode::SubI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_sub(word2).to_le());
+            }
+            Opcode::MulI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_mul(word2).to_le());
+            }
+            Opcode::DivI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_div(word2).to_le());
+            }
+            Opcode::DivU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_div(word2).to_le());
+            }
+
+            Opcode::CompLeqI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push((word1 <= word2) as u8);
+            }
+            Opcode::CompLtI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push((word1 < word2) as u8);
+            }
+
+            Opcode::CompLeqU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push((word1 <= word2) as u8);
+            }
+            Opcode::CompLtU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push((word1 < word2) as u8);
+            }
+
+            Opcode::CompEq32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push((word1 == word2) as u8);
+            }
+            Opcode::CompEq64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push((word1 == word2) as u8);
+            }
+
+            Opcode::CompNeq32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push((word1 != word2) as u8);
+            }
+            Opcode::CompNeq64 => {
+                let word2 = i64::from_le(self.memory.pop()?);
+                let word1 = i64::from_le(self.memory.pop()?);
+                self.memory.push((word1 != word2) as u8);
+            }
+
+            Opcode::AddU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+
+                self.memory.push(word1.wrapping_add(word2).to_le());
+            }
+            Opcode::SubI64 => {
+                let word2 = i64::from_le(self.memory.pop()?);
+                let word1 = i64::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_sub(word2).to_le());
+            }
+            Opcode::SubU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_sub(word2).to_le());
+            }
+            Opcode::MulI64 => {
+                let word2 = i64::from_le(self.memory.pop()?);
+                let word1 = i64::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_mul(word2).to_le());
+            }
+            Opcode::MulU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_mul(word2).to_le());
+            }
+            Opcode::DivI64 => {
+                let word2 = i64::from_le(self.memory.pop()?);
+                let word1 = i64::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_div(word2).to_le());
+            }
+            Opcode::ModI32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push((word1 % word2).to_le());
+            }
+            Opcode::ModI64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push((word1 % word2).to_le());
+            }
+            Opcode::RShiftI32 => {
+                let word2 = u8::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                let result = word1.wrapping_shr(word2 as u32);
+                self.memory.push(result.to_le());
+            }
+            Opcode::LShiftI32 => {
+                let word2 = u8::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                let result = word1.wrapping_shl(word2 as u32);
+                self.memory.push(result.to_le());
+            }
+
+            Opcode::BitAndI8 => {
+                let word2 = i8::from_le(self.memory.pop()?);
+                let word1 = i8::from_le(self.memory.pop()?);
+                self.memory.push(word1.bitand(word2).to_le());
+            }
+            Opcode::BitAndI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.bitand(word2).to_le());
+            }
+            Opcode::BitOrI8 => {
+                let word2 = i8::from_le(self.memory.pop()?);
+                let word1 = i8::from_le(self.memory.pop()?);
+                self.memory.push(word1.bitor(word2).to_le());
+            }
+            Opcode::BitOrI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.bitor(word2).to_le());
+            }
+            Opcode::BitXorI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.bitxor(word2).to_le());
+            }
+
+            Opcode::Jump => {
+                let target = self.memory.read_pc()?;
+                self.memory.jump(target);
+            }
+
+            Opcode::JumpIfZero8 => {
+                let target = self.memory.read_pc()?;
+                let value: u8 = self.memory.pop()?;
+                if value == 0 {
+                    self.memory.jump(target);
+                }
+            }
+            Opcode::JumpIfZero16 => {
+                let target = self.memory.read_pc()?;
+                let value: u16 = self.memory.pop()?;
+                if value == 0 {
+                    self.memory.jump(target);
+                }
+            }
+            Opcode::JumpIfZero32 => {
+                let target = self.memory.read_pc()?;
+                let value: u32 = self.memory.pop()?;
+                if value == 0 {
+                    self.memory.jump(target);
+                }
+            }
+            Opcode::JumpIfZero64 => {
+                let target = self.memory.read_pc()?;
+                let value: u64 = self.memory.pop()?;
+                if value == 0 {
+                    self.memory.jump(target);
+                }
+            }
+
+            Opcode::JumpIfNotZero8 => {
+                let target = self.memory.read_pc()?;
+                let value: u8 = self.memory.pop()?;
+                if value != 0 {
+                    self.memory.jump(target);
+                }
+            }
+            Opcode::JumpIfNotZero16 => {
+                let target = self.memory.read_pc()?;
+                let value: u16 = self.memory.pop()?;
+                if value != 0 {
+                    self.memory.jump(target);
+                }
+            }
+            Opcode::JumpIfNotZero32 => {
+                let target = self.memory.read_pc()?;
+                let value: u32 = self.memory.pop()?;
+                if value != 0 {
+                    self.memory.jump(target);
+                }
+            }
+            Opcode::JumpIfNotZero64 => {
+                let target = self.memory.read_pc()?;
+                let value: u64 = self.memory.pop()?;
+                if value != 0 {
+                    self.memory.jump(target);
+                }
+            }
+
+            Opcode::Ret => {
+                self.memory.ret()?;
+            }
+            Opcode::Call => {
+                let func: VarPointer = self.memory.pop()?;
+                self.memory.call(func)?;
+            }
+            Opcode::Ecall => {
+                let ecall = u32::from_le(self.memory.pop()?);
+                match ecall {
+                    ECALL_EXIT => {
+                        let exit = i32::from_le(self.memory.pop()?);
+                        // TODO exit
+                    }
+
+                    ECALL_IS_SAFE => {
+                        let var_pointer: VarPointer = self.memory.pop()?;
+                        let result = self.memory.read::<u8>(var_pointer).is_ok();
+                        self.memory.push((result as u64).to_le());
+                    }
+                    ECALL_THROW_ERROR => {
+                        let skip_frames = u32::from_le(self.memory.pop()?);
+                        let message_ptr: VarPointer = self.memory.pop()?;
+                        let name_ptr: VarPointer = self.memory.pop()?;
+
+                        let message_bytes = self.memory.cstring_bytes(message_ptr)?;
+                        let name_bytes = self.memory.cstring_bytes(name_ptr)?;
+
+                        let mut message = String::new();
+                        string_append_utf8_lossy(&mut message, message_bytes);
+                        let mut name = String::new();
+                        string_append_utf8_lossy(&mut name, name_bytes);
+
+                        for _ in 0..skip_frames {
+                            self.memory.ret()?;
+                        }
+
+                        return Err(IError::new(name, message));
+                    }
+
+                    ECALL_HEAP_ALLOC => {
+                        let size = u64::from_le(self.memory.pop()?);
+                        let ptr = self.memory.add_heap_var(size as u32);
+                        self.memory.push(ptr);
+                    }
+
+                    ECALL_PRINTF => {
+                        let format_args: VarPointer = self.memory.pop()?;
+                        let format_pointer: VarPointer = self.memory.pop()?;
+                        let ret = printf(
+                            &mut self.memory,
+                            &mut self.output,
+                            format_pointer,
+                            format_args.var_idx() - 1,
+                        )?;
+                        self.memory.push((ret as u64).to_le());
+                    }
+
+                    call => {
+                        return ierr!("InvalidEnviromentCall", "invalid ecall value of {}", call)
+                    }
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
     pub fn events(&mut self) -> StringArray<WriteEvent> {
         return mem::replace(&mut self.output, StringArray::new());
     }
 }
 
 pub fn printf(
-    sel: &mut Memory,
+    sel: &Memory,
     out: &mut StringArray<WriteEvent>,
     format_ptr: VarPointer,
     args: usize,
@@ -44,7 +498,7 @@ pub fn printf(
 
 #[allow(unused_assignments)] // TODO remove this when we make this fully standard compliant
 pub fn printf_internal(
-    sel: &mut Memory,
+    sel: &Memory,
     format_ptr: VarPointer,
     mut current_offset: u16,
     mut out: &mut StringWriter,

@@ -7,6 +7,12 @@ pub struct Var<T> {
     pub meta: T,
 }
 
+impl<T> Var<T> {
+    pub fn new(idx: usize, meta: T) -> Self {
+        Self { idx, meta }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryData {
     pub data: Vec<u8>,
@@ -213,10 +219,11 @@ impl CallFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Opcode {
     Func,
+    Loc,
 
     StackAlloc,
     StackDealloc,
@@ -303,6 +310,7 @@ pub enum Opcode {
     JumpIfNotZero32,
     JumpIfNotZero64,
 
+    Ret,
     Call,
     Ecall,
 }
