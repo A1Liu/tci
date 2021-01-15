@@ -2,7 +2,7 @@ use crate::buckets::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
-use core::{fmt, marker, ops, slice, str};
+use core::{fmt, marker, mem, ops, slice, str};
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -180,11 +180,11 @@ pub fn align_u32(size: u32, align: u32) -> u32 {
 
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
 pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
-    std::slice::from_raw_parts_mut(p as *mut T as *mut u8, std::mem::size_of::<T>())
+    std::slice::from_raw_parts_mut(p as *mut T as *mut u8, mem::size_of::<T>())
 }
 
-pub fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(p as *const T as *const u8, std::mem::size_of::<T>()) }
+pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(p as *const T as *const u8, mem::size_of::<T>()) }
 }
 
 pub fn u32_to_u32_tup(value: u32) -> (u32, u32) {
@@ -301,7 +301,7 @@ impl StringWriter {
 impl io::Write for StringWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
-        core::str::from_utf8(buf).map_err(map_err)?;
+        str::from_utf8(buf).map_err(map_err)?;
         self.buf.extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -586,81 +586,156 @@ pub fn write_utf8_lossy(mut write: impl io::Write, bytes: &[u8]) -> io::Result<u
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct ShortSlice<'a, T> {
-    pub data: *const T,
-    pub len: u32,
-    pub meta: u32,
-    pub phantom: marker::PhantomData<&'a T>,
+#[repr(C)]
+#[derive(Debug)]
+pub struct TE<T, E>(T, [E]);
+
+pub struct TaggedMultiArray<T, E> {
+    elements: Vec<u8>,
+    tags: Vec<(usize, usize)>,
+    phantom: marker::PhantomData<(T, E)>,
 }
 
-impl<'a, T> ShortSlice<'a, T> {
-    pub fn new(data: &'a [T], meta: u32) -> Self {
-        Self {
-            data: data.as_ptr(),
-            len: data.len() as u32, // TODO check for overflow
-            meta,
-            phantom: marker::PhantomData,
-        }
-    }
+pub struct TMAIter<'a, T, E> {
+    tma: &'a TaggedMultiArray<T, E>,
+    idx: usize,
 }
 
-// impl<'a, T> ops::Deref for &ShortSlice<'a, T> {
-//     type Target = [T];
-//
-//     fn deref(&self) -> &[T] {
-//         return unsafe { slice::from_raw_parts(self.data, self.len as usize) };
-//     }
-// }
-
-impl<'a, T> ops::Deref for ShortSlice<'a, T> {
-    type Target = [T];
-
-    fn deref(&self) -> &[T] {
-        return unsafe { slice::from_raw_parts(self.data, self.len as usize) };
-    }
-}
-
-impl<'a, T> fmt::Debug for ShortSlice<'a, T>
-where
-    T: fmt::Debug,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        use ops::Deref;
-        write!(fmt, "{:?}", self.deref())
-    }
-}
-
-pub struct StringArray {
-    bytes: Vec<u8>,
-    indices: Vec<ops::Range<usize>>,
-}
-
-impl StringArray {
+impl<T, E> TaggedMultiArray<T, E> {
     pub fn new() -> Self {
         Self {
-            bytes: Vec::new(),
-            indices: Vec::new(),
+            elements: Vec::new(),
+            tags: Vec::new(),
+            phantom: marker::PhantomData,
         }
     }
 
     pub fn len(&self) -> usize {
-        return self.indices.len();
+        return self.tags.len();
     }
 
-    pub fn push(&mut self, string: &str) {
-        let begin = self.bytes.len();
-        self.bytes.extend_from_slice(string.as_bytes());
-        let end = self.bytes.len();
-        self.indices.push(begin..end);
+    pub fn push(&mut self, tag: T, data: Vec<E>) {
+        let begin = align_usize(self.elements.len(), mem::align_of::<T>());
+        let len = data.len();
+        self.elements.resize(begin, 0);
+        self.elements.extend_from_slice(any_as_u8_slice(&tag));
+        mem::forget(tag);
+        let elem_begin = align_usize(self.elements.len(), mem::align_of::<E>());
+        self.elements.resize(elem_begin, 0);
+
+        for elem in data {
+            self.elements.extend_from_slice(any_as_u8_slice(&elem));
+            mem::forget(elem);
+        }
+
+        self.tags.push((begin, len));
+    }
+
+    pub fn push_from(&mut self, tag: T, data: &[E])
+    where
+        E: Clone,
+    {
+        let begin = align_usize(self.elements.len(), mem::align_of::<T>());
+        let len = data.len();
+        self.elements.resize(begin, 0);
+        self.elements.extend_from_slice(any_as_u8_slice(&tag));
+        mem::forget(tag);
+        let elem_begin = align_usize(self.elements.len(), mem::align_of::<E>());
+        self.elements.resize(elem_begin, 0);
+
+        for elem in data {
+            let elem = elem.clone();
+            self.elements.extend_from_slice(any_as_u8_slice(&elem));
+            mem::forget(elem);
+        }
+
+        self.tags.push((begin, len));
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&TE<T, E>> {
+        let (idx, len) = *self.tags.get(idx)?;
+        let ptr = &self.elements[idx] as *const u8 as *const T;
+        unsafe {
+            let fat_ptr = slice::from_raw_parts(ptr, len);
+            return Some(mem::transmute::<&[T], &TE<T, E>>(fat_ptr));
+        }
+    }
+}
+impl<T, E> fmt::Debug for TaggedMultiArray<T, E>
+where
+    T: fmt::Debug,
+    E: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_list().entries(self.into_iter()).finish()
     }
 }
 
-impl ops::Index<usize> for StringArray {
-    type Output = str;
+impl<T, E> ops::Index<usize> for TaggedMultiArray<T, E> {
+    type Output = TE<T, E>;
 
-    fn index(&self, idx: usize) -> &str {
-        unsafe { str::from_utf8_unchecked(&self.bytes[self.indices[idx].clone()]) }
+    fn index(&self, idx: usize) -> &TE<T, E> {
+        return self.get(idx).unwrap();
+    }
+}
+
+impl<'a, T, E> Iterator for TMAIter<'a, T, E> {
+    type Item = &'a TE<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let val = self.tma.get(self.idx)?;
+        self.idx += 1;
+        return Some(val);
+    }
+}
+
+impl<'a, T, E> IntoIterator for &'a TaggedMultiArray<T, E> {
+    type Item = &'a TE<T, E>;
+    type IntoIter = TMAIter<'a, T, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return TMAIter { tma: self, idx: 0 };
+    }
+}
+
+impl<T, E> Drop for TaggedMultiArray<T, E> {
+    fn drop(&mut self) {}
+}
+
+#[repr(C)]
+pub struct TS<T>(T, str);
+
+#[derive(Debug)]
+pub struct StringArray<T> {
+    pub data: TaggedMultiArray<T, u8>,
+}
+
+impl<T> StringArray<T> {
+    pub fn new() -> Self {
+        Self {
+            data: TaggedMultiArray::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        return self.data.len();
+    }
+
+    pub fn push(&mut self, tag: T, data: &str) {
+        self.data.push_from(tag, data.as_bytes());
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&TS<T>> {
+        let ts = self.data.get(idx)?;
+        return Some(unsafe { mem::transmute(ts) });
+    }
+}
+
+impl<T> ops::Index<usize> for StringArray<T> {
+    type Output = TS<T>;
+
+    fn index(&self, idx: usize) -> &TS<T> {
+        return self.get(idx).unwrap();
     }
 }
 

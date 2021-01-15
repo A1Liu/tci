@@ -1,4 +1,4 @@
-use super::structs::*;
+use super::types::*;
 use crate::util::*;
 use codespan_reporting::files::Files;
 use std::io;

@@ -212,3 +212,103 @@ impl CallFrame {
         Self { name, loc, fp, pc }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum Opcode {
+    Func,
+
+    StackAlloc,
+    StackDealloc,
+
+    MakeI8,
+    MakeI32,
+    MakeU32,
+    MakeI64,
+    MakeU64,
+    MakeF32,
+    MakeF64,
+    MakeBinaryPtr,
+    MakeFp,
+    MakeSp,
+
+    Pop,
+    Swap,
+    Dup,
+    PushDyn,
+
+    SExtend8To16,
+    SExtend8To32,
+    SExtend8To64,
+    SExtend16To32,
+    SExtend16To64,
+    SExtend32To64,
+
+    ZExtend8To16,
+    ZExtend8To32,
+    ZExtend8To64,
+    ZExtend16To32,
+    ZExtend16To64,
+    ZExtend32To64,
+
+    Get,
+    Set,
+
+    AddU32,
+    AddU64,
+
+    SubI32,
+    SubI64,
+    SubU64,
+
+    MulI32,
+    MulI64,
+    MulU64,
+
+    DivI32,
+    DivI64,
+    DivU64,
+
+    CompLtI32,
+    CompLtU64,
+    CompLeqI32,
+    CompLeqU64,
+
+    CompEq32,
+    CompEq64,
+    CompNeq32,
+    CompNeq64,
+
+    ModI32,
+    ModI64,
+
+    RShiftI32,
+    LShiftI32,
+
+    BitAndI8,
+    BitAndI32,
+    BitOrI8,
+    BitOrI32,
+    BitXorI32,
+
+    Jump,
+
+    JumpIfZero8,
+    JumpIfZero16,
+    JumpIfZero32,
+    JumpIfZero64,
+
+    JumpIfNotZero8,
+    JumpIfNotZero16,
+    JumpIfNotZero32,
+    JumpIfNotZero64,
+
+    Call,
+    Ecall,
+}
+
+#[derive(Debug)]
+pub enum WriteEvent {
+    StdoutWrite,
+    StderrWrite,
+}

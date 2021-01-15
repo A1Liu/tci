@@ -1,5 +1,5 @@
 use super::error::*;
-use super::structs::*;
+use super::types::*;
 use crate::util::*;
 use core::mem;
 
@@ -94,11 +94,90 @@ impl Memory {
         return Ok(unsafe { out.assume_init() });
     }
 
-    pub fn read_bytes_to_stack<T: Copy>(
-        &mut self,
-        ptr: VarPointer,
-        len: u32,
-    ) -> Result<(), IError> {
+    pub fn read<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var_idx = ptr.var_idx() - 1;
+        let or_else = || invalid_ptr(ptr);
+
+        let from_bytes = if ptr.is_stack() {
+            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.stack_data.len());
+
+            &self.stack_data[lower..upper]
+        } else if ptr.is_heap() {
+            let lower = self.heap.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.shared_data.len());
+
+            &self.shared_data[lower..upper]
+        } else {
+            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
+            let heap_lower = self.heap.get(0).map(|a| a.idx);
+            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+
+            &self.shared_data[lower..upper]
+        };
+
+        let (len, from_len) = (mem::size_of::<T>() as u32, from_bytes.len() as u32);
+        let range = (ptr.offset() as usize)..(ptr.offset() as usize + len as usize);
+        let or_else = move || invalid_offset(from_len, ptr, len);
+        let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
+
+        let mut out = mem::MaybeUninit::uninit();
+        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
+        return Ok(unsafe { out.assume_init() });
+    }
+
+    pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var_idx = ptr.var_idx() - 1;
+        let or_else = || invalid_ptr(ptr);
+
+        let from_bytes = if ptr.is_stack() {
+            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.stack_data.len());
+
+            &self.stack_data[lower..upper]
+        } else if ptr.is_heap() {
+            let lower = self.heap.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.shared_data.len());
+
+            &self.shared_data[lower..upper]
+        } else {
+            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
+            let heap_lower = self.heap.get(0).map(|a| a.idx);
+            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+
+            &self.shared_data[lower..upper]
+        };
+
+        let mut idx = from_bytes.len();
+        for (idx_, byte) in from_bytes.iter().enumerate() {
+            if *byte == 0 {
+                idx = idx_;
+                break;
+            }
+        }
+
+        if idx == from_bytes.len() {
+            return ierr!("MissingNullTerminator", "string missing null terminator");
+        }
+
+        return Ok(&from_bytes[0..idx]);
+    }
+
+    pub fn read_bytes_to_stack(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
         if ptr.var_idx() == 0 {
             return Err(invalid_ptr(ptr));
         }
@@ -135,11 +214,7 @@ impl Memory {
         return Ok(());
     }
 
-    pub fn write_bytes_from_stack<T: Copy>(
-        &mut self,
-        ptr: VarPointer,
-        len: u32,
-    ) -> Result<(), IError> {
+    pub fn write_bytes_from_stack(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
         if ptr.var_idx() == 0 {
             return Err(invalid_ptr(ptr));
         }
