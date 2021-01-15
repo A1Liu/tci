@@ -8,14 +8,9 @@ mod util;
 #[macro_use]
 mod runtime;
 
-// mod clang;
-
-mod assembler;
 mod ast;
 mod buckets;
-mod commands;
 mod filedb;
-mod interpreter;
 mod lexer;
 mod parser;
 mod preprocessor;
@@ -28,9 +23,7 @@ mod test;
 
 use codespan_reporting::term::termcolor::WriteColor;
 use filedb::FileDb;
-use interpreter::{Program, Runtime};
 use js_sys::{Function as Func, Promise};
-use runtime::RuntimeStatus;
 use std::collections::HashMap;
 use std::io::Write;
 use util::*;
@@ -106,7 +99,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         }};
     }
 
-    let mut runtime = None;
+    // let mut runtime = None;
     loop {
         while let Some(input) = recv()? {
             match input {
@@ -140,40 +133,40 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                         }
                     };
 
-                    runtime = Some(Runtime::new(program, StringArray::new()));
+                    // runtime = Some(Runtime::new(program, StringArray::new()));
                 }
             }
         }
 
-        if let Some(runtime) = runtime.as_mut() {
-            let diag = runtime.run_op_count(5000);
+        // if let Some(runtime) = runtime.as_mut() {
+        //     let diag = runtime.run_op_count(5000);
 
-            let mut io = StringWriter::new();
-            for event in runtime.memory.events() {
-                let string = event.to_string();
-                write!(io, "{}", string).unwrap();
-            }
+        //     let mut io = StringWriter::new();
+        //     for event in runtime.memory.events() {
+        //         let string = event.to_string();
+        //         write!(io, "{}", string).unwrap();
+        //     }
 
-            let string = io.to_string();
-            if string != "" {
-                send(Out::Stdout(string))?;
-            }
+        //     let string = io.to_string();
+        //     if string != "" {
+        //         send(Out::Stdout(string))?;
+        //     }
 
-            match diag.status {
-                RuntimeStatus::Exited(_) | RuntimeStatus::ErrorExited(_) => {
-                    wait(0)?.await?;
-                    continue;
-                }
-                _ => {}
-            }
-            send(Out::JumpTo(diag.loc))?;
-        }
+        //     match diag.status {
+        //         RuntimeStatus::Exited(_) | RuntimeStatus::ErrorExited(_) => {
+        //             wait(0)?.await?;
+        //             continue;
+        //         }
+        //         _ => {}
+        //     }
+        //     send(Out::JumpTo(diag.loc))?;
+        // }
 
         wait(1)?.await?;
     }
 }
 
-fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
+fn compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
     let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
     let mut errors: Vec<Error> = Vec::new();
@@ -227,21 +220,22 @@ fn compile(env: &mut FileDb) -> Result<Program, Vec<Error>> {
         return Err(errors);
     }
 
-    let mut assembler = assembler::Assembler::new();
+    // let mut assembler = assembler::Assembler::new();
 
-    for (file, tu) in tu_map {
-        match assembler.add_file(file, tu) {
-            Ok(_) => {}
-            Err(err) => return Err(vec![err]),
-        }
-    }
+    // for (file, tu) in tu_map {
+    //     match assembler.add_file(file, tu) {
+    //         Ok(_) => {}
+    //         Err(err) => return Err(vec![err]),
+    //     }
+    // }
 
-    let program = match assembler.assemble(env) {
-        Ok(x) => x,
-        Err(err) => return Err(vec![err]),
-    };
+    // let program = match assembler.assemble(env) {
+    //     Ok(x) => x,
+    //     Err(err) => return Err(vec![err]),
+    // };
 
-    return Ok(program);
+    // return Ok(program);
+    return Ok(());
 }
 
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
