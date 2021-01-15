@@ -21,7 +21,7 @@ services:
 
       - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
       - "--certificatesresolvers.mytlschallenge.acme.email=al5932@nyu.edu"
-      - "--certificatesresolvers.mytlschallenge.acme.storage=letsencrypt/acme.json"
+      - "--certificatesresolvers.mytlschallenge.acme.storage=.letsencrypt/acme.json"
     ports:
       - "80:80"
       - "443:443"
@@ -31,7 +31,7 @@ services:
     volumes:
       # So that Traefik can listen to the Docker events
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "./letsencrypt:/letsencrypt"
+      - "./.letsencrypt:/.letsencrypt"
   tci:
     # image: a1liu/tci:latest
     build: .

@@ -2,6 +2,7 @@
 /.dist
 /.cache
 /.pkg
+/.letsencrypt
 
 /lib/codespan-reporting/target
 /letsencrypt
