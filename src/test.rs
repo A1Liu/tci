@@ -20,7 +20,7 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     println!("compiled");
     let mut runtime = Runtime::new(&program);
 
-    let code = runtime.run_debug(&*files);
+    let code = runtime.run();
     println!("return code: {}", code);
 
     if code != 0 {

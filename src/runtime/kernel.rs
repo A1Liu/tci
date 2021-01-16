@@ -842,9 +842,15 @@ pub fn printf_internal(
                 write_utf8_lossy(&mut out, &[b'%']).map_err(map_err)?;
             }
             b's' => {
+                println!("hello {}", precision);
                 let char_ptr = sel.read(next_ptr())?;
 
-                write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?).map_err(map_err)?;
+                if precision == 0 {
+                    write_utf8_lossy(&mut out, sel.cstring_bytes(char_ptr)?).map_err(map_err)?;
+                } else {
+                    write_utf8_lossy(&mut out, &sel.cstring_bytes(char_ptr)?[..precision])
+                        .map_err(map_err)?;
+                }
             }
             byte => {
                 return Err(ierror!(

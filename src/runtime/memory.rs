@@ -207,6 +207,10 @@ impl Memory {
             &self.shared_data[lower..upper]
         };
 
+        let (from_len, range) = (from_bytes.len() as u32, (ptr.offset() as usize)..);
+        let or_else = move || invalid_ptr(ptr);
+        let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
+
         let mut idx = from_bytes.len();
         for (idx_, byte) in from_bytes.iter().enumerate() {
             if *byte == 0 {
@@ -219,7 +223,7 @@ impl Memory {
             return ierr!("MissingNullTerminator", "string missing null terminator");
         }
 
-        return Ok(&from_bytes[0..idx]);
+        return Ok(&from_bytes[..idx]);
     }
 
     pub fn read_bytes_to_stack(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
