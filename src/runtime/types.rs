@@ -1,4 +1,5 @@
 use crate::util::*;
+use core::mem;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,6 +26,57 @@ impl BinaryData {
             data: Vec::new(),
             vars: Vec::new(),
         }
+    }
+
+    pub fn add_data(&mut self, data: &mut Vec<u8>) -> VarPointer {
+        let data_len = self.data.len();
+        self.data.append(data);
+        self.vars.push(Var::new(data_len, ()));
+        return VarPointer::new_binary(self.vars.len() as u32, 0);
+    }
+
+    pub fn add_slice(&mut self, data: &[u8]) -> VarPointer {
+        let data_len = self.data.len();
+        self.data.extend_from_slice(data);
+        self.vars.push(Var::new(data_len, ()));
+        return VarPointer::new_binary(self.vars.len() as u32, 0);
+    }
+
+    pub fn read<T: Copy>(&mut self, ptr: VarPointer) -> Option<T> {
+        if ptr.var_idx() == 0 {
+            return None;
+        }
+
+        let var_idx = ptr.var_idx() - 1;
+        let lower = self.vars.get(var_idx)?.idx;
+        let upper = self.vars.get(var_idx + 1).map(|a| a.idx);
+        let upper = upper.unwrap_or(self.data.len());
+
+        let data = &mut self.data[lower..upper];
+        let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
+        let from_bytes = data.get(idx..(idx + len))?;
+
+        let mut out = mem::MaybeUninit::uninit();
+        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
+        return Some(unsafe { out.assume_init() });
+    }
+
+    pub fn write<T: Copy>(&mut self, ptr: VarPointer, t: T) {
+        if ptr.var_idx() == 0 {
+            panic!("passed in nullish pointer");
+        }
+
+        let var_idx = ptr.var_idx() - 1;
+        let lower = self.vars.get(var_idx).unwrap().idx;
+        let upper = self.vars.get(var_idx + 1).map(|a| a.idx);
+        let upper = upper.unwrap_or(self.data.len());
+
+        let data = &mut self.data[lower..upper];
+        let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
+        let to_bytes = data.get_mut(idx..(idx + len)).unwrap();
+
+        let from_bytes = any_as_u8_slice(&t);
+        to_bytes.copy_from_slice(from_bytes);
     }
 }
 
@@ -172,7 +224,7 @@ impl VarPointer {
 
     pub fn add(self, add: u64) -> Self {
         Self {
-            value: (u64::from_le(unsafe { self.value }).wrapping_add(1)).to_le(),
+            value: (u64::from_le(unsafe { self.value }).wrapping_add(add)).to_le(),
         }
     }
 
@@ -235,7 +287,6 @@ pub enum Opcode {
     MakeU64,
     MakeF32,
     MakeF64,
-    MakeBinaryPtr,
     MakeFp,
     MakeSp,
 
@@ -319,4 +370,10 @@ pub enum Opcode {
 pub enum WriteEvent {
     StdoutWrite,
     StderrWrite,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeStatus {
+    Running,
+    Exited(i32),
 }

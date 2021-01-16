@@ -12,6 +12,7 @@ use std::sync::*;
 pub use lazy_static::lazy_static;
 pub use std::collections::hash_map::Entry;
 pub use std::collections::HashMap;
+pub use std::io::Write;
 
 #[allow(unused_macros)]
 macro_rules! debug {
@@ -588,7 +589,7 @@ pub fn write_utf8_lossy(mut write: impl io::Write, bytes: &[u8]) -> io::Result<u
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct TE<T, E>(T, [E]);
+pub struct TE<T, E>(pub T, pub [E]);
 
 pub struct TaggedMultiArray<T, E> {
     elements: Vec<u8>,
@@ -703,11 +704,16 @@ impl<T, E> Drop for TaggedMultiArray<T, E> {
 }
 
 #[repr(C)]
-pub struct TS<T>(T, str);
+pub struct TS<T>(pub T, pub str);
 
 #[derive(Debug)]
 pub struct StringArray<T> {
     pub data: TaggedMultiArray<T, u8>,
+}
+
+pub struct SAIter<'a, T> {
+    sa: &'a StringArray<T>,
+    idx: usize,
 }
 
 impl<T> StringArray<T> {
@@ -736,6 +742,25 @@ impl<T> ops::Index<usize> for StringArray<T> {
 
     fn index(&self, idx: usize) -> &TS<T> {
         return self.get(idx).unwrap();
+    }
+}
+
+impl<'a, T> Iterator for SAIter<'a, T> {
+    type Item = &'a TS<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let val = self.sa.get(self.idx)?;
+        self.idx += 1;
+        return Some(val);
+    }
+}
+
+impl<'a, T> IntoIterator for &'a StringArray<T> {
+    type Item = &'a TS<T>;
+    type IntoIter = SAIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return SAIter { sa: self, idx: 0 };
     }
 }
 
@@ -994,6 +1019,7 @@ where
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
 pub struct n32 {
     pub data: u32,
 }
@@ -1208,5 +1234,20 @@ impl<'a, 'b, E> IntoIterator for &'a StackLL<'b, E> {
 
     fn into_iter(self) -> Self::IntoIter {
         StackLLIter { ll: Some(self) }
+    }
+}
+
+pub struct VecU8 {
+    pub data: Vec<u8>,
+}
+
+impl VecU8 {
+    pub fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+
+    pub fn push<T: Copy + 'static>(&mut self, t: T) {
+        let from_bytes = any_as_u8_slice(&t);
+        self.data.extend_from_slice(from_bytes);
     }
 }

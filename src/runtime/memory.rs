@@ -35,7 +35,7 @@ impl Memory {
             current_func: LinkName::new(!0),
             loc: NO_FILE,
             fp: 1,
-            pc: VarPointer::new_binary(0, 0),
+            pc: VarPointer::new_binary(1, 0),
         }
     }
 
@@ -59,18 +59,19 @@ impl Memory {
             self.pc,
         ));
 
+        self.pc = new_pc;
         let func: Opcode = self.read_pc()?;
         if func != Opcode::Func {
             return Err(ierror!(
                 "InvalidCall",
-                "called code is not a function (this is an error in TCI)"
+                "called {} which is not a function (this is an error in TCI)",
+                new_pc
             ));
         }
 
         self.current_func = self.read_pc()?;
         self.loc = self.read_pc()?;
         self.fp = self.stack.len() as u16 + 1;
-        self.pc = new_pc;
 
         return Ok(());
     }
@@ -110,7 +111,7 @@ impl Memory {
         let or_else = move || invalid_offset(from_len, ptr, len as u32);
         let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
 
-        self.pc.add(len as u64);
+        self.pc = self.pc.add(len as u64);
         let mut out = mem::MaybeUninit::uninit();
         unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
         return Ok(unsafe { out.assume_init() });
@@ -119,14 +120,14 @@ impl Memory {
     pub fn add_stack_var(&mut self, len: u32) -> VarPointer {
         let stack_len = self.stack_data.len();
         self.stack_data.resize(stack_len + len as usize, 0);
-        self.stack.push(Var::new(self.stack.len(), ()));
+        self.stack.push(Var::new(stack_len, ()));
         return VarPointer::new_stack(self.stack.len() as u16, 0);
     }
 
     pub fn add_heap_var(&mut self, len: u32) -> VarPointer {
         let data_len = self.shared_data.len();
         self.shared_data.resize(data_len + len as usize, 0);
-        self.heap.push(Var::new(self.heap.len(), ()));
+        self.heap.push(Var::new(data_len, ()));
         return VarPointer::new_heap(self.heap.len() as u32, 0);
     }
 
@@ -315,22 +316,26 @@ impl Memory {
     pub fn swap_bytes(&mut self, top_bytes: u32, bottom_bytes: u32) -> Result<(), IError> {
         let (top_bytes, bottom_bytes) = (top_bytes as usize, bottom_bytes as usize);
         let (len, stack_len) = (top_bytes + bottom_bytes, self.expr_stack.len());
-        let or_else = move || expr_stack_too_short(stack_len, len);
+        if len > stack_len {
+            return Err(expr_stack_too_short(stack_len, len));
+        }
 
         let slice_o = self.expr_stack.get_mut((stack_len - len)..);
-        slice_o.ok_or_else(or_else)?.rotate_left(bottom_bytes);
+        slice_o.unwrap().rotate_left(bottom_bytes);
         return Ok(());
     }
 
     pub fn dup_bytes(&mut self, bytes: u32) -> Result<(), IError> {
         let bytes = bytes as usize;
         let (stack_len, new_len) = (self.expr_stack.len(), self.expr_stack.len() + bytes);
-        self.expr_stack.reserve(bytes);
-        unsafe { self.expr_stack.set_len(new_len) };
 
-        let or_else = move || expr_stack_too_short(stack_len, bytes);
-        let slice = self.expr_stack.get_mut((stack_len - 2 * bytes)..);
-        let (from, to) = slice.ok_or_else(or_else)?.split_at_mut(bytes);
+        if bytes > self.expr_stack.len() {
+            return Err(expr_stack_too_short(stack_len, bytes));
+        }
+        self.expr_stack.resize(new_len, 0);
+
+        let slice = &mut self.expr_stack[(new_len - 2 * bytes)..];
+        let (from, to) = slice.split_at_mut(bytes);
         to.copy_from_slice(from);
 
         return Ok(());
@@ -338,9 +343,11 @@ impl Memory {
 
     pub fn pop<T: Copy>(&mut self) -> Result<T, IError> {
         let (len, stack_len) = (mem::size_of::<T>(), self.expr_stack.len());
-        let or_else = move || expr_stack_too_short(stack_len, len);
-        let slice = self.expr_stack.get_mut((stack_len - len)..);
-        let from_bytes = slice.ok_or_else(or_else)?;
+        if len > stack_len {
+            return Err(expr_stack_too_short(stack_len, len));
+        }
+
+        let from_bytes = &self.expr_stack[(stack_len - len)..];
 
         let mut out = mem::MaybeUninit::uninit();
         unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };

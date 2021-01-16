@@ -371,6 +371,27 @@ impl FileDb {
         Ok(file_id)
     }
 
+    pub fn display_loc(&self, loc: CodeLoc) -> Option<String> {
+        use codespan_reporting::diagnostic::*;
+        use codespan_reporting::term::*;
+
+        let mut out = StringWriter::new();
+        let config = Config {
+            display_style: DisplayStyle::Rich,
+            tab_width: 4,
+            styles: Styles::default(),
+            chars: Chars::default(),
+            start_context_lines: 3,
+            end_context_lines: 1,
+        };
+
+        let diagnostic =
+            Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);
+        emit(&mut out, &config, self, &diagnostic).unwrap();
+
+        return Some(out.into_string());
+    }
+
     pub fn add_from_include(&mut self, include: &str, file: u32) -> Result<u32, io::Error> {
         if Path::new(include).is_relative() {
             let base_path = parent_if_file(self.files[file as usize].unwrap()._name);

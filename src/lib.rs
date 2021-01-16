@@ -8,6 +8,7 @@ mod util;
 #[macro_use]
 mod runtime;
 
+mod assembler;
 mod ast;
 mod buckets;
 mod filedb;
@@ -24,8 +25,8 @@ mod test;
 use codespan_reporting::term::termcolor::WriteColor;
 use filedb::FileDb;
 use js_sys::{Function as Func, Promise};
+use runtime::*;
 use std::collections::HashMap;
-use std::io::Write;
 use util::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -48,6 +49,7 @@ pub enum OutMessage {
     JumpTo(CodeLoc),
     Debug(String),
     Stdout(String),
+    Stderr(String),
 }
 
 #[wasm_bindgen]
@@ -110,7 +112,9 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         }};
     }
 
-    // let mut runtime = None;
+    let mut files = FileDb::new(false);
+    let mut runtime = None;
+
     loop {
         debug!("running another iteration of loop...");
 
@@ -119,7 +123,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                 In::Sources(input_files) => {
                     use std::path::Path;
 
-                    let mut files = FileDb::new(false);
+                    files = FileDb::new(false);
                     let mut out = HashMap::new();
                     for (name, contents) in input_files {
                         let file_id = if Path::new(&name).is_relative() {
@@ -146,40 +150,42 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                         }
                     };
 
-                    // runtime = Some(Runtime::new(program, StringArray::new()));
+                    runtime = Some(Runtime::new(&program));
                 }
             }
         }
 
-        // if let Some(runtime) = runtime.as_mut() {
-        //     let diag = runtime.run_op_count(5000);
+        let mut timeout = 1;
+        if let Some(runtime) = runtime.as_mut() {
+            let status = runtime.run_op_count(5000);
 
-        //     let mut io = StringWriter::new();
-        //     for event in runtime.memory.events() {
-        //         let string = event.to_string();
-        //         write!(io, "{}", string).unwrap();
-        //     }
+            match status {
+                RuntimeStatus::Exited(code) => {
+                    timeout = 0;
+                    runtime.print_callstack(&files);
+                }
+                _ => {}
+            }
 
-        //     let string = io.to_string();
-        //     if string != "" {
-        //         send(Out::Stdout(string))?;
-        //     }
+            for TS(tag, s) in &runtime.events() {
+                match tag {
+                    WriteEvent::StdoutWrite => {
+                        send(Out::Stdout(s.to_string()))?;
+                    }
+                    WriteEvent::StderrWrite => {
+                        send(Out::Stderr(s.to_string()))?;
+                    }
+                }
+            }
 
-        //     match diag.status {
-        //         RuntimeStatus::Exited(_) | RuntimeStatus::ErrorExited(_) => {
-        //             wait(0)?.await?;
-        //             continue;
-        //         }
-        //         _ => {}
-        //     }
-        //     send(Out::JumpTo(diag.loc))?;
-        // }
+            send(Out::JumpTo(runtime.loc()))?;
+        }
 
-        wait(0)?.await?;
+        wait(timeout)?.await?;
     }
 }
 
-fn compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
+fn compile(env: &mut FileDb) -> Result<BinaryData, Vec<Error>> {
     let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
     let mut tokens = lexer::TokenDb::new();
     let mut errors: Vec<Error> = Vec::new();
@@ -233,22 +239,21 @@ fn compile(env: &mut FileDb) -> Result<(), Vec<Error>> {
         return Err(errors);
     }
 
-    // let mut assembler = assembler::Assembler::new();
+    let mut assembler = assembler::Assembler::new();
 
-    // for (file, tu) in tu_map {
-    //     match assembler.add_file(file, tu) {
-    //         Ok(_) => {}
-    //         Err(err) => return Err(vec![err]),
-    //     }
-    // }
+    for (file, tu) in tu_map {
+        match assembler.add_file(file, tu) {
+            Ok(_) => {}
+            Err(err) => return Err(vec![err]),
+        }
+    }
 
-    // let program = match assembler.assemble(env) {
-    //     Ok(x) => x,
-    //     Err(err) => return Err(vec![err]),
-    // };
+    let program = match assembler.assemble(env) {
+        Ok(x) => x,
+        Err(err) => return Err(vec![err]),
+    };
 
-    // return Ok(program);
-    return Ok(());
+    return Ok(program);
 }
 
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {

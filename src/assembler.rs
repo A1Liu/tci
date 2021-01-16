@@ -1,43 +1,102 @@
 use crate::buckets::*;
 use crate::filedb::*;
-use crate::interpreter::*;
 use crate::runtime::*;
 use crate::tc_ast::*;
 use crate::util::*;
+use core::mem;
 
 #[derive(Debug)]
 pub struct ASMFunc {
     pub func_type: TCFuncType,
     pub decl_loc: CodeLoc,
-    pub func_header: Option<(u32, CodeLoc)>, // first u32 points into opcodes buffer
+    pub func_header: Option<(VarPointer, CodeLoc)>, // first u32 points into opcodes buffer
+}
+
+pub struct FuncEnv {
+    pub link_names: HashMap<u32, LinkName>,
+    pub opcodes: VecU8,
+    pub labels: Vec<LabelData>,
+    pub gotos: Vec<u32>,
+}
+
+impl FuncEnv {
+    pub fn new() -> Self {
+        Self {
+            link_names: HashMap::new(),
+            opcodes: VecU8::new(),
+            labels: Vec::new(),
+            gotos: Vec::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.link_names.clear();
+        self.opcodes.data.clear();
+        self.labels.clear();
+        self.gotos.clear();
+    }
+}
+
+pub struct BinaryInit {
+    pub init: BinaryData,
+    pub main_call: VarPointer,
+}
+
+lazy_static! {
+    pub static ref BINARY_INIT: BinaryInit = {
+        let mut data = VecU8::new();
+
+        data.push(Opcode::StackAlloc);
+        data.push(4u32);
+        data.push(Opcode::StackAlloc);
+        data.push(8u32);
+        data.push(Opcode::StackAlloc);
+        data.push(4u32);
+
+        data.push(Opcode::MakeU64);
+        let main_call = data.data.len() as u32;
+
+        data.push(0u64);
+
+        data.push(Opcode::Call);
+        data.push(Opcode::MakeSp);
+        data.push(0i16);
+        data.push(Opcode::Get);
+        data.push(4);
+        data.push(Opcode::StackDealloc); // for the return value
+
+        data.push(Opcode::StackDealloc);
+        data.push(Opcode::StackDealloc);
+
+        data.push(Opcode::MakeU32);
+        data.push(ECALL_EXIT);
+        data.push(Opcode::Ecall);
+
+        let mut init = BinaryData::new();
+        let main_call = init.add_data(&mut data.data).with_offset(main_call);
+
+        BinaryInit { init, main_call }
+    };
 }
 
 pub struct Assembler {
     pub buckets: BucketListFactory,
-    pub opcodes: Vec<TaggedOpcode>,
     pub func_linkage: HashMap<LinkName, u32>,
     pub functions: Vec<ASMFunc>,
-    pub function_temps: Vec<u32>,
-    pub data: VarBuffer,
-    pub symbols: Vec<RuntimeVar>,
-    pub labels: Vec<u32>,
+    pub function_temps: Vec<(VarPointer, CodeLoc)>,
+    pub func: FuncEnv,
+    pub data: BinaryData,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ASMEnv<'a> {
     var_offsets: &'a [i16],
-    binary_offsets: &'a [u32],
     link_names: &'a HashMap<u32, LinkName>,
 }
 
-pub fn asm_env<'a>(
-    var_offsets: &'a [i16],
-    binary_offsets: &'a [u32],
-    link_names: &'a HashMap<u32, LinkName>,
-) -> ASMEnv<'a> {
+pub fn asm_env<'a>(var_offsets: &'a [i16], link_names: &'a HashMap<u32, LinkName>) -> ASMEnv<'a> {
     ASMEnv {
         var_offsets,
-        binary_offsets,
         link_names,
     }
 }
@@ -50,51 +109,28 @@ impl Drop for Assembler {
 
 #[derive(Debug, Clone, Copy)]
 pub struct LabelData {
-    pub new_label: u32,
+    pub offset: u32,
     pub scope_idx: u32,
 }
 
-lazy_static! {
-    pub static ref INIT_MAIN :Vec<Opcode> = vec![
-        Opcode::StackAlloc {
-            bytes: 4,
-            symbol: META_NO_SYMBOL,
-        },
-        Opcode::StackAlloc {
-            bytes: 8,
-            symbol: META_NO_SYMBOL,
-        },
-        Opcode::MakeTempStackFpPtr { var: 0, offset: 0 },
-        Opcode::PopIntoTopVar {
-            offset: 0,
-            bytes: 8,
-        },
-        Opcode::Ret, // Placeholder for main idx
-        Opcode::CallDyn,
-        Opcode::StackDealloc,
-        Opcode::GetLocal {
-            var: 0,
-            offset: 0,
-            bytes: 4,
-        },
-        Opcode::MakeTempU32(ECALL_EXIT),
-        Opcode::EcallDyn,
-    ];
+impl LabelData {
+    pub fn uninit() -> Self {
+        Self {
+            offset: !0,
+            scope_idx: !0,
+        }
+    }
 }
-
-pub const INIT_MAIN_PLACEHOLDER_IDX: usize = 4;
 
 impl Assembler {
     pub fn new() -> Self {
         Self {
             buckets: BucketListFactory::new(),
-            opcodes: Vec::new(),
-            data: VarBuffer::new(),
+            data: BINARY_INIT.init.clone(),
             func_linkage: HashMap::new(),
             functions: Vec::new(),
             function_temps: Vec::new(),
-            symbols: Vec::new(),
-            labels: Vec::new(),
+            func: FuncEnv::new(),
         }
     }
 
@@ -103,19 +139,6 @@ impl Assembler {
 
         let mut link_names = HashMap::new();
         let mut defns = Vec::new();
-        let mut binary_offsets = Vec::with_capacity(tu.variables.len());
-        unsafe { binary_offsets.set_len(tu.variables.len()) };
-
-        for (_, &global_var) in tu.variables.iter() {
-            if global_var.ty.is_function() {
-                binary_offsets[global_var.var_idx as usize] = !0; // TODO idk man wtf do i do about this?
-                continue;
-            }
-
-            let size = global_var.ty.size().into();
-            let var = self.data.add_var(size, META_NO_SYMBOL); // TODO add symbol
-            binary_offsets[global_var.var_idx as usize] = var;
-        }
 
         for (ident, tc_func) in std::mem::replace(&mut tu.functions, HashMap::new()) {
             let link_name = if tc_func.is_static {
@@ -160,27 +183,40 @@ impl Assembler {
                 return Err(func_redef(*defn_loc, defn.loc));
             }
 
-            let opcode = self.opcodes.len() as u32;
+            let label_count = defn.label_count as usize;
+            self.func.labels.resize(label_count, LabelData::uninit());
 
-            self.opcodes.push(TaggedOpcode {
-                op: Opcode::Func(link_name),
-                loc: defn.loc,
-            });
+            let temps_begin = self.function_temps.len();
 
-            self.add_function(&binary_offsets, &link_names, &defn);
+            self.func.opcodes.push(Opcode::Func);
+            self.func.opcodes.push(link_name);
+            self.func.opcodes.push(defn.loc);
+
+            self.add_function(&link_names, &defn);
+
+            let fptr = self.data.add_data(&mut self.func.opcodes.data);
+
+            for (ptr, _) in &mut self.function_temps[temps_begin..] {
+                let offset = ptr.offset();
+                *ptr = fptr.with_offset(offset);
+            }
+
+            for &goto in self.func.gotos.iter() {
+                let ptr = fptr.with_offset(goto);
+                let label_ptr: VarPointer = self.data.read(ptr).unwrap();
+                let label_offset = self.func.labels[label_ptr.offset() as usize].offset;
+                self.data.write(ptr, fptr.with_offset(label_offset));
+            }
+
             let header = &mut self.functions[self.func_linkage[&link_name] as usize].func_header;
-            *header = Some((opcode, defn.loc));
+            *header = Some((fptr, defn.loc));
+            self.func.clear();
         }
 
         return Ok(());
     }
 
-    pub fn add_function(
-        &mut self,
-        binary_offsets: &[u32],
-        link_names: &HashMap<u32, LinkName>,
-        defn: &TCFuncDefn,
-    ) {
+    pub fn add_function(&mut self, link_names: &HashMap<u32, LinkName>, defn: &TCFuncDefn) {
         if defn.ops.len() < 2 {
             unreachable!()
         }
@@ -189,8 +225,6 @@ impl Assembler {
         // maps symbols to variable offsets
         let mut var_offsets: Vec<i16> = (0..defn.sym_count).map(|_| i16::MAX).collect();
         let mut next_offset = 0; // where should the next variable be allocated (relative to fp)?
-        let mut labels: Vec<LabelData> = Vec::with_capacity(defn.label_count as usize);
-        unsafe { labels.set_len(defn.label_count as usize) };
 
         for idx in 0..defn.param_count {
             var_offsets[idx as usize] = -(idx as i16) - 2;
@@ -199,33 +233,23 @@ impl Assembler {
         for t_op in defn.ops {
             match t_op.kind {
                 TCOpcodeKind::Label { label, scope_idx } => {
-                    let new_label = self.labels.len() as u32;
-                    self.labels.push(!0);
-                    let label_data = LabelData {
-                        new_label,
-                        scope_idx,
-                    };
-
-                    labels[label as usize] = label_data;
+                    self.func.labels[label as usize].scope_idx = scope_idx;
                 }
                 _ => {}
             }
         }
 
         if let TCOpcodeKind::ScopeBegin(vars, _) = defn.ops[0].kind {
-            let mut op = TaggedOpcode::new(Opcode::Ret, defn.ops[0].loc);
+            self.func.opcodes.push(Opcode::Loc);
+            self.func.opcodes.push(defn.ops[0].loc);
 
             for (&var, &ty) in vars {
                 if var_offsets[var as usize] < 0 {
                     continue;
                 }
 
-                op.op = Opcode::StackAlloc {
-                    bytes: ty.size().into(),
-                    symbol: META_NO_SYMBOL,
-                };
-
-                self.opcodes.push(op);
+                self.func.opcodes.push(Opcode::StackAlloc);
+                self.func.opcodes.push(ty.size());
                 var_offsets[var as usize] = next_offset;
                 next_offset += 1;
             }
@@ -234,78 +258,66 @@ impl Assembler {
         }
 
         for t_op in &defn.ops[1..(defn.ops.len() - 1)] {
-            let mut op = TaggedOpcode::new(Opcode::Ret, t_op.loc);
+            self.func.opcodes.push(Opcode::Loc);
+            self.func.opcodes.push(t_op.loc);
 
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, _) => {
                     for (&var, &ty) in vars {
-                        op.op = Opcode::StackAlloc {
-                            bytes: ty.size().into(),
-                            symbol: META_NO_SYMBOL,
-                        };
+                        self.func.opcodes.push(Opcode::StackAlloc);
+                        self.func.opcodes.push(ty.size());
 
-                        self.opcodes.push(op);
                         var_offsets[var as usize] = next_offset;
                         next_offset += 1;
-
-                        // TODO add runtime var support
-                        // self.symbols.push(RuntimeVar {
-                        //     symbol: *symbol,
-                        //     decl_type: ty.clone_into_alloc(&*self.buckets),
-                        //     loc: t_op.loc,
-                        // });
                     }
                 }
                 TCOpcodeKind::ScopeEnd { count, begin } => {
-                    op.op = Opcode::StackDealloc;
-
                     for _ in 0..count {
-                        self.opcodes.push(op);
+                        self.func.opcodes.push(Opcode::StackDealloc);
                     }
 
                     next_offset -= count as i16;
                 }
                 TCOpcodeKind::Ret => {
-                    // TODO make sure stack deallocs happen
-                    op.op = Opcode::Ret;
-                    self.opcodes.push(op);
+                    for _ in 0..next_offset {
+                        self.func.opcodes.push(Opcode::StackDealloc);
+                    }
+
+                    self.func.opcodes.push(Opcode::Ret);
                 }
                 TCOpcodeKind::RetVal(val) => {
-                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    let env = asm_env(&var_offsets, link_names);
                     self.translate_expr(env, &val);
 
-                    op.op = Opcode::GetLocal {
-                        var: -1,
-                        offset: 0,
-                        bytes: 8,
-                    };
-                    self.opcodes.push(op);
-                    op.op = Opcode::Set {
-                        offset: 0,
-                        bytes: val.ty.repr_size(),
-                    };
-                    self.opcodes.push(op);
-                    op.op = Opcode::Ret;
-                    self.opcodes.push(op);
+                    self.func.opcodes.push(Opcode::MakeFp);
+                    self.func.opcodes.push(-1i16);
+                    self.func.opcodes.push(Opcode::Set);
+                    self.func.opcodes.push(val.ty.repr_size());
+
+                    for _ in 0..next_offset {
+                        self.func.opcodes.push(Opcode::StackDealloc);
+                    }
+
+                    self.func.opcodes.push(Opcode::Ret);
                 }
                 TCOpcodeKind::Expr(expr) => {
-                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    let env = asm_env(&var_offsets, link_names);
                     self.translate_expr(env, &expr);
 
                     let bytes = expr.ty.repr_size();
-                    op.op = Opcode::Pop { bytes };
-                    self.opcodes.push(op);
+                    self.func.opcodes.push(Opcode::Pop);
+                    self.func.opcodes.push(bytes);
                 }
 
                 TCOpcodeKind::Label { label, .. } => {
-                    let new_label = labels[label as usize].new_label;
-                    self.labels[new_label as usize] = self.opcodes.len() as u32;
+                    self.func.labels[label as usize].offset = self.func.opcodes.data.len() as u32;
                 }
                 TCOpcodeKind::Goto { goto, scope_idx } => {
-                    let label = labels[goto as usize];
+                    let label = self.func.labels[goto as usize];
                     self.solve_scope_difference(defn.ops, scope_idx, label.scope_idx, t_op.loc);
-                    op.op = Opcode::Jump(label.new_label);
-                    self.opcodes.push(op);
+                    self.func.opcodes.push(Opcode::Jump);
+                    self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                    self.func.opcodes.push(VarPointer::new_binary(0, goto));
                 }
                 TCOpcodeKind::GotoIfZero {
                     cond,
@@ -313,18 +325,20 @@ impl Assembler {
                     goto,
                     scope_idx,
                 } => {
-                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    let env = asm_env(&var_offsets, link_names);
                     self.translate_expr(env, &cond);
 
-                    let new_label = labels[goto as usize].new_label;
-                    op.op = match cond_ty.size() {
-                        1 => Opcode::JumpIfZero8(new_label),
-                        2 => Opcode::JumpIfZero16(new_label),
-                        4 => Opcode::JumpIfZero32(new_label),
-                        8 => Opcode::JumpIfZero64(new_label),
+                    let op = match cond_ty.size() {
+                        1 => Opcode::JumpIfZero8,
+                        2 => Opcode::JumpIfZero16,
+                        4 => Opcode::JumpIfZero32,
+                        8 => Opcode::JumpIfZero64,
                         _ => unreachable!(),
                     };
-                    self.opcodes.push(op);
+
+                    self.func.opcodes.push(op);
+                    self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                    self.func.opcodes.push(VarPointer::new_binary(0, goto));
                 }
                 TCOpcodeKind::GotoIfNotZero {
                     cond,
@@ -332,18 +346,20 @@ impl Assembler {
                     goto,
                     scope_idx,
                 } => {
-                    let env = asm_env(&var_offsets, binary_offsets, link_names);
+                    let env = asm_env(&var_offsets, link_names);
                     self.translate_expr(env, &cond);
 
-                    let new_label = labels[goto as usize].new_label;
-                    op.op = match cond_ty.size() {
-                        1 => Opcode::JumpIfNotZero8(new_label),
-                        2 => Opcode::JumpIfNotZero16(new_label),
-                        4 => Opcode::JumpIfNotZero32(new_label),
-                        8 => Opcode::JumpIfNotZero64(new_label),
+                    let op = match cond_ty.size() {
+                        1 => Opcode::JumpIfNotZero8,
+                        2 => Opcode::JumpIfNotZero16,
+                        4 => Opcode::JumpIfNotZero32,
+                        8 => Opcode::JumpIfNotZero64,
                         _ => unreachable!(),
                     };
-                    self.opcodes.push(op);
+
+                    self.func.opcodes.push(op);
+                    self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                    self.func.opcodes.push(VarPointer::new_binary(0, goto));
                 }
                 x => unimplemented!("{:?}", x),
             }
@@ -351,17 +367,17 @@ impl Assembler {
 
         let last = defn.ops[defn.ops.len() - 1];
         if let TCOpcodeKind::ScopeEnd { count, begin } = last.kind {
-            let mut op = TaggedOpcode::new(Opcode::StackDealloc, last.loc);
-            op.op = Opcode::StackDealloc;
+            self.func.opcodes.push(Opcode::Loc);
+            self.func.opcodes.push(last.loc);
 
             for _ in 0..(count - defn.param_count) {
-                self.opcodes.push(op);
+                self.func.opcodes.push(Opcode::StackDealloc);
             }
         } else {
             panic!("invariant broken");
         }
 
-        self.opcodes.push(TaggedOpcode::new(Opcode::Ret, defn.loc));
+        self.func.opcodes.push(Opcode::Ret);
     }
 
     /// inserts stack deallocs and stack allocs to solve scope problems
@@ -404,75 +420,77 @@ impl Assembler {
             label_scopes.pop();
         }
 
-        let mut tagged = TaggedOpcode::new(Opcode::StackDealloc, loc);
         for (_, scope) in goto_scopes {
             for _ in 0..scope.len() {
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::StackDealloc);
             }
         }
 
         for (_, scope) in label_scopes.into_iter().rev() {
             for (&var, &ty) in scope {
-                tagged.op = Opcode::StackAlloc {
-                    bytes: ty.size().into(),
-                    symbol: META_NO_SYMBOL,
-                };
-
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::StackAlloc);
+                self.func.opcodes.push(ty.size());
             }
         }
     }
 
     pub fn translate_expr(&mut self, env: ASMEnv, expr: &TCExpr) {
-        let mut tagged = TaggedOpcode::new(Opcode::Ret, expr.loc);
-
         match &expr.kind {
             TCExprKind::I8Literal(val) => {
-                tagged.op = Opcode::MakeTempI8(*val);
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeI8);
+                self.func.opcodes.push(*val);
             }
             TCExprKind::I32Literal(val) => {
-                tagged.op = Opcode::MakeTempI32(*val);
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeI32);
+                self.func.opcodes.push(*val);
             }
             TCExprKind::I64Literal(val) => {
-                tagged.op = Opcode::MakeTempI64(*val);
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeI64);
+                self.func.opcodes.push(*val);
             }
             TCExprKind::U64Literal(val) => {
-                tagged.op = Opcode::MakeTempU64(*val);
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(*val);
             }
             TCExprKind::StringLiteral(val) => {
-                // TODO check overflow here
-                let var = self.data.add_var(val.len() as u32 + 1, META_NO_SYMBOL);
-                let slice = self.data.get_full_var_range_mut(var);
-                let end = slice.len() - 1;
-                slice[..end].copy_from_slice(val.as_bytes());
-                slice[end] = 0;
-                tagged.op = Opcode::MakeTempBinaryPtr { var, offset: 0 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                let ptr = self.data.add_slice(val.as_bytes());
+                self.data.data.push(0u8);
+                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(ptr);
             }
             TCExprKind::LocalIdent { label } => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
                 let var = env.var_offsets[*label as usize];
-                tagged.op = if expr.ty.is_array() {
-                    Opcode::MakeTempStackFpPtr { var, offset: 0 }
-                } else {
-                    Opcode::GetLocal {
-                        var,
-                        offset: 0,
-                        bytes: expr.ty.repr_size(),
-                    }
-                };
 
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::MakeFp);
+                self.func.opcodes.push(var);
+
+                if !expr.ty.is_array() {
+                    self.func.opcodes.push(Opcode::Get);
+                    self.func.opcodes.push(expr.ty.repr_size());
+                }
             }
             TCExprKind::FunctionIdent { ident } => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
                 let link_name = env.link_names[ident];
                 let id = self.func_linkage[&link_name];
-                self.function_temps.push(self.opcodes.len() as u32);
-                tagged.op = Opcode::MakeTempU32(id);
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::MakeU64);
+
+                let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
+                self.function_temps.push((ptr, expr.loc));
+                self.func.opcodes.push(VarPointer::new_binary(0, id));
             }
 
             TCExprKind::ArrayInit { elems, elem_ty } => {
@@ -492,8 +510,8 @@ impl Assembler {
                     let bytes = expr.ty.repr_size();
 
                     if idx + 1 < exprs.len() {
-                        tagged.op = Opcode::Pop { bytes };
-                        self.opcodes.push(tagged);
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(bytes);
                     }
                 }
             }
@@ -501,41 +519,43 @@ impl Assembler {
             TCExprKind::PostIncr { incr_ty, value } => {
                 use TCPrimType::*;
                 self.translate_assign(env, value);
-                tagged.op = Opcode::PushDup { bytes: 8 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(8u32);
+
                 let bytes: u32 = incr_ty.size() as u32;
-                tagged.op = Opcode::Get { offset: 0, bytes };
-                self.opcodes.push(tagged);
-                tagged.op = Opcode::PushDup { bytes };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Get);
+                self.func.opcodes.push(bytes);
+
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(bytes);
+
                 match incr_ty {
                     I32 | U32 => {
-                        tagged.op = Opcode::MakeTempU32(1);
-                        self.opcodes.push(tagged);
-                        tagged.op = Opcode::AddU32;
-                        self.opcodes.push(tagged);
+                        self.func.opcodes.push(Opcode::MakeU32);
+                        self.func.opcodes.push(1u32);
+                        self.func.opcodes.push(Opcode::AddU32);
                     }
                     I64 | U64 => {
-                        tagged.op = Opcode::MakeTempU64(1);
-                        self.opcodes.push(tagged);
-                        tagged.op = Opcode::AddU64;
-                        self.opcodes.push(tagged);
+                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(1u64);
+                        self.func.opcodes.push(Opcode::AddU64);
                     }
                     Pointer { stride } => {
                         let stride: u32 = stride.into();
-                        tagged.op = Opcode::MakeTempU64(stride as u64);
-                        self.opcodes.push(tagged);
-                        tagged.op = Opcode::AddU64;
-                        self.opcodes.push(tagged);
+                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(stride as u64);
+                        self.func.opcodes.push(Opcode::AddU64);
                     }
                     x => unimplemented!("post incr for {:?}", x),
                 }
 
-                let top = bytes * 2;
-                tagged.op = Opcode::Swap { top, bottom: 8 };
-                self.opcodes.push(tagged);
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(bytes * 2);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(Opcode::Set);
+                self.func.opcodes.push(bytes);
             }
 
             TCExprKind::BinOp {
@@ -546,7 +566,7 @@ impl Assembler {
             } => {
                 self.translate_expr(env, left);
                 self.translate_expr(env, right);
-                self.translate_bin_op(*op, *op_type, tagged.loc);
+                self.translate_bin_op(*op, *op_type, expr.loc);
             }
 
             TCExprKind::UnaryOp {
@@ -555,84 +575,114 @@ impl Assembler {
                 operand,
             } => {
                 self.translate_expr(env, operand);
-                self.translate_un_op(*op, *op_type, tagged.loc);
+                self.translate_un_op(*op, *op_type, expr.loc);
             }
 
             TCExprKind::Conv { from, to, expr } => {
                 self.translate_expr(env, expr);
-                let opcode = match (from, to.size()) {
-                    (TCPrimType::U8, 1) => None,
-                    (TCPrimType::U8, 4) => Some(Opcode::ZExtend8To32),
-                    (TCPrimType::U8, 8) => Some(Opcode::ZExtend8To64),
-                    (TCPrimType::I8, 1) => None,
-                    (TCPrimType::I8, 4) => Some(Opcode::SExtend8To32),
-                    (TCPrimType::I8, 8) => Some(Opcode::SExtend8To64),
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                match (from, to.size()) {
+                    (TCPrimType::U8, 1) => {}
+                    (TCPrimType::U8, 4) => self.func.opcodes.push(Opcode::ZExtend8To32),
+                    (TCPrimType::U8, 8) => self.func.opcodes.push(Opcode::ZExtend8To64),
+                    (TCPrimType::I8, 1) => {}
+                    (TCPrimType::I8, 4) => self.func.opcodes.push(Opcode::SExtend8To32),
+                    (TCPrimType::I8, 8) => self.func.opcodes.push(Opcode::SExtend8To64),
 
-                    (TCPrimType::U32, 1) => Some(Opcode::Pop { bytes: 3 }),
-                    (TCPrimType::U32, 4) => None,
-                    (TCPrimType::U32, 8) => Some(Opcode::ZExtend32To64),
-                    (TCPrimType::I32, 1) => Some(Opcode::Pop { bytes: 3 }),
-                    (TCPrimType::I32, 4) => None,
-                    (TCPrimType::I32, 8) => Some(Opcode::SExtend32To64),
+                    (TCPrimType::U32, 1) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(3u32)
+                    }
+                    (TCPrimType::U32, 4) => {}
+                    (TCPrimType::U32, 8) => self.func.opcodes.push(Opcode::ZExtend32To64),
+                    (TCPrimType::I32, 1) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(3u32)
+                    }
+                    (TCPrimType::I32, 4) => {}
+                    (TCPrimType::I32, 8) => self.func.opcodes.push(Opcode::SExtend32To64),
 
-                    (TCPrimType::U64, 1) => Some(Opcode::Pop { bytes: 7 }),
-                    (TCPrimType::U64, 4) => Some(Opcode::Pop { bytes: 4 }),
-                    (TCPrimType::U64, 8) => None,
-                    (TCPrimType::I64, 1) => Some(Opcode::Pop { bytes: 7 }),
-                    (TCPrimType::I64, 4) => Some(Opcode::Pop { bytes: 4 }),
-                    (TCPrimType::I64, 8) => None,
+                    (TCPrimType::U64, 1) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(7u32)
+                    }
+                    (TCPrimType::U64, 4) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(4u32)
+                    }
+                    (TCPrimType::U64, 8) => {}
+                    (TCPrimType::I64, 1) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(7u32)
+                    }
+                    (TCPrimType::I64, 4) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(4u32)
+                    }
+                    (TCPrimType::I64, 8) => {}
 
-                    (TCPrimType::Pointer { .. }, 1) => Some(Opcode::Pop { bytes: 7 }),
-                    (TCPrimType::Pointer { .. }, 4) => Some(Opcode::Pop { bytes: 4 }),
-                    (TCPrimType::Pointer { .. }, 8) => None,
+                    (TCPrimType::Pointer { .. }, 1) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(7u32)
+                    }
+                    (TCPrimType::Pointer { .. }, 4) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(4u32)
+                    }
+                    (TCPrimType::Pointer { .. }, 8) => {}
                     (_, _) => unreachable!(),
-                };
-
-                if let Some(opcode) = opcode {
-                    tagged.op = opcode;
-                    self.opcodes.push(tagged);
                 }
             }
 
             // TODO fix this with array members
-            TCExprKind::Member { base, offset } => {
-                let base_bytes = base.ty.repr_size();
+            &TCExprKind::Member { base, offset } => {
                 self.translate_expr(env, base);
+
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+
+                let base_bytes = base.ty.repr_size();
                 let want_bytes = expr.ty.repr_size();
                 let top_bytes = base_bytes - want_bytes - offset;
-                tagged.op = Opcode::Pop { bytes: top_bytes };
-                self.opcodes.push(tagged);
-                tagged.op = Opcode::PopKeep {
-                    drop: *offset,
-                    keep: want_bytes,
-                };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(top_bytes);
+                if offset != 0 {
+                    self.func.opcodes.push(Opcode::Swap);
+                    self.func.opcodes.push(want_bytes);
+                    self.func.opcodes.push(offset);
+                    self.func.opcodes.push(Opcode::Pop);
+                    self.func.opcodes.push(offset);
+                }
             }
             &TCExprKind::PtrMember { base, offset } => {
-                let bytes = expr.ty.repr_size();
                 self.translate_expr(env, base);
-                if expr.ty.is_array() {
-                    tagged.op = Opcode::MakeTempU64(offset as u64);
-                    self.opcodes.push(tagged);
-                    tagged.op = Opcode::AddU64;
-                    self.opcodes.push(tagged);
-                } else {
-                    tagged.op = Opcode::Get {
-                        offset: offset,
-                        bytes,
-                    };
-                    self.opcodes.push(tagged);
+
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+
+                let bytes = expr.ty.repr_size();
+                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(offset as u64);
+                self.func.opcodes.push(Opcode::AddU64);
+                if !expr.ty.is_array() {
+                    self.func.opcodes.push(Opcode::Get);
+                    self.func.opcodes.push(bytes);
                 }
             }
 
             TCExprKind::Assign { target, value } => {
                 self.translate_expr(env, value);
-                let bytes = target.ty.size().into();
-                tagged.op = Opcode::PushDup { bytes };
-                self.opcodes.push(tagged);
+
+                let bytes: u32 = target.ty.size().into();
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(bytes);
                 self.translate_assign(env, target);
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                self.opcodes.push(tagged);
+
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::Set);
+                self.func.opcodes.push(bytes);
             }
 
             TCExprKind::MutAssign {
@@ -642,103 +692,78 @@ impl Assembler {
                 op_type,
             } => {
                 self.translate_assign(env, target);
-                tagged.op = Opcode::PushDup { bytes: 8 };
-                self.opcodes.push(tagged);
+
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(8u32);
 
                 let bytes = target.ty.repr_size();
-                tagged.op = Opcode::Get { offset: 0, bytes };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Get);
+                self.func.opcodes.push(bytes);
 
                 self.translate_expr(env, value);
 
-                self.translate_bin_op(*op, *op_type, tagged.loc);
+                self.translate_bin_op(*op, *op_type, expr.loc);
 
-                tagged.op = Opcode::PushDup { bytes };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(bytes);
 
-                let top = bytes * 2;
-                tagged.op = Opcode::Swap { top, bottom: 8 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(bytes * 2);
+                self.func.opcodes.push(8 as u32);
 
-                tagged.op = Opcode::Set { offset: 0, bytes };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Set);
+                self.func.opcodes.push(bytes);
             }
 
             TCExprKind::Deref(ptr) => {
                 self.translate_expr(env, ptr);
-                tagged.op = Opcode::Get {
-                    offset: 0,
-                    bytes: expr.ty.size().into(),
-                };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+
+                self.func.opcodes.push(Opcode::Get);
+                self.func.opcodes.push(expr.ty.size());
             }
             TCExprKind::Ref(lvalue) => self.translate_assign(env, lvalue),
 
             TCExprKind::Call { func, params } => {
                 self.translate_expr(env, func); // callee is sequenced before params
 
-                let rtype_size = expr.ty.repr_size();
-                tagged.op = Opcode::StackAlloc {
-                    bytes: rtype_size,
-                    symbol: META_NO_SYMBOL,
-                };
-                self.opcodes.push(tagged);
-
                 // Safety allocation to make sure varargs don't run off the stack
-                tagged.op = Opcode::StackAlloc {
-                    bytes: 0,
-                    symbol: META_NO_SYMBOL,
-                };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::StackAlloc);
+                self.func.opcodes.push(0u32);
 
                 for (idx, param) in params.iter().rev().enumerate() {
                     let bytes = param.ty.repr_size();
 
-                    tagged.op = Opcode::StackAlloc {
-                        bytes,
-                        symbol: META_NO_SYMBOL, // TODO this should be the parameter symbol
-                    };
-                    self.opcodes.push(tagged);
                     self.translate_expr(env, param);
-                    tagged.op = Opcode::PopIntoTopVar { offset: 0, bytes };
-                    self.opcodes.push(tagged);
+                    self.func.opcodes.push(Opcode::StackAlloc);
+                    self.func.opcodes.push(bytes);
+                    self.func.opcodes.push(Opcode::MakeSp);
+                    self.func.opcodes.push(0i16);
+                    self.func.opcodes.push(Opcode::Set);
+                    self.func.opcodes.push(bytes);
                 }
 
-                // Create a pointer to the return location
-                tagged.op = Opcode::StackAlloc {
-                    bytes: 8,
-                    symbol: META_NO_SYMBOL,
-                };
-                self.opcodes.push(tagged);
-                tagged.op = Opcode::MakeTempStackSpPtr {
-                    var: params.len() as i16 * -1 - 3,
-                    offset: 0,
-                };
-                self.opcodes.push(tagged);
-                tagged.op = Opcode::PopIntoTopVar {
-                    offset: 0,
-                    bytes: 8,
-                };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
 
-                tagged.op = Opcode::CallDyn;
-                self.opcodes.push(tagged);
+                // Allocation for return value
+                let rtype_size = expr.ty.repr_size();
+                self.func.opcodes.push(Opcode::StackAlloc);
+                self.func.opcodes.push(rtype_size);
 
-                tagged.op = Opcode::StackDealloc;
+                self.func.opcodes.push(Opcode::Call);
+
+                self.func.opcodes.push(Opcode::MakeSp);
+                self.func.opcodes.push(0i16);
+                self.func.opcodes.push(Opcode::Get);
+                self.func.opcodes.push(rtype_size);
+                self.func.opcodes.push(Opcode::StackDealloc); // for the return value
+
                 for _ in 0..params.len() {
-                    self.opcodes.push(tagged);
+                    self.func.opcodes.push(Opcode::StackDealloc);
                 }
-                self.opcodes.push(tagged); // for the pointer to the return location
-                self.opcodes.push(tagged); // for the safety allocation
-
-                if rtype_size == 0 {
-                    //
-                    tagged.op = Opcode::StackDealloc;
-                    self.opcodes.push(tagged);
-                } else {
-                    tagged.op = Opcode::StackAddToTemp;
-                    self.opcodes.push(tagged);
-                }
+                self.func.opcodes.push(Opcode::StackDealloc); // for the safety allocation
             }
 
             TCExprKind::Ternary {
@@ -747,40 +772,43 @@ impl Assembler {
                 if_true,
                 if_false,
             } => {
-                let else_label = self.labels.len() as u32;
-                self.labels.push(!0);
-                let end_label = self.labels.len() as u32;
-                self.labels.push(!0);
+                let else_label = self.func.labels.len() as u32;
+                self.func.labels.push(LabelData::uninit());
+                let end_label = self.func.labels.len() as u32;
+                self.func.labels.push(LabelData::uninit());
                 self.translate_expr(env, condition);
 
-                tagged.op = match cond_ty.size() {
-                    1 => Opcode::JumpIfZero8(else_label),
-                    2 => Opcode::JumpIfZero16(else_label),
-                    4 => Opcode::JumpIfZero32(else_label),
-                    8 => Opcode::JumpIfZero64(else_label),
+                let op = match cond_ty.size() {
+                    1 => Opcode::JumpIfZero8,
+                    2 => Opcode::JumpIfZero16,
+                    4 => Opcode::JumpIfZero32,
+                    8 => Opcode::JumpIfZero64,
                     _ => unreachable!(),
                 };
-                self.opcodes.push(tagged);
+
+                self.func.opcodes.push(op);
+                self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                let ptr = VarPointer::new_binary(0, else_label);
+                self.func.opcodes.push(ptr);
 
                 self.translate_expr(env, if_true);
-                tagged.op = Opcode::Jump(end_label);
-                self.opcodes.push(tagged);
-                self.labels[else_label as usize] = self.opcodes.len() as u32;
+                self.func.opcodes.push(Opcode::Jump);
+                self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                self.func.opcodes.push(VarPointer::new_binary(0, end_label));
+                self.func.labels[else_label as usize].offset = self.func.opcodes.data.len() as u32;
                 self.translate_expr(env, if_false);
-                self.labels[end_label as usize] = self.opcodes.len() as u32;
+                self.func.labels[end_label as usize].offset = self.func.opcodes.data.len() as u32;
             }
 
             TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
                 self.translate_expr(env, ecall);
-                tagged.op = Opcode::EcallDyn;
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Ecall);
             }
             TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
                 self.translate_expr(env, size);
                 self.translate_expr(env, ptr);
 
-                tagged.op = Opcode::PushDyn;
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::PushDyn);
             }
 
             x => unimplemented!("{:#?}", x),
@@ -788,25 +816,27 @@ impl Assembler {
     }
 
     pub fn translate_assign(&mut self, env: ASMEnv, assign: &TCAssignTarget) {
-        let mut tagged = TaggedOpcode::new(Opcode::Ret, assign.loc);
-
         match assign.kind {
             TCAssignTargetKind::Ptr(expr) => {
                 self.translate_expr(env, expr);
                 if assign.offset != 0 {
-                    tagged.op = Opcode::MakeTempU64(assign.offset as u64);
-                    self.opcodes.push(tagged);
-                    tagged.op = Opcode::AddU64;
-                    self.opcodes.push(tagged);
+                    self.func.opcodes.push(Opcode::Loc);
+                    self.func.opcodes.push(assign.loc);
+                    self.func.opcodes.push(Opcode::MakeU64);
+                    self.func.opcodes.push(assign.offset as u64);
+                    self.func.opcodes.push(Opcode::AddU64);
                 }
             }
             TCAssignTargetKind::LocalIdent { label } => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(assign.loc);
+
                 let var = env.var_offsets[label as usize];
-                tagged.op = Opcode::MakeTempStackFpPtr {
-                    var,
-                    offset: assign.offset,
-                };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::MakeFp);
+                self.func.opcodes.push(var);
+                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(assign.offset as u64);
+                self.func.opcodes.push(Opcode::AddU64);
             }
             _ => unimplemented!(),
         }
@@ -815,25 +845,25 @@ impl Assembler {
     pub fn translate_un_op(&mut self, op: TCUnaryOp, op_type: TCPrimType, loc: CodeLoc) {
         use TCPrimType::*;
         use TCUnaryOp::*;
-        let mut tagged = TaggedOpcode::new(Opcode::Ret, loc);
+
+        self.func.opcodes.push(Opcode::Loc);
+        self.func.opcodes.push(loc);
+
         match (op, op_type) {
             (Neg, I32) => {
-                tagged.op = Opcode::MakeTempI32(-1);
-                self.opcodes.push(tagged);
-                tagged.op = Opcode::MulI32;
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::MakeI32);
+                self.func.opcodes.push(-1i32);
+                self.func.opcodes.push(Opcode::MulI32);
             }
             _ => unimplemented!(),
         }
     }
 
     pub fn translate_bin_op(&mut self, op: BinOp, op_type: TCPrimType, loc: CodeLoc) {
-        let mut tagged = TaggedOpcode {
-            op: Opcode::StackDealloc,
-            loc,
-        };
+        self.func.opcodes.push(Opcode::Loc);
+        self.func.opcodes.push(loc);
 
-        tagged.op = match (op, op_type) {
+        let op = match (op, op_type) {
             (BinOp::Add, TCPrimType::U32) => Opcode::AddU32,
             (BinOp::Add, TCPrimType::I32) => Opcode::AddU32,
             (BinOp::Add, TCPrimType::U64) => Opcode::AddU64,
@@ -860,13 +890,15 @@ impl Assembler {
             (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
 
             (BinOp::Gt, TCPrimType::I32) => {
-                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(4u32);
+                self.func.opcodes.push(4u32);
                 Opcode::CompLtI32
             }
             (BinOp::Gt, TCPrimType::U64) => {
-                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
                 Opcode::CompLtU64
             }
 
@@ -876,13 +908,15 @@ impl Assembler {
             (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
 
             (BinOp::Geq, TCPrimType::I32) => {
-                tagged.op = Opcode::Swap { top: 4, bottom: 4 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(4u32);
+                self.func.opcodes.push(4u32);
                 Opcode::CompLeqI32
             }
             (BinOp::Geq, TCPrimType::U64) => {
-                tagged.op = Opcode::Swap { top: 8, bottom: 8 };
-                self.opcodes.push(tagged);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
                 Opcode::CompLeqU64
             }
 
@@ -904,10 +938,10 @@ impl Assembler {
             (op, ptype) => unimplemented!("op={:?} type={:?}", op, ptype),
         };
 
-        self.opcodes.push(tagged);
+        self.func.opcodes.push(op);
     }
 
-    pub fn assemble(mut self, env: &FileDb) -> Result<Program, Error> {
+    pub fn assemble(mut self, env: &FileDb) -> Result<BinaryData, Error> {
         let no_main = || error!("missing main function definition");
         let main_sym = if let Some(sym) = env.translate.get("main") {
             *sym
@@ -923,106 +957,25 @@ impl Assembler {
         let main_func_idx = self.func_linkage.get(&main_link_name).ok_or_else(no_main)?;
 
         let main_func = &self.functions[*main_func_idx as usize];
-        let (main_idx, main_loc) = main_func.func_header.ok_or_else(no_main)?;
+        let (main_ptr, main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
-        let runtime_length = INIT_MAIN.len() as u32; // No overflow here because len is predefined
-        let main_idx = main_idx + runtime_length;
+        self.data.write(BINARY_INIT.main_call, main_ptr);
 
-        let mut opcodes: Vec<TaggedOpcode> = INIT_MAIN
-            .iter()
-            .map(|&op| TaggedOpcode { op, loc: main_loc })
-            .collect();
-        opcodes[INIT_MAIN_PLACEHOLDER_IDX] = TaggedOpcode {
-            op: Opcode::MakeTempU64(main_idx as u64),
-            loc: main_loc,
-        };
-        opcodes.append(&mut self.opcodes);
-
-        for op in opcodes.iter_mut() {
-            match &mut op.op {
-                Opcode::Jump(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfZero8(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfZero16(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfZero32(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfZero64(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfNotZero8(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfNotZero16(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfNotZero32(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                Opcode::JumpIfNotZero64(target) => {
-                    *target = self.labels[*target as usize] + runtime_length;
-                }
-                _ => {}
-            }
-        }
-
-        for &temp in &self.function_temps {
-            let idx = temp + runtime_length;
-
-            if let Opcode::MakeTempU32(func) = opcodes[idx as usize].op {
-                let function = &self.functions[func as usize];
-                if let Some((fptr, _loc)) = function.func_header {
-                    let fptr = fptr + runtime_length;
-                    opcodes[idx as usize].op = Opcode::MakeTempU64(fptr as u64);
-                } else {
-                    let func_loc = function.decl_loc;
-                    return Err(error!(
-                        "couldn't find definition for function",
-                        opcodes[idx as usize].loc, "called here", func_loc, "declared here"
-                    ));
-                }
+        for (temp, loc) in &self.function_temps {
+            let ptr: VarPointer = self.data.read(*temp).unwrap();
+            let function = &self.functions[ptr.offset() as usize];
+            if let Some((fptr, _loc)) = function.func_header {
+                self.data.write(*temp, fptr);
             } else {
-                panic!("invariant ruined");
+                let func_loc = function.decl_loc;
+                return Err(error!(
+                    "couldn't find definition for function",
+                    *loc, "called here", func_loc, "declared here"
+                ));
             }
         }
 
-        use core::mem::{align_of, replace, size_of};
-        let file_size = env.size();
-
-        let symbols_size = align_usize(
-            self.symbols.len() * size_of::<RuntimeVar>(),
-            align_of::<TaggedOpcode>(),
-        );
-
-        let opcodes_size = opcodes.len() * size_of::<TaggedOpcode>();
-
-        let var_data_size = align_usize(self.data.data.len(), align_of::<Var>());
-        let vars_size = self.data.vars.len() * size_of::<Var>();
-        let data_size = var_data_size + vars_size;
-
-        let total_size = file_size + symbols_size + opcodes_size + data_size;
-        let buckets = BucketListFactory::with_capacity(total_size + 16);
-        let frame = buckets.frame(total_size).unwrap();
-
-        let files = FileDbRef::new(&frame, env);
-        let symbols = frame.add_array(replace(&mut self.symbols, Vec::new()));
-        let ops = frame.add_array(opcodes);
-        let data = self.data.write_to_ref(frame);
-
-        let program = Program {
-            buckets,
-            files,
-            symbols,
-            data,
-            ops,
-        };
-
-        return Ok(program);
+        return Ok(mem::replace(&mut self.data, BinaryData::new()));
     }
 }
 

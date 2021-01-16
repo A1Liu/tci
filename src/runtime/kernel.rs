@@ -1,9 +1,12 @@
 use super::error::*;
 use super::memory::*;
 use super::types::*;
+use crate::filedb::*;
 use crate::util::*;
+use codespan_reporting::files::Files;
+use codespan_reporting::term::termcolor::WriteColor;
 use core::mem;
-use std::io::Write;
+use std::io::{Error as IOError, Write};
 use std::ops::{BitAnd, BitOr, BitXor};
 
 /// Exit the program with an error code
@@ -28,24 +31,198 @@ pub const ECALL_THROW_ERROR: u32 = 5;
 /// Calls Printf
 pub const ECALL_PRINTF: u32 = 6;
 
-#[derive(Debug)]
-pub struct Kernel {
+pub struct Runtime {
     output: StringArray<WriteEvent>,
     memory: Memory,
+    status: RuntimeStatus,
 }
 
-impl Kernel {
+impl Runtime {
     pub fn new(binary: &BinaryData) -> Self {
         Self {
             output: StringArray::new(),
             memory: Memory::new(&binary),
+            status: RuntimeStatus::Running,
         }
     }
 
-    pub fn run_op_internal(&mut self) -> Result<(), IError> {
-        let opcode: Opcode = self.memory.read_pc()?;
+    pub fn loc(&self) -> CodeLoc {
+        return self.memory.loc;
+    }
 
-        match opcode {
+    pub fn run_debug(&mut self, files: &FileDb) -> i32 {
+        loop {
+            match self.run_op_debug(files) {
+                RuntimeStatus::Exited(e) => return e,
+                RuntimeStatus::Running => {}
+            }
+        }
+    }
+
+    pub fn run(&mut self) -> i32 {
+        loop {
+            match self.run_op() {
+                RuntimeStatus::Exited(e) => return e,
+                RuntimeStatus::Running => {}
+            }
+        }
+    }
+
+    pub fn run_op_count(&mut self, count: u32) -> RuntimeStatus {
+        for _ in 0..count {
+            match self.run_op() {
+                RuntimeStatus::Running => {}
+                x => return x,
+            }
+        }
+
+        return self.status;
+    }
+
+    pub fn print_callstack<'a>(&mut self, files: &'a impl Files<'a, FileId = u32>) {
+        let mut out = StringWriter::new();
+        self.write_callstack(&mut out, files).unwrap();
+        self.output
+            .push(WriteEvent::StderrWrite, &out.into_string());
+    }
+
+    pub fn write_callstack<'a>(
+        &self,
+        out: &mut impl WriteColor,
+        files: &'a impl Files<'a, FileId = u32>,
+    ) -> Result<(), IOError> {
+        use codespan_reporting::diagnostic::*;
+        use codespan_reporting::term::*;
+
+        let config = Config {
+            display_style: DisplayStyle::Rich,
+            tab_width: 4,
+            styles: Styles::default(),
+            chars: Chars::default(),
+            start_context_lines: 3,
+            end_context_lines: 1,
+        };
+
+        for frame in self.memory.callstack.iter().skip(1) {
+            let diagnostic = Diagnostic::new(Severity::Void)
+                .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
+            emit(out, &config, files, &diagnostic)?;
+        }
+
+        let loc = self.memory.loc;
+        if loc != NO_FILE {
+            let diagnostic =
+                Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);
+            emit(out, &config, files, &diagnostic)?;
+        }
+
+        return Ok(());
+    }
+
+    pub fn run_op(&mut self) -> RuntimeStatus {
+        match self.status {
+            RuntimeStatus::Running => {}
+            _ => return self.status,
+        }
+
+        let op = match self.memory.read_pc() {
+            Ok(op) => op,
+            Err(e) => {
+                self.status = RuntimeStatus::Exited(1);
+                let mut out = StringWriter::new();
+
+                if self.output.len() > 0 {
+                    let TS(t, s) = &self.output[self.output.len() - 1];
+                    if !s.ends_with("\n") {
+                        write!(out, "\n").unwrap();
+                    }
+                }
+
+                write!(out, "{}: {}\n", e.short_name, e.message).unwrap();
+                self.output
+                    .push(WriteEvent::StderrWrite, &out.into_string());
+
+                return self.status;
+            }
+        };
+
+        if let Err(e) = self.run_op_internal(op) {
+            self.status = RuntimeStatus::Exited(1);
+            let mut out = StringWriter::new();
+
+            if self.output.len() > 0 {
+                let TS(t, s) = &self.output[self.output.len() - 1];
+                if !s.ends_with("\n") {
+                    write!(out, "\n").unwrap();
+                }
+            }
+
+            write!(out, "{}: {}\n", e.short_name, e.message).unwrap();
+            self.output
+                .push(WriteEvent::StderrWrite, &out.into_string());
+        }
+
+        return self.status;
+    }
+
+    pub fn run_op_debug(&mut self, files: &FileDb) -> RuntimeStatus {
+        match self.status {
+            RuntimeStatus::Running => {}
+            _ => return self.status,
+        }
+
+        let op = match self.memory.read_pc() {
+            Ok(op) => op,
+            Err(e) => {
+                self.status = RuntimeStatus::Exited(1);
+                let mut out = StringWriter::new();
+
+                if self.output.len() > 0 {
+                    let TS(t, s) = &self.output[self.output.len() - 1];
+                    if !s.ends_with("\n") {
+                        write!(out, "\n").unwrap();
+                    }
+                }
+
+                write!(out, "{}: {}\n", e.short_name, e.message).unwrap();
+                self.output
+                    .push(WriteEvent::StderrWrite, &out.into_string());
+
+                return self.status;
+            }
+        };
+
+        if self.loc() != NO_FILE {
+            print!("{:?}\n{}", op, files.display_loc(self.loc()).unwrap());
+        } else {
+            println!("{:?} NO_FILE", op);
+        }
+
+        println!("{:?}", self.memory.expr_stack);
+        let ret = self.run_op_internal(op);
+        println!("{:?}\n", self.memory.expr_stack);
+
+        if let Err(e) = ret {
+            self.status = RuntimeStatus::Exited(1);
+            let mut out = StringWriter::new();
+
+            if self.output.len() > 0 {
+                let TS(t, s) = &self.output[self.output.len() - 1];
+                if !s.ends_with("\n") {
+                    write!(out, "\n").unwrap();
+                }
+            }
+
+            write!(out, "{}: {}\n", e.short_name, e.message).unwrap();
+            self.output
+                .push(WriteEvent::StderrWrite, &out.into_string());
+        }
+
+        return self.status;
+    }
+
+    pub fn run_op_internal(&mut self, op: Opcode) -> Result<(), IError> {
+        match op {
             Opcode::Func => {
                 // this opcode is handled by Memory
                 return Err(ierror!(
@@ -64,6 +241,7 @@ impl Kernel {
             Opcode::StackDealloc => {
                 self.memory.pop_stack_var()?;
             }
+
             Opcode::MakeI8 => {
                 let val: i8 = self.memory.read_pc()?;
                 self.memory.push(val);
@@ -91,11 +269,6 @@ impl Kernel {
             Opcode::MakeF64 => {
                 let val: f64 = self.memory.read_pc()?;
                 self.memory.push(val);
-            }
-            Opcode::MakeBinaryPtr => {
-                let var = self.memory.read_pc()?;
-                let offset = self.memory.read_pc()?;
-                self.memory.push(VarPointer::new_binary(var, offset));
             }
             Opcode::MakeSp => {
                 let var_offset: i16 = self.memory.read_pc()?;
@@ -188,7 +361,6 @@ impl Kernel {
             Opcode::Set => {
                 let bytes = self.memory.read_pc()?;
                 let ptr: VarPointer = self.memory.pop()?;
-                self.memory.dup_bytes(bytes)?;
                 self.memory.write_bytes_from_stack(ptr, bytes)?;
             }
 
@@ -417,7 +589,7 @@ impl Kernel {
                 match ecall {
                     ECALL_EXIT => {
                         let exit = i32::from_le(self.memory.pop()?);
-                        // TODO exit
+                        self.status = RuntimeStatus::Exited(exit);
                     }
 
                     ECALL_IS_SAFE => {

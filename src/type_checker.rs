@@ -434,7 +434,7 @@ pub fn parse_struct_decl(
 
     let label = locals.open_struct_defn(id, loc)?;
 
-    let mut align = 0;
+    let mut align = 1;
     let mut size = 0;
     let mut fields = HashMap::new();
 

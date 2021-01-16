@@ -1,9 +1,7 @@
 use crate::filedb::*;
-use crate::interpreter::Runtime;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
-use core::mem;
 use std::fs::read_to_string;
 
 fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
@@ -19,30 +17,25 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
         }
     };
 
-    mem::drop(files);
+    println!("compiled");
+    let mut runtime = Runtime::new(&program);
 
-    // for (idx, op) in program.ops.iter().enumerate() {
-    //     println!("op {}: {:?}", idx, op.op);
-    // }
-
-    let mut runtime = Runtime::new(program, StringArray::new());
-
-    let diag = runtime.run(&mut writer);
-    let code = match diag.status {
-        RuntimeStatus::Exited(code) => code,
-        RuntimeStatus::ErrorExited(err) => {
-            println!("error is: {:?}", err);
-            1
-        }
-        x => panic!("runtime status is: {:?}", x),
-    };
-
+    let code = runtime.run_debug(&*files);
     println!("return code: {}", code);
+
+    if code != 0 {
+        runtime.print_callstack(&*files);
+    }
+
+    let mut writer = StringWriter::new();
+    for TS(_, s) in &runtime.events() {
+        writer.write(s.as_bytes()).unwrap();
+    }
+
     let output = writer.into_string();
 
     if code != 0 {
         println!("{}", output);
-        println!("pc: {}", runtime.pc());
         panic!();
     }
 
@@ -50,7 +43,7 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     match read_to_string(output_file) {
         Ok(expected) => {
             if output != expected.replace("\r\n", "\n") {
-                println!("left: {:?}\nright: {:?}", output, expected);
+                println!("left:  {:?}\nright: {:?}", output, expected);
                 panic!();
             }
         }
@@ -74,36 +67,36 @@ fn test_file_compile_should_fail(filename: &str) {
     }
 }
 
-fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
-    let config = codespan_reporting::term::Config::default();
-    let mut files = FileDb::new(true);
-    let mut writer = StringWriter::new();
-
-    files.add_from_fs(filename).unwrap();
-
-    let program = match compile(&mut files) {
-        Ok(program) => program,
-        Err(errs) => {
-            emit_err(&errs, &files, &mut writer);
-            println!("{}", writer.into_string());
-            panic!();
-        }
-    };
-    mem::drop(files);
-
-    let mut runtime = Runtime::new(program, StringArray::new());
-    let diag = runtime.run(&mut writer);
-    for (idx, op) in runtime.program.ops.iter().enumerate() {
-        println!("op {}: {:?}", idx, op);
-    }
-
-    let err = match diag.status {
-        RuntimeStatus::ErrorExited(err) => err,
-        x => panic!("{:?}", x),
-    };
-
-    assert_eq!(err.short_name, expected_err);
-}
+// fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
+//     let config = codespan_reporting::term::Config::default();
+//     let mut files = FileDb::new(true);
+//     let mut writer = StringWriter::new();
+//
+//     files.add_from_fs(filename).unwrap();
+//
+//     let program = match compile(&mut files) {
+//         Ok(program) => program,
+//         Err(errs) => {
+//             emit_err(&errs, &files, &mut writer);
+//             println!("{}", writer.into_string());
+//             panic!();
+//         }
+//     };
+//     mem::drop(files);
+//
+//     let mut runtime = Runtime::new(program, StringArray::new());
+//     let diag = runtime.run(&mut writer);
+//     for (idx, op) in runtime.program.ops.iter().enumerate() {
+//         println!("op {}: {:?}", idx, op);
+//     }
+//
+//     let err = match diag.status {
+//         RuntimeStatus::ErrorExited(err) => err,
+//         x => panic!("{:?}", x),
+//     };
+//
+//     assert_eq!(err.short_name, expected_err);
+// }
 
 macro_rules! gen_test_should_succeed {
     ( $( $ident:tt ),* ) => {
