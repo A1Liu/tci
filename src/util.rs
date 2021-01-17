@@ -29,23 +29,38 @@ macro_rules! debug {
 }
 
 macro_rules! error {
-    ($arg1:expr) => {
-        $crate::util::Error::new($arg1, vec![])
-    };
+    ($arg1:expr) => {{
+        let mut s = $arg1.to_string();
+        if cfg!(debug_assertions) {
+            s += &format!(" (in compiler at {}:{})", file!(), line!());
+        }
 
-    ($msg:expr, $loc1:expr, $msg1:expr) => {
+        $crate::util::Error::new(s, vec![])
+    }};
+
+    ($msg:expr, $loc1:expr, $msg1:expr) => {{
+        let mut s = $msg.to_string();
+        if cfg!(debug_assertions) {
+            s += &format!(" (in compiler at {}:{})", file!(), line!());
+        }
+
         $crate::util::Error::new(
-            $msg,
+            s,
             vec![$crate::util::ErrorSection {
                 location: $loc1,
                 message: $msg1.to_string(),
             }],
         )
-    };
+    }};
 
-    ($msg:expr, $loc1:expr, $msg1:expr, $loc2:expr, $msg2:expr) => {
+    ($msg:expr, $loc1:expr, $msg1:expr, $loc2:expr, $msg2:expr) => {{
+        let mut s = $msg.to_string();
+        if cfg!(debug_assertions) {
+            s += &format!(" (in compiler at {}:{})", file!(), line!());
+        }
+
         $crate::util::Error::new(
-            $msg,
+            s,
             vec![
                 $crate::util::ErrorSection {
                     location: $loc1,
@@ -57,7 +72,7 @@ macro_rules! error {
                 },
             ],
         )
-    };
+    }};
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -79,9 +94,9 @@ impl Into<Label<u32>> for &ErrorSection {
 }
 
 impl Error {
-    pub fn new(message: &str, sections: Vec<ErrorSection>) -> Error {
+    pub fn new(message: String, sections: Vec<ErrorSection>) -> Error {
         Self {
-            message: message.to_string(),
+            message: message,
             sections,
         }
     }

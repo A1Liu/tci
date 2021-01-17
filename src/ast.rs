@@ -42,9 +42,13 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ExprKind {
-    IntLiteral(i32),
-    CharLiteral(i8),
-    StringLiteral(&'static str),
+    IntLit(i32),
+    ULit(u32),
+    ULLLit(u64),
+    FloatLit(f32),
+    DoubleLit(f64),
+    CharLit(i8),
+    StringLit(&'static str),
     ParenList(&'static [Expr]),
     Ident(u32),
     BinOp(BinOp, &'static Expr, &'static Expr),

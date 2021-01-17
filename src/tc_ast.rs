@@ -45,6 +45,8 @@ pub enum TCPrimType {
     I64, // long
     I8,  // char
     U8,  // unsigned char
+    F32, // float
+    F64, // double
     Pointer { stride: n32 },
 }
 
@@ -65,8 +67,9 @@ impl TCPrimType {
     pub fn size(self) -> u8 {
         match self {
             TCPrimType::I8 | TCPrimType::U8 => return 1,
-            TCPrimType::I32 | TCPrimType::U32 => return 4,
-            TCPrimType::I64 | TCPrimType::U64 | TCPrimType::Pointer { .. } => return 8,
+            TCPrimType::I32 | TCPrimType::U32 | TCPrimType::F32 => return 4,
+            TCPrimType::I64 | TCPrimType::U64 | TCPrimType::F64 => return 8,
+            TCPrimType::Pointer { .. } => return 8,
         }
     }
 }
@@ -156,6 +159,8 @@ pub enum TCTypeBase {
     I64, // long
     I8,  // char
     U8,  // unsigned char
+    F32, // float
+    F64, // double
     Void,
     NamedStruct {
         ident: u32,
@@ -176,8 +181,8 @@ impl TCTypeBase {
     pub fn size(&self) -> n32 {
         match self {
             TCTypeBase::I8 | TCTypeBase::U8 => 1.into(),
-            TCTypeBase::U32 | TCTypeBase::I32 => 4.into(),
-            TCTypeBase::U64 | TCTypeBase::I64 => 8.into(),
+            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4.into(),
+            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8.into(),
             TCTypeBase::Void => return n32::NULL,
             TCTypeBase::NamedStruct { sa, .. } => sa.size,
             TCTypeBase::UnnamedStruct { sa, .. } => sa.size,
@@ -189,8 +194,8 @@ impl TCTypeBase {
     pub fn align(&self) -> n32 {
         match self {
             TCTypeBase::I8 | TCTypeBase::U8 => 1.into(),
-            TCTypeBase::U32 | TCTypeBase::I32 => 4.into(),
-            TCTypeBase::U64 | TCTypeBase::I64 => 8.into(),
+            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4.into(),
+            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8.into(),
             TCTypeBase::Void => return n32::NULL,
             TCTypeBase::NamedStruct { sa, .. } => sa.align,
             TCTypeBase::UnnamedStruct { sa, .. } => sa.align,
@@ -255,6 +260,7 @@ pub trait TCTy {
             TCTypeBase::I8 | TCTypeBase::U8 => return None,
             TCTypeBase::I32 | TCTypeBase::U32 => return None,
             TCTypeBase::I64 | TCTypeBase::U64 => return None,
+            TCTypeBase::F32 | TCTypeBase::F64 => return None,
             TCTypeBase::Void => return None,
             TCTypeBase::UnnamedStruct { loc, .. } => return Some(LabelOrLoc::Loc(loc)),
             TCTypeBase::NamedStruct { ident, .. } => return Some(LabelOrLoc::Ident(ident)),
@@ -274,6 +280,8 @@ pub trait TCTy {
             TCTypeBase::U32 => write!(writer, "unsigned int"),
             TCTypeBase::I64 => write!(writer, "long"),
             TCTypeBase::U64 => write!(writer, "unsigned long"),
+            TCTypeBase::F32 => write!(writer, "float"),
+            TCTypeBase::F64 => write!(writer, "double"),
             TCTypeBase::Void => write!(writer, "void"),
             TCTypeBase::NamedStruct { ident, .. } => {
                 write!(writer, "struct {}", symbols.to_str(ident).unwrap())
@@ -444,6 +452,7 @@ pub trait TCTy {
         match self.base() {
             TCTypeBase::I8 | TCTypeBase::U8 => return true,
             TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
+            TCTypeBase::F32 | TCTypeBase::F64 => return false,
             TCTypeBase::Void => return false,
             TCTypeBase::NamedStruct { .. } | TCTypeBase::UnnamedStruct { .. } => return false,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_integer(),
@@ -487,6 +496,7 @@ pub trait TCTy {
         match self.base() {
             TCTypeBase::I8 | TCTypeBase::U8 => return true,
             TCTypeBase::I32 | TCTypeBase::U32 | TCTypeBase::I64 | TCTypeBase::U64 => return true,
+            TCTypeBase::F32 | TCTypeBase::F64 => return true,
             TCTypeBase::Void => return false,
             TCTypeBase::NamedStruct { sa, .. } => return sa.size != n32::NULL,
             TCTypeBase::UnnamedStruct { sa, .. } => return sa.size != n32::NULL,
@@ -496,41 +506,28 @@ pub trait TCTy {
     }
 
     fn repr_size(&self) -> u32 {
-        let mut multiplier = 1;
-        let mut is_array = false;
         for modifier in self.mods() {
             match modifier {
-                TCTypeModifier::Pointer => {
-                    if is_array {
-                        return multiplier * 8;
-                    } else {
-                        return 8;
-                    }
-                }
+                TCTypeModifier::Pointer => return 8,
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
                 | TCTypeModifier::UnknownParams => return 8,
                 TCTypeModifier::Param(_) | TCTypeModifier::VarargsParam => unreachable!(),
-                TCTypeModifier::Array(i) => {
-                    multiplier *= i;
-                    is_array = true;
-                }
+                TCTypeModifier::Array(i) => return 8,
                 TCTypeModifier::VariableArray => return 8,
             }
         }
 
-        let base = match self.base() {
+        return match self.base() {
             TCTypeBase::I8 | TCTypeBase::U8 => 1,
-            TCTypeBase::U32 | TCTypeBase::I32 => 4,
-            TCTypeBase::U64 | TCTypeBase::I64 => 8,
+            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4,
+            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8,
             TCTypeBase::Void => return 0,
             TCTypeBase::NamedStruct { sa, .. } => sa.size.into(),
             TCTypeBase::UnnamedStruct { sa, .. } => sa.size.into(),
             TCTypeBase::InternalTypedef(def) => def.repr_size(),
             TCTypeBase::Typedef { refers_to, .. } => refers_to.repr_size(),
         };
-
-        return (multiplier * base).into();
     }
 
     fn align(&self) -> n32 {
@@ -619,6 +616,8 @@ pub trait TCTy {
             TCTypeBase::U32 => Some(TCPrimType::U32),
             TCTypeBase::I64 => Some(TCPrimType::I64),
             TCTypeBase::U64 => Some(TCPrimType::U64),
+            TCTypeBase::F32 => Some(TCPrimType::F32),
+            TCTypeBase::F64 => Some(TCPrimType::F64),
             TCTypeBase::Void => None,
             TCTypeBase::NamedStruct { .. } => None,
             TCTypeBase::UnnamedStruct { .. } => None,
@@ -1062,11 +1061,14 @@ pub enum TCBuiltin {
 #[derive(Debug, Clone, Copy)]
 pub enum TCExprKind {
     Uninit,
-    I8Literal(i8),
-    I32Literal(i32),
-    I64Literal(i64),
-    U64Literal(u64),
-    StringLiteral(&'static str),
+    I8Lit(i8),
+    I32Lit(i32),
+    U32Lit(u32),
+    I64Lit(i64),
+    U64Lit(u64),
+    F32Lit(f32),
+    F64Lit(f64),
+    StringLit(&'static str),
     LocalIdent {
         label: u32,
     },

@@ -175,26 +175,26 @@ rule ident() -> (u32, CodeLoc) = i:raw_ident() {?
     }
 }
 
-rule int() -> (i32, CodeLoc) = pos:position!() n:$[TokenKind::IntLiteral(_)] {
+rule int() -> (i32, CodeLoc) = pos:position!() n:$[TokenKind::IntLit(_)] {
     match n[0] {
-        TokenKind::IntLiteral(n) => (n, env.locs[pos]),
+        TokenKind::IntLit(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
 
-rule char() -> (i8, CodeLoc) = pos:position!() n:$[TokenKind::CharLiteral(_)] {
+rule char() -> (i8, CodeLoc) = pos:position!() n:$[TokenKind::CharLit(_)] {
     match n[0] {
-        TokenKind::CharLiteral(n) => (n, env.locs[pos]),
+        TokenKind::CharLit(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
 
-rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([TokenKind::StringLiteral(_)]+) pos2:position!() {
+rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([TokenKind::StringLit(_)]+) pos2:position!() {
     let mut string = String::new();
     let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
     for token in n {
         let s = match token {
-            TokenKind::StringLiteral(s) => s,
+            TokenKind::StringLit(s) => s,
             _ => unreachable!(),
         };
 
@@ -209,7 +209,7 @@ rule constant_expr() -> Expr =
         let (n, loc) = n;
 
         Expr {
-            kind: ExprKind::IntLiteral(n),
+            kind: ExprKind::IntLit(n),
             loc,
         }
     } /
@@ -217,7 +217,7 @@ rule constant_expr() -> Expr =
         let (n, loc) = n;
 
         Expr {
-            kind: ExprKind::StringLiteral(n),
+            kind: ExprKind::StringLit(n),
             loc,
         }
     } /
@@ -225,7 +225,7 @@ rule constant_expr() -> Expr =
         let (n, loc) = n;
 
         Expr {
-            kind: ExprKind::CharLiteral(n),
+            kind: ExprKind::CharLit(n),
             loc,
         }
     }

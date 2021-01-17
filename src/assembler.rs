@@ -436,31 +436,31 @@ impl Assembler {
 
     pub fn translate_expr(&mut self, env: ASMEnv, expr: &TCExpr) {
         match &expr.kind {
-            TCExprKind::I8Literal(val) => {
+            TCExprKind::I8Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::MakeI8);
                 self.func.opcodes.push(*val);
             }
-            TCExprKind::I32Literal(val) => {
+            TCExprKind::I32Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::MakeI32);
                 self.func.opcodes.push(*val);
             }
-            TCExprKind::I64Literal(val) => {
+            TCExprKind::I64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::MakeI64);
                 self.func.opcodes.push(*val);
             }
-            TCExprKind::U64Literal(val) => {
+            TCExprKind::U64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::MakeU64);
                 self.func.opcodes.push(*val);
             }
-            TCExprKind::StringLiteral(val) => {
+            TCExprKind::StringLit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 let ptr = self.data.add_slice(val.as_bytes());

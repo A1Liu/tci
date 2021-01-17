@@ -7,13 +7,16 @@ use std::collections::HashMap;
 
 pub const CLOSING_CHAR: u8 = !0;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenKind {
     Ident(u32),
-    TypeIdent(u32),
-    IntLiteral(i32),
-    StringLiteral(&'static str),
-    CharLiteral(i8),
+    IntLit(i32),
+    ULit(u32),
+    ULLLit(u64),
+    FloatLit(f32),
+    DoubleLit(f64),
+    StringLit(&'static str),
+    CharLit(i8),
 
     Pragma(&'static str),
 
@@ -106,13 +109,20 @@ pub enum MacroTok {
     Tok(TokenKind),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RawTok {
     Tok(TokenKind),
+    Include(u32),
+    Ifdef(u32),
+    Ifndef(u32),
+    Endif,
+    Noop,
+    Else,
+
+    If,
     Define(u32),
     FuncDefine(u32),
-    EndDefine,
-    Include(u32),
+    EndPPLine,
 }
 
 #[derive(Debug, Clone)]
@@ -285,6 +295,7 @@ impl<'a> Lexer<'a> {
             };
 
             match tok {
+                RawTok::Noop => continue,
                 RawTok::Include(id) => return Ok(Some(id)),
                 RawTok::Tok(TokenKind::Ident(id)) => {
                     let (mac, loc) = if let Some((mac, loc)) = self.macros.get(&id) {
@@ -301,6 +312,37 @@ impl<'a> Lexer<'a> {
                     self.toks.push(tok);
                     self.locs.push(lexer.loc());
                 }
+
+                RawTok::If => {
+                    let should_write = self.eval_macro_if(lexer, data)?;
+                    let prev_should_write = lexer.should_write.last().map(|a| *a).unwrap_or(true);
+
+                    lexer.should_write.push(should_write && prev_should_write);
+                }
+                RawTok::Ifdef(def) => {
+                    let should_write = self.macros.contains_key(&def);
+                    let prev_should_write = lexer.should_write.last().map(|a| *a).unwrap_or(true);
+
+                    lexer.should_write.push(should_write && prev_should_write);
+                }
+                RawTok::Ifndef(def) => {
+                    let should_write = !self.macros.contains_key(&def);
+                    let prev_should_write = lexer.should_write.last().map(|a| *a).unwrap_or(true);
+
+                    lexer.should_write.push(should_write && prev_should_write);
+                }
+                RawTok::Endif => {
+                    let loc = lexer.loc();
+                    let or_else = move || error!("#endif without matching #if", loc, "found here");
+                    lexer.should_write.pop().ok_or_else(or_else)?;
+                }
+                RawTok::Else => {
+                    let loc = lexer.loc();
+                    let or_else = move || error!("#else without matching #if", loc, "found here");
+                    let last = lexer.should_write.last_mut().ok_or_else(or_else)?;
+                    *last = !*last;
+                }
+
                 RawTok::Define(id) => {
                     let (_macro, loc) = self.parse_macro_defn(lexer, data, lexer.loc())?;
                     self.macros.insert(id, (_macro, loc));
@@ -309,9 +351,87 @@ impl<'a> Lexer<'a> {
                     let (_macro, loc) = self.parse_func_macro_defn(lexer, data, lexer.loc())?;
                     self.macros.insert(id, (_macro, loc));
                 }
-                RawTok::EndDefine => panic!("this should never happen"),
+                RawTok::EndPPLine => panic!("this should never happen"),
             }
         }
+    }
+
+    pub fn eval_macro_if(&mut self, lexer: &mut SimpleLexer, data: &[u8]) -> Result<bool, Error> {
+        let val = self.eval_macro_or(lexer, data)?;
+        let end_line = self.expect_raw_tok(lexer, data)?;
+        if end_line != RawTok::EndPPLine {
+            return Err(error!("expected newline", lexer.loc(), "here"));
+        }
+
+        return Ok(val);
+    }
+
+    pub fn eval_macro_or(&mut self, lexer: &mut SimpleLexer, data: &[u8]) -> Result<bool, Error> {
+        return self.eval_macro_and(lexer, data);
+    }
+
+    pub fn eval_macro_and(&mut self, lexer: &mut SimpleLexer, data: &[u8]) -> Result<bool, Error> {
+        return self.eval_macro_not(lexer, data);
+    }
+
+    pub fn eval_macro_not(&mut self, lexer: &mut SimpleLexer, data: &[u8]) -> Result<bool, Error> {
+        // remember the '!=' operator is like a boolean XOR
+        // let target = false;
+        return self.eval_macro_defined(lexer, data);
+    }
+
+    pub fn eval_macro_defined(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+    ) -> Result<bool, Error> {
+        let tok = self.expect_tok(lexer, data)?;
+        if let TokenKind::Ident(id) = tok {
+            if id != MACRO_DEFINED {
+                return Err(error!(
+                    "expected call to 'defined'",
+                    lexer.loc(),
+                    "token found here should be the word 'defined'"
+                ));
+            }
+        } else {
+            return Err(error!(
+                "expected call to 'defined'",
+                lexer.loc(),
+                "token found here should be the word 'defined'"
+            ));
+        }
+
+        let tok = self.expect_tok(lexer, data)?;
+        if tok != TokenKind::LParen {
+            return Err(error!(
+                "expected call to 'defined'",
+                lexer.loc(),
+                "token found here should be a '('"
+            ));
+        }
+
+        let tok = self.expect_tok(lexer, data)?;
+        let id = if let TokenKind::Ident(id) = tok {
+            id
+        } else {
+            return Err(error!(
+                "expected call to 'defined'",
+                lexer.loc(),
+                "token found here should be the word 'defined'"
+            ));
+        };
+
+        let tok = self.expect_tok(lexer, data)?;
+        if tok != TokenKind::RParen {
+            return Err(error!(
+                "expected call to 'defined'",
+                lexer.loc(),
+                "token found here should be a ')'"
+            ));
+        }
+
+        return Ok(self.macros.contains_key(&id));
     }
 
     pub fn expand_macro(
@@ -444,7 +564,7 @@ impl<'a> Lexer<'a> {
 
         while let Some(tok) = toks.next() {
             let id = match tok {
-                TokenKind::Ident(id) | TokenKind::TypeIdent(id) => *id,
+                TokenKind::Ident(id) => *id,
                 _ => {
                     output.push(*tok);
                     continue;
@@ -565,7 +685,7 @@ impl<'a> Lexer<'a> {
 
         loop {
             let next = match self.expect_raw_tok(lexer, data)? {
-                RawTok::EndDefine => {
+                RawTok::EndPPLine => {
                     let loc = l_from(define_loc, loc);
                     if out.len() == 0 {
                         return Ok((Macro::Marker, loc));
@@ -612,7 +732,7 @@ impl<'a> Lexer<'a> {
         let mut loc = lexer.loc();
         loop {
             let next = match self.expect_raw_tok(lexer, data)? {
-                RawTok::EndDefine => {
+                RawTok::EndPPLine => {
                     let loc = l_from(define_loc, loc);
                     return Ok((Macro::Func { params, toks }, loc));
                 }
@@ -700,6 +820,7 @@ pub struct SimpleLexer {
     pub begin: usize,
     pub current: usize,
     pub file: u32,
+    pub should_write: Vec<bool>, // yeah yeah yeah whatever
 }
 
 impl SimpleLexer {
@@ -710,10 +831,35 @@ impl SimpleLexer {
             begin: 0,
             current: 0,
             file,
+            should_write: Vec::new(),
         }
     }
 
     pub fn lex(
+        &mut self,
+        buckets: &impl Allocator<'static>,
+        symbols: &mut Symbols,
+        files: &FileDb,
+        data: &[u8],
+    ) -> Result<Option<RawTok>, Error> {
+        let tok = self._lex(buckets, symbols, files, data)?;
+        if let Some(tok) = tok {
+            match tok {
+                RawTok::Ifdef(_) | RawTok::Ifndef(_) | RawTok::Endif => return Ok(Some(tok)),
+                _ => {
+                    if self.should_write.last().map(|a| *a).unwrap_or(true) {
+                        return Ok(Some(tok));
+                    }
+
+                    return Ok(Some(RawTok::Noop));
+                }
+            }
+        }
+
+        return Ok(None);
+    }
+
+    pub fn _lex(
         &mut self,
         buckets: &impl Allocator<'static>,
         symbols: &mut Symbols,
@@ -735,13 +881,13 @@ impl SimpleLexer {
             }};
         }
 
-        self.kill_whitespace(data)?;
+        self.kill_whitespace(data, self.in_macro)?;
         self.begin = self.current;
 
         if self.current == data.len() {
             if self.in_macro {
                 self.in_macro = false;
-                return Ok(Some(RawTok::EndDefine));
+                return Ok(Some(RawTok::EndPPLine));
             }
 
             return Ok(None);
@@ -752,12 +898,12 @@ impl SimpleLexer {
                 self.current += 1;
                 self.at_line_begin = true;
                 self.in_macro = false;
-                return Ok(Some(RawTok::EndDefine));
+                return Ok(Some(RawTok::EndPPLine));
             } else if self.peek_eq_series(data, &CRLF) {
                 self.current += 2;
                 self.at_line_begin = true;
                 self.in_macro = false;
-                return Ok(Some(RawTok::EndDefine));
+                return Ok(Some(RawTok::EndPPLine));
             }
         }
 
@@ -780,14 +926,24 @@ impl SimpleLexer {
             }
 
             x if (x >= b'0' && x <= b'9') => {
-                let mut int_value: i32 = (x - b'0') as i32;
-                while self.peek_check(data, |b| b >= b'0' && b <= b'9') {
-                    int_value *= 10;
-                    int_value += (data[self.current] - b'0') as i32;
+                let mut began_mods = false;
+                while self.peek_check(data, is_ident_char) {
+                    let c = data[self.current];
+                    if c < b'0' || c > b'9' {
+                        began_mods = true;
+                    }
+
                     self.current += 1;
                 }
 
-                ret!(TokenKind::IntLiteral(int_value));
+                if !began_mods && self.peek_eq(data, b'.') {
+                    self.current += 1;
+                    while self.peek_check(data, is_ident_char) {
+                        self.current += 1;
+                    }
+                }
+
+                ret!(TokenKind::IntLit(0));
             }
 
             b'\"' => {
@@ -800,7 +956,7 @@ impl SimpleLexer {
 
                 let string = unsafe { std::str::from_utf8_unchecked(&chars) };
                 let string = buckets.add_str(string);
-                ret!(TokenKind::StringLiteral(string));
+                ret!(TokenKind::StringLit(string));
             }
 
             b'\'' => {
@@ -818,7 +974,7 @@ impl SimpleLexer {
                     ));
                 }
 
-                ret!(TokenKind::CharLiteral(byte as i8));
+                ret!(TokenKind::CharLit(byte as i8));
             }
 
             b'{' => ret!(TokenKind::LBrace),
@@ -975,7 +1131,7 @@ impl SimpleLexer {
     ) -> Result<RawTok, Error> {
         let directive = {
             let begin = self.current;
-            while self.peek_neqs(data, &WHITESPACE) {
+            while self.peek_check(data, is_ident_char) {
                 self.current += 1;
             }
 
@@ -983,6 +1139,91 @@ impl SimpleLexer {
         };
 
         match directive {
+            "if" => {
+                self.in_macro = true;
+                return Ok(RawTok::If);
+            }
+            "else" => {
+                self.kill_whitespace(data, true)?;
+
+                if self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                    self.begin = self.current;
+                    self.current += 1;
+                    return Err(error!(
+                        "#else must be on its own line",
+                        self.loc(),
+                        "#else found here"
+                    ));
+                }
+
+                return Ok(RawTok::Else);
+            }
+            "ifndef" => {
+                while self.peek_eqs(data, &WHITESPACE) {
+                    self.current += 1;
+                }
+
+                let ident_begin = self.current;
+                while self.peek_check(data, is_ident_char) {
+                    self.current += 1;
+                }
+
+                let ident = unsafe { str::from_utf8_unchecked(&data[ident_begin..self.current]) };
+
+                // Don't add the empty string
+                if ident == "" {
+                    return Err(error!(
+                        "expected an identifer for ifndef",
+                        l(ident_begin as u32, ident_begin as u32 + 1, self.file),
+                        "This should be an identifier"
+                    ));
+                }
+
+                let ident = symbols.add_str(ident);
+
+                return Ok(RawTok::Ifndef(ident));
+            }
+            "ifdef" => {
+                while self.peek_eqs(data, &WHITESPACE) {
+                    self.current += 1;
+                }
+
+                let ident_begin = self.current;
+                while self.peek_check(data, is_ident_char) {
+                    self.current += 1;
+                }
+
+                let ident = unsafe { str::from_utf8_unchecked(&data[ident_begin..self.current]) };
+
+                // Don't add the empty string
+                if ident == "" {
+                    return Err(error!(
+                        "expected an identifer for ifdef",
+                        l(ident_begin as u32, ident_begin as u32 + 1, self.file),
+                        "This should be an identifier"
+                    ));
+                }
+
+                let ident = symbols.add_str(ident);
+
+                return Ok(RawTok::Ifdef(ident));
+            }
+            "endif" => {
+                self.kill_whitespace(data, true)?;
+
+                if self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                    self.begin = self.current;
+                    self.current += 1;
+                    return Err(error!(
+                        "#endif must be on its own line",
+                        self.loc(),
+                        "#endif found here"
+                    ));
+                }
+
+                return Ok(RawTok::Endif);
+            }
+
             "pragma" => {
                 self.current += 1;
                 let begin = self.current;
@@ -1010,7 +1251,7 @@ impl SimpleLexer {
                 // Don't add the empty string
                 if ident == "" {
                     return Err(error!(
-                        "expected an identifer for macro declaration",
+                        "expected an identifer for macro definition",
                         l(ident_begin as u32, ident_begin as u32 + 1, self.file),
                         "This should be an identifier"
                     ));
@@ -1049,6 +1290,10 @@ impl SimpleLexer {
                         ));
                     }
 
+                    if !self.should_write.last().map(|a| *a).unwrap_or(true) {
+                        return Ok(RawTok::Noop);
+                    }
+
                     let map_err = |err| {
                         error!(
                             "error finding file",
@@ -1083,8 +1328,6 @@ impl SimpleLexer {
                         ));
                     }
 
-                    let sys_file = unsafe { str::from_utf8_unchecked(&data[name_begin..name_end]) };
-
                     if self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
                         return Err(expected_newline(
                             "include",
@@ -1092,6 +1335,11 @@ impl SimpleLexer {
                             self.current,
                             self.file,
                         ));
+                    }
+
+                    let sys_file = unsafe { str::from_utf8_unchecked(&data[name_begin..name_end]) };
+                    if !self.should_write.last().map(|a| *a).unwrap_or(true) {
+                        return Ok(RawTok::Noop);
                     }
 
                     let map_err = |err| {
@@ -1113,12 +1361,16 @@ impl SimpleLexer {
                 }
             }
             x => {
-                return Err(error!("invalid compiler directive", self.loc(), x));
+                return Err(error!(
+                    "invalid compiler directive",
+                    self.loc(),
+                    format!("found here to be `{}`", x)
+                ));
             }
         }
     }
 
-    pub fn kill_whitespace(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub fn kill_whitespace(&mut self, data: &[u8], avoid_newlines: bool) -> Result<(), Error> {
         self.begin = self.current;
 
         loop {
@@ -1172,14 +1424,14 @@ impl SimpleLexer {
             }
 
             if self.peek_eq(data, b'\n') {
-                if self.in_macro {
+                if avoid_newlines {
                     break;
                 }
 
                 self.current += 1;
                 self.at_line_begin = true;
             } else if self.peek_eq_series(data, &CRLF) {
-                if self.in_macro {
+                if avoid_newlines {
                     break;
                 }
 

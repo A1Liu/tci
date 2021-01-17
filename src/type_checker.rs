@@ -963,7 +963,7 @@ pub fn check_decl_rec(
                     }
                     ArraySizeKind::VariableExpression(expr) => {
                         let expr = eval_expr(check_expr(locals, expr)?)?;
-                        let (expr, loc) = if let TCExprKind::I32Literal(i) = expr.kind {
+                        let (expr, loc) = if let TCExprKind::I32Lit(i) = expr.kind {
                             (i, expr.loc)
                         } else {
                             unreachable!()
@@ -1154,7 +1154,7 @@ pub fn check_declaration(
 
 pub fn eval_expr(expr: TCExpr) -> Result<TCExpr, Error> {
     // TODO cmon man
-    if let TCExprKind::I32Literal(i) = expr.kind {
+    if let TCExprKind::I32Lit(i) = expr.kind {
         return Ok(expr);
     } else {
         return Err(error!(
@@ -1166,23 +1166,51 @@ pub fn eval_expr(expr: TCExpr) -> Result<TCExpr, Error> {
 
 pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
     match expr.kind {
-        ExprKind::IntLiteral(val) => {
+        ExprKind::IntLit(val) => {
             return Ok(TCExpr {
-                kind: TCExprKind::I32Literal(val),
+                kind: TCExprKind::I32Lit(val),
                 ty: TCType::new(TCTypeBase::I32),
                 loc: expr.loc,
             });
         }
-        ExprKind::StringLiteral(val) => {
+        ExprKind::ULit(val) => {
             return Ok(TCExpr {
-                kind: TCExprKind::StringLiteral(env.add_str(val)),
+                kind: TCExprKind::U32Lit(val),
+                ty: TCType::new(TCTypeBase::U32),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::ULLLit(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::U64Lit(val),
+                ty: TCType::new(TCTypeBase::U64),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::FloatLit(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::F32Lit(val),
+                ty: TCType::new(TCTypeBase::F32),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::DoubleLit(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::F64Lit(val),
+                ty: TCType::new(TCTypeBase::F64),
+                loc: expr.loc,
+            });
+        }
+        ExprKind::StringLit(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::StringLit(env.add_str(val)),
                 ty: TCType::new_ptr(TCTypeBase::I8),
                 loc: expr.loc,
             });
         }
-        ExprKind::CharLiteral(c) => {
+        ExprKind::CharLit(c) => {
             return Ok(TCExpr {
-                kind: TCExprKind::I8Literal(c),
+                kind: TCExprKind::I8Lit(c),
                 ty: TCType::new(TCTypeBase::I8),
                 loc: expr.loc,
             });
@@ -1199,7 +1227,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 // happens in for loops
                 return Ok(TCExpr {
                     ty: TCType::new(TCTypeBase::I8),
-                    kind: TCExprKind::I8Literal(0),
+                    kind: TCExprKind::I8Lit(0),
                     loc: expr.loc,
                 });
             }
@@ -1224,7 +1252,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             let size = ty.size().unwrap_or_else(|| ty.repr_size());
 
             return Ok(TCExpr {
-                kind: TCExprKind::U64Literal(size as u64),
+                kind: TCExprKind::U64Lit(size as u64),
                 ty: TCType::new(TCTypeBase::U64),
                 loc: expr.loc,
             });
@@ -1234,7 +1262,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             let size = expr.ty.size().unwrap_or_else(|| expr.ty.repr_size());
 
             return Ok(TCExpr {
-                kind: TCExprKind::U64Literal(size as u64),
+                kind: TCExprKind::U64Lit(size as u64),
                 ty: TCType::new(TCTypeBase::U64),
                 loc: expr.loc,
             });
@@ -1519,7 +1547,7 @@ pub fn check_bin_op(
 
                     let elem_size = TCExpr {
                         loc: l.loc,
-                        kind: TCExprKind::I64Literal(stride as i64),
+                        kind: TCExprKind::I64Lit(stride as i64),
                         ty: TCType::new(TCTypeBase::I64),
                     };
 
@@ -1546,7 +1574,7 @@ pub fn check_bin_op(
 
                     let elem_size = TCExpr {
                         loc: l.loc,
-                        kind: TCExprKind::U64Literal(stride as u64),
+                        kind: TCExprKind::U64Lit(stride as u64),
                         ty: TCType::new(TCTypeBase::U64),
                     };
 
@@ -1610,7 +1638,7 @@ pub fn check_bin_op(
                     };
 
                     let divisor = TCExpr {
-                        kind: TCExprKind::U64Literal(l_stride as u64),
+                        kind: TCExprKind::U64Lit(l_stride as u64),
                         ty,
                         loc,
                     };
@@ -1648,7 +1676,7 @@ pub fn check_bin_op(
 
                     let elem_size = TCExpr {
                         loc: l.loc,
-                        kind: TCExprKind::I64Literal(stride as i64),
+                        kind: TCExprKind::I64Lit(stride as i64),
                         ty: TCType::new(TCTypeBase::I64),
                     };
 
@@ -1677,7 +1705,7 @@ pub fn check_bin_op(
 
                     let elem_size = TCExpr {
                         loc: l.loc,
-                        kind: TCExprKind::U64Literal(stride as u64),
+                        kind: TCExprKind::U64Lit(stride as u64),
                         ty: TCType::new(TCTypeBase::U64),
                     };
 

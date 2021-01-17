@@ -111,9 +111,11 @@ lazy_static! {
         new_file!(@HEADER, "stddef.h");
         new_file!(@HEADER, "stdint.h");
         new_file!(@HEADER, "stdarg.h");
+        new_file!(@HEADER, "stdbool.h");
+        new_file!(@HEADER, "float.h");
 
-        new_file!(@IMPL, "tci.h");
-        new_file!(@IMPL, "stdio.h");
+        new_file!(@IMPL, "tci.c");
+        new_file!(@IMPL, "printf.c");
         new_file!(@IMPL, "stdlib.h");
         new_file!(@IMPL, "string.h");
         new_file!(@IMPL, "stdarg.h");
@@ -257,8 +259,9 @@ impl<'a> Files<'a> for FileDb {
 }
 
 pub const MAIN_SYM: u32 = 0;
-pub const BUILTIN_PUSH_STACK: u32 = 1;
-pub const BUILTIN_ECALL: u32 = 2;
+pub const MACRO_DEFINED: u32 = 1;
+pub const BUILTIN_PUSH_STACK: u32 = 2;
+pub const BUILTIN_ECALL: u32 = 3;
 
 pub struct Symbols {
     pub buckets: BucketListFactory,
@@ -281,6 +284,7 @@ impl Symbols {
         };
 
         new_self.add_str("main");
+        new_self.add_str("defined");
         new_self.add_str("__tci_builtin_push_stack");
         new_self.add_str("__tci_builtin_ecall");
 
