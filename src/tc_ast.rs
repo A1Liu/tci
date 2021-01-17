@@ -264,7 +264,7 @@ pub trait TCTy {
     }
 
     // TODO make this nicer
-    fn display(&self, files: &FileDb) -> String {
+    fn display(&self, symbols: &Symbols) -> String {
         let mut writer = StringWriter::new();
 
         match self.base() {
@@ -276,12 +276,12 @@ pub trait TCTy {
             TCTypeBase::U64 => write!(writer, "unsigned long"),
             TCTypeBase::Void => write!(writer, "void"),
             TCTypeBase::NamedStruct { ident, .. } => {
-                write!(writer, "struct {}", files.symbol_to_str(ident))
+                write!(writer, "struct {}", symbols.to_str(ident).unwrap())
             }
             TCTypeBase::UnnamedStruct { .. } => write!(writer, "anonymous struct"),
-            TCTypeBase::InternalTypedef(def) => write!(writer, "{}", def.display(files)), // TODO fix this
+            TCTypeBase::InternalTypedef(def) => write!(writer, "{}", def.display(symbols)), // TODO fix this
             TCTypeBase::Typedef { typedef, .. } => {
-                write!(writer, "{}", files.symbol_to_str(typedef.0))
+                write!(writer, "{}", symbols.to_str(typedef.0).unwrap())
             }
         }
         .unwrap();
@@ -303,13 +303,13 @@ pub trait TCTy {
                 }
                 TCTypeModifier::BeginParam(ty) => {
                     if is_func.replace(()).is_some() {
-                        write!(writer, ")({}", ty.display(files))
+                        write!(writer, ")({}", ty.display(symbols))
                     } else {
-                        write!(writer, "({}", ty.display(files))
+                        write!(writer, "({}", ty.display(symbols))
                     }
                 }
                 TCTypeModifier::Param(ty) => {
-                    write!(writer, ", {}", ty.display(files))
+                    write!(writer, ", {}", ty.display(symbols))
                 }
                 TCTypeModifier::NoParams => {
                     is_func.take().map(|_| write!(writer, ")"));
@@ -330,7 +330,7 @@ pub trait TCTy {
         return writer.to_string();
     }
 
-    fn expand_typedef(&self, files: &FileDb) -> TCTypeOwned {
+    fn expand_typedef(&self) -> TCTypeOwned {
         let mut owned = if let Some(refers_to) = self.get_typedef() {
             let (base, mods) = (refers_to.base, Vec::from(refers_to.mods));
             TCTypeOwned { base, mods }
@@ -1332,6 +1332,7 @@ pub struct TCFunctionDeclarator {
 }
 
 pub struct TranslationUnit {
+    pub file: u32,
     pub buckets: BucketListFactory,
     pub typedefs: HashMap<(u32, CodeLoc), TCType>,
     pub variables: HashMap<TCIdent, TCGlobalVar>,
@@ -1381,8 +1382,9 @@ impl Drop for TranslationUnit {
 }
 
 impl TranslationUnit {
-    pub fn new() -> Self {
+    pub fn new(file: u32) -> Self {
         Self {
+            file,
             buckets: BucketListFactory::new(),
             typedefs: HashMap::new(),
             variables: HashMap::new(),

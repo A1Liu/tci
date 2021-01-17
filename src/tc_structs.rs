@@ -50,7 +50,7 @@ pub struct TypeEnv<'a> {
 
 pub struct GlobalTypeEnv<'a> {
     tu: TranslationUnit,
-    files: &'a FileDb,
+    symbols: &'a Symbols,
     next_var: u32,
 }
 
@@ -115,11 +115,11 @@ impl FuncEnv {
 // }
 
 impl<'a> TypeEnv<'a> {
-    pub fn global(files: &'a FileDb) -> Self {
+    pub fn global(file: u32, symbols: &'a Symbols) -> Self {
         Self {
             kind: TypeEnvKind::Global(GlobalTypeEnv {
-                tu: TranslationUnit::new(),
-                files,
+                tu: TranslationUnit::new(file),
+                symbols,
                 next_var: 0,
             }),
             structs: HashMap::new(),
@@ -131,14 +131,14 @@ impl<'a> TypeEnv<'a> {
     pub fn tu(mut self) -> TranslationUnit {
         return match &mut self.kind {
             TypeEnvKind::Global(GlobalTypeEnv { tu, .. }) => {
-                std::mem::replace(tu, TranslationUnit::new())
+                std::mem::replace(tu, TranslationUnit::new(!0))
             }
             _ => unreachable!(),
         };
     }
 
-    pub fn files(&self) -> &FileDb {
-        return &self.globals().0.files;
+    pub fn symbols(&self) -> &Symbols {
+        return &self.globals().0.symbols;
     }
 
     pub fn globals(&self) -> (&GlobalTypeEnv<'a>, &TypeEnv<'a>) {

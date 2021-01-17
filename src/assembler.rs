@@ -134,7 +134,7 @@ impl Assembler {
         }
     }
 
-    pub fn add_file(&mut self, file: u32, mut tu: TranslationUnit) -> Result<(), Error> {
+    pub fn add_file(&mut self, mut tu: TranslationUnit) -> Result<(), Error> {
         // Add function return sizes
 
         let mut link_names = HashMap::new();
@@ -142,7 +142,7 @@ impl Assembler {
 
         for (ident, tc_func) in std::mem::replace(&mut tu.functions, HashMap::new()) {
             let link_name = if tc_func.is_static {
-                LinkName::new_static(ident, file)
+                LinkName::new_static(ident, tu.file)
             } else {
                 LinkName::new(ident)
             };
@@ -943,14 +943,9 @@ impl Assembler {
 
     pub fn assemble(mut self, env: &FileDb) -> Result<BinaryData, Error> {
         let no_main = || error!("missing main function definition");
-        let main_sym = if let Some(sym) = env.translate.get("main") {
-            *sym
-        } else {
-            return Err(no_main());
-        };
 
         let main_link_name = LinkName {
-            name: main_sym,
+            name: MAIN_SYM,
             file: n32::NULL,
         };
 

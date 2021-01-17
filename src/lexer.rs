@@ -2,24 +2,20 @@ use crate::buckets::*;
 use crate::filedb::*;
 use crate::util::*;
 use codespan_reporting::files::Files;
-use std::collections::{HashMap, HashSet};
+use core::{mem, str};
+use std::collections::HashMap;
 
 pub const CLOSING_CHAR: u8 = !0;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum TokenKind<'a> {
+pub enum TokenKind {
     Ident(u32),
     TypeIdent(u32),
     IntLiteral(i32),
-    StringLiteral(&'a str),
+    StringLiteral(&'static str),
     CharLiteral(i8),
 
-    Include(u32),
-    IncludeSys(u32),
-    MacroDef(u32),
-    FuncMacroDef(u32),
-    MacroDefEnd,
-    Pragma(&'a str),
+    Pragma(&'static str),
 
     Void,
     Char,
@@ -106,8 +102,31 @@ pub enum TokenKind<'a> {
     Short,
 }
 
+pub enum MacroTok {
+    Tok(TokenKind),
+}
+
+#[derive(Debug)]
+pub enum RawTok {
+    Tok(TokenKind),
+    Define(u32),
+    FuncDefine(u32),
+    EndDefine,
+    Include(u32),
+}
+
+#[derive(Debug, Clone)]
+pub enum Macro {
+    Func {
+        params: Vec<u32>,
+        toks: Vec<TokenKind>,
+    },
+    Value(Vec<TokenKind>),
+    Marker,
+}
+
 lazy_static! {
-    pub static ref RESERVED_KEYWORDS: HashMap<&'static str, TokenKind<'static>> = {
+    pub static ref RESERVED_KEYWORDS: HashMap<&'static str, TokenKind> = {
         let mut set = HashMap::new();
         set.insert("auto", TokenKind::Unimplemented);
         set.insert("break", TokenKind::Break);
@@ -172,23 +191,8 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Token<'a> {
-    pub kind: TokenKind<'a>,
-    pub loc: CodeLoc,
-}
-
-impl<'a> Token<'a> {
-    pub fn new(kind: TokenKind<'a>, range: core::ops::Range<usize>, file: u32) -> Self {
-        Self {
-            kind,
-            loc: l(range.start as u32, range.end as u32, file),
-        }
-    }
-}
-
 #[inline]
-pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
+pub fn invalid_token(begin: usize, end: usize, file: u32) -> Error {
     return error!(
         "invalid token",
         l(begin as u32, end as u32, file),
@@ -196,131 +200,788 @@ pub fn invalid_token(file: u32, begin: usize, end: usize) -> Error {
     );
 }
 
-pub type TokenDb<'a> = HashMap<u32, &'a [Token<'a>]>;
-
 const WHITESPACE: [u8; 2] = [b' ', b'\t'];
 const CRLF: [u8; 2] = [b'\r', b'\n'];
 
-pub fn lex_file<'b>(
-    buckets: &impl Allocator<'b>,
-    token_db: &mut TokenDb<'b>,
-    symbols: &mut FileDb,
-    file: u32,
-) -> Result<&'b [Token<'b>], Error> {
-    if let Some(toks) = token_db.get(&file) {
-        return Ok(toks);
+pub struct Lexer<'a> {
+    pub buckets: BucketListFactory,
+    pub symbols: Symbols,
+    pub files: &'a FileDb,
+
+    pub macros: HashMap<u32, (Macro, CodeLoc)>,
+    pub toks: Vec<TokenKind>,
+    pub locs: Vec<CodeLoc>,
+}
+
+impl<'a> Drop for Lexer<'a> {
+    fn drop(&mut self) {
+        unsafe { self.buckets.dealloc() };
+    }
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(files: &'a FileDb) -> Self {
+        Self {
+            buckets: BucketListFactory::new(),
+            symbols: Symbols::new(),
+            files,
+
+            macros: HashMap::new(),
+            toks: Vec::new(),
+            locs: Vec::new(),
+        }
     }
 
-    let mut incomplete = HashSet::new();
-    let tokens = Lexer::new(file).lex_file(buckets, &mut incomplete, token_db, symbols)?;
-    token_db.insert(file, tokens);
-    return Ok(tokens);
+    pub fn symbols(mut self) -> Symbols {
+        return mem::replace(&mut self.symbols, Symbols::new());
+    }
+
+    pub fn lex(&mut self, file: u32) -> Result<(u32, Vec<TokenKind>, Vec<CodeLoc>), Error> {
+        self.macros.clear();
+        self.toks.clear();
+        self.locs.clear();
+
+        let data = self.files.source(file).unwrap().as_bytes();
+        let mut lexers = TaggedMultiArray::new();
+        lexers.push_from(SimpleLexer::new(file), data);
+
+        loop {
+            let TE(lexer, data) = match lexers.last_mut() {
+                Some(a) => a,
+                None => break,
+            };
+
+            match self.lex_file_until_include(lexer, data)? {
+                Some(include) => {
+                    let loc = lexer.loc();
+                    let mut iter = (&lexers).into_iter();
+                    if iter.find(|TE(lex, _)| lex.file == include).is_some() {
+                        return Err(error!("include cycle detected", loc, "cycle found here"));
+                    }
+
+                    let data = self.files.source(include).unwrap().as_bytes();
+                    lexers.push_from(SimpleLexer::new(include), data);
+                }
+                None => {
+                    lexers.pop();
+                }
+            }
+        }
+
+        let toks = mem::replace(&mut self.toks, Vec::new());
+        let locs = mem::replace(&mut self.locs, Vec::new());
+        return Ok((file, toks, locs));
+    }
+
+    pub fn lex_file_until_include(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+    ) -> Result<Option<u32>, Error> {
+        loop {
+            let tok = match lexer.lex(&*self.buckets, &mut self.symbols, self.files, data)? {
+                Some(tok) => tok,
+                None => return Ok(None),
+            };
+
+            match tok {
+                RawTok::Include(id) => return Ok(Some(id)),
+                RawTok::Tok(TokenKind::Ident(id)) => {
+                    let (mac, loc) = if let Some((mac, loc)) = self.macros.get(&id) {
+                        ((*mac).clone(), *loc)
+                    } else {
+                        self.toks.push(TokenKind::Ident(id));
+                        self.locs.push(lexer.loc());
+                        continue;
+                    };
+
+                    self.expand_macro(lexer, data, id, &mac, loc)?;
+                }
+                RawTok::Tok(tok) => {
+                    self.toks.push(tok);
+                    self.locs.push(lexer.loc());
+                }
+                RawTok::Define(id) => {
+                    let (_macro, loc) = self.parse_macro_defn(lexer, data, lexer.loc())?;
+                    self.macros.insert(id, (_macro, loc));
+                }
+                RawTok::FuncDefine(id) => {
+                    let (_macro, loc) = self.parse_func_macro_defn(lexer, data, lexer.loc())?;
+                    self.macros.insert(id, (_macro, loc));
+                }
+                RawTok::EndDefine => panic!("this should never happen"),
+            }
+        }
+    }
+
+    pub fn expand_macro(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+        id: u32,
+        mac: &Macro,
+        loc: CodeLoc,
+    ) -> Result<(), Error> {
+        let mut expanded = Vec::new();
+        expanded.push(id);
+
+        let begin = lexer.loc();
+
+        let expansion = match mac {
+            Macro::Func { params, toks } => {
+                if self.expect_tok(lexer, data)? != TokenKind::LParen {
+                    return Err(error!(
+                        "TCI requires function macro to be called",
+                        lexer.loc(),
+                        "this should be a '(' character"
+                    ));
+                }
+
+                let mut actual_params = Vec::new();
+                let mut paren_count = 0;
+                let mut current_tok = self.expect_tok(lexer, data)?;
+
+                if current_tok != TokenKind::RParen {
+                    loop {
+                        let mut current_param = Vec::new();
+                        while paren_count != 0
+                            || (current_tok != TokenKind::RParen && current_tok != TokenKind::Comma)
+                        {
+                            current_param.push(current_tok);
+                            match current_tok {
+                                TokenKind::LParen => paren_count += 1,
+                                TokenKind::RParen => paren_count -= 1,
+                                _ => {}
+                            }
+
+                            current_tok = self.expect_tok(lexer, data)?;
+                        }
+
+                        actual_params.push(current_param);
+                        if current_tok == TokenKind::RParen {
+                            break;
+                        }
+
+                        current_tok = self.expect_tok(lexer, data)?;
+                    }
+                }
+
+                if params.len() != actual_params.len() {
+                    return Err(error!(
+                        "provided wrong number of arguments to macro",
+                        loc,
+                        format!("macro defined here (takes in {} arguments)", params.len()),
+                        l_from(begin, lexer.loc()),
+                        format!(
+                            "macro used here (passed in {} arguments)",
+                            actual_params.len()
+                        )
+                    ));
+                }
+
+                let mut params_hash = HashMap::new();
+                for (idx, param) in actual_params.into_iter().enumerate() {
+                    params_hash.insert(params[idx], param);
+                }
+
+                self.expand_macro_simple(params_hash, &toks)
+            }
+            Macro::Value(toks) => self.expand_macro_simple(HashMap::new(), &toks),
+            Macro::Marker => {
+                return Err(error!(
+                    "used marker macro in code",
+                    loc, "macro defined here", begin, "used here"
+                ))
+            }
+        };
+
+        let loc = l_from(begin, lexer.loc());
+        let output = self.expand_macro_rec(&mut expanded, &expansion, loc)?;
+
+        self.toks.extend_from_slice(&output);
+        self.locs.resize(self.toks.len(), loc);
+
+        return Ok(());
+    }
+
+    pub fn expand_macro_simple(
+        &self,
+        params: HashMap<u32, Vec<TokenKind>>,
+        toks: &[TokenKind],
+    ) -> Vec<TokenKind> {
+        let mut output = Vec::new();
+
+        for tok in toks {
+            match tok {
+                TokenKind::Ident(id) => {
+                    if let Some(expand) = params.get(id) {
+                        for tok in expand {
+                            output.push(*tok);
+                        }
+                    } else {
+                        output.push(*tok);
+                    }
+                }
+                x => {
+                    output.push(*x);
+                }
+            }
+        }
+
+        return output;
+    }
+
+    pub fn expand_macro_rec(
+        &self,
+        expanded: &mut Vec<u32>,
+        tokens: &[TokenKind],
+        loc: CodeLoc,
+    ) -> Result<Vec<TokenKind>, Error> {
+        let mut toks = tokens.iter();
+        let mut output = Vec::new();
+
+        let expect = || error!("expected token");
+
+        while let Some(tok) = toks.next() {
+            let id = match tok {
+                TokenKind::Ident(id) | TokenKind::TypeIdent(id) => *id,
+                _ => {
+                    output.push(*tok);
+                    continue;
+                }
+            };
+
+            let (macro_def, def_loc) = match self.macros.get(&id) {
+                Some(def) => {
+                    if expanded.contains(&id) {
+                        output.push(*tok); // TODO output warning here
+                        continue;
+                    }
+
+                    def
+                }
+                None => {
+                    output.push(*tok);
+                    continue;
+                }
+            };
+
+            let (macro_params, macro_toks) = match &macro_def {
+                Macro::Marker => {
+                    return Err(error!(
+                        "used marker macro in code",
+                        *def_loc, "macro defined here", loc, "used here"
+                    ))
+                }
+                Macro::Value(toks) => {
+                    expanded.push(id);
+                    let mut expanded_toks = self.expand_macro_rec(expanded, toks, loc)?;
+                    expanded.pop();
+                    output.append(&mut expanded_toks);
+                    continue;
+                }
+                Macro::Func { params, toks } => (params, toks),
+            };
+
+            let lparen_tok = toks.next().ok_or_else(expect)?;
+            match lparen_tok {
+                TokenKind::LParen => {}
+                _ => {
+                    return Err(error!(
+                        "expected a left paren '(' because of function macro invokation",
+                        loc, "macro used here", *def_loc, "macro defined here"
+                    ));
+                }
+            }
+
+            let mut actual_params = Vec::new();
+            let mut paren_count = 0;
+            let mut current_tok = *toks.next().ok_or_else(expect)?;
+
+            if current_tok != TokenKind::RParen {
+                loop {
+                    let mut current_param = Vec::new();
+                    while paren_count != 0
+                        || (current_tok != TokenKind::RParen && current_tok != TokenKind::Comma)
+                    {
+                        current_param.push(current_tok);
+                        match current_tok {
+                            TokenKind::LParen => paren_count += 1,
+                            TokenKind::RParen => paren_count -= 1,
+                            _ => {}
+                        }
+
+                        current_tok = *toks.next().ok_or_else(expect)?;
+                    }
+
+                    actual_params.push(current_param);
+                    if current_tok == TokenKind::RParen {
+                        break;
+                    }
+
+                    current_tok = *toks.next().ok_or_else(expect)?;
+                }
+            }
+
+            if macro_params.len() != actual_params.len() {
+                return Err(error!(
+                    "provided wrong number of arguments to macro",
+                    *def_loc,
+                    format!(
+                        "macro defined here (takes in {} arguments)",
+                        macro_params.len()
+                    ),
+                    loc,
+                    format!(
+                        "macro used here (passed in {} arguments)",
+                        actual_params.len()
+                    )
+                ));
+            }
+
+            let mut params_hash = HashMap::new();
+            for (idx, param) in actual_params.into_iter().enumerate() {
+                params_hash.insert(macro_params[idx], param);
+            }
+
+            expanded.push(id);
+            let expanded_toks = self.expand_macro_simple(params_hash, macro_toks);
+            let mut expanded_toks = self.expand_macro_rec(expanded, &expanded_toks, loc)?;
+            expanded.pop();
+            output.append(&mut expanded_toks);
+        }
+
+        return Ok(output);
+    }
+
+    pub fn parse_macro_defn(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+        define_loc: CodeLoc,
+    ) -> Result<(Macro, CodeLoc), Error> {
+        let mut out = Vec::new();
+        let mut loc = define_loc;
+
+        loop {
+            let next = match self.expect_raw_tok(lexer, data)? {
+                RawTok::EndDefine => {
+                    let loc = l_from(define_loc, loc);
+                    if out.len() == 0 {
+                        return Ok((Macro::Marker, loc));
+                    } else {
+                        return Ok((Macro::Value(out), loc));
+                    }
+                }
+                RawTok::Tok(t) => t,
+                x => {
+                    return Err(error!(
+                        "expected token or new line, found something else",
+                        lexer.loc(),
+                        format!("this was lexed as a {:?}", x)
+                    ))
+                }
+            };
+
+            out.push(next);
+            loc = lexer.loc();
+        }
+    }
+
+    pub fn parse_func_macro_defn(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+        define_loc: CodeLoc,
+    ) -> Result<(Macro, CodeLoc), Error> {
+        let mut params = Vec::new();
+        let mut tok = self.expect_tok(lexer, data)?;
+        while let TokenKind::Ident(id) = tok {
+            params.push(id);
+            tok = self.expect_tok(lexer, data)?;
+            if let TokenKind::Comma = tok {
+                tok = self.expect_tok(lexer, data)?;
+            }
+        }
+
+        if tok != TokenKind::RParen {
+            return Err(error!("unexpected token", lexer.loc(), "this token"));
+        }
+
+        let mut toks = Vec::new();
+        let mut loc = lexer.loc();
+        loop {
+            let next = match self.expect_raw_tok(lexer, data)? {
+                RawTok::EndDefine => {
+                    let loc = l_from(define_loc, loc);
+                    return Ok((Macro::Func { params, toks }, loc));
+                }
+                RawTok::Tok(t) => t,
+                x => {
+                    return Err(error!(
+                        "expected token or new line, found something else",
+                        lexer.loc(),
+                        format!("this was lexed as a {:?}", x)
+                    ))
+                }
+            };
+
+            toks.push(next);
+            loc = lexer.loc();
+        }
+    }
+
+    pub fn expect_tok_opt(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+    ) -> Result<Option<TokenKind>, Error> {
+        let tok = match self.simple_lex(lexer, data)? {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        match tok {
+            RawTok::Tok(t) => return Ok(Some(t)),
+            x => {
+                return Err(error!(
+                    "expected token, found something else",
+                    lexer.loc(),
+                    format!("this was lexed as a {:?}", x)
+                ));
+            }
+        }
+    }
+
+    pub fn expect_tok(&mut self, lexer: &mut SimpleLexer, data: &[u8]) -> Result<TokenKind, Error> {
+        match self.expect_raw_tok(lexer, data)? {
+            RawTok::Tok(t) => return Ok(t),
+            x => {
+                return Err(error!(
+                    "expected token, found something else",
+                    lexer.loc(),
+                    format!("this was lexed as a {:?}", x)
+                ));
+            }
+        }
+    }
+
+    pub fn expect_raw_tok(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+    ) -> Result<RawTok, Error> {
+        let tok = self.simple_lex(lexer, data)?;
+        let or_else = || {
+            error!(
+                "expected token",
+                lexer.loc(),
+                "expecting another token after this one"
+            )
+        };
+
+        return Ok(tok.ok_or_else(or_else)?);
+    }
+
+    #[inline]
+    pub fn simple_lex(
+        &mut self,
+        lexer: &mut SimpleLexer,
+        data: &[u8],
+    ) -> Result<Option<RawTok>, Error> {
+        return lexer.lex(&*self.buckets, &mut self.symbols, self.files, data);
+    }
 }
 
-pub struct Lexer<'a> {
-    file: u32,
-    current: usize,
-    output: Vec<Token<'a>>,
+#[derive(Debug)]
+pub struct SimpleLexer {
+    pub at_line_begin: bool,
+    pub in_macro: bool,
+    pub begin: usize,
+    pub current: usize,
+    pub file: u32,
 }
 
-impl<'b> Lexer<'b> {
+impl SimpleLexer {
     pub fn new(file: u32) -> Self {
         Self {
-            file,
+            at_line_begin: true,
+            in_macro: false,
+            begin: 0,
             current: 0,
-            output: Vec::new(),
+            file,
         }
     }
 
-    pub fn lex_file(
-        mut self,
-        buckets: &impl Allocator<'b>,
-        incomplete: &mut HashSet<u32>,
-        token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb,
-    ) -> Result<&'b [Token<'b>], Error> {
-        let bytes = symbols.source(self.file).unwrap().as_bytes();
-
-        self.lex_macro(buckets, incomplete, token_db, symbols, bytes)?;
-
-        let mut done = self.lex_macro_or_token(buckets, incomplete, token_db, symbols, bytes)?;
-
-        while !done {
-            done = self.lex_macro_or_token(buckets, incomplete, token_db, symbols, bytes)?;
-        }
-
-        return Ok(buckets.add_array(self.output));
-    }
-
-    pub fn lex_macro_or_token(
+    pub fn lex(
         &mut self,
-        buckets: &impl Allocator<'b>,
-        incomplete: &mut HashSet<u32>,
-        token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb,
+        buckets: &impl Allocator<'static>,
+        symbols: &mut Symbols,
+        files: &FileDb,
         data: &[u8],
-    ) -> Result<bool, Error> {
-        loop {
-            while self.peek_eqs(data, &WHITESPACE) {
-                self.current += 1;
-            }
-
-            if self.peek_eq_series(data, &[b'/', b'/']) {
-                self.current += 2;
-                while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
-                    self.current += 1;
-                }
-            } else if self.peek_eq_series(data, &[b'/', b'*']) {
-                self.current += 2;
-                while self.peek_neq_series(data, &[b'*', b'/']) {
-                    self.current += 1;
-                }
-
-                self.current += 2;
-                continue;
-            }
-
-            if self.peek_eq(data, b'\n') {
-                self.current += 1;
-            } else if self.peek_eq_series(data, &CRLF) {
-                self.current += 2;
-            } else {
-                break;
-            }
-
-            self.lex_macro(buckets, incomplete, token_db, symbols, data)?;
+    ) -> Result<Option<RawTok>, Error> {
+        macro_rules! ret {
+            ($arg1:expr) => {{
+                self.at_line_begin = false;
+                return Ok(Some(RawTok::Tok($arg1)));
+            }};
         }
+
+        macro_rules! incr_ret {
+            ($arg1:expr) => {{
+                self.current += 1;
+                self.at_line_begin = false;
+                return Ok(Some(RawTok::Tok($arg1)));
+            }};
+        }
+
+        self.kill_whitespace(data)?;
+        self.begin = self.current;
 
         if self.current == data.len() {
-            return Ok(true);
+            if self.in_macro {
+                self.in_macro = false;
+                return Ok(Some(RawTok::EndDefine));
+            }
+
+            return Ok(None);
         }
 
-        let tok = self.lex_token(buckets, symbols, data)?;
-        self.output.push(tok);
-        return Ok(false);
+        if self.in_macro {
+            if self.peek_eq(data, b'\n') {
+                self.current += 1;
+                self.at_line_begin = true;
+                self.in_macro = false;
+                return Ok(Some(RawTok::EndDefine));
+            } else if self.peek_eq_series(data, &CRLF) {
+                self.current += 2;
+                self.at_line_begin = true;
+                self.in_macro = false;
+                return Ok(Some(RawTok::EndDefine));
+            }
+        }
+
+        self.current += 1;
+
+        match data[self.begin] {
+            x if (x >= b'A' && x <= b'Z') || (x >= b'a' && x <= b'z') || x == b'_' => {
+                while self.peek_check(data, is_ident_char) {
+                    self.current += 1;
+                }
+
+                let word =
+                    unsafe { std::str::from_utf8_unchecked(&data[self.begin..self.current]) };
+                if let Some(kind) = RESERVED_KEYWORDS.get(word) {
+                    ret!(*kind);
+                }
+
+                let id = symbols.add_str(word);
+                ret!(TokenKind::Ident(id));
+            }
+
+            x if (x >= b'0' && x <= b'9') => {
+                let mut int_value: i32 = (x - b'0') as i32;
+                while self.peek_check(data, |b| b >= b'0' && b <= b'9') {
+                    int_value *= 10;
+                    int_value += (data[self.current] - b'0') as i32;
+                    self.current += 1;
+                }
+
+                ret!(TokenKind::IntLiteral(int_value));
+            }
+
+            b'\"' => {
+                let mut cur = self.lex_character(b'\"', data)?;
+                let mut chars = Vec::new();
+                while cur != CLOSING_CHAR {
+                    chars.push(cur);
+                    cur = self.lex_character(b'\"', data)?;
+                }
+
+                let string = unsafe { std::str::from_utf8_unchecked(&chars) };
+                let string = buckets.add_str(string);
+                ret!(TokenKind::StringLiteral(string));
+            }
+
+            b'\'' => {
+                let byte = self.lex_character(b'\'', data)?;
+                if byte == CLOSING_CHAR {
+                    return Err(error!("empty character literal", self.loc(), "found here"));
+                }
+
+                let closing = self.expect(data)?;
+                if closing != b'\'' {
+                    return Err(error!(
+                        "expected closing single quote",
+                        self.loc(),
+                        "this should be a closing single quote"
+                    ));
+                }
+
+                ret!(TokenKind::CharLiteral(byte as i8));
+            }
+
+            b'{' => ret!(TokenKind::LBrace),
+            b'}' => ret!(TokenKind::RBrace),
+            b'(' => ret!(TokenKind::LParen),
+            b')' => ret!(TokenKind::RParen),
+            b'[' => ret!(TokenKind::LBracket),
+            b']' => ret!(TokenKind::RBracket),
+            b'~' => ret!(TokenKind::Tilde),
+            b';' => ret!(TokenKind::Semicolon),
+            b':' => ret!(TokenKind::Colon),
+            b',' => ret!(TokenKind::Comma),
+            b'?' => ret!(TokenKind::Question),
+            b'#' => {
+                if self.at_line_begin {
+                    self.at_line_begin = false;
+                    return Ok(Some(self.lex_directive(buckets, symbols, files, data)?));
+                } else {
+                    return Err(error!("unexpected token", self.loc(), "this token"));
+                }
+            }
+
+            b'.' => {
+                if self.peek_eq(data, b'.') {
+                    self.current += 1;
+                    if self.peek_eq(data, b'.') {
+                        incr_ret!(TokenKind::DotDotDot);
+                    }
+
+                    return Err(invalid_token(self.begin, self.current, self.file));
+                }
+
+                ret!(TokenKind::Dot);
+            }
+            b'+' => {
+                if self.peek_eq(data, b'+') {
+                    incr_ret!(TokenKind::PlusPlus);
+                } else if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::PlusEq);
+                } else {
+                    ret!(TokenKind::Plus);
+                }
+            }
+            b'-' => {
+                if self.peek_eq(data, b'-') {
+                    incr_ret!(TokenKind::DashDash);
+                } else if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::DashEq);
+                } else if self.peek_eq(data, b'>') {
+                    incr_ret!(TokenKind::Arrow);
+                } else {
+                    ret!(TokenKind::Dash);
+                }
+            }
+            b'/' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::SlashEq);
+                } else {
+                    ret!(TokenKind::Slash);
+                }
+            }
+            b'*' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::StarEq);
+                } else {
+                    ret!(TokenKind::Star);
+                }
+            }
+            b'%' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::PercentEq);
+                } else {
+                    ret!(TokenKind::Percent);
+                }
+            }
+            b'>' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::Geq);
+                } else if self.peek_eq(data, b'>') {
+                    self.current += 1;
+                    if self.peek_eq(data, b'=') {
+                        incr_ret!(TokenKind::GtGtEq);
+                    }
+                    ret!(TokenKind::GtGt);
+                } else {
+                    ret!(TokenKind::Gt);
+                }
+            }
+            b'<' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::Leq);
+                } else if self.peek_eq(data, b'<') {
+                    self.current += 1;
+                    if self.peek_eq(data, b'=') {
+                        incr_ret!(TokenKind::LtLtEq);
+                    }
+                    ret!(TokenKind::LtLt);
+                } else {
+                    ret!(TokenKind::Lt);
+                }
+            }
+            b'!' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::Neq);
+                } else {
+                    ret!(TokenKind::Bang);
+                }
+            }
+            b'=' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::EqEq);
+                } else {
+                    ret!(TokenKind::Eq);
+                }
+            }
+            b'|' => {
+                if self.peek_eq(data, b'|') {
+                    incr_ret!(TokenKind::LineLine);
+                } else if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::LineEq);
+                } else {
+                    ret!(TokenKind::Line);
+                }
+            }
+            b'&' => {
+                if self.peek_eq(data, b'&') {
+                    incr_ret!(TokenKind::AmpAmp);
+                } else if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::AmpEq);
+                } else {
+                    ret!(TokenKind::Amp);
+                }
+            }
+            b'^' => {
+                if self.peek_eq(data, b'=') {
+                    incr_ret!(TokenKind::CaretEq);
+                } else {
+                    ret!(TokenKind::Caret);
+                }
+            }
+
+            x => {
+                return Err(invalid_token(self.begin, self.current, self.file));
+            }
+        }
     }
 
-    pub fn lex_macro(
+    pub fn lex_directive(
         &mut self,
-        buckets: &impl Allocator<'b>,
-        incomplete: &mut HashSet<u32>,
-        token_db: &mut TokenDb<'b>,
-        symbols: &mut FileDb,
+        buckets: &impl Allocator<'static>,
+        symbols: &mut Symbols,
+        files: &FileDb,
         data: &[u8],
-    ) -> Result<(), Error> {
-        if self.peek_eq(data, b'#') {
-            self.current += 1;
-        } else {
-            return Ok(());
-        }
+    ) -> Result<RawTok, Error> {
+        let directive = {
+            let begin = self.current;
+            while self.peek_neqs(data, &WHITESPACE) {
+                self.current += 1;
+            }
 
-        // macros!
-        let begin = self.current;
-        while self.peek_neqs(data, &WHITESPACE) {
-            self.current += 1;
-        }
+            unsafe { str::from_utf8_unchecked(&data[begin..self.current]) }
+        };
 
-        let directive = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
         match directive {
             "pragma" => {
                 self.current += 1;
@@ -329,15 +990,10 @@ impl<'b> Lexer<'b> {
                     self.current += 1;
                 }
 
-                let pragma = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
+                let pragma = unsafe { str::from_utf8_unchecked(&data[begin..self.current]) };
                 let pragma = buckets.add_str(pragma);
 
-                self.output.push(Token::new(
-                    TokenKind::Pragma(pragma),
-                    begin..self.current,
-                    self.file,
-                ));
-                return Ok(());
+                return Ok(RawTok::Tok(TokenKind::Pragma(pragma)));
             }
             "define" => {
                 while self.peek_eqs(data, &WHITESPACE) {
@@ -345,20 +1001,14 @@ impl<'b> Lexer<'b> {
                 }
 
                 let ident_begin = self.current;
-                if ident_begin == data.len() {
-                    return Err(error!(
-                        "unexpected end of file",
-                        l(ident_begin as u32, begin as u32, self.file),
-                        "EOF found here"
-                    ));
-                }
-
                 while self.peek_check(data, is_ident_char) {
                     self.current += 1;
                 }
 
+                let ident = unsafe { str::from_utf8_unchecked(&data[ident_begin..self.current]) };
+
                 // Don't add the empty string
-                if self.current - ident_begin == 0 {
+                if ident == "" {
                     return Err(error!(
                         "expected an identifer for macro declaration",
                         l(ident_begin as u32, ident_begin as u32 + 1, self.file),
@@ -366,88 +1016,15 @@ impl<'b> Lexer<'b> {
                     ));
                 }
 
-                let id = symbols.translate_add(ident_begin..self.current, self.file);
+                let ident = symbols.add_str(ident);
+                self.in_macro = true;
 
-                macro_rules! consume_whitespace_macro {
-                    () => {
-                        while self.peek_eqs(data, &WHITESPACE) {
-                            self.current += 1;
-                        }
-
-                        if self.current == data.len() {
-                            break;
-                        }
-
-                        if self.peek_eq_series(data, &[b'/', b'/']) {
-                            self.current += 2;
-                            while self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
-                                self.current += 1;
-                            }
-                        } else if self.peek_eq_series(data, &[b'/', b'*']) {
-                            self.current += 2;
-                            while self.peek_neq_series(data, &[b'*', b'/']) {
-                                self.current += 1;
-                            }
-
-                            self.current += 2;
-                            continue;
-                        }
-
-                        if self.peek_eq(data, b'\n') {
-                            break;
-                        } else if self.peek_eq_series(data, &CRLF) {
-                            break;
-                        } else if self.peek_eq_series(data, &[b'\\', b'\n']) {
-                            self.current += 2;
-                            continue;
-                        } else if self.peek_eq_series(data, &[b'\\', b'\r', b'\n']) {
-                            self.current += 3;
-                            continue;
-                        }
-                    };
+                if self.peek_eq(data, b'(') {
+                    self.current += 1;
+                    return Ok(RawTok::FuncDefine(ident));
+                } else {
+                    return Ok(RawTok::Define(ident));
                 }
-
-                if !self.peek_eq(data, b'(') {
-                    self.output.push(Token::new(
-                        TokenKind::MacroDef(id),
-                        begin..self.current,
-                        self.file,
-                    ));
-
-                    loop {
-                        consume_whitespace_macro!();
-                        let tok = self.lex_token(buckets, symbols, data)?;
-                        self.output.push(tok);
-                    }
-
-                    self.output.push(Token::new(
-                        TokenKind::MacroDefEnd,
-                        self.current..self.current,
-                        self.file,
-                    ));
-
-                    return Ok(());
-                }
-
-                self.output.push(Token::new(
-                    TokenKind::FuncMacroDef(id),
-                    begin..self.current,
-                    self.file,
-                ));
-
-                loop {
-                    consume_whitespace_macro!();
-                    let tok = self.lex_token(buckets, symbols, data)?;
-                    self.output.push(tok);
-                }
-
-                self.output.push(Token::new(
-                    TokenKind::MacroDefEnd,
-                    self.current..self.current,
-                    self.file,
-                ));
-
-                return Ok(());
             }
             "include" => {
                 while self.peek_eqs(data, &WHITESPACE) {
@@ -463,46 +1040,30 @@ impl<'b> Lexer<'b> {
 
                     let name_end = self.current;
                     self.current += 1;
-                    if !self.peek_eq(data, b'\n') && !self.peek_eq_series(data, &CRLF) {
-                        return Err(expected_newline("include", begin, self.current, self.file));
+                    if self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                        return Err(expected_newline(
+                            "include",
+                            self.begin,
+                            self.current,
+                            self.file,
+                        ));
                     }
 
                     let map_err = |err| {
                         error!(
                             "error finding file",
-                            l(begin as u32, self.current as u32, self.file),
+                            self.loc(),
                             format!("got error '{}'", err)
                         )
                     };
+
                     let include_name =
-                        unsafe { core::str::from_utf8_unchecked(&data[name_begin..name_end]) };
-                    let include_id = symbols
-                        .add_from_include(include_name, self.file)
+                        unsafe { str::from_utf8_unchecked(&data[name_begin..name_end]) };
+                    let include_id = files
+                        .resolve_include(include_name, self.file)
                         .map_err(map_err)?;
-                    self.output.push(Token::new(
-                        TokenKind::Include(include_id),
-                        begin..self.current,
-                        self.file,
-                    ));
 
-                    if incomplete.contains(&include_id) {
-                        return Err(error!(
-                            "include cycle detected",
-                            l(begin as u32, self.current as u32, self.file),
-                            "found here"
-                        ));
-                    }
-
-                    if token_db.contains_key(&include_id) {
-                        return Ok(());
-                    }
-
-                    incomplete.insert(include_id);
-                    let toks =
-                        Lexer::new(include_id).lex_file(buckets, incomplete, token_db, symbols)?;
-                    token_db.insert(include_id, toks);
-                    incomplete.remove(&include_id);
-                    return Ok(());
+                    return Ok(RawTok::Include(include_id));
                 } else if self.peek_eq(data, b'<') {
                     self.current += 1;
                     let name_begin = self.current;
@@ -522,288 +1083,123 @@ impl<'b> Lexer<'b> {
                         ));
                     }
 
-                    let sys_file =
-                        unsafe { core::str::from_utf8_unchecked(&data[name_begin..name_end]) };
+                    let sys_file = unsafe { str::from_utf8_unchecked(&data[name_begin..name_end]) };
 
-                    if !self.peek_eq(data, b'\n') && !self.peek_eq_series(data, &CRLF) {
-                        return Err(expected_newline("include", begin, self.current, self.file));
+                    if self.peek_neq(data, b'\n') && self.peek_neq_series(data, &CRLF) {
+                        return Err(expected_newline(
+                            "include",
+                            self.begin,
+                            self.current,
+                            self.file,
+                        ));
                     }
 
-                    let id_opt = symbols.file_names.get(sys_file).map(|i| Ok(*i));
-                    let sys_lib = SYS_LIBS.get(sys_file).ok_or_else(|| {
-                        return error!(
-                            "library header file not found",
-                            l(begin as u32, self.current as u32, self.file),
-                            "include found here"
-                        );
-                    })?;
-                    let sys_header = unsafe { core::str::from_utf8_unchecked(sys_lib.header) };
-                    let sys_impl = unsafe { core::str::from_utf8_unchecked(sys_lib.lib) };
-                    let id = id_opt.unwrap_or_else(|| {
-                        let id = symbols.add(&sys_file, sys_header).unwrap();
-                        let toks =
-                            Lexer::new(id).lex_file(buckets, incomplete, token_db, symbols)?;
-                        token_db.insert(id, toks);
+                    let map_err = |err| {
+                        error!(
+                            "error finding file",
+                            self.loc(),
+                            format!("got error '{}'", err)
+                        )
+                    };
 
-                        return Ok(id);
-                    })?;
-
-                    self.output.push(Token::new(
-                        TokenKind::IncludeSys(id),
-                        begin..self.current,
-                        self.file,
-                    ));
-
-                    return Ok(());
+                    let id = files.resolve_system_include(sys_file).map_err(map_err)?;
+                    return Ok(RawTok::Include(id));
                 } else {
                     return Err(error!(
                         "expected a '<' or '\"' here",
-                        l(begin as u32, self.current as u32, self.file),
+                        self.loc(),
                         "directive found here"
                     ));
                 }
             }
-            _ => {
-                return Err(error!(
-                    "invalid compiler directive",
-                    l(begin as u32, self.current as u32, self.file),
-                    "directive found here"
-                ));
+            x => {
+                return Err(error!("invalid compiler directive", self.loc(), x));
             }
         }
     }
 
-    pub fn lex_token(
-        &mut self,
-        buckets: &impl Allocator<'b>,
-        symbols: &mut FileDb,
-        data: &[u8],
-    ) -> Result<Token<'b>, Error> {
-        let begin = self.current;
-        self.current += 1;
+    pub fn kill_whitespace(&mut self, data: &[u8]) -> Result<(), Error> {
+        self.begin = self.current;
 
-        macro_rules! ret_tok {
-            ($arg1:expr) => {{
-                return Ok(Token::new($arg1, begin..self.current, self.file));
-            }};
+        loop {
+            while self.peek_eqs(data, &WHITESPACE) {
+                self.current += 1;
+                self.at_line_begin = false;
+            }
+
+            if self.peek_eq_series(data, &[b'/', b'/']) {
+                self.current += 2;
+                loop {
+                    if self.current == data.len() {
+                        return Ok(());
+                    }
+
+                    if self.peek_eq(data, b'\n') {
+                        break;
+                    } else if self.peek_eq_series(data, &CRLF) {
+                        break;
+                    } else if self.peek_eq_series(data, &[b'\\', b'\n']) {
+                        self.current += 2;
+                        continue;
+                    } else if self.peek_eq_series(data, &[b'\\', b'\r', b'\n']) {
+                        self.current += 3;
+                        continue;
+                    } else {
+                        self.current += 1;
+                    }
+                }
+            } else if self.peek_eq_series(data, &[b'/', b'*']) {
+                self.current += 2;
+                loop {
+                    if self.current == data.len() {
+                        return Err(error!(
+                            "block comment still open when file ends",
+                            self.loc(),
+                            "comment is here"
+                        ));
+                    }
+
+                    if self.peek_eq_series(data, &[b'*', b'/']) {
+                        break;
+                    }
+
+                    self.current += 1;
+                }
+
+                self.current += 2;
+                self.at_line_begin = false;
+                continue;
+            }
+
+            if self.peek_eq(data, b'\n') {
+                if self.in_macro {
+                    break;
+                }
+
+                self.current += 1;
+                self.at_line_begin = true;
+            } else if self.peek_eq_series(data, &CRLF) {
+                if self.in_macro {
+                    break;
+                }
+
+                self.current += 2;
+                self.at_line_begin = true;
+            } else if self.peek_eq_series(data, &[b'\\', b'\n']) {
+                self.current += 2;
+            } else if self.peek_eq_series(data, &[b'\\', b'\r', b'\n']) {
+                self.current += 3;
+            } else {
+                break;
+            }
         }
 
-        match data[begin] {
-            x if (x >= b'A' && x <= b'Z') || (x >= b'a' && x <= b'z') || x == b'_' => {
-                while self.peek_check(data, is_ident_char) {
-                    self.current += 1;
-                }
+        return Ok(());
+    }
 
-                let word = unsafe { std::str::from_utf8_unchecked(&data[begin..self.current]) };
-                if let Some(kind) = RESERVED_KEYWORDS.get(word) {
-                    ret_tok!(*kind);
-                }
-
-                let id = symbols.translate_add(begin..self.current, self.file);
-                ret_tok!(TokenKind::Ident(id));
-            }
-
-            x if (x >= b'0' && x <= b'9') => {
-                let mut int_value: i32 = (x - b'0') as i32;
-                while self.peek_check(data, |b| b >= b'0' && b <= b'9') {
-                    int_value *= 10;
-                    int_value += (data[self.current] - b'0') as i32;
-                    self.current += 1;
-                }
-
-                ret_tok!(TokenKind::IntLiteral(int_value));
-            }
-
-            b'\"' => {
-                let mut cur = self.lex_character(b'\"', data)?;
-                let mut chars = Vec::new();
-                while cur != CLOSING_CHAR {
-                    chars.push(cur);
-                    cur = self.lex_character(b'\"', data)?;
-                }
-
-                let string = unsafe { std::str::from_utf8_unchecked(&chars) };
-                let string = buckets.add_str(string);
-                ret_tok!(TokenKind::StringLiteral(string));
-            }
-
-            b'\'' => {
-                let byte = self.lex_character(b'\'', data)?;
-                if byte == CLOSING_CHAR {
-                    return Err(error!(
-                        "empty character literal",
-                        l(begin as u32, self.current as u32, self.file),
-                        "found here"
-                    ));
-                }
-
-                let closing = self.expect(data)?;
-                if closing != b'\'' {
-                    return Err(error!(
-                        "expected closing single quote",
-                        l(begin as u32, self.current as u32, self.file),
-                        "this should be a closing single quote"
-                    ));
-                }
-
-                ret_tok!(TokenKind::CharLiteral(byte as i8));
-            }
-
-            b'{' => ret_tok!(TokenKind::LBrace),
-            b'}' => ret_tok!(TokenKind::RBrace),
-            b'(' => ret_tok!(TokenKind::LParen),
-            b')' => ret_tok!(TokenKind::RParen),
-            b'[' => ret_tok!(TokenKind::LBracket),
-            b']' => ret_tok!(TokenKind::RBracket),
-            b'~' => ret_tok!(TokenKind::Tilde),
-            b';' => ret_tok!(TokenKind::Semicolon),
-            b':' => ret_tok!(TokenKind::Colon),
-            b',' => ret_tok!(TokenKind::Comma),
-            b'?' => ret_tok!(TokenKind::Question),
-
-            b'.' => {
-                if self.peek_eq(data, b'.') {
-                    self.current += 1;
-                    if self.peek_eq(data, b'.') {
-                        self.current += 1;
-                        ret_tok!(TokenKind::DotDotDot);
-                    }
-
-                    return Err(invalid_token(self.file, begin, self.current));
-                }
-
-                ret_tok!(TokenKind::Dot);
-            }
-            b'+' => {
-                if self.peek_eq(data, b'+') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::PlusPlus);
-                } else if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::PlusEq);
-                } else {
-                    ret_tok!(TokenKind::Plus);
-                }
-            }
-            b'-' => {
-                if self.peek_eq(data, b'-') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::DashDash);
-                } else if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::DashEq);
-                } else if self.peek_eq(data, b'>') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::Arrow);
-                } else {
-                    ret_tok!(TokenKind::Dash);
-                }
-            }
-            b'/' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::SlashEq);
-                } else {
-                    ret_tok!(TokenKind::Slash);
-                }
-            }
-            b'*' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::StarEq);
-                } else {
-                    ret_tok!(TokenKind::Star);
-                }
-            }
-            b'%' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::PercentEq);
-                } else {
-                    ret_tok!(TokenKind::Percent);
-                }
-            }
-            b'>' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::Geq);
-                } else if self.peek_eq(data, b'>') {
-                    self.current += 1;
-                    if self.peek_eq(data, b'=') {
-                        self.current += 1;
-                        ret_tok!(TokenKind::GtGtEq);
-                    }
-                    ret_tok!(TokenKind::GtGt);
-                } else {
-                    ret_tok!(TokenKind::Gt);
-                }
-            }
-            b'<' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::Leq);
-                } else if self.peek_eq(data, b'<') {
-                    self.current += 1;
-                    if self.peek_eq(data, b'=') {
-                        self.current += 1;
-                        ret_tok!(TokenKind::LtLtEq);
-                    }
-                    ret_tok!(TokenKind::LtLt);
-                } else {
-                    ret_tok!(TokenKind::Lt);
-                }
-            }
-            b'!' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::Neq);
-                } else {
-                    ret_tok!(TokenKind::Bang);
-                }
-            }
-            b'=' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::EqEq);
-                } else {
-                    ret_tok!(TokenKind::Eq);
-                }
-            }
-            b'|' => {
-                if self.peek_eq(data, b'|') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::LineLine);
-                } else if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::LineEq);
-                } else {
-                    ret_tok!(TokenKind::Line);
-                }
-            }
-            b'&' => {
-                if self.peek_eq(data, b'&') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::AmpAmp);
-                } else if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::AmpEq);
-                } else {
-                    ret_tok!(TokenKind::Amp);
-                }
-            }
-            b'^' => {
-                if self.peek_eq(data, b'=') {
-                    self.current += 1;
-                    ret_tok!(TokenKind::CaretEq);
-                } else {
-                    ret_tok!(TokenKind::Caret);
-                }
-            }
-
-            x => {
-                return Err(invalid_token(self.file, begin, self.current));
-            }
-        }
+    #[inline]
+    pub fn loc(&self) -> CodeLoc {
+        return l(self.begin as u32, self.current as u32, self.file);
     }
 
     #[inline]

@@ -2,9 +2,9 @@ use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
-use std::fs::read_to_string;
+use std::fs::{read_dir, read_to_string};
 
-fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
+fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
 
@@ -40,32 +40,34 @@ fn test_file_should_succeed(files: &mut FileDb, output_file: &str) {
     }
 
     println!("{}", output);
-    match read_to_string(output_file) {
-        Ok(expected) => {
-            if output != expected.replace("\r\n", "\n") {
-                println!("left:  {:?}\nright: {:?}", output, expected);
-                panic!();
+    if let Some(output_file) = output_file {
+        match read_to_string(output_file) {
+            Ok(expected) => {
+                if output != expected.replace("\r\n", "\n") {
+                    println!("left:  {:?}\nright: {:?}", output, expected);
+                    panic!();
+                }
             }
+            Err(_) => {}
         }
-        Err(_) => {}
     }
 }
 
-fn test_file_compile_should_fail(filename: &str) {
-    let config = codespan_reporting::term::Config::default();
-    let mut files = FileDb::new(true);
-    let mut writer = StringWriter::new();
-
-    files.add_from_fs(filename).unwrap();
-
-    match compile(&mut files) {
-        Err(errs) => {
-            emit_err(&errs, &files, &mut writer);
-            println!("{}", writer.to_string());
-        }
-        _ => panic!("should have failed"),
-    }
-}
+// fn test_file_compile_should_fail(filename: &str) {
+//     let config = codespan_reporting::term::Config::default();
+//     let mut files = FileDb::new(true);
+//     let mut writer = StringWriter::new();
+//
+//     files.add_from_fs(filename).unwrap();
+//
+//     match compile(&mut files) {
+//         Err(errs) => {
+//             emit_err(&errs, &files, &mut writer);
+//             println!("{}", writer.to_string());
+//         }
+//         _ => panic!("should have failed"),
+//     }
+// }
 
 // fn test_file_runtime_should_fail(filename: &str, expected_err: &str) {
 //     let config = codespan_reporting::term::Config::default();
@@ -99,29 +101,41 @@ fn test_file_compile_should_fail(filename: &str) {
 // }
 
 macro_rules! gen_test_should_succeed {
-    ( $( $ident:tt ),* ) => {
+    ( $( $ident:ident ),* ) => {
         $(
             gen_test_should_succeed!(@S, $ident);
         )*
     };
-    (@S, ( $folder:literal, $name:ident, $( $ident:ident),* ) ) => {
-            #[test]
-            fn $name() {
-                let mut files = FileDb::new(true);
-                files.add_from_fs(concat!("lib/test/", $folder, stringify!($name), ".c")).unwrap();
-                $(
-                files.add_from_fs(concat!("lib/test/", $folder, stringify!($ident), ".c")).unwrap();
-                )*
-
-                test_file_should_succeed(&mut files,concat!("lib/test/", $folder, stringify!($name), ".c.out"));
-            }
-    };
     (@S, $ident:ident) => {
             #[test]
             fn $ident() {
-                let mut files = FileDb::new(true);
-                files.add_from_fs(concat!("lib/test/", stringify!($ident), ".c")).unwrap();
-                test_file_should_succeed(&mut files,concat!("lib/test/", stringify!($ident), ".c.out"));
+                use std::path::Path;
+
+                let file_path = concat!("lib/test/", stringify!($ident), ".c");
+                let folder_path = concat!("lib/test/", stringify!($ident));
+
+                let mut files = FileDb::new();
+                if Path::new(file_path).exists() {
+                    let out_path = concat!("lib/test/", stringify!($ident), ".c.out");
+                    files.add(file_path, &read_to_string(file_path).unwrap()).unwrap();
+                    test_file_should_succeed(&files, Some(out_path));
+                    return;
+                }
+
+                let mut out_path = None;
+                for entry in read_dir(Path::new(folder_path)).unwrap() {
+                    let path = entry.unwrap().path();
+                    let file_path = path.to_str().unwrap();
+                    if file_path.ends_with(".out") {
+                        out_path = Some(path);
+                        continue;
+                    }
+
+                    files.add(file_path, &read_to_string(file_path).unwrap()).unwrap();
+                }
+
+                let out_path_ref = out_path.as_ref().map(|a| a.to_str()).flatten();
+                test_file_should_succeed(&files, out_path_ref);
             }
     };
 
@@ -150,9 +164,9 @@ gen_test_should_succeed!(
     bool_operators,
     assign_operators,
     exit,
-    ("dyn_array_ptr/", dyn_array_ptr, main),
-    ("arrays/", arrays, main),
-    ("statics/", statics, main)
+    dyn_array_ptr,
+    arrays,
+    statics
 );
 
 // gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

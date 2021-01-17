@@ -104,10 +104,10 @@ lazy_static! {
 
         map
     };
-    pub static ref BUILTINS: HashMap<&'static str, BuiltinTransform> = {
-        let mut m: HashMap<&'static str, BuiltinTransform> = HashMap::new();
+    pub static ref BUILTINS: HashMap<u32, BuiltinTransform> = {
+        let mut m: HashMap<u32, BuiltinTransform> = HashMap::new();
 
-        m.insert("__tci_builtin_push_temp_stack", |env, call_loc, args| {
+        m.insert(BUILTIN_PUSH_STACK, |env, call_loc, args| {
             if args.len() != 2 {
                 return Err(error!(
                     "wrong number of arguments to builtin function",
@@ -137,7 +137,7 @@ lazy_static! {
             });
         });
 
-        m.insert("__tci_builtin_ecall", |env, call_loc, args| {
+        m.insert(BUILTIN_ECALL, |env, call_loc, args| {
             if args.len() != 1 {
                 return Err(error!(
                     "wrong number of arguments to builtin function",
@@ -162,8 +162,12 @@ lazy_static! {
     };
 }
 
-pub fn check_tree(files: &FileDb, tree: &[GlobalStatement]) -> Result<TranslationUnit, Error> {
-    let mut globals = TypeEnv::global(files);
+pub fn check_tree(
+    file: u32,
+    symbols: &Symbols,
+    tree: &[GlobalStatement],
+) -> Result<TranslationUnit, Error> {
+    let mut globals = TypeEnv::global(file, symbols);
 
     for decl in tree {
         match decl.kind {
@@ -1254,7 +1258,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                     }
 
                     let op_type = target.ty.to_prim_type().unwrap();
-                    let or_else = || bitshift_conversion_error(env.files(), &val);
+                    let or_else = || bitshift_conversion_error(env.symbols(), &val);
                     let val = assign_convert(&*env, TCType::new(TCTypeBase::I8), val, expr.loc)
                         .ok_or_else(or_else)?;
 
@@ -1345,7 +1349,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
         ExprKind::Member { base, member } => {
             let base = check_expr(&mut *env, base)?;
 
-            let or_else = || not_a_struct(env.files(), base.ty, base.loc);
+            let or_else = || not_a_struct(env.symbols(), base.ty, base.loc);
             let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
 
             let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
@@ -1366,7 +1370,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
         }
         ExprKind::PtrMember { base, member } => {
             let base = check_expr(&mut *env, base)?;
-            let or_else = || not_a_struct_pointer(env.files(), base.ty, base.loc);
+            let or_else = || not_a_struct_pointer(env.symbols(), base.ty, base.loc);
             let base_ty = base.ty.deref().ok_or_else(or_else)?;
             let struct_id = base_ty.get_struct_id_strict().ok_or_else(or_else)?;
 
@@ -1389,7 +1393,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
         ExprKind::Call { function, params } => {
             if let ExprKind::Ident(id) = function.kind {
-                if let Some(trans) = BUILTINS.get(env.files().symbol_to_str(id)) {
+                if let Some(trans) = BUILTINS.get(&id) {
                     return trans(env, expr.loc, params);
                 }
             }
@@ -1579,12 +1583,12 @@ pub fn check_bin_op(
                     ));
                 } else {
                     // pointer subtraction
-                    let f = env.files();
-                    let or_else = |e: TCExpr| move || ptr_to_incomplete_type(f, e.ty, e.loc);
+                    let s = env.symbols();
+                    let or_else = |e: TCExpr| move || ptr_to_incomplete_type(s, e.ty, e.loc);
                     let l_stride = l.ty.pointer_stride().ok_or_else(or_else(l))?;
                     let r_stride = r.ty.pointer_stride().ok_or_else(or_else(r))?;
                     if l_stride != r_stride {
-                        let (l_td, r_td) = (l.ty.display(f), r.ty.display(f));
+                        let (l_td, r_td) = (l.ty.display(s), r.ty.display(s));
                         return Err(error!(
                             "pointer subtraction performed on pointers to types of different sizes",
                             l.loc,
@@ -1713,7 +1717,7 @@ pub fn check_bin_op(
         }
 
         let op_type = l.ty.to_prim_type().unwrap();
-        let or_else = || bitshift_conversion_error(env.files(), &r);
+        let or_else = || bitshift_conversion_error(env.symbols(), &r);
         let r = assign_convert(&*env, TCType::new(TCTypeBase::I8), r, loc).ok_or_else(or_else)?;
 
         let (left, right, ty) = (env.add(l), env.add(r), l.ty);
@@ -1827,7 +1831,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
 
         ExprKind::Member { base, member } => {
             let mut base = check_assign_target(&mut *env, base)?;
-            let or_else = || not_a_struct(env.files(), base.ty, base.loc);
+            let or_else = || not_a_struct(env.symbols(), base.ty, base.loc);
             let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
 
             let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
@@ -1845,7 +1849,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
         }
         ExprKind::PtrMember { base, member } => {
             let base = check_expr(&mut *env, base)?;
-            let or_else = || not_a_struct_pointer(env.files(), base.ty, base.loc);
+            let or_else = || not_a_struct_pointer(env.symbols(), base.ty, base.loc);
             let base_ty = base.ty.deref().ok_or_else(or_else)?;
             let struct_id = base_ty.get_struct_id_strict().ok_or_else(or_else)?;
 
@@ -2017,19 +2021,19 @@ pub fn bin_assign_op_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
     );
 }
 
-pub fn not_a_struct_pointer(files: &FileDb, ty: TCType, loc: CodeLoc) -> Error {
+pub fn not_a_struct_pointer(syms: &Symbols, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
         "accessed expression using arrow that was not a struct pointer",
         loc,
-        format!("access happened here (type is {})", ty.display(files))
+        format!("access happened here (type is {})", ty.display(syms))
     );
 }
 
-pub fn not_a_struct(files: &FileDb, ty: TCType, loc: CodeLoc) -> Error {
+pub fn not_a_struct(syms: &Symbols, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
         "tried to access field of non-struct type",
         loc,
-        format!("access happened here (type is {})", ty.display(files))
+        format!("access happened here (type is {})", ty.display(syms))
     );
 }
 
@@ -2086,14 +2090,14 @@ pub fn condition_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
     );
 }
 
-pub fn ptr_to_incomplete_type(files: &FileDb, ty: TCType, loc: CodeLoc) -> Error {
+pub fn ptr_to_incomplete_type(syms: &Symbols, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
         "cannot perform arithmetic on pointer type",
         loc, "pointer found here"
     );
 }
 
-pub fn bitshift_conversion_error(files: &FileDb, expr: &TCExpr) -> Error {
+pub fn bitshift_conversion_error(syms: &Symbols, expr: &TCExpr) -> Error {
     return error!(
         "couldn't use value as bitshift size",
         expr.loc, "value found here"

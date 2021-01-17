@@ -5,6 +5,7 @@ use crate::util::*;
 use std::cell::RefCell;
 
 pub struct ParseEnv {
+    pub file: u32,
     pub symbol_is_type: RefCell<Vec<HashMap<u32, bool>>>, // true is type
     pub locs: Vec<CodeLoc>,
     pub buckets: BucketListFactory,
@@ -18,11 +19,12 @@ impl Drop for ParseEnv {
 }
 
 impl ParseEnv {
-    pub fn new(toks: &[Token]) -> Self {
+    pub fn new(file: u32, locs: Vec<CodeLoc>) -> Self {
         Self {
+            file,
             // TODO This is a hack to work around stuff in rust-peg
             symbol_is_type: RefCell::new(vec![HashMap::new()]),
-            locs: toks.iter().map(|tok| tok.loc).collect(),
+            locs,
             tree: Vec::new(),
             buckets: BucketListFactory::new(),
         }
@@ -74,9 +76,8 @@ pub fn concat<E>(mut a: Vec<E>, b: Vec<E>) -> Vec<E> {
     return a;
 }
 
-pub fn parse(toks: &[Token<'static>]) -> Result<ParseEnv, Error> {
-    let mut parser = ParseEnv::new(toks);
-    let toks: Vec<_> = toks.iter().map(|tok| tok.kind).collect();
+pub fn parse(file: u32, toks: Vec<TokenKind>, locs: Vec<CodeLoc>) -> Result<ParseEnv, Error> {
+    let mut parser = ParseEnv::new(file, locs);
     match c_parser::translation_unit(&toks, &mut parser) {
         Ok(tree) => {
             parser.tree = tree;
@@ -96,7 +97,7 @@ pub fn parse(toks: &[Token<'static>]) -> Result<ParseEnv, Error> {
 peg::parser! {
 
 // Translated from https://github.com/vickenty/lang-c/blob/master/grammar.rustpeg
-pub grammar c_parser(env: &ParseEnv) for [TokenKind<'static>] {
+pub grammar c_parser(env: &ParseEnv) for [TokenKind] {
 
 rule list0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x()*) pos2:position!() {
     if pos == pos2 {

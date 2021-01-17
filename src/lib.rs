@@ -14,7 +14,6 @@ mod buckets;
 mod filedb;
 mod lexer;
 mod parser;
-mod preprocessor;
 mod tc_ast;
 mod tc_structs;
 mod type_checker;
@@ -112,7 +111,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         }};
     }
 
-    let mut files = FileDb::new(false);
+    let mut files = FileDb::new();
     let mut runtime = None;
 
     loop {
@@ -121,19 +120,10 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         while let Some(input) = recv()? {
             match input {
                 In::Sources(input_files) => {
-                    use std::path::Path;
-
-                    files = FileDb::new(false);
+                    files = FileDb::new();
                     let mut out = HashMap::new();
                     for (name, contents) in input_files {
-                        let file_id = if Path::new(&name).is_relative() {
-                            let real_path = Path::new("/").join(&name);
-                            let path = real_path.to_str().unwrap();
-                            files.add(path, &contents).unwrap()
-                        } else {
-                            files.add(&name, &contents).unwrap()
-                        };
-
+                        let file_id = files.add(&name, &contents).unwrap();
                         out.insert(file_id, name);
                     }
 
@@ -185,64 +175,63 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
     }
 }
 
-fn compile(env: &mut FileDb) -> Result<BinaryData, Vec<Error>> {
-    let mut buckets = buckets::BucketListFactory::with_capacity(2 * env.size());
-    let mut tokens = lexer::TokenDb::new();
+fn compile_filter<'a, In, T>(
+    mut a: impl FnMut(In) -> Result<T, Error> + 'a,
+    errs: &'a mut Vec<Error>,
+) -> impl FnMut(In) -> Option<T> + 'a {
+    return move |idx| match a(idx) {
+        Ok(t) => return Some(t),
+        Err(e) => {
+            errs.push(e);
+            return None;
+        }
+    };
+}
+
+fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
+    let mut lexer = lexer::Lexer::new(env);
 
-    let files_list = env.vec();
+    let files_list = env.impls();
     let files = files_list.iter();
-    files.for_each(|&id| {
-        let result = lexer::lex_file(&*buckets, &mut tokens, env, id);
-        match result {
-            Err(err) => errors.push(err),
-            Ok(_) => {}
-        }
-    });
-
-    if errors.len() != 0 {
-        unsafe { buckets.dealloc() };
-        return Err(errors);
-    }
-
-    let mut processed_tokens = HashMap::new();
-    for &file in tokens.keys() {
-        match preprocessor::preprocess_file(&tokens, file) {
-            Ok(toks) => std::mem::drop(processed_tokens.insert(file, toks)),
-            Err(err) => errors.push(err),
-        }
-    }
-
-    let mut trees = HashMap::new();
-    for (file, toks) in processed_tokens {
-        match parser::parse(&toks) {
-            Ok(env) => std::mem::drop(trees.insert(file, env)),
-            Err(err) => errors.push(err),
-        }
-    }
-
-    unsafe { buckets.dealloc() };
+    let lexed: Vec<_> = files
+        .filter_map(compile_filter(|&idx| lexer.lex(idx), &mut errors))
+        .collect();
 
     if errors.len() != 0 {
         return Err(errors);
     }
 
-    let mut tu_map = HashMap::new();
-    for (file, tree) in trees {
-        match type_checker::check_tree(env, &tree.tree) {
-            Ok(tu) => std::mem::drop(tu_map.insert(file, tu)),
-            Err(err) => errors.push(err),
-        }
+    println!("lexed");
+    let parsed: Vec<_> = lexed
+        .into_iter()
+        .filter_map(compile_filter(
+            |(id, toks, locs)| parser::parse(id, toks, locs),
+            &mut errors,
+        ))
+        .collect();
+
+    let symbols = lexer.symbols();
+
+    if errors.len() != 0 {
+        return Err(errors);
     }
+
+    let checked: Vec<_> = parsed
+        .into_iter()
+        .filter_map(compile_filter(
+            |env: parser::ParseEnv| type_checker::check_tree(env.file, &symbols, &env.tree),
+            &mut errors,
+        ))
+        .collect();
 
     if errors.len() != 0 {
         return Err(errors);
     }
 
     let mut assembler = assembler::Assembler::new();
-
-    for (file, tu) in tu_map {
-        match assembler.add_file(file, tu) {
+    for tu in checked {
+        match assembler.add_file(tu) {
             Ok(_) => {}
             Err(err) => return Err(vec![err]),
         }

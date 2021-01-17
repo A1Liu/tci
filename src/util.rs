@@ -602,6 +602,11 @@ pub struct TMAIter<'a, T, E> {
     idx: usize,
 }
 
+pub struct TMAIterMut<'a, T, E> {
+    tma: &'a mut TaggedMultiArray<T, E>,
+    idx: usize,
+}
+
 impl<T, E> TaggedMultiArray<T, E> {
     pub fn new() -> Self {
         Self {
@@ -653,6 +658,42 @@ impl<T, E> TaggedMultiArray<T, E> {
         self.tags.push((begin, len));
     }
 
+    pub fn pop(&mut self) -> Option<T> {
+        let (idx, len) = self.tags.pop()?;
+
+        let ptr = &mut self.elements[idx] as *mut u8 as *mut T;
+        let TE(tag, elems) = unsafe {
+            let fat_ptr = slice::from_raw_parts_mut(ptr, len);
+            mem::transmute::<&mut [T], &mut TE<T, E>>(fat_ptr)
+        };
+
+        let tag = unsafe { core::ptr::read(tag) };
+        for e in elems.iter_mut() {
+            unsafe { core::ptr::drop_in_place(e) };
+        }
+
+        self.elements.resize(idx, 0);
+        return Some(tag);
+    }
+
+    pub fn last_mut(&mut self) -> Option<&mut TE<T, E>> {
+        let (idx, len) = *self.tags.last()?;
+        let ptr = &mut self.elements[idx] as *mut u8 as *mut T;
+        unsafe {
+            let fat_ptr = slice::from_raw_parts_mut(ptr, len);
+            return Some(mem::transmute::<&mut [T], &mut TE<T, E>>(fat_ptr));
+        }
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut TE<T, E>> {
+        let (idx, len) = *self.tags.get(idx)?;
+        let ptr = &mut self.elements[idx] as *mut u8 as *mut T;
+        unsafe {
+            let fat_ptr = slice::from_raw_parts_mut(ptr, len);
+            return Some(mem::transmute::<&mut [T], &mut TE<T, E>>(fat_ptr));
+        }
+    }
+
     pub fn get(&self, idx: usize) -> Option<&TE<T, E>> {
         let (idx, len) = *self.tags.get(idx)?;
         let ptr = &self.elements[idx] as *const u8 as *const T;
@@ -680,6 +721,16 @@ impl<T, E> ops::Index<usize> for TaggedMultiArray<T, E> {
     }
 }
 
+impl<'a, T, E> Iterator for TMAIterMut<'a, T, E> {
+    type Item = &'a mut TE<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let val = self.tma.get_mut(self.idx)? as *mut TE<T, E>;
+        self.idx += 1;
+        return Some(unsafe { &mut *val });
+    }
+}
+
 impl<'a, T, E> Iterator for TMAIter<'a, T, E> {
     type Item = &'a TE<T, E>;
 
@@ -696,6 +747,15 @@ impl<'a, T, E> IntoIterator for &'a TaggedMultiArray<T, E> {
 
     fn into_iter(self) -> Self::IntoIter {
         return TMAIter { tma: self, idx: 0 };
+    }
+}
+
+impl<'a, T, E> IntoIterator for &'a mut TaggedMultiArray<T, E> {
+    type Item = &'a mut TE<T, E>;
+    type IntoIter = TMAIterMut<'a, T, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return TMAIterMut { tma: self, idx: 0 };
     }
 }
 
