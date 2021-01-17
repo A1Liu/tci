@@ -945,7 +945,7 @@ impl Assembler {
         let no_main = || error!("missing main function definition");
 
         let main_link_name = LinkName {
-            name: MAIN_SYM,
+            name: BuiltinSymbol::Main as u32,
             file: n32::NULL,
         };
 

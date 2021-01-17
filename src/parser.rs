@@ -4,6 +4,15 @@ use crate::lexer::*;
 use crate::util::*;
 use std::cell::RefCell;
 
+pub enum LiteralType {
+    Int,
+    Unsigned,
+    Long,
+    LongLong,
+    UnsignedLong,
+    UnsignedLongLong,
+}
+
 pub struct ParseEnv {
     pub file: u32,
     pub symbol_is_type: RefCell<Vec<HashMap<u32, bool>>>, // true is type
@@ -99,7 +108,12 @@ peg::parser! {
 // Translated from https://github.com/vickenty/lang-c/blob/master/grammar.rustpeg
 pub grammar c_parser(env: &ParseEnv) for [TokenKind] {
 
-rule list0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x()*) pos2:position!() {
+use TokenKind::*;
+use NumChar::*;
+
+rule w() = [Whitespace]* {}
+
+rule list0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ** w()) pos2:position!() {
     if pos == pos2 {
         (v, NO_FILE)
     } else {
@@ -107,11 +121,12 @@ rule list0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x()*) pos2:p
     }
 }
 
-rule list1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x()+) pos2:position!() {
+rule list1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ++ w()) pos2:position!() {
     (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
 }
 
-rule cs0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ** [TokenKind::Comma]) pos2:position!() {
+rule cs0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) =
+    pos:position!() v:(x() ** (w() [Comma] w())) pos2:position!() {
     if pos == pos2 {
         (v, NO_FILE)
     } else {
@@ -119,12 +134,13 @@ rule cs0<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ** [TokenK
     }
 }
 
-rule cs1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) = pos:position!() v:(x() ++ [TokenKind::Comma]) pos2:position!() {
+rule cs1<E>(x: rule<E>) -> (Vec<E>, CodeLoc) =
+    pos:position!() v:(x() ++ (w() [Comma] w())) pos2:position!() {
     (v, l_from(env.locs[pos], env.locs[pos2 - 1]))
 }
 
 rule list_010<E>(b: rule<E>, s: rule<E>, a: rule<E>) -> (Vec<E>, CodeLoc) =
-    before:list0(<b()>) pos:position!() single:s() after:list0(<a()>)
+    before:list0(<b()>) w() pos:position!() single:s() w() after:list0(<a()>)
 {
     let (mut before, mut begin_loc) = before;
     let (mut after, mut end_loc) = after;
@@ -153,16 +169,16 @@ rule list_ge1_n<E>(a: rule<E>, b: rule<E>) -> (Vec<E>, CodeLoc) = v:list_010(<b(
 
 rule scoped<E>(e: rule<E>) -> E = ({ env.enter_scope(); }) e:e()? {? env.leave_scope(); e.ok_or("") }
 
-rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[TokenKind::Pragma(_)] {
+rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[Pragma(_)] {
     match n[0] {
-        TokenKind::Pragma(n) => (n, env.locs[pos]),
+        Pragma(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
 
-rule raw_ident() -> (u32, CodeLoc) = pos:position!() n:$[TokenKind::Ident(_)] {
+rule raw_ident() -> (u32, CodeLoc) = pos:position!() n:$[Ident(_)] {
     match n[0] {
-        TokenKind::Ident(n) => (n, env.locs[pos]),
+        Ident(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
@@ -175,26 +191,209 @@ rule ident() -> (u32, CodeLoc) = i:raw_ident() {?
     }
 }
 
-rule int() -> (i32, CodeLoc) = pos:position!() n:$[TokenKind::IntLit(_)] {
+rule number_lit() -> u8 =
+    [IntChar(_0)] { b'0' } /
+    [IntChar(_1)] { b'1' } /
+    [IntChar(_2)] { b'2' } /
+    [IntChar(_3)] { b'3' } /
+    [IntChar(_4)] { b'4' } /
+    [IntChar(_5)] { b'5' } /
+    [IntChar(_6)] { b'6' } /
+    [IntChar(_7)] { b'7' } /
+    [IntChar(_8)] { b'8' } /
+    [IntChar(_9)] { b'9' }
+
+rule hex_number_lit() -> u8 =
+    [IntChar(_0)] { b'0' } /
+    [IntChar(_1)] { b'1' } /
+    [IntChar(_2)] { b'2' } /
+    [IntChar(_3)] { b'3' } /
+    [IntChar(_4)] { b'4' } /
+    [IntChar(_5)] { b'5' } /
+    [IntChar(_6)] { b'6' } /
+    [IntChar(_7)] { b'7' } /
+    [IntChar(_8)] { b'8' } /
+    [IntChar(_9)] { b'9' } /
+    [IntChar(_A)] { b'A' } /
+    [IntChar(_B)] { b'B' } /
+    [IntChar(_C)] { b'C' } /
+    [IntChar(_D)] { b'D' } /
+    [IntChar(_E)] { b'E' } /
+    [IntChar(_F)] { b'F' }
+
+rule number_lit_seq() -> String =
+    nums:number_lit()+ {
+        unsafe { String::from_utf8_unchecked(nums) }
+    } /
+    [IntChar(_0)] {
+        "0".to_string()
+    }
+
+rule hex_number_lit_seq() -> String =
+    nums:hex_number_lit()+ {
+        unsafe { String::from_utf8_unchecked(nums) }
+    } /
+    [IntChar(_0)] {
+        "0".to_string()
+    }
+
+rule float_number_lit_seq() -> String = n:number_lit_seq() [Dot] trailing:number_lit()+
+{
+    let mut n = n;
+    n.push('.');
+    n.push_str(&unsafe { String::from_utf8_unchecked(trailing) });
+    n
+}
+
+rule dec_number_type_part() -> u8 =
+    [IntChar(_L)] { b'l' } /
+    [IntChar(_U)] { b'u' }
+
+rule dec_number_type() -> LiteralType = parts:dec_number_type_part()* {?
+    let mut unsigned = 0;
+    let mut long = 0;
+
+    for part in parts {
+        if part == b'l' {
+            long += 1;
+        } else if part == b'u' {
+            unsigned += 1;
+        }
+    }
+
+    if unsigned == 0 && long == 0 {
+        Ok(LiteralType::Int)
+    } else if unsigned == 1 && long == 0 {
+        Ok(LiteralType::Unsigned)
+    } else if unsigned == 1 && long == 1 {
+        Ok(LiteralType::UnsignedLong)
+    } else if unsigned == 1 && long == 2 {
+        Ok(LiteralType::UnsignedLongLong)
+    } else {
+        Err("invalid integer literal suffix")
+    }
+}
+
+
+rule float_number() -> Expr =
+    pos:position!() bef:number_lit_seq() [IntChar(_E)]
+    dash:[Dash]? aft:number_lit_seq() [IntChar(_F)] pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        let mult = if dash.is_some() { -1f32 } else { 1f32 };
+
+        let opt = str::parse::<f32>(&bef).ok().zip(str::parse::<f32>(&aft).ok());
+        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|float| {
+            Expr {
+                kind: ExprKind::FloatLit(float),
+                loc,
+            }
+        })
+    } /
+    pos:position!() bef:number_lit_seq() [IntChar(_E)]
+    dash:[Dash]? aft:number_lit_seq() pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        let mult = if dash.is_some() { -1f64 } else { 1f64 };
+        let opt = str::parse::<f64>(&bef).ok().zip(str::parse::<f64>(&aft).ok());
+        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|double| {
+            Expr {
+                kind: ExprKind::DoubleLit(double),
+                loc,
+            }
+        })
+    } /
+    pos:position!() bef:float_number_lit_seq() [IntChar(_E)]
+    dash:[Dash]? aft:float_number_lit_seq() [IntChar(_F)] pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        let mult = if dash.is_some() { -1f32 } else { 1f32 };
+        let opt = str::parse::<f32>(&bef).ok().zip(str::parse::<f32>(&aft).ok());
+        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|float| {
+            Expr {
+                kind: ExprKind::FloatLit(float),
+                loc,
+            }
+        })
+    } /
+    pos:position!() bef:float_number_lit_seq() [IntChar(_E)]
+    dash:[Dash]? aft:float_number_lit_seq() pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        let mult = if dash.is_some() { -1f64 } else { 1f64 };
+        let opt = str::parse::<f64>(&bef).ok().zip(str::parse::<f64>(&aft).ok());
+        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|double| {
+            Expr {
+                kind: ExprKind::DoubleLit(double),
+                loc,
+            }
+        })
+    } /
+    pos:position!() n:float_number_lit_seq() [IntChar(_F)] pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        str::parse::<f32>(&n).map_err(|e| "couldn't parse float constant").map(|float| {
+            Expr {
+                kind: ExprKind::FloatLit(float),
+                loc,
+            }
+        })
+    } /
+    pos:position!() n:float_number_lit_seq() pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        str::parse::<f64>(&n).map_err(|e| "couldn't parse double constant").map(|double| {
+            Expr {
+                kind: ExprKind::DoubleLit(double),
+                loc,
+            }
+        })
+    }
+
+rule dec_number() -> Expr =
+    pos:position!() [IntChar(_0)] [IntChar(_X)] n:hex_number_lit_seq()
+    ty:dec_number_type() pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        let kind = match ty {
+            LiteralType::Int => i32::from_str_radix(&n ,16).map(|n| ExprKind::IntLit(n)),
+            LiteralType::Long => i64::from_str_radix(&n ,16).map(|n| ExprKind::LongLit(n)),
+            LiteralType::LongLong => i64::from_str_radix(&n ,16).map(|n| ExprKind::LongLit(n)),
+            LiteralType::Unsigned => u32::from_str_radix(&n ,16).map(|n| ExprKind::ULit(n)),
+            LiteralType::UnsignedLong => u64::from_str_radix(&n ,16).map(|n| ExprKind::ULongLit(n)),
+            LiteralType::UnsignedLongLong => u64::from_str_radix(&n ,16).map(|n| ExprKind::ULongLit(n)),
+        };
+
+        kind.map_err(|e| "couldn't parse hex integer constant").map(|kind| Expr { kind, loc })
+    } /
+    pos:position!() n:number_lit_seq() ty:dec_number_type() pos2:position!() {?
+        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
+
+        let kind = match ty {
+            LiteralType::Int => i32::from_str_radix(&n ,10).map(|n| ExprKind::IntLit(n)),
+            LiteralType::Long => i64::from_str_radix(&n ,10).map(|n| ExprKind::LongLit(n)),
+            LiteralType::LongLong => i64::from_str_radix(&n ,10).map(|n| ExprKind::LongLit(n)),
+            LiteralType::Unsigned => u32::from_str_radix(&n ,10).map(|n| ExprKind::ULit(n)),
+            LiteralType::UnsignedLong => u64::from_str_radix(&n ,10).map(|n| ExprKind::ULongLit(n)),
+            LiteralType::UnsignedLongLong => u64::from_str_radix(&n ,10).map(|n| ExprKind::ULongLit(n)),
+        };
+
+        kind.map_err(|e| "couldn't parse hex integer constant").map(|kind| Expr { kind, loc })
+    }
+
+rule char() -> (i8, CodeLoc) = pos:position!() n:$[CharLit(_)] {
     match n[0] {
-        TokenKind::IntLit(n) => (n, env.locs[pos]),
+        CharLit(n) => (n, env.locs[pos]),
         _ => unreachable!(),
     }
 }
 
-rule char() -> (i8, CodeLoc) = pos:position!() n:$[TokenKind::CharLit(_)] {
-    match n[0] {
-        TokenKind::CharLit(n) => (n, env.locs[pos]),
-        _ => unreachable!(),
-    }
-}
-
-rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([TokenKind::StringLit(_)]+) pos2:position!() {
+rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([StringLit(_)] ++ w()) pos2:position!() {
     let mut string = String::new();
     let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
     for token in n {
         let s = match token {
-            TokenKind::StringLit(s) => s,
+            StringLit(s) => s,
             _ => unreachable!(),
         };
 
@@ -205,14 +404,8 @@ rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([TokenKind::Strin
 }
 
 rule constant_expr() -> Expr =
-    n:int() {
-        let (n, loc) = n;
-
-        Expr {
-            kind: ExprKind::IntLit(n),
-            loc,
-        }
-    } /
+    float_number() /
+    dec_number() /
     n:string() {
         let (n, loc) = n;
 
@@ -240,20 +433,20 @@ rule atom() -> Expr =
             loc,
         }
     } /
-    pos:position!() [TokenKind::LParen] e:expr() pos2:position!() [TokenKind::RParen] {
+    pos:position!() [LParen] w() e:expr() w() pos2:position!() [RParen] {
         Expr {
             kind: e.kind,
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     } /
-    pos:position!() [TokenKind::Sizeof] [TokenKind::LParen]
-    t:type_name() pos2:position!() [TokenKind::RParen] {
+    pos:position!() [Sizeof] w() [LParen]
+    w() t:type_name() w() pos2:position!() [RParen] {
         Expr { loc: l_from(env.locs[pos], env.locs[pos2]), kind: ExprKind::SizeofTy(t)  }
     }
 
 
 rule assignment_expr() -> Expr = precedence! {
-    x:@ [TokenKind::Eq] y:(@) {
+    x:@ w() [Eq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
@@ -261,70 +454,70 @@ rule assignment_expr() -> Expr = precedence! {
         }
     }
 
-    x:@ [TokenKind::PlusEq] y:(@) {
+    x:@ w() [PlusEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Add), to: x, val: y }
         }
     }
-    x:@ [TokenKind::DashEq] y:(@) {
+    x:@ w() [DashEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Sub), to: x, val: y }
         }
     }
-    x:@ [TokenKind::StarEq] y:(@) {
+    x:@ w() [StarEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mul), to: x, val: y }
         }
     }
-    x:@ [TokenKind::SlashEq] y:(@) {
+    x:@ w() [SlashEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Div), to: x, val: y }
         }
     }
-    x:@ [TokenKind::PercentEq] y:(@) {
+    x:@ w() [PercentEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mod), to: x, val: y }
         }
     }
-    x:@ [TokenKind::LtLtEq] y:(@) {
+    x:@ w() [LtLtEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::LShift), to: x, val: y }
         }
     }
-    x:@ [TokenKind::GtGtEq] y:(@) {
+    x:@ w() [GtGtEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::RShift), to: x, val: y }
         }
     }
-    x:@ [TokenKind::AmpEq] y:(@) {
+    x:@ w() [AmpEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitAnd), to: x, val: y }
         }
     }
-    x:@ [TokenKind::CaretEq] y:(@) {
+    x:@ w() [CaretEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitXor), to: x, val: y }
         }
     }
-    x:@ [TokenKind::LineEq] y:(@) {
+    x:@ w() [LineEq] w() y:(@) {
         let (x, y) = env.buckets.add((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
@@ -333,7 +526,7 @@ rule assignment_expr() -> Expr = precedence! {
     }
 
     --
-    x:@ [TokenKind::Question] e:expr() [TokenKind::Colon] y:(@) {
+    x:@ w() [Question] w() e:expr() w() [Colon] w() y:(@) {
         let (x, e, y) = env.buckets.add((x, e, y));
         Expr {
             loc: l_from(x.loc, y.loc),
@@ -342,91 +535,95 @@ rule assignment_expr() -> Expr = precedence! {
     }
 
     --
-    x:(@) [TokenKind::LineLine] y:@ {
+    x:(@) w() [LineLine] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolOr, x, y) }
     }
 
     --
-    x:(@) [TokenKind::AmpAmp] y:@ {
+    x:(@) w() [AmpAmp] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolAnd, x, y) }
     }
 
     --
-    x:(@) [TokenKind::Line] y:@ {
+    x:(@) w() [Line] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitOr, x, y) }
     }
 
     --
-    x:(@) [TokenKind::Caret] y:@ {
+    x:(@) w() [Caret] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitXor, x, y) }
     }
 
     --
-    x:(@) [TokenKind::Amp] y:@ {
+    x:(@) w() [Amp] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitAnd, x, y) }
     }
 
     --
-    x:(@) [TokenKind::EqEq] y:@ {
+    x:(@) w() [EqEq] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Eq, x, y) }
     }
-    x:(@) [TokenKind::Neq] y:@ {
+    x:(@) w() [Neq] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Neq, x, y) }
     }
 
     --
-    x:(@) [TokenKind::Gt] y:@ {
+    x:(@) w() [Gt] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Gt, x, y) }
     }
-    x:(@) [TokenKind::Geq] y:@ {
+    x:(@) w() [Geq] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Geq, x, y) }
     }
-    x:(@) [TokenKind::Lt] y:@ {
+    x:(@) w() [Lt] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Lt, x, y) }
     }
-    x:(@) [TokenKind::Leq] y:@ {
+    x:(@) w() [Leq] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Leq, x, y) }
     }
 
     --
-    x:(@) [TokenKind::LtLt] y:@ {
+    x:(@) w() [LtLt] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::LShift, x, y) }
     }
-    x:(@) [TokenKind::GtGt] y:@ {
+    x:(@) w() [GtGt] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::RShift, x, y) }
     }
 
     --
-    x:(@) [TokenKind::Plus] y:@ {
+    x:(@) w() [Plus] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Add, x, y) }
     }
-    x:(@) [TokenKind::Dash] y:@ {
+    x:(@) w() [Dash] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Sub, x, y) }
     }
 
     --
-    x:(@) [TokenKind::Slash] y:@ {
+    x:(@) w() [Slash] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Div, x, y) }
     }
-    x:(@) [TokenKind::Star] y:@ {
+    x:(@) w() [Star] w() y:@ {
         let (x, y) = env.buckets.add((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Mul, x, y) }
+    }
+    x:(@) w() [Percent] w() y:@ {
+        let (x, y) = env.buckets.add((x, y));
+        Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Mod, x, y) }
     }
 
     --
@@ -435,60 +632,76 @@ rule assignment_expr() -> Expr = precedence! {
 }
 
 rule cast_expr() -> Expr =
-    pos:position!() [TokenKind::LParen] t:type_name() [TokenKind::RParen] x:cast_expr() {
+    pos:position!() [LParen] w() t:type_name() w() [RParen] w() x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, from: x } }
     } /
     prefix_expr()
 
 rule prefix_expr() -> Expr =
-    pos:position!() [TokenKind::Amp] x:cast_expr() {
+    pos:position!() [Amp] w() x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Ref, x)  }
     } /
-    pos:position!() [TokenKind::Star] x:cast_expr() {
+    pos:position!() [Star] w() x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Deref, x)  }
     } /
-    pos:position!() [TokenKind::Sizeof] x:prefix_expr() {
+    pos:position!() [Sizeof] w() x:prefix_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::SizeofExpr(x)  }
     } /
-    pos:position!() [TokenKind::Dash] x:cast_expr() {
+    pos:position!() [Bang] w() x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::BoolNot, x)  }
+    } /
+    pos:position!() [Tilde] w() x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::BitNot, x)  }
+    } /
+    pos:position!() [Dash] w() x:cast_expr() {
         let x = env.buckets.add(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Neg, x)  }
+    } /
+    pos:position!() [DashDash] w() x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::PreDecr, x)  }
+    } /
+    pos:position!() [PlusPlus] w() x:cast_expr() {
+        let x = env.buckets.add(x);
+        Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::PreIncr, x)  }
     } /
     postfix_expr()
 
 rule postfix_expr() -> Expr = precedence! {
     // Postfix
-    x:(@) [TokenKind::LParen] c:cs0(<assignment_expr()>) pos:position!() [TokenKind::RParen] {
+    x:(@) w() [LParen] w() c:cs0(<assignment_expr()>) w() pos:position!() [RParen] {
         let (c, _) = c;
         let loc = l_from(x.loc, env.locs[pos]);
         let function = env.buckets.add(x);
         let params = env.buckets.add_array(c);
         Expr { loc, kind: ExprKind::Call { function, params } }
     }
-    x:(@) pos:position!() [TokenKind::DashDash] {
+    x:(@) w() pos:position!() [DashDash] {
         let loc = l_from(x.loc, env.locs[pos]);
         Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostDecr, env.buckets.add(x)) }
     }
-    x:(@) pos:position!() [TokenKind::PlusPlus] {
+    x:(@) w() pos:position!() [PlusPlus] {
         let loc = l_from(x.loc, env.locs[pos]);
         Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostIncr, env.buckets.add(x)) }
     }
-    x:(@) [TokenKind::LBracket] y:expr() pos:position!() [TokenKind::RBracket] {
+    x:(@) w() [LBracket] w() y:expr() w() pos:position!() [RBracket] {
         let loc = l_from(x.loc, env.locs[pos]);
         let (x, y) = env.buckets.add((x, y));
         Expr { loc, kind: ExprKind::BinOp(BinOp::Index, x, y) }
     }
-    x:(@) [TokenKind::Arrow] id:raw_ident() {
+    x:(@) w() [Arrow] w() id:raw_ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
         let x = env.buckets.add(x);
         Expr { loc, kind: ExprKind::PtrMember { member: id, base: x } }
     }
-    x:(@) [TokenKind::Dot] id:raw_ident() {
+    x:(@) w() [Dot] w() id:raw_ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
         let x = env.buckets.add(x);
@@ -511,7 +724,7 @@ rule expr() -> Expr = list:cs1(<assignment_expr()>) { // TODO alllocations!
     }
 }
 
-pub rule declaration() -> Declaration = d:declaration1() [TokenKind::Semicolon] {
+pub rule declaration() -> Declaration = d:declaration1() w() [Semicolon] {
     Declaration {
         loc: d.2,
         specifiers: env.buckets.add_array(d.0),
@@ -520,7 +733,7 @@ pub rule declaration() -> Declaration = d:declaration1() [TokenKind::Semicolon] 
 }
 
 rule declaration_seq<E, T>(h: rule<(Vec<E>, CodeLoc)>, t: rule<(Vec<E>, Vec<T>, CodeLoc)>)
-    -> (Vec<E>, Vec<T>, CodeLoc) = head:h() tail:t()
+    -> (Vec<E>, Vec<T>, CodeLoc) = head:h() w() tail:t()
 {
     (concat(head.0, tail.0), tail.1, l_from(head.1, tail.2))
 }
@@ -555,7 +768,7 @@ rule declaration_typedef_tail0() -> (Vec<DeclarationSpecifier>, Vec<InitDeclarat
 // What can follow after typedef + type name
 rule declaration_typedef_tail1(s: rule<(Vec<DeclarationSpecifier>, CodeLoc)>)
     -> (Vec<DeclarationSpecifier>, Vec<InitDeclarator>, CodeLoc)
-    = s:s() d:declaration_type_declarators() { (s.0, d.0, l_from(s.1, d.1)) }
+    = s:s() w() d:declaration_type_declarators() { (s.0, d.0, l_from(s.1, d.1)) }
 
 rule declaration_unique_type() -> (Vec<DeclarationSpecifier>, CodeLoc) =
     n:decl_spec_unique_type0() { (vec![ n ], n.loc) }
@@ -564,11 +777,11 @@ rule declaration_nonunique_type() -> (Vec<DeclarationSpecifier>, CodeLoc) =
     n:decl_spec_nonunique_type0() { (vec![ n ], n.loc) }
 
 rule decl_specs() -> (Vec<DeclarationSpecifier>, CodeLoc) =
-    s:decl_specs_unique() t:decl_specs_tail() { (concat(s.0, t.0), l_from(s.1, t.1)) }
+    s:decl_specs_unique() w() t:decl_specs_tail() { (concat(s.0, t.0), l_from(s.1, t.1)) }
 
 rule decl_specs_tail() -> (Vec<DeclarationSpecifier>, CodeLoc) =
-    t:declaration_unique_type() s:decl_specs_unique() { (concat(t.0, s.0), l_from(t.1, s.1)) } /
-    t:declaration_nonunique_type() s:decl_specs_nonunique() { (concat(t.0, s.0), l_from(t.1, s.1)) }
+    t:declaration_unique_type() w() s:decl_specs_unique() { (concat(t.0, s.0), l_from(t.1, s.1)) } /
+    t:declaration_nonunique_type() w() s:decl_specs_nonunique() { (concat(t.0, s.0), l_from(t.1, s.1)) }
 
 rule decl_specs_unique() -> (Vec<DeclarationSpecifier>, CodeLoc) = list0(<decl_spec_nontype()>)
 
@@ -582,8 +795,8 @@ rule decl_spec_nontype() -> DeclarationSpecifier =
             kind: DeclarationSpecifierKind::TypeQualifier(s),
             loc: s.loc,
         }
-    }
-    // s:function_specifier() { s }
+    } /
+    s:function_specifier() { s }
 
 rule declaration_typedef() -> (Vec<DeclarationSpecifier>, CodeLoc) =
     s:declaration_typedef0() { (vec![ s ], s.loc) }
@@ -608,7 +821,7 @@ rule declaration_init_declarators() -> (Vec<InitDeclarator>, CodeLoc) = cs0(<ini
 
 rule declaration_type_declarators() -> (Vec<InitDeclarator>, CodeLoc) = cs0(<type_declarator()>)
 
-rule init_declarator() -> InitDeclarator = d:init_declarator_declarator() i:init_declarator_init()?  {
+rule init_declarator() -> InitDeclarator = d:init_declarator_declarator() w() i:init_declarator_init()?  {
     let loc = if let Some(i) = i {
         l_from(d.loc, i.loc)
     } else {
@@ -628,7 +841,7 @@ rule init_declarator_declarator() -> Declarator =
         d
     }
 
-rule init_declarator_init() -> Initializer = [TokenKind::Eq] i:initializer() { i }
+rule init_declarator_init() -> Initializer = [Eq] w() i:initializer() { i }
 
 rule type_declarator() -> InitDeclarator = d:declarator() {
     env.handle_declarator(&d, true);
@@ -644,13 +857,13 @@ rule type_declarator() -> InitDeclarator = d:declarator() {
 ////
 
 rule storage_class_specifier() -> DeclarationSpecifier =
-    pos:position!() [TokenKind::Extern] {
+    pos:position!() [Extern] {
         DeclarationSpecifier {
             kind: DeclarationSpecifierKind::Extern,
             loc: env.locs[pos],
         }
     } /
-    pos:position!() [TokenKind::Static] {
+    pos:position!() [Static] {
         DeclarationSpecifier {
             kind: DeclarationSpecifierKind::Static,
             loc: env.locs[pos],
@@ -658,7 +871,7 @@ rule storage_class_specifier() -> DeclarationSpecifier =
     }
 
 rule storage_class_typedef() -> DeclarationSpecifier =
-    pos:position!() [TokenKind::Typedef] {
+    pos:position!() [Typedef] {
         DeclarationSpecifier {
             kind: DeclarationSpecifierKind::Typedef,
             loc: env.locs[pos],
@@ -670,8 +883,8 @@ rule storage_class_typedef() -> DeclarationSpecifier =
 ////
 
 rule type_specifier_unique() -> TypeSpecifier =
-    [TokenKind::Void] { TypeSpecifier::Void } /
-    pos:position!() [TokenKind::Struct] id:raw_ident()? declarations:struct_body() {
+    [Void] { TypeSpecifier::Void } /
+    pos:position!() [Struct] w() id:raw_ident()? w() declarations:struct_body() {
         let (declarations, loc) = declarations;
 
         if let Some((ident, _)) = id {
@@ -691,7 +904,7 @@ rule type_specifier_unique() -> TypeSpecifier =
             })
         }
     } /
-    pos:position!() [TokenKind::Union]  id:raw_ident()? declarations:struct_body() {
+    pos:position!() [Union] w() id:raw_ident()? w() declarations:struct_body() {
         let (declarations, loc) = declarations;
 
         if let Some((ident, _)) = id {
@@ -711,7 +924,7 @@ rule type_specifier_unique() -> TypeSpecifier =
             })
         }
     } /
-    pos:position!() [TokenKind::Struct] id:raw_ident() {
+    pos:position!() [Struct] w() id:raw_ident() {
         let (id, loc) = id;
 
         TypeSpecifier::Struct(StructType {
@@ -719,7 +932,7 @@ rule type_specifier_unique() -> TypeSpecifier =
             loc: l_from(env.locs[pos], loc),
         })
     } /
-    pos:position!() [TokenKind::Union] id:raw_ident() {
+    pos:position!() [Union] w() id:raw_ident() {
         let (id, loc) = id;
 
         TypeSpecifier::Union(StructType {
@@ -734,8 +947,8 @@ rule type_specifier_unique() -> TypeSpecifier =
 
 
 rule struct_body() -> (&'static [StructField], CodeLoc) =
-    pos:position!() [TokenKind::LBrace] d:list0(<struct_field()>)
-    pos2:position!() [TokenKind::RBrace] {
+    pos:position!() [LBrace] w() d:list0(<struct_field()>) w()
+    pos2:position!() [RBrace] {
         let (d, _) = d;
         let d = env.buckets.add_array(d);
 
@@ -743,8 +956,8 @@ rule struct_body() -> (&'static [StructField], CodeLoc) =
     }
 
 rule struct_field() -> StructField =
-    s:specifier_qualifiers() d:cs0(<struct_declarator()>)
-    pos2:position!() [TokenKind::Semicolon] {
+    s:specifier_qualifiers() w() d:cs0(<struct_declarator()>)
+    pos2:position!() [Semicolon] {
         let (s, loc) = s;
         let (d, _) = d;
         StructField {
@@ -763,14 +976,14 @@ rule struct_declarator() -> StructDeclarator =
     }
 
 rule type_specifier_nonunique() -> TypeSpecifier =
-    pos:position!() [TokenKind::Char] { TypeSpecifier::Char } /
-    pos:position!() [TokenKind::Short] { TypeSpecifier::Short } /
-    pos:position!() [TokenKind::Int] { TypeSpecifier::Int } /
-    pos:position!() [TokenKind::Long] { TypeSpecifier::Long } /
-    pos:position!() [TokenKind::Float] { TypeSpecifier::Float } /
-    pos:position!() [TokenKind::Double] { TypeSpecifier::Double } /
-    pos:position!() [TokenKind::Signed] { TypeSpecifier::Signed } /
-    pos:position!() [TokenKind::Unsigned] { TypeSpecifier::Unsigned }
+    pos:position!() [Char] { TypeSpecifier::Char } /
+    pos:position!() [Short] { TypeSpecifier::Short } /
+    pos:position!() [Int] { TypeSpecifier::Int } /
+    pos:position!() [Long] { TypeSpecifier::Long } /
+    pos:position!() [Float] { TypeSpecifier::Float } /
+    pos:position!() [Double] { TypeSpecifier::Double } /
+    pos:position!() [Signed] { TypeSpecifier::Signed } /
+    pos:position!() [Unsigned] { TypeSpecifier::Unsigned }
 
 rule specifier_qualifiers() -> (Vec<SpecifierQualifier>, CodeLoc) =
     list_eq1_n(<specifier_qualifier_unique_type0()>, <specifier_qualifier_qualifier0()>) /
@@ -801,7 +1014,13 @@ rule specifier_qualifier_qualifier0() -> SpecifierQualifier = q:type_qualifier()
 }
 
 rule type_qualifier() -> TypeQualifier =
-    pos:position!() [TokenKind::Volatile] {
+    pos:position!() [Const] {
+        TypeQualifier {
+            kind: TypeQualifierKind::Const,
+            loc: env.locs[pos],
+        }
+    } /
+    pos:position!() [Volatile] {
         TypeQualifier {
             kind: TypeQualifierKind::Volatile,
             loc: env.locs[pos],
@@ -809,7 +1028,7 @@ rule type_qualifier() -> TypeQualifier =
     }
 
 rule declarator() -> Declarator
-    = pointer:list0(<pointer()>) decl:direct_declarator() derived:list0(<derived_declarator()>)
+    = pointer:list0(<pointer()>) w() decl:direct_declarator() w() derived:list0(<derived_declarator()>)
 {
     let (mut pointer, mut begin_loc) = pointer;
     if begin_loc == NO_FILE {
@@ -837,7 +1056,7 @@ rule direct_declarator() -> Declarator =
             loc: i.1,
         }
     } /
-    pos:position!() [TokenKind::LParen] d:declarator() pos2:position!() [TokenKind::RParen] {
+    pos:position!() [LParen] w() d:declarator() w() pos2:position!() [RParen] {
         Declarator {
            kind: DeclaratorKind::Declarator(env.buckets.add(d)),
            derived: &[],
@@ -846,7 +1065,7 @@ rule direct_declarator() -> Declarator =
     }
 
 rule derived_declarator() -> DerivedDeclarator  =
-    pos:position!() [TokenKind::LBracket] a:array_declarator() pos2:position!() [TokenKind::RBracket] {
+    pos:position!() [LBracket] w() a:array_declarator() w() pos2:position!() [RBracket] {
         DerivedDeclarator {
             kind: DerivedDeclaratorKind::Array(a),
             loc: l_from(env.locs[pos], env.locs[pos2]),
@@ -858,7 +1077,7 @@ rule derived_declarator() -> DerivedDeclarator  =
             loc: f.loc,
         }
     } /
-    pos:position!() [TokenKind::LParen] pos2:position!() [TokenKind::RParen] {
+    pos:position!() [LParen] w() pos2:position!() [RParen] {
         DerivedDeclarator {
             kind: DerivedDeclaratorKind::EmptyFunction,
             loc: l_from(env.locs[pos], env.locs[pos2]),
@@ -866,7 +1085,7 @@ rule derived_declarator() -> DerivedDeclarator  =
     }
 
 rule array_declarator() -> ArrayDeclarator =
-    q:list0(<type_qualifier()>) e:constant_expr() {
+    q:list0(<type_qualifier()>) w() e:constant_expr() {
         let (q, mut begin_loc) = q;
         if begin_loc == NO_FILE {
             begin_loc = e.loc;
@@ -894,8 +1113,8 @@ rule array_declarator() -> ArrayDeclarator =
     }
 
 rule function_declarator() -> FunctionDeclarator =
-    pos:position!() [TokenKind::LParen] params:cs1(<parameter_declaration()>)
-    varargs:([TokenKind::Comma] [TokenKind::DotDotDot])? pos2:position!() [TokenKind::RParen]
+    pos:position!() [LParen] w() params:cs1(<parameter_declaration()>) w()
+    varargs:([Comma] w() [DotDotDot] w())? pos2:position!() [RParen]
     {
         let (params, mut loc) = params;
         let varargs = varargs.is_some();
@@ -908,7 +1127,7 @@ rule function_declarator() -> FunctionDeclarator =
         }
     }
 
-rule pointer() -> DerivedDeclarator = pos:position!() [TokenKind::Star] q:list0(<type_qualifier()>) {
+rule pointer() -> DerivedDeclarator = pos:position!() [Star] w() q:list0(<type_qualifier()>) {
     let (q, mut end_loc) = q;
     let loc = env.locs[pos];
     if end_loc == NO_FILE {
@@ -922,7 +1141,7 @@ rule pointer() -> DerivedDeclarator = pos:position!() [TokenKind::Star] q:list0(
     }
 }
 
-rule pointer_quals() -> PointerQuals = pos:position!() [TokenKind::Star] q:list0(<type_qualifier()>) {
+rule pointer_quals() -> PointerQuals = pos:position!() [Star] w() q:list0(<type_qualifier()>) {
     let (q, mut end_loc) = q;
     let loc = env.locs[pos];
     if end_loc == NO_FILE {
@@ -937,7 +1156,7 @@ rule pointer_quals() -> PointerQuals = pos:position!() [TokenKind::Star] q:list0
 }
 
 
-rule parameter_declaration() -> ParameterDeclaration = s:decl_specs() d:parameter_declarator()
+rule parameter_declaration() -> ParameterDeclaration = s:decl_specs() w() d:parameter_declarator()
 {
     let (specs, mut loc) = s;
     if let Some(decl) = d {
@@ -961,7 +1180,7 @@ rule parameter_declarator() -> Option<Declarator> =
     { None }
 
 
-rule type_name() -> TypeName = s:specifier_qualifiers() d:abstract_declarator()? {
+rule type_name() -> TypeName = s:specifier_qualifiers() w() d:abstract_declarator()? {
     let (sqs, mut loc) = s;
 
     if let Some(d) = d {
@@ -975,10 +1194,15 @@ rule type_name() -> TypeName = s:specifier_qualifiers() d:abstract_declarator()?
     }
 }
 
-// rule function_specifiers
+rule function_specifier() -> DeclarationSpecifier = pos:position!() [Inline] {
+    DeclarationSpecifier {
+        kind: DeclarationSpecifierKind::Inline,
+        loc: env.locs[pos],
+    }
+}
 
 rule abstract_declarator() -> Declarator =
-    p:list0(<pointer()>) k:direct_abstract_declarator() d:list0(<derived_abstract_declarator()>) {
+    p:list0(<pointer()>) w() k:direct_abstract_declarator() w() d:list0(<derived_abstract_declarator()>) {
         let (mut p, begin_loc) = p;
         let (d, end_loc) = d;
         let loc = l_from(begin_loc, k.loc);
@@ -989,7 +1213,7 @@ rule abstract_declarator() -> Declarator =
         declarator.derived = env.buckets.add_array(concat(d, p));
         declarator
     } /
-    p:list0(<pointer()>) d:list1(<derived_abstract_declarator()>) {
+    p:list0(<pointer()>) w() d:list1(<derived_abstract_declarator()>) {
         let (p, begin_loc) = p;
         let (d, end_loc) = d;
         let loc = l_from(begin_loc, end_loc);
@@ -1011,7 +1235,8 @@ rule abstract_declarator() -> Declarator =
     }
 
 rule direct_abstract_declarator() -> Declarator =
-    pos:position!() [TokenKind::LParen] d:abstract_declarator() pos2:position!() [TokenKind::RParen]
+    pos:position!() [LParen] w() d:abstract_declarator() w()
+    pos2:position!() [RParen]
 {
     Declarator {
         kind: DeclaratorKind::Declarator(env.buckets.add(d)),
@@ -1021,13 +1246,13 @@ rule direct_abstract_declarator() -> Declarator =
 }
 
 rule derived_abstract_declarator() -> DerivedDeclarator =
-    pos:position!() [TokenKind::LBracket] a:abstract_array_declarator() pos2:position!() [TokenKind::RBracket] {
+    pos:position!() [LBracket] w() a:abstract_array_declarator() w() pos2:position!() [RBracket] {
         DerivedDeclarator {
             kind: DerivedDeclaratorKind::Array(a),
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     } /
-    pos:position!() [TokenKind::LParen] a:abstract_function_declarator() pos2:position!() [TokenKind::RParen] {
+    pos:position!() [LParen] w() a:abstract_function_declarator() w() pos2:position!() [RParen] {
         DerivedDeclarator {
             kind: DerivedDeclaratorKind::Function(a),
             loc: l_from(env.locs[pos], env.locs[pos2]),
@@ -1046,7 +1271,7 @@ rule abstract_array_declarator() -> ArrayDeclarator =
             loc,
         }
     } /
-    q:list0(<type_qualifier()>) e:assignment_expr() {
+    q:list0(<type_qualifier()>) w() e:assignment_expr() {
         let (q, loc) = q;
 
         ArrayDeclarator {
@@ -1060,7 +1285,7 @@ rule abstract_array_declarator() -> ArrayDeclarator =
     }
 
 rule abstract_function_declarator() -> FunctionDeclarator =
-    p:cs1(<parameter_declaration()>) pos:position!() varargs:([TokenKind::Comma] [TokenKind::DotDotDot])? {
+    p:cs1(<parameter_declaration()>) w() pos:position!() varargs:([Comma] w() [DotDotDot])? {
         let (p, mut loc) = p;
         let varargs = varargs.is_some();
         if varargs {
@@ -1098,8 +1323,8 @@ rule initializer() -> Initializer =
             loc: e.loc,
         }
     } /
-    pos:position!() [TokenKind::LBrace] i:cs1(<initializer_list_item()>)
-    [TokenKind::Comma]? pos2:position!() [TokenKind::RBrace]
+    pos:position!() [LBrace] w() i:cs1(<initializer_list_item()>) w()
+    [Comma]? w() pos2:position!() [RBrace]
     {
         Initializer {
             kind: InitializerKind::List(env.buckets.add_array(i.0)),
@@ -1121,7 +1346,7 @@ pub rule statement() -> Statement =
     scoped(<selection_statement()>) /
     scoped(<iteration_statement()>) /
     jump_statement() /
-    pos:position!() [TokenKind::Semicolon] {
+    pos:position!() [Semicolon] {
         let loc = env.locs[pos];
         Statement {
             kind: StatementKind::Block(Block { stmts: &[], loc }),
@@ -1134,7 +1359,7 @@ pub rule statement() -> Statement =
 ////
 
 rule labeled_statement() -> Statement =
-    i:raw_ident() [TokenKind::Colon] s:statement() {
+    i:raw_ident() w() [Colon] w() s:statement() {
         let (i, loc) = i;
         Statement {
             loc: l_from(loc, s.loc),
@@ -1145,7 +1370,7 @@ rule labeled_statement() -> Statement =
             }
         }
     } /
-    pos:position!() [TokenKind::Case] i:constant_expr() s:statement() {
+    pos:position!() [Case] w() i:constant_expr() w() [Colon] w() s:statement() {
         Statement {
             loc: l_from(env.locs[pos], s.loc),
             kind: StatementKind::CaseLabeled {
@@ -1154,7 +1379,7 @@ rule labeled_statement() -> Statement =
             }
         }
     } /
-    pos:position!() [TokenKind::Default] [TokenKind::Colon] s:statement() {
+    pos:position!() w() [Default] w() [Colon] w() s:statement() {
         Statement {
             loc: l_from(env.locs[pos], s.loc),
             kind: StatementKind::DefaultCaseLabeled(env.buckets.add(s))
@@ -1166,7 +1391,7 @@ rule labeled_statement() -> Statement =
 ////
 
 rule compound_statement() -> Block =
-    pos:position!() [TokenKind::LBrace] b:list0(<block_item()>) pos2:position!() [TokenKind::RBrace]
+    pos:position!() [LBrace] w() b:list0(<block_item()>) w() pos2:position!() [RBrace]
 {
     let (block, loc) = b;
 
@@ -1194,7 +1419,7 @@ rule block_item() -> BlockItem =
 // 6.8.3 Expression and null statements
 ////
 
-rule expression_statement() -> Statement = e:expr() [TokenKind::Semicolon] {
+rule expression_statement() -> Statement = e:expr() w() [Semicolon] {
     Statement {
         loc: e.loc,
         kind: StatementKind::Expr(e),
@@ -1206,8 +1431,8 @@ rule expression_statement() -> Statement = e:expr() [TokenKind::Semicolon] {
 ////
 
 rule selection_statement() -> Statement =
-    pos:position!() [TokenKind::If] [TokenKind::LParen] e:expr()
-    [TokenKind::RParen] a:statement() b:else_statement()?
+    pos:position!() [If] w() [LParen] w() e:expr()
+    w() [RParen] w() a:statement() w() b:else_statement()?
     {
         let mut loc = l_from(env.locs[pos], a.loc);
         if let Some(else_stmt) = b {
@@ -1223,7 +1448,8 @@ rule selection_statement() -> Statement =
             loc,
         }
     } /
-    pos:position!() [TokenKind::Switch] [TokenKind::LParen] e:expr() [TokenKind::RParen] a:statement() {
+    pos:position!() [Switch] w() [LParen] w() e:expr() w()
+    [RParen] w() a:statement() {
         let mut loc = l_from(env.locs[pos], a.loc);
 
         Statement {
@@ -1235,7 +1461,7 @@ rule selection_statement() -> Statement =
         }
     }
 
-rule else_statement() -> Statement = [TokenKind::Else] s:statement() { s }
+rule else_statement() -> Statement = [Else] w() s:statement() { s }
 
 ////
 // 6.8.5 Iteration statement
@@ -1247,7 +1473,8 @@ rule iteration_statement() -> Statement =
     s:for_statement() { s }
 
 rule while_statement() -> Statement =
-    pos:position!() [TokenKind::While] [TokenKind::LParen] e:expr() [TokenKind::RParen] s:statement() {
+    pos:position!() [While] w() [LParen] w() e:expr() w()
+    [RParen] w() s:statement() {
         let loc = l_from(env.locs[pos], s.loc);
 
         Statement {
@@ -1260,8 +1487,9 @@ rule while_statement() -> Statement =
     }
 
 rule do_while_statement() -> Statement =
-    pos:position!() [TokenKind::Do] s:statement() [TokenKind::While] [TokenKind::LParen]
-    e:expr() [TokenKind::RParen] pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [Do] w() s:statement() w() [While] w()
+    [LParen] w() e:expr() w() [RParen] w()
+    pos2:position!() [Semicolon] {
         let loc = l_from(env.locs[pos], env.locs[pos2]);
 
         Statement {
@@ -1274,8 +1502,9 @@ rule do_while_statement() -> Statement =
     }
 
 rule for_statement() -> Statement =
-    pos:position!() [TokenKind::For] [TokenKind::LParen] a:expr()? [TokenKind::Semicolon] b:expr()?
-    [TokenKind::Semicolon] e:expr()? [TokenKind::RParen] s:statement() {
+    pos:position!() [For] w() [LParen] w() a:expr()? w()
+    [Semicolon] w() b:expr()? w() [Semicolon] w() e:expr()?
+    w() [RParen] w() s:statement() {
         let loc = l_from(env.locs[pos], s.loc);
 
         Statement {
@@ -1288,8 +1517,9 @@ rule for_statement() -> Statement =
             loc,
         }
     } /
-    pos:position!() [TokenKind::For] [TokenKind::LParen] a:declaration() b:expr()?
-    [TokenKind::Semicolon] c:expr()? [TokenKind::RParen] s:statement() {
+    pos:position!() [For] w() [LParen] w() a:declaration()
+    w() b:expr()? w() [Semicolon] w() c:expr()? w() [RParen]
+    w() s:statement() {
         let loc = l_from(env.locs[pos], s.loc);
 
         Statement {
@@ -1309,7 +1539,7 @@ rule for_statement() -> Statement =
 ////
 
 rule jump_statement() -> Statement =
-    pos:position!() [TokenKind::Goto] i:raw_ident() pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [Goto] w() i:raw_ident() w() pos2:position!() [Semicolon] {
         let (i, label_loc) = i;
         let loc = l_from(env.locs[pos], env.locs[pos2]);
         Statement {
@@ -1320,7 +1550,7 @@ rule jump_statement() -> Statement =
             loc
         }
     } /
-    pos:position!() [TokenKind::Continue] pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [Continue] w() pos2:position!() [Semicolon] {
         let loc = l_from(env.locs[pos], env.locs[pos2]);
 
         Statement {
@@ -1328,7 +1558,7 @@ rule jump_statement() -> Statement =
             loc
         }
     } /
-    pos:position!() [TokenKind::Break] pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [Break] w() pos2:position!() [Semicolon] {
         let loc = l_from(env.locs[pos], env.locs[pos2]);
 
         Statement {
@@ -1336,7 +1566,7 @@ rule jump_statement() -> Statement =
             loc
         }
     } /
-    pos:position!() [TokenKind::Return] pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [Return] w() pos2:position!() [Semicolon] {
         let loc = l_from(env.locs[pos], env.locs[pos2]);
 
         Statement {
@@ -1344,7 +1574,7 @@ rule jump_statement() -> Statement =
             loc
         }
     } /
-    pos:position!() [TokenKind::Return] e:expr() pos2:position!() [TokenKind::Semicolon] {
+    pos:position!() [Return] w() e:expr() w() pos2:position!() [Semicolon] {
         let loc = l_from(env.locs[pos], env.locs[pos2]);
 
         Statement {
@@ -1357,7 +1587,9 @@ rule jump_statement() -> Statement =
 // 6.9 External definitions
 ////
 
-pub rule translation_unit() -> Vec<GlobalStatement> = d:external_declaration()*
+pub rule translation_unit() -> Vec<GlobalStatement> = w() tu:(external_declaration() ** w()) w() {
+    tu
+}
 
 rule external_declaration() -> GlobalStatement =
     d:declaration() {
@@ -1382,8 +1614,8 @@ rule external_declaration() -> GlobalStatement =
     }
 
 rule function_definition() -> FunctionDefinition =
-    a:decl_specs() pointer:list0(<pointer_quals()>) id:ident()
-    f:function_declarator() d:compound_statement() {
+    a:decl_specs() w() pointer:list0(<pointer_quals()>) w() id:ident()
+    w() f:function_declarator() w() d:compound_statement() {
         let (a, begin_loc) = a;
         let (ident, _) = id;
         let (pointer, _) = pointer;
@@ -1398,8 +1630,8 @@ rule function_definition() -> FunctionDefinition =
             loc,
         }
     } /
-    a:decl_specs() pointer:list0(<pointer_quals()>) id:ident()
-    [TokenKind::LParen] [TokenKind::RParen] d:compound_statement() {
+    a:decl_specs() w() pointer:list0(<pointer_quals()>) w() id:ident() w()
+    [LParen] w() [RParen] w() d:compound_statement() {
         let (a, begin_loc) = a;
         let (ident, _) = id;
         let (pointer, _) = pointer;

@@ -202,7 +202,6 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
         return Err(errors);
     }
 
-    println!("lexed");
     let parsed: Vec<_> = lexed
         .into_iter()
         .filter_map(compile_filter(

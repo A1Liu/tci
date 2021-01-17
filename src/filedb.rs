@@ -258,11 +258,6 @@ impl<'a> Files<'a> for FileDb {
     }
 }
 
-pub const MAIN_SYM: u32 = 0;
-pub const MACRO_DEFINED: u32 = 1;
-pub const BUILTIN_PUSH_STACK: u32 = 2;
-pub const BUILTIN_ECALL: u32 = 3;
-
 pub struct Symbols {
     pub buckets: BucketListFactory,
     pub to_symbol: HashMap<&'static str, u32>,
@@ -275,6 +270,16 @@ impl Drop for Symbols {
     }
 }
 
+#[repr(u32)]
+pub enum BuiltinSymbol {
+    Main = 0,
+
+    MacroDefined,
+
+    BuiltinPushStack,
+    BuiltinEcall,
+}
+
 impl Symbols {
     pub fn new() -> Self {
         let mut new_self = Self {
@@ -284,7 +289,9 @@ impl Symbols {
         };
 
         new_self.add_str("main");
+
         new_self.add_str("defined");
+
         new_self.add_str("__tci_builtin_push_stack");
         new_self.add_str("__tci_builtin_ecall");
 

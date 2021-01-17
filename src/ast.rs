@@ -36,6 +36,8 @@ pub enum UnaryOp {
     BitNot,
     PostIncr,
     PostDecr,
+    PreIncr,
+    PreDecr,
     Deref,
     Ref,
 }
@@ -43,8 +45,9 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, Copy)]
 pub enum ExprKind {
     IntLit(i32),
+    LongLit(i64),
     ULit(u32),
-    ULLLit(u64),
+    ULongLit(u64),
     FloatLit(f32),
     DoubleLit(f64),
     CharLit(i8),
@@ -138,7 +141,7 @@ pub enum TypeSpecifier {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TypeQualifierKind {
-    // Const,
+    Const,
     Volatile,
     // Restrict,
     Atomic,

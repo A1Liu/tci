@@ -8,15 +8,41 @@ use std::collections::HashMap;
 pub const CLOSING_CHAR: u8 = !0;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum NumChar {
+    // values
+    _0 = 0,
+    _1,
+    _2,
+    _3,
+    _4,
+    _5,
+    _6,
+    _7,
+    _8,
+    _9,
+
+    _A,
+    _B,
+    _C,
+    _D,
+    _E,
+    _F,
+
+    _L,
+    _X,
+    _U,
+    _INVALID,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenKind {
     Ident(u32),
-    IntLit(i32),
-    ULit(u32),
-    ULLLit(u64),
-    FloatLit(f32),
-    DoubleLit(f64),
+    IntChar(NumChar),
     StringLit(&'static str),
     CharLit(i8),
+
+    Whitespace,
 
     Pragma(&'static str),
 
@@ -35,6 +61,7 @@ pub enum TokenKind {
     Sizeof,
     Typedef,
     Volatile,
+    Inline,
 
     If,
     Else,
@@ -154,7 +181,7 @@ lazy_static! {
         set.insert("for", TokenKind::For);
         set.insert("goto", TokenKind::Goto);
         set.insert("if", TokenKind::If);
-        set.insert("inline", TokenKind::Unimplemented);
+        set.insert("inline", TokenKind::Inline);
         set.insert("int", TokenKind::Int);
         set.insert("long", TokenKind::Long);
         set.insert("register", TokenKind::Unimplemented);
@@ -387,7 +414,7 @@ impl<'a> Lexer<'a> {
     ) -> Result<bool, Error> {
         let tok = self.expect_tok(lexer, data)?;
         if let TokenKind::Ident(id) = tok {
-            if id != MACRO_DEFINED {
+            if id != BuiltinSymbol::MacroDefined as u32 {
                 return Err(error!(
                     "expected call to 'defined'",
                     lexer.loc(),
@@ -817,6 +844,8 @@ impl<'a> Lexer<'a> {
 pub struct SimpleLexer {
     pub at_line_begin: bool,
     pub in_macro: bool,
+    pub in_number: bool,
+
     pub begin: usize,
     pub current: usize,
     pub file: u32,
@@ -828,6 +857,7 @@ impl SimpleLexer {
         Self {
             at_line_begin: true,
             in_macro: false,
+            in_number: false,
             begin: 0,
             current: 0,
             file,
@@ -869,6 +899,15 @@ impl SimpleLexer {
         macro_rules! ret {
             ($arg1:expr) => {{
                 self.at_line_begin = false;
+                self.in_number = false;
+                return Ok(Some(RawTok::Tok($arg1)));
+            }};
+        }
+
+        macro_rules! num_ret {
+            ($arg1:expr) => {{
+                self.at_line_begin = false;
+                self.in_number = true;
                 return Ok(Some(RawTok::Tok($arg1)));
             }};
         }
@@ -881,7 +920,14 @@ impl SimpleLexer {
             }};
         }
 
-        self.kill_whitespace(data, self.in_macro)?;
+        if self.kill_whitespace(data, self.in_macro)? {
+            self.in_number = false;
+
+            if !self.in_macro {
+                return Ok(Some(RawTok::Tok(TokenKind::Whitespace)));
+            }
+        }
+
         self.begin = self.current;
 
         if self.current == data.len() {
@@ -911,6 +957,21 @@ impl SimpleLexer {
 
         match data[self.begin] {
             x if (x >= b'A' && x <= b'Z') || (x >= b'a' && x <= b'z') || x == b'_' => {
+                if self.in_number {
+                    match x {
+                        b'a' | b'A' => num_ret!(TokenKind::IntChar(NumChar::_A)),
+                        b'b' | b'B' => num_ret!(TokenKind::IntChar(NumChar::_B)),
+                        b'c' | b'C' => num_ret!(TokenKind::IntChar(NumChar::_C)),
+                        b'd' | b'D' => num_ret!(TokenKind::IntChar(NumChar::_D)),
+                        b'e' | b'E' => num_ret!(TokenKind::IntChar(NumChar::_E)),
+                        b'f' | b'F' => num_ret!(TokenKind::IntChar(NumChar::_F)),
+                        b'l' | b'L' => num_ret!(TokenKind::IntChar(NumChar::_L)),
+                        b'x' | b'X' => num_ret!(TokenKind::IntChar(NumChar::_X)),
+                        b'u' | b'U' => num_ret!(TokenKind::IntChar(NumChar::_U)),
+                        x => num_ret!(TokenKind::IntChar(NumChar::_INVALID)),
+                    }
+                }
+
                 while self.peek_check(data, is_ident_char) {
                     self.current += 1;
                 }
@@ -925,26 +986,16 @@ impl SimpleLexer {
                 ret!(TokenKind::Ident(id));
             }
 
-            x if (x >= b'0' && x <= b'9') => {
-                let mut began_mods = false;
-                while self.peek_check(data, is_ident_char) {
-                    let c = data[self.current];
-                    if c < b'0' || c > b'9' {
-                        began_mods = true;
-                    }
-
-                    self.current += 1;
-                }
-
-                if !began_mods && self.peek_eq(data, b'.') {
-                    self.current += 1;
-                    while self.peek_check(data, is_ident_char) {
-                        self.current += 1;
-                    }
-                }
-
-                ret!(TokenKind::IntLit(0));
-            }
+            b'0' => num_ret!(TokenKind::IntChar(NumChar::_0)),
+            b'1' => num_ret!(TokenKind::IntChar(NumChar::_1)),
+            b'2' => num_ret!(TokenKind::IntChar(NumChar::_2)),
+            b'3' => num_ret!(TokenKind::IntChar(NumChar::_3)),
+            b'4' => num_ret!(TokenKind::IntChar(NumChar::_4)),
+            b'5' => num_ret!(TokenKind::IntChar(NumChar::_5)),
+            b'6' => num_ret!(TokenKind::IntChar(NumChar::_6)),
+            b'7' => num_ret!(TokenKind::IntChar(NumChar::_7)),
+            b'8' => num_ret!(TokenKind::IntChar(NumChar::_8)),
+            b'9' => num_ret!(TokenKind::IntChar(NumChar::_9)),
 
             b'\"' => {
                 let mut cur = self.lex_character(b'\"', data)?;
@@ -1370,7 +1421,7 @@ impl SimpleLexer {
         }
     }
 
-    pub fn kill_whitespace(&mut self, data: &[u8], avoid_newlines: bool) -> Result<(), Error> {
+    pub fn kill_whitespace(&mut self, data: &[u8], avoid_newlines: bool) -> Result<bool, Error> {
         self.begin = self.current;
 
         loop {
@@ -1383,7 +1434,7 @@ impl SimpleLexer {
                 self.current += 2;
                 loop {
                     if self.current == data.len() {
-                        return Ok(());
+                        return Ok(true);
                     }
 
                     if self.peek_eq(data, b'\n') {
@@ -1446,7 +1497,7 @@ impl SimpleLexer {
             }
         }
 
-        return Ok(());
+        return Ok(self.begin != self.current);
     }
 
     #[inline]

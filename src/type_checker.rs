@@ -107,37 +107,40 @@ lazy_static! {
     pub static ref BUILTINS: HashMap<u32, BuiltinTransform> = {
         let mut m: HashMap<u32, BuiltinTransform> = HashMap::new();
 
-        m.insert(BUILTIN_PUSH_STACK, |env, call_loc, args| {
-            if args.len() != 2 {
-                return Err(error!(
-                    "wrong number of arguments to builtin function",
-                    call_loc, "called here"
-                ));
-            }
+        m.insert(
+            BuiltinSymbol::BuiltinPushStack as u32,
+            |env, call_loc, args| {
+                if args.len() != 2 {
+                    return Err(error!(
+                        "wrong number of arguments to builtin function",
+                        call_loc, "called here"
+                    ));
+                }
 
-            let void_ptr = TCType::new_ptr(TCTypeBase::Void);
-            let void = TCType::new(TCTypeBase::Void);
-            let uint = TCType::new(TCTypeBase::U32);
+                let void_ptr = TCType::new_ptr(TCTypeBase::Void);
+                let void = TCType::new(TCTypeBase::Void);
+                let uint = TCType::new(TCTypeBase::U32);
 
-            let ptr = check_expr(&mut *env, &args[0])?;
-            let or_else = || param_conversion_error(void_ptr, &ptr);
-            let ptr = assign_convert(&*env, void_ptr, ptr, call_loc).ok_or_else(or_else)?;
+                let ptr = check_expr(&mut *env, &args[0])?;
+                let or_else = || param_conversion_error(void_ptr, &ptr);
+                let ptr = assign_convert(&*env, void_ptr, ptr, call_loc).ok_or_else(or_else)?;
 
-            let size = check_expr(&mut *env, &args[1])?;
-            let or_else = || param_conversion_error(uint, &size);
-            let size = assign_convert(&*env, uint, size, call_loc).ok_or_else(or_else)?;
+                let size = check_expr(&mut *env, &args[1])?;
+                let or_else = || param_conversion_error(uint, &size);
+                let size = assign_convert(&*env, uint, size, call_loc).ok_or_else(or_else)?;
 
-            return Ok(TCExpr {
-                kind: TCExprKind::Builtin(TCBuiltin::PushTempStack {
-                    ptr: env.add(ptr),
-                    size: env.add(size),
-                }),
-                ty: void,
-                loc: call_loc,
-            });
-        });
+                return Ok(TCExpr {
+                    kind: TCExprKind::Builtin(TCBuiltin::PushTempStack {
+                        ptr: env.add(ptr),
+                        size: env.add(size),
+                    }),
+                    ty: void,
+                    loc: call_loc,
+                });
+            },
+        );
 
-        m.insert(BUILTIN_ECALL, |env, call_loc, args| {
+        m.insert(BuiltinSymbol::BuiltinEcall as u32, |env, call_loc, args| {
             if args.len() != 1 {
                 return Err(error!(
                     "wrong number of arguments to builtin function",
@@ -1173,6 +1176,13 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 loc: expr.loc,
             });
         }
+        ExprKind::LongLit(val) => {
+            return Ok(TCExpr {
+                kind: TCExprKind::I64Lit(val),
+                ty: TCType::new(TCTypeBase::I64),
+                loc: expr.loc,
+            });
+        }
         ExprKind::ULit(val) => {
             return Ok(TCExpr {
                 kind: TCExprKind::U32Lit(val),
@@ -1180,7 +1190,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 loc: expr.loc,
             });
         }
-        ExprKind::ULLLit(val) => {
+        ExprKind::ULongLit(val) => {
             return Ok(TCExpr {
                 kind: TCExprKind::U64Lit(val),
                 ty: TCType::new(TCTypeBase::U64),
@@ -1988,6 +1998,51 @@ pub fn check_un_op(
                 kind: TCExprKind::PostIncr { incr_ty, value },
                 ty: value.ty,
                 loc,
+            });
+        }
+
+        UnaryOp::PreDecr => {
+            let target = check_assign_target(env, obj)?;
+            let or_else = || bin_assign_op_non_primitive(target.ty, target.loc);
+            let op_type = target.ty.to_prim_type().ok_or_else(or_else)?;
+
+            let (kind, ty) = match op_type {
+                TCPrimType::I8 => (TCExprKind::I8Lit(1), TCType::new(TCTypeBase::I8)),
+                TCPrimType::I32 => (TCExprKind::I32Lit(1), TCType::new(TCTypeBase::I32)),
+                x => unimplemented!("predecr for {:?}", x),
+            };
+
+            let loc = obj.loc;
+            let val = TCExpr { kind, ty, loc };
+            let (op, value, ty) = (BinOp::Sub, env.add(val), target.ty);
+
+            #[rustfmt::skip]
+            return Ok(TCExpr {
+                kind: TCExprKind::MutAssign { target, value, op_type, op },
+                ty: target.ty,
+                loc: obj.loc,
+            });
+        }
+        UnaryOp::PreIncr => {
+            let target = check_assign_target(env, obj)?;
+            let or_else = || bin_assign_op_non_primitive(target.ty, target.loc);
+            let op_type = target.ty.to_prim_type().ok_or_else(or_else)?;
+
+            let (kind, ty) = match op_type {
+                TCPrimType::I8 => (TCExprKind::I8Lit(1), TCType::new(TCTypeBase::I8)),
+                TCPrimType::I32 => (TCExprKind::I32Lit(1), TCType::new(TCTypeBase::I32)),
+                x => unimplemented!("predecr for {:?}", x),
+            };
+
+            let loc = obj.loc;
+            let val = TCExpr { kind, ty, loc };
+            let (op, value, ty) = (BinOp::Add, env.add(val), target.ty);
+
+            #[rustfmt::skip]
+            return Ok(TCExpr {
+                kind: TCExprKind::MutAssign { target, value, op_type, op },
+                ty: target.ty,
+                loc: obj.loc,
             });
         }
 
