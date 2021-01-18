@@ -237,13 +237,18 @@ rule hex_number_lit_seq() -> String =
         "0".to_string()
     }
 
-rule float_number_lit_seq() -> String = n:number_lit_seq() [Dot] trailing:number_lit()+
-{
-    let mut n = n;
-    n.push('.');
-    n.push_str(&unsafe { String::from_utf8_unchecked(trailing) });
-    n
-}
+rule float_number_lit_seq_strict() -> String =
+    n:number_lit_seq() [Dot] trailing:number_lit()+ {
+        let mut n = n;
+        n.push('.');
+        n.push_str(&unsafe { String::from_utf8_unchecked(trailing) });
+        n
+    }
+
+rule float_number_lit_seq() -> String =
+    float_number_lit_seq_strict() /
+    number_lit_seq()
+
 
 rule dec_number_type_part() -> u8 =
     [IntChar(_L)] { b'l' } /
@@ -276,33 +281,6 @@ rule dec_number_type() -> LiteralType = parts:dec_number_type_part()* {?
 
 
 rule float_number() -> Expr =
-    pos:position!() bef:number_lit_seq() [IntChar(_E)]
-    dash:[Dash]? aft:number_lit_seq() [IntChar(_F)] pos2:position!() {?
-        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
-
-        let mult = if dash.is_some() { -1f32 } else { 1f32 };
-
-        let opt = str::parse::<f32>(&bef).ok().zip(str::parse::<f32>(&aft).ok());
-        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|float| {
-            Expr {
-                kind: ExprKind::FloatLit(float),
-                loc,
-            }
-        })
-    } /
-    pos:position!() bef:number_lit_seq() [IntChar(_E)]
-    dash:[Dash]? aft:number_lit_seq() pos2:position!() {?
-        let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
-
-        let mult = if dash.is_some() { -1f64 } else { 1f64 };
-        let opt = str::parse::<f64>(&bef).ok().zip(str::parse::<f64>(&aft).ok());
-        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|double| {
-            Expr {
-                kind: ExprKind::DoubleLit(double),
-                loc,
-            }
-        })
-    } /
     pos:position!() bef:float_number_lit_seq() [IntChar(_E)]
     dash:[Dash]? aft:float_number_lit_seq() [IntChar(_F)] pos2:position!() {?
         let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
@@ -339,7 +317,7 @@ rule float_number() -> Expr =
             }
         })
     } /
-    pos:position!() n:float_number_lit_seq() pos2:position!() {?
+    pos:position!() n:float_number_lit_seq_strict() pos2:position!() {?
         let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
 
         str::parse::<f64>(&n).map_err(|e| "couldn't parse double constant").map(|double| {
@@ -1366,7 +1344,7 @@ rule labeled_statement() -> Statement =
             kind: StatementKind::Labeled {
                 label: i,
                 label_loc: loc,
-                stmt: env.buckets.add(s),
+                labeled: env.buckets.add(s),
             }
         }
     } /
@@ -1375,7 +1353,7 @@ rule labeled_statement() -> Statement =
             loc: l_from(env.locs[pos], s.loc),
             kind: StatementKind::CaseLabeled {
                 case_value: i,
-                stmt: env.buckets.add(s),
+                labeled: env.buckets.add(s),
             }
         }
     } /

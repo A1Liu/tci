@@ -448,6 +448,12 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::MakeI32);
                 self.func.opcodes.push(*val);
             }
+            TCExprKind::U32Lit(val) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeU32);
+                self.func.opcodes.push(*val);
+            }
             TCExprKind::I64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
@@ -458,6 +464,18 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(*val);
+            }
+            TCExprKind::F32Lit(val) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeF32);
+                self.func.opcodes.push(*val);
+            }
+            TCExprKind::F64Lit(val) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::MakeF64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::StringLit(val) => {
@@ -493,6 +511,10 @@ impl Assembler {
                 self.func.opcodes.push(VarPointer::new_binary(0, id));
             }
 
+            TCExprKind::Uninit => {
+                self.func.opcodes.push(Opcode::PushUndef);
+                self.func.opcodes.push(expr.ty.repr_size());
+            }
             TCExprKind::ArrayInit { elems, elem_ty } => {
                 let mut elem = TCExpr {
                     kind: TCExprKind::Uninit,
@@ -502,6 +524,24 @@ impl Assembler {
                 for &expr_kind in elems.iter() {
                     elem.kind = expr_kind;
                     self.translate_expr(env, &elem);
+                }
+            }
+            TCExprKind::StructLiteral(fields, size) => {
+                let mut offset = 0;
+                for field in *fields {
+                    let aligned_offset = align_u32(offset, field.ty.align().into());
+                    if aligned_offset > offset {
+                        self.func.opcodes.push(Opcode::PushUndef);
+                        self.func.opcodes.push(aligned_offset - offset);
+                    }
+
+                    self.translate_expr(env, field);
+                    offset = aligned_offset + field.ty.repr_size();
+                }
+
+                if offset < *size {
+                    self.func.opcodes.push(Opcode::PushUndef);
+                    self.func.opcodes.push(*size - offset);
                 }
             }
             TCExprKind::ParenList(exprs) => {
@@ -547,6 +587,57 @@ impl Assembler {
                         self.func.opcodes.push(Opcode::MakeU64);
                         self.func.opcodes.push(stride as u64);
                         self.func.opcodes.push(Opcode::AddU64);
+                    }
+                    x => unimplemented!("post incr for {:?}", x),
+                }
+
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(bytes * 2);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(Opcode::Set);
+                self.func.opcodes.push(bytes);
+            }
+            TCExprKind::PostDecr { decr_ty, value } => {
+                use TCPrimType::*;
+                self.translate_assign(env, value);
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(8u32);
+
+                let bytes = decr_ty.size() as u32;
+                self.func.opcodes.push(Opcode::Get);
+                self.func.opcodes.push(bytes);
+
+                self.func.opcodes.push(Opcode::Dup);
+                self.func.opcodes.push(bytes);
+
+                match decr_ty {
+                    I32 => {
+                        self.func.opcodes.push(Opcode::MakeI32);
+                        self.func.opcodes.push(1u32);
+                        self.func.opcodes.push(Opcode::SubI32);
+                    }
+                    U32 => {
+                        self.func.opcodes.push(Opcode::MakeU32);
+                        self.func.opcodes.push(1u32);
+                        self.func.opcodes.push(Opcode::SubU32);
+                    }
+                    I64 => {
+                        self.func.opcodes.push(Opcode::MakeI64);
+                        self.func.opcodes.push(1u64);
+                        self.func.opcodes.push(Opcode::SubI64);
+                    }
+                    U64 => {
+                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(1u64);
+                        self.func.opcodes.push(Opcode::SubU64);
+                    }
+                    Pointer { stride } => {
+                        let stride: u32 = stride.into();
+                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(stride as u64);
+                        self.func.opcodes.push(Opcode::SubU64);
                     }
                     x => unimplemented!("post incr for {:?}", x),
                 }
@@ -855,7 +946,7 @@ impl Assembler {
                 self.func.opcodes.push(-1i32);
                 self.func.opcodes.push(Opcode::MulI32);
             }
-            _ => unimplemented!(),
+            x => unimplemented!("unary op: {:?}", x),
         }
     }
 
@@ -870,11 +961,15 @@ impl Assembler {
             (BinOp::Add, TCPrimType::I64) => Opcode::AddU64,
             (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::AddU64,
 
+            (BinOp::Sub, TCPrimType::I8) => Opcode::SubI8,
+            (BinOp::Sub, TCPrimType::U8) => Opcode::SubU8,
             (BinOp::Sub, TCPrimType::I32) => Opcode::SubI32,
+            (BinOp::Sub, TCPrimType::U32) => Opcode::SubU32,
             (BinOp::Sub, TCPrimType::I64) => Opcode::SubI64,
             (BinOp::Sub, TCPrimType::U64) => Opcode::SubU64,
             (BinOp::Sub, TCPrimType::Pointer { .. }) => Opcode::SubU64,
 
+            (BinOp::Mul, TCPrimType::U32) => Opcode::MulU32,
             (BinOp::Mul, TCPrimType::I32) => Opcode::MulI32,
             (BinOp::Mul, TCPrimType::I64) => Opcode::MulI64,
             (BinOp::Mul, TCPrimType::U64) => Opcode::MulU64,
@@ -885,15 +980,41 @@ impl Assembler {
             (BinOp::Eq, TCPrimType::I32) => Opcode::CompEq32,
             (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
             (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
+            (BinOp::Eq, TCPrimType::F64) => Opcode::CompEqF64,
 
             (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
             (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
+            (BinOp::Neq, TCPrimType::F64) => Opcode::CompNeqF64,
 
+            (BinOp::Gt, TCPrimType::I8) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                Opcode::CompLtI8
+            }
+            (BinOp::Gt, TCPrimType::U8) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                Opcode::CompLtU8
+            }
             (BinOp::Gt, TCPrimType::I32) => {
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(4u32);
                 self.func.opcodes.push(4u32);
                 Opcode::CompLtI32
+            }
+            (BinOp::Gt, TCPrimType::U32) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(4u32);
+                self.func.opcodes.push(4u32);
+                Opcode::CompLtU32
+            }
+            (BinOp::Gt, TCPrimType::I64) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLtI64
             }
             (BinOp::Gt, TCPrimType::U64) => {
                 self.func.opcodes.push(Opcode::Swap);
@@ -907,11 +1028,29 @@ impl Assembler {
 
             (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
 
+            (BinOp::Geq, TCPrimType::I8) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                Opcode::CompLeqI8
+            }
+            (BinOp::Geq, TCPrimType::U8) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                Opcode::CompLeqU8
+            }
             (BinOp::Geq, TCPrimType::I32) => {
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(4u32);
                 self.func.opcodes.push(4u32);
                 Opcode::CompLeqI32
+            }
+            (BinOp::Geq, TCPrimType::U32) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(4u32);
+                self.func.opcodes.push(4u32);
+                Opcode::CompLeqU32
             }
             (BinOp::Geq, TCPrimType::U64) => {
                 self.func.opcodes.push(Opcode::Swap);
@@ -921,19 +1060,30 @@ impl Assembler {
             }
 
             (BinOp::LShift, TCPrimType::I32) => Opcode::LShiftI32,
+            (BinOp::LShift, TCPrimType::U32) => Opcode::LShiftU32,
 
             (BinOp::RShift, TCPrimType::I32) => Opcode::RShiftI32,
 
-            (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAndI8,
-            (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAndI32,
+            (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAnd8,
+            (BinOp::BitAnd, TCPrimType::U8) => Opcode::BitAnd8,
+            (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAnd32,
+            (BinOp::BitAnd, TCPrimType::U32) => Opcode::BitAnd32,
+            (BinOp::BitAnd, TCPrimType::I64) => Opcode::BitAnd64,
+            (BinOp::BitAnd, TCPrimType::U64) => Opcode::BitAnd64,
 
-            (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOrI8,
-            (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOrI32,
+            (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOr8,
+            (BinOp::BitOr, TCPrimType::U8) => Opcode::BitOr8,
+            (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOr32,
+            (BinOp::BitOr, TCPrimType::U32) => Opcode::BitOr32,
+            (BinOp::BitOr, TCPrimType::I64) => Opcode::BitOr64,
+            (BinOp::BitOr, TCPrimType::U64) => Opcode::BitOr64,
 
-            (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXorI32,
-
-            (BinOp::BoolAnd, TCPrimType::I8) => Opcode::BitAndI8,
-            (BinOp::BoolOr, TCPrimType::I8) => Opcode::BitOrI8,
+            (BinOp::BitXor, TCPrimType::I8) => Opcode::BitXor8,
+            (BinOp::BitXor, TCPrimType::U8) => Opcode::BitXor8,
+            (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXor32,
+            (BinOp::BitXor, TCPrimType::U32) => Opcode::BitXor32,
+            (BinOp::BitXor, TCPrimType::I64) => Opcode::BitXor64,
+            (BinOp::BitXor, TCPrimType::U64) => Opcode::BitXor64,
 
             (op, ptype) => unimplemented!("op={:?} type={:?}", op, ptype),
         };

@@ -216,6 +216,8 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
         return Err(errors);
     }
 
+    println!("parsed");
+
     let checked: Vec<_> = parsed
         .into_iter()
         .filter_map(compile_filter(
@@ -227,6 +229,8 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
     if errors.len() != 0 {
         return Err(errors);
     }
+
+    println!("type checked");
 
     let mut assembler = assembler::Assembler::new();
     for tu in checked {

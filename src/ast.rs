@@ -42,7 +42,7 @@ pub enum UnaryOp {
     Ref,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum::AsRefStr)]
 pub enum ExprKind {
     IntLit(i32),
     LongLit(i64),
@@ -312,16 +312,16 @@ pub struct Block {
     pub loc: CodeLoc,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum::AsRefStr)]
 pub enum StatementKind {
     Labeled {
         label: u32,
         label_loc: CodeLoc,
-        stmt: &'static Statement,
+        labeled: &'static Statement,
     },
     CaseLabeled {
         case_value: Expr,
-        stmt: &'static Statement,
+        labeled: &'static Statement,
     },
     DefaultCaseLabeled(&'static Statement),
     Goto {

@@ -4,6 +4,7 @@ use crate::filedb::*;
 use crate::tc_ast::*;
 use crate::tc_structs::*;
 use crate::util::*;
+use std::convert::TryInto;
 
 #[derive(Hash, PartialEq, Eq)]
 pub struct TypeDeclSpec {
@@ -85,19 +86,36 @@ lazy_static! {
 
         gen_type_decl_spec!(map, I32, int);
         gen_type_decl_spec!(map, I64, long);
+        gen_type_decl_spec!(map, I16, short);
         gen_type_decl_spec!(map, I8, char);
         gen_type_decl_spec!(map, Void, void);
-        gen_type_decl_spec!(map, I8, signed char);
+        gen_type_decl_spec!(map, F32, float);
+        gen_type_decl_spec!(map, F64, double);
         gen_type_decl_spec!(map, U32, unsigned);
-        gen_type_decl_spec!(map, U8,unsigned char);
 
-        gen_type_decl_spec!(map, I64,long int);
-        gen_type_decl_spec!(map, I64,long long int);
-        gen_type_decl_spec!(map, I64,long long);
+        gen_type_decl_spec!(map, I8, signed char);
+        gen_type_decl_spec!(map, U8, unsigned char);
 
+        gen_type_decl_spec!(map, I16, short int);
+        gen_type_decl_spec!(map, U16, unsigned short int);
+        gen_type_decl_spec!(map, I16, signed short int);
+        gen_type_decl_spec!(map, U16, unsigned short);
+        gen_type_decl_spec!(map, I16, signed short);
+
+        gen_type_decl_spec!(map, I32, signed int);
         gen_type_decl_spec!(map, U32, unsigned int);
 
+        gen_type_decl_spec!(map, I64, signed long);
         gen_type_decl_spec!(map, U64, unsigned long);
+
+        gen_type_decl_spec!(map, I64, long int);
+        gen_type_decl_spec!(map, I64, long long int);
+        gen_type_decl_spec!(map, I64, long long);
+
+        gen_type_decl_spec!(map, I64, signed long int);
+        gen_type_decl_spec!(map, I64, signed long long int);
+        gen_type_decl_spec!(map, I64, signed long long);
+
         gen_type_decl_spec!(map, U64, unsigned long int);
         gen_type_decl_spec!(map, U64, unsigned long long);
         gen_type_decl_spec!(map, U64, unsigned long long int);
@@ -402,6 +420,45 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             env.label(out, cb.br, body.loc);
         }
 
+        StatementKind::While { condition, body } => {
+            let (mut scope, cb) = env.loop_child(out, body.loc);
+
+            scope.label(out, cb.cont, body.loc);
+
+            let cond = check_expr(&mut scope, &condition)?;
+
+            if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+                return Err(condition_non_primitive(cond.ty, cond.loc));
+            }
+
+            check_stmt(&mut scope, out, *body)?;
+
+            scope.goto(out, cb.cont, body.loc);
+
+            scope.close_scope(out);
+            env.label(out, cb.br, body.loc);
+        }
+        StatementKind::DoWhile { condition, body } => {
+            let (mut scope, cb) = env.loop_child(out, body.loc);
+
+            let begin = out.label();
+            scope.label(out, begin, body.loc);
+
+            check_stmt(&mut scope, out, *body)?;
+
+            scope.label(out, cb.cont, body.loc);
+
+            let cond = check_expr(&mut scope, &condition)?;
+
+            if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+                return Err(condition_non_primitive(cond.ty, cond.loc));
+            }
+
+            scope.goto(out, begin, body.loc);
+            scope.close_scope(out);
+            env.label(out, cb.br, body.loc);
+        }
+
         StatementKind::Continue => {
             if env.cont(out, stmt.loc) {
                 return Err(error!(
@@ -419,10 +476,131 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             }
         }
 
+        StatementKind::Switch { expr, body } => {
+            let cond = check_expr(env, &expr)?;
+            let (mut scope, br) = env.switch(cond, out, body.loc);
+            check_stmt(&mut scope, out, *body)?;
+            scope.close_scope(out);
+            env.label(out, br, body.loc);
+        }
+        StatementKind::CaseLabeled {
+            case_value,
+            labeled,
+        } => {
+            let case_value = check_expr(env, &case_value)?;
+            if env.case(out, case_value) {
+                return Err(error!(
+                    "case used when not in a switch",
+                    stmt.loc, "case used here"
+                ));
+            }
+
+            check_stmt(env, out, *labeled)?;
+        }
+        StatementKind::DefaultCaseLabeled(labeled) => {
+            env.default(out, stmt.loc)?;
+            check_stmt(env, out, *labeled)?;
+        }
+
         x => unimplemented!("{:#?}", x),
     }
 
     return Ok(());
+}
+
+pub fn parse_union_decl(
+    locals: &mut TypeEnv,
+    fields: StructType,
+    loc: CodeLoc,
+) -> Result<TCTypeBase, Error> {
+    let (id, decls) = match fields.kind {
+        StructTypeKind::Named(id) => return Ok(locals.check_union_decl(id, loc)),
+        StructTypeKind::NamedDecl {
+            ident,
+            declarations,
+        } => (ident.into(), declarations),
+        StructTypeKind::UnnamedDecl { declarations } => (n32::NULL, declarations),
+    };
+
+    let label = locals.open_union_defn(id, loc)?;
+
+    let mut align = 1;
+    let mut size = 0;
+    let mut fields: Vec<TCStructField> = Vec::new();
+
+    for decl in decls {
+        let base = parse_spec_quals(&mut *locals, decl.specifiers)?;
+        if decl.declarators.len() == 0 {
+            let (loc, sa) = match base {
+                TCTypeBase::UnnamedStruct { loc, sa } => (loc, sa),
+                TCTypeBase::UnnamedUnion { loc, sa } => (loc, sa),
+                _ => continue,
+            };
+
+            let sa_align = sa.align.into();
+            align = core::cmp::max(align, sa_align);
+            let aligned_size = align_u32(size, sa_align);
+            let sa_size: u32 = sa.size.into();
+            size = core::cmp::max(aligned_size, sa_size);
+
+            let anon_fields = locals.get_struct_fields(LabelOrLoc::Loc(loc));
+            let anon_fields = anon_fields.or_else(|| locals.get_union_fields(LabelOrLoc::Loc(loc)));
+            for &field in anon_fields.unwrap() {
+                if let Some(prev) = fields.iter().find(|f| f.name == field.name) {
+                    return Err(error!(
+                        "redeclaration of union field",
+                        prev.loc, "previous here", field.loc, "redeclaration here"
+                    ));
+                }
+
+                fields.push(field);
+            }
+
+            continue;
+        }
+
+        for &declarator in decl.declarators {
+            let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
+            let name: u32 = id.into();
+            let decl_loc = declarator.loc;
+
+            let sa_size = ty.size();
+            if sa_size == n32::NULL {
+                return Err(error!(
+                    "declared union member of incomplete type",
+                    decl_loc, "declared here"
+                ));
+            }
+
+            let ty = ty.to_ref(&*locals);
+            let sa_size: u32 = sa_size.into();
+            let sa_align: u32 = ty.align().into();
+
+            align = core::cmp::max(align, sa_align);
+            let aligned_size = align_u32(size, sa_align);
+            size = core::cmp::max(aligned_size, sa_size);
+
+            let offset = 0;
+            #[rustfmt::skip]
+            let field = TCStructField { name, ty, offset, loc, };
+            if let Some(prev) = fields.iter().find(|f| f.name == name) {
+                return Err(error!(
+                    "redeclaration of union field",
+                    prev.loc, "previous here", field.loc, "redeclaration here"
+                ));
+            }
+
+            fields.push(field);
+        }
+    }
+
+    let size = align_u32(size, align);
+
+    let sa = SizeAlign {
+        size: size.into(),
+        align: align.into(),
+    };
+    return locals.close_union_defn(label, sa, fields);
 }
 
 pub fn parse_struct_decl(
@@ -443,7 +621,7 @@ pub fn parse_struct_decl(
 
     let mut align = 1;
     let mut size = 0;
-    let mut fields = HashMap::new();
+    let mut fields: Vec<TCStructField> = Vec::new();
 
     if decls.len() == 0 {
         let sa = SizeAlign {
@@ -456,10 +634,10 @@ pub fn parse_struct_decl(
     for decl in &decls[..(decls.len() - 1)] {
         let base = parse_spec_quals(&mut *locals, decl.specifiers)?;
         if decl.declarators.len() == 0 {
-            let (loc, sa) = if let TCTypeBase::UnnamedStruct { loc, sa } = base {
-                (loc, sa)
-            } else {
-                continue;
+            let (loc, sa) = match base {
+                TCTypeBase::UnnamedStruct { loc, sa } => (loc, sa),
+                TCTypeBase::UnnamedUnion { loc, sa } => (loc, sa),
+                _ => continue,
             };
 
             let sa_align = sa.align.into();
@@ -468,16 +646,20 @@ pub fn parse_struct_decl(
             let sa_size: u32 = sa.size.into();
             size = offset + sa_size;
 
-            for (&ident, &field) in locals.get_struct_fields(LabelOrLoc::Loc(loc)).unwrap() {
+            let anon_fields = locals.get_struct_fields(LabelOrLoc::Loc(loc));
+            let anon_fields = anon_fields.or_else(|| locals.get_union_fields(LabelOrLoc::Loc(loc)));
+            for &field in anon_fields.unwrap() {
                 let mut field = field;
-                field.offset = offset;
+                field.offset += offset;
 
-                if let Some(prev) = fields.insert(ident, field) {
+                if let Some(prev) = fields.iter().find(|f| f.name == field.name) {
                     return Err(error!(
                         "redeclaration of struct field",
                         prev.loc, "previous here", field.loc, "redeclaration here"
                     ));
                 }
+
+                fields.push(field);
             }
 
             continue;
@@ -486,7 +668,7 @@ pub fn parse_struct_decl(
         for &declarator in decl.declarators {
             // add field
             let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
-            let ident: u32 = id.into();
+            let name: u32 = id.into();
             let decl_loc = declarator.loc;
 
             let sa_size = ty.size();
@@ -505,13 +687,16 @@ pub fn parse_struct_decl(
             let offset = align_u32(size, sa_align);
             size = offset + sa_size;
 
-            let field = TCStructField { ty, offset, loc };
-            if let Some(prev) = fields.insert(ident, field) {
+            #[rustfmt::skip]
+            let field = TCStructField { name, ty, offset, loc, };
+            if let Some(prev) = fields.iter().find(|f| f.name == name) {
                 return Err(error!(
                     "redeclaration of struct field",
                     prev.loc, "previous here", field.loc, "redeclaration here"
                 ));
             }
+
+            fields.push(field);
         }
     }
 
@@ -525,23 +710,27 @@ pub fn parse_struct_decl(
             let sa_size: u32 = sa.size.into();
             size = offset + sa_size;
 
-            for (&ident, &field) in locals.get_struct_fields(LabelOrLoc::Loc(loc)).unwrap() {
+            let anon_fields = locals.get_struct_fields(LabelOrLoc::Loc(loc));
+            let anon_fields = anon_fields.or_else(|| locals.get_union_fields(LabelOrLoc::Loc(loc)));
+            for &field in anon_fields.unwrap() {
                 let mut field = field;
-                field.offset = offset;
+                field.offset += offset;
 
-                if let Some(prev) = fields.insert(ident, field) {
+                if let Some(prev) = fields.iter().find(|f| f.name == field.name) {
                     return Err(error!(
                         "redeclaration of struct field",
                         prev.loc, "previous here", field.loc, "redeclaration here"
                     ));
                 }
+
+                fields.push(field);
             }
         }
     } else {
         for &declarator in &decl.declarators[..(decl.declarators.len() - 1)] {
             // add field
             let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
-            let ident: u32 = id.into();
+            let name: u32 = id.into();
             let decl_loc = declarator.loc;
 
             let sa_size = ty.size();
@@ -560,18 +749,21 @@ pub fn parse_struct_decl(
             let offset = align_u32(size, sa_align);
             size = offset + sa_size;
 
-            let field = TCStructField { ty, offset, loc };
-            if let Some(prev) = fields.insert(ident, field) {
+            #[rustfmt::skip]
+            let field = TCStructField { name, ty, offset, loc, };
+            if let Some(prev) = fields.iter().find(|f| f.name == name) {
                 return Err(error!(
                     "redeclaration of struct field",
                     prev.loc, "previous here", field.loc, "redeclaration here"
                 ));
             }
+
+            fields.push(field);
         }
 
         let declarator = *decl.declarators.last().unwrap();
         let (ty, id) = check_decl(locals, base, &declarator.declarator)?;
-        let ident: u32 = id.into();
+        let name: u32 = id.into();
         let decl_loc = declarator.loc;
 
         let mut sa_size = ty.size();
@@ -594,13 +786,16 @@ pub fn parse_struct_decl(
         let offset = align_u32(size, sa_align);
         size = offset + sa_size;
 
-        let field = TCStructField { ty, offset, loc };
-        if let Some(prev) = fields.insert(ident, field) {
+        #[rustfmt::skip]
+        let field = TCStructField { name, ty, offset, loc, };
+        if let Some(prev) = fields.iter().find(|f| f.name == name) {
             return Err(error!(
                 "redeclaration of struct field",
                 prev.loc, "previous here", field.loc, "redeclaration here"
             ));
         }
+
+        fields.push(field);
     }
 
     let size = align_u32(size, align);
@@ -713,7 +908,7 @@ pub fn parse_decl_specs(
                 return Ok((sc, ty));
             }
             TypeSpecifier(TySpec::Union(fields)) => {
-                unimplemented!()
+                return Ok((sc, parse_union_decl(&mut *locals, fields, decl_spec.loc)?))
             }
             TypeSpecifier(TySpec::Struct(fields)) => {
                 return Ok((sc, parse_struct_decl(&mut *locals, fields, decl_spec.loc)?))
@@ -966,18 +1161,17 @@ pub fn check_decl_rec(
                     }
                     ArraySizeKind::VariableExpression(expr) => {
                         let expr = eval_expr(check_expr(locals, expr)?)?;
-                        let (expr, loc) = if let TCExprKind::I32Lit(i) = expr.kind {
-                            (i, expr.loc)
-                        } else {
-                            unreachable!()
+                        let loc = expr.loc;
+                        let expr = match expr.kind {
+                            TCExprKind::I32Lit(i) => i.try_into().map_err(neg_arr_size(loc))?,
+                            TCExprKind::U32Lit(i) => i,
+                            x => {
+                                return Err(error!(
+                                    "cannot use expression as array type",
+                                    loc, "expression is not a constant"
+                                ))
+                            }
                         };
-
-                        if expr < 0 {
-                            return Err(error!(
-                                "array must have positive size",
-                                loc, "size found here"
-                            ));
-                        }
 
                         tc_type.mods.push(TCTypeModifier::Array(expr as u32));
                     }
@@ -1022,6 +1216,21 @@ pub fn assign_convert(
         return Some(expr);
     }
 
+    if ty.is_void() {
+        let mut exprs = vec![expr];
+        exprs.push(TCExpr {
+            kind: TCExprKind::Uninit,
+            ty: TCType::new(TCTypeBase::Void),
+            loc,
+        });
+
+        return Some(TCExpr {
+            kind: TCExprKind::ParenList(alloc.add_array(exprs)),
+            ty: TCType::new(TCTypeBase::Void),
+            loc,
+        });
+    }
+
     let to = ty.to_prim_type()?;
     let from = expr.ty.to_prim_type()?;
     let expr = alloc.add(expr);
@@ -1031,6 +1240,87 @@ pub fn assign_convert(
         ty,
         loc,
     });
+}
+
+pub fn check_initializer_list(
+    locals: &mut TypeEnv,
+    mut target: TCTypeOwned,
+    init: &[Expr],
+    decl_loc: CodeLoc,
+) -> Result<(TCExprKind, TCType), Error> {
+    let deref = target.deref().map(|a| a.to_ty_owned());
+    if let Some(array_mod) = target.array_mod() {
+        let elem_ty = deref.unwrap().to_ref(&*locals);
+
+        let mut tc_exprs = Vec::new();
+        for expr in init {
+            let tc_expr = check_expr(&mut *locals, expr)?;
+            let or_else = || conversion_error(elem_ty, decl_loc, &tc_expr);
+            let tc_expr =
+                assign_convert(&*locals, elem_ty, tc_expr, decl_loc).ok_or_else(or_else)?;
+            tc_exprs.push(tc_expr.kind);
+        }
+
+        let array_init = match array_mod {
+            TCTypeModifier::Array(arr) => {
+                tc_exprs.resize(*arr as usize, TCExprKind::Uninit);
+                let elems = locals.add_array(tc_exprs);
+
+                TCExprKind::ArrayInit { elems, elem_ty }
+            }
+            x @ TCTypeModifier::VariableArray => {
+                *x = TCTypeModifier::Array(tc_exprs.len() as u32); // TODO overflow
+                let elems = locals.add_array(tc_exprs);
+
+                TCExprKind::ArrayInit { elems, elem_ty }
+            }
+            _ => unreachable!(),
+        };
+
+        return Ok((array_init, target.to_ref(&*locals)));
+    }
+
+    let target = target.to_ref(&*locals);
+    let or_else = || {
+        error!(
+            "can only use initializer lists on structs and arrays",
+            decl_loc,
+            format!("this has type {}", target.display(locals.symbols()))
+        )
+    };
+
+    let (is_struct, id) = target.get_id_strict().ok_or_else(or_else)?;
+    if !is_struct {
+        return Err(or_else());
+    }
+
+    let mut written_fields = Vec::new();
+    let fields = get_fields(&*locals, target).ok_or_else(or_else)?;
+    let fields = locals.get_struct_fields(id).ok_or_else(or_else)?;
+    let mut offset = None;
+    for (field, expr) in fields.iter().zip(init.iter()) {
+        if let Some(offset) = offset {
+            if field.offset <= offset {
+                return Err(error!(
+                    "can only use initializer lists on simple structs",
+                    decl_loc,
+                    format!("this has type {}", target.display(locals.symbols()))
+                ));
+            }
+        }
+        offset = Some(field.offset);
+
+        let tc_expr = check_expr(&mut *locals, expr)?;
+        let or_else = || conversion_error(field.ty, decl_loc, &tc_expr);
+        let tc_expr = assign_convert(&*locals, field.ty, tc_expr, decl_loc).ok_or_else(or_else)?;
+        written_fields.push(tc_expr);
+    }
+
+    let written_fields = locals.add_array(written_fields);
+    return Ok((
+        TCExprKind::StructLiteral(written_fields, target.repr_size()),
+        target,
+    ));
 }
 
 pub fn check_declaration(
@@ -1054,12 +1344,12 @@ pub fn check_declaration(
     }
 
     for decl in declaration.declarators {
-        let (mut ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
+        let (ty, id) = check_decl(&mut *locals, base, &decl.declarator)?;
         let ident: u32 = id.into();
         let loc = decl.loc;
 
         let (init, ty) = if let Some(init) = decl.initializer {
-            match init.kind {
+            let (init, ty) = match init.kind {
                 InitializerKind::Expr(expr) => {
                     let tc_expr = check_expr(&mut *locals, expr)?;
                     let ty = ty.to_ref(&*locals);
@@ -1067,66 +1357,22 @@ pub fn check_declaration(
                     let tc_expr = assign_convert(&*locals, ty, tc_expr, decl.declarator.loc)
                         .ok_or_else(or_else)?;
 
-                    let init = match sc {
-                        StorageClass::Extern => TCDeclInit::ExternInit(tc_expr.kind),
-                        StorageClass::Default => TCDeclInit::Default(tc_expr.kind),
-                        StorageClass::Static => TCDeclInit::Static(tc_expr.kind),
-                        StorageClass::Typedef => unreachable!(),
-                    };
-
-                    (init, ty)
+                    (tc_expr.kind, ty)
                 }
 
                 // Simple form of initializer lists
                 InitializerKind::List(exprs) => {
-                    let or_else = || {
-                        error!(
-                            "initializer lists not supported for anything but 1D arrays",
-                            init.loc, "initializer list used here"
-                        )
-                    };
-
-                    let deref = ty.deref().map(|a| a.to_ty_owned());
-                    let array_mod = ty.array_mod().ok_or_else(or_else)?;
-                    let elem_ty = deref.unwrap().to_ref(&*locals);
-
-                    let mut tc_exprs = Vec::new();
-                    for expr in exprs {
-                        let tc_expr = check_expr(&mut *locals, expr)?;
-                        let or_else = || conversion_error(elem_ty, decl.declarator.loc, &tc_expr);
-                        let tc_expr =
-                            assign_convert(&*locals, elem_ty, tc_expr, decl.declarator.loc)
-                                .ok_or_else(or_else)?;
-                        tc_exprs.push(tc_expr.kind);
-                    }
-
-                    let array_init = match array_mod {
-                        TCTypeModifier::Array(arr) => {
-                            tc_exprs.resize(*arr as usize, TCExprKind::Uninit);
-                            let elems = locals.add_array(tc_exprs);
-
-                            TCExprKind::ArrayInit { elems, elem_ty }
-                        }
-                        x @ TCTypeModifier::VariableArray => {
-                            *x = TCTypeModifier::Array(tc_exprs.len() as u32); // TODO overflow
-                            let elems = locals.add_array(tc_exprs);
-
-                            TCExprKind::ArrayInit { elems, elem_ty }
-                        }
-                        _ => unreachable!(),
-                    };
-
-                    let init = match sc {
-                        StorageClass::Extern => TCDeclInit::ExternInit(array_init),
-                        StorageClass::Default => TCDeclInit::Default(array_init),
-                        StorageClass::Static => TCDeclInit::Static(array_init),
-                        StorageClass::Typedef => unreachable!(),
-                    };
-
-                    let ty = ty.to_ref(&*locals);
-                    (init, ty)
+                    check_initializer_list(&mut *locals, ty, exprs, decl.declarator.loc)?
                 }
-            }
+            };
+
+            let init = match sc {
+                StorageClass::Extern => TCDeclInit::ExternInit(init),
+                StorageClass::Default => TCDeclInit::Default(init),
+                StorageClass::Static => TCDeclInit::Static(init),
+                StorageClass::Typedef => unreachable!(),
+            };
+            (init, ty)
         } else {
             let init = match sc {
                 StorageClass::Extern => TCDeclInit::Extern,
@@ -1157,13 +1403,17 @@ pub fn check_declaration(
 
 pub fn eval_expr(expr: TCExpr) -> Result<TCExpr, Error> {
     // TODO cmon man
-    if let TCExprKind::I32Lit(i) = expr.kind {
-        return Ok(expr);
-    } else {
-        return Err(error!(
-            "cannot evaluate constant expression",
-            expr.loc, "expression found here"
-        ));
+    match expr.kind {
+        TCExprKind::I32Lit(i) => return Ok(expr),
+        TCExprKind::U32Lit(i) => return Ok(expr),
+        TCExprKind::U64Lit(i) => return Ok(expr),
+        TCExprKind::I64Lit(i) => return Ok(expr),
+        _ => {
+            return Err(error!(
+                "cannot evaluate constant expression",
+                expr.loc, "expression found here"
+            ))
+        }
     }
 }
 
@@ -1386,47 +1636,31 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
         ExprKind::Member { base, member } => {
             let base = check_expr(&mut *env, base)?;
+            let field = check_field_access(&mut *env, base.ty, member, expr.loc)?;
 
-            let or_else = || not_a_struct(env.symbols(), base.ty, base.loc);
-            let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
-
-            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
-            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
-
-            if let Some(field) = member_info.get(&member) {
-                return Ok(TCExpr {
-                    ty: field.ty,
-                    loc: expr.loc,
-                    kind: TCExprKind::Member {
-                        base: env.add(base),
-                        offset: field.offset,
-                    },
-                });
-            } else {
-                return Err(field_doesnt_exist(base.ty, expr.loc));
-            }
+            return Ok(TCExpr {
+                ty: field.ty,
+                loc: expr.loc,
+                kind: TCExprKind::Member {
+                    base: env.add(base),
+                    offset: field.offset,
+                },
+            });
         }
         ExprKind::PtrMember { base, member } => {
             let base = check_expr(&mut *env, base)?;
             let or_else = || not_a_struct_pointer(env.symbols(), base.ty, base.loc);
             let base_ty = base.ty.deref().ok_or_else(or_else)?;
-            let struct_id = base_ty.get_struct_id_strict().ok_or_else(or_else)?;
+            let field = check_field_access(&mut *env, base_ty, member, expr.loc)?;
 
-            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
-            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
-
-            if let Some(field) = member_info.get(&member) {
-                return Ok(TCExpr {
-                    ty: field.ty,
-                    loc: expr.loc,
-                    kind: TCExprKind::PtrMember {
-                        base: env.add(base),
-                        offset: field.offset,
-                    },
-                });
-            } else {
-                return Err(field_doesnt_exist(base.ty, expr.loc));
-            }
+            return Ok(TCExpr {
+                ty: field.ty,
+                loc: expr.loc,
+                kind: TCExprKind::PtrMember {
+                    base: env.add(base),
+                    offset: field.offset,
+                },
+            });
         }
 
         ExprKind::Call { function, params } => {
@@ -1440,7 +1674,14 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             let func_type = if let Some(f) = func.ty.to_func_type(&*env) {
                 f
             } else {
-                return Err(error!("can't call expression", func.loc, "expr found here"));
+                return Err(error!(
+                    "can't call expression",
+                    func.loc,
+                    format!(
+                        "expr found here to be type {}",
+                        func.ty.display(env.symbols())
+                    )
+                ));
             };
 
             if let Some(ftype_params) = func_type.params {
@@ -1501,16 +1742,81 @@ pub fn check_bin_op(
     r: &Expr,
     loc: CodeLoc,
 ) -> Result<TCExpr, Error> {
-    if op == BinOp::Index {
-        let sum = check_bin_op(&mut *env, BinOp::Add, l, r, loc)?;
-        let or_else = || error!("cannot dereference value", loc, "value found here");
-        let ty = sum.ty.deref().ok_or_else(or_else)?;
+    match op {
+        BinOp::BoolOr => {
+            let l = check_expr(&mut *env, l)?;
+            let r = check_expr(&mut *env, r)?;
+            let or_else = || condition_non_primitive(l.ty, l.loc);
+            let cond_ty = l.ty.to_prim_type().ok_or_else(or_else)?;
+            let or_else = || condition_non_primitive(r.ty, r.loc);
+            let op_type = r.ty.to_prim_type().ok_or_else(or_else)?;
 
-        return Ok(TCExpr {
-            kind: TCExprKind::Deref(env.add(sum)),
-            ty,
-            loc,
-        });
+            let if_true = TCExpr {
+                kind: TCExprKind::I8Lit(1),
+                ty: TCType::new(TCTypeBase::I8),
+                loc: l.loc,
+            };
+
+            let (op, operand) = (TCUnaryOp::BoolNorm, env.add(r));
+            #[rustfmt::skip]
+            let if_false = TCExpr {
+                kind: TCExprKind::UnaryOp { op, op_type, operand, },
+                ty: TCType::new(TCTypeBase::I8),
+                loc: r.loc,
+            };
+
+            let (condition, if_true, if_false) = (env.add(l), env.add(if_true), env.add(if_false));
+
+            #[rustfmt::skip]
+            return Ok(TCExpr {
+                kind: TCExprKind::Ternary { condition, cond_ty, if_true, if_false, },
+                ty: TCType::new(TCTypeBase::I8),
+                loc,
+            });
+        }
+        BinOp::BoolAnd => {
+            let l = check_expr(&mut *env, l)?;
+            let r = check_expr(&mut *env, r)?;
+            let or_else = || condition_non_primitive(l.ty, l.loc);
+            let cond_ty = l.ty.to_prim_type().ok_or_else(or_else)?;
+            let or_else = || condition_non_primitive(r.ty, r.loc);
+            let op_type = r.ty.to_prim_type().ok_or_else(or_else)?;
+
+            let if_false = TCExpr {
+                kind: TCExprKind::I8Lit(0),
+                ty: TCType::new(TCTypeBase::I8),
+                loc: l.loc,
+            };
+
+            let (op, operand) = (TCUnaryOp::BoolNorm, env.add(r));
+            #[rustfmt::skip]
+            let if_true = TCExpr {
+                kind: TCExprKind::UnaryOp { op, op_type, operand, },
+                ty: TCType::new(TCTypeBase::I8),
+                loc: r.loc,
+            };
+
+            let (condition, if_true, if_false) = (env.add(l), env.add(if_true), env.add(if_false));
+
+            #[rustfmt::skip]
+            return Ok(TCExpr {
+                kind: TCExprKind::Ternary { condition, cond_ty, if_true, if_false, },
+                ty: TCType::new(TCTypeBase::I8),
+                loc,
+            });
+        }
+        BinOp::Index => {
+            let sum = check_bin_op(&mut *env, BinOp::Add, l, r, loc)?;
+            let or_else = || error!("cannot dereference value", loc, "value found here");
+            let ty = sum.ty.deref().ok_or_else(or_else)?;
+
+            return Ok(TCExpr {
+                kind: TCExprKind::Deref(env.add(sum)),
+                ty,
+                loc,
+            });
+        }
+        _ => {}
     }
 
     let l = check_expr(&mut *env, l)?;
@@ -1773,6 +2079,7 @@ pub fn check_bin_op(
     let ty = match op {
         BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => TCType::new(TCTypeBase::I8),
         BinOp::Eq | BinOp::Neq => TCType::new(TCTypeBase::I8),
+        BinOp::BoolAnd | BinOp::BoolOr => TCType::new(TCTypeBase::I8),
         _ => left.ty,
     };
 
@@ -1863,48 +2170,64 @@ pub fn prim_unify(
     }
 }
 
+pub fn get_fields<'a>(env: &'a TypeEnv, ty: TCType) -> Option<&'a [TCStructField]> {
+    let (is_struct, id) = ty.get_id_strict()?;
+
+    if is_struct {
+        env.get_struct_fields(id)
+    } else {
+        env.get_union_fields(id)
+    }
+}
+
+pub fn check_field_access(
+    env: &TypeEnv,
+    ty: TCType,
+    field: u32,
+    loc: CodeLoc,
+) -> Result<TCStructField, Error> {
+    let or_else = || not_a_struct(env.symbols(), ty, loc);
+    let (is_struct, id) = ty.get_id_strict().ok_or_else(or_else)?;
+
+    let or_else = || access_incomplete_struct_type(ty, loc);
+    let member_info = if is_struct {
+        env.get_struct_fields(id).ok_or_else(or_else)?
+    } else {
+        env.get_union_fields(id).ok_or_else(or_else)?
+    };
+
+    let res = member_info.iter().find(|m| m.name == field);
+    let or_else = || field_doesnt_exist(ty, loc);
+    return Ok(*res.ok_or_else(or_else)?);
+}
+
 pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTarget, Error> {
     match &expr.kind {
         ExprKind::Ident(id) => return env.assign_ident(*id, expr.loc),
 
         ExprKind::Member { base, member } => {
             let mut base = check_assign_target(&mut *env, base)?;
-            let or_else = || not_a_struct(env.symbols(), base.ty, base.loc);
-            let struct_id = base.ty.get_struct_id_strict().ok_or_else(or_else)?;
+            let field = check_field_access(&mut *env, base.ty, *member, base.loc)?;
 
-            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
-            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
+            base.ty = field.ty;
+            base.offset += field.offset;
+            base.loc = expr.loc;
 
-            if let Some(field) = member_info.get(&member) {
-                base.ty = field.ty;
-                base.offset += field.offset;
-                base.loc = expr.loc;
-
-                return Ok(base);
-            } else {
-                return Err(field_doesnt_exist(base.ty, expr.loc));
-            }
+            return Ok(base);
         }
         ExprKind::PtrMember { base, member } => {
             let base = check_expr(&mut *env, base)?;
             let or_else = || not_a_struct_pointer(env.symbols(), base.ty, base.loc);
             let base_ty = base.ty.deref().ok_or_else(or_else)?;
-            let struct_id = base_ty.get_struct_id_strict().ok_or_else(or_else)?;
+            let field = check_field_access(&mut *env, base_ty, *member, expr.loc)?;
 
-            let or_else = || access_incomplete_struct_type(base.ty, expr.loc);
-            let member_info = env.get_struct_fields(struct_id).ok_or_else(or_else)?;
-
-            if let Some(field) = member_info.get(&member) {
-                return Ok(TCAssignTarget {
-                    kind: TCAssignTargetKind::Ptr(env.add(base)),
-                    offset: field.offset,
-                    ty: field.ty,
-                    defn_loc: base.loc,
-                    loc: expr.loc,
-                });
-            } else {
-                return Err(field_doesnt_exist(base.ty, expr.loc));
-            }
+            return Ok(TCAssignTarget {
+                kind: TCAssignTargetKind::Ptr(env.add(base)),
+                offset: field.offset,
+                ty: field.ty,
+                defn_loc: base.loc,
+                loc: expr.loc,
+            });
         }
 
         ExprKind::UnaryOp(UnaryOp::Deref, ptr) => {
@@ -1984,6 +2307,10 @@ pub fn check_un_op(
             let value = check_assign_target(env, obj)?;
             let decr_ty = value.ty.to_prim_type().ok_or_else(ptype_err(value.loc))?;
 
+            if let TCPrimType::Pointer { stride: n32::NULL } = decr_ty {
+                return Err(ptr_to_incomplete_type(env.symbols(), value.ty, loc));
+            }
+
             return Ok(TCExpr {
                 kind: TCExprKind::PostDecr { decr_ty, value },
                 ty: value.ty,
@@ -1993,6 +2320,10 @@ pub fn check_un_op(
         UnaryOp::PostIncr => {
             let value = check_assign_target(env, obj)?;
             let incr_ty = value.ty.to_prim_type().ok_or_else(ptype_err(value.loc))?;
+
+            if let TCPrimType::Pointer { stride: n32::NULL } = incr_ty {
+                return Err(ptr_to_incomplete_type(env.symbols(), value.ty, loc));
+            }
 
             return Ok(TCExpr {
                 kind: TCExprKind::PostIncr { incr_ty, value },
@@ -2009,6 +2340,15 @@ pub fn check_un_op(
             let (kind, ty) = match op_type {
                 TCPrimType::I8 => (TCExprKind::I8Lit(1), TCType::new(TCTypeBase::I8)),
                 TCPrimType::I32 => (TCExprKind::I32Lit(1), TCType::new(TCTypeBase::I32)),
+                TCPrimType::U32 => (TCExprKind::U32Lit(1), TCType::new(TCTypeBase::U32)),
+                TCPrimType::U64 => (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64)),
+
+                TCPrimType::Pointer { stride } => {
+                    let or_else = || ptr_to_incomplete_type(env.symbols(), target.ty, loc);
+                    let stride = stride.ok_or_else(or_else)? as u64;
+                    (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64))
+                }
+
                 x => unimplemented!("predecr for {:?}", x),
             };
 
@@ -2031,7 +2371,15 @@ pub fn check_un_op(
             let (kind, ty) = match op_type {
                 TCPrimType::I8 => (TCExprKind::I8Lit(1), TCType::new(TCTypeBase::I8)),
                 TCPrimType::I32 => (TCExprKind::I32Lit(1), TCType::new(TCTypeBase::I32)),
-                x => unimplemented!("predecr for {:?}", x),
+                TCPrimType::U32 => (TCExprKind::U32Lit(1), TCType::new(TCTypeBase::U32)),
+                TCPrimType::U64 => (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64)),
+
+                TCPrimType::Pointer { stride } => {
+                    let or_else = || ptr_to_incomplete_type(env.symbols(), target.ty, loc);
+                    let stride = stride.ok_or_else(or_else)? as u64;
+                    (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64))
+                }
+                x => unimplemented!("preincr for {:?}", x),
             };
 
             let loc = obj.loc;
@@ -2058,7 +2406,7 @@ pub fn check_un_op(
                     op_type,
                     operand,
                 },
-                ty: operand.ty,
+                ty: TCType::new(TCTypeBase::I8),
                 loc,
             });
         }
@@ -2106,7 +2454,7 @@ pub fn bin_assign_op_non_primitive(ty: TCType, loc: CodeLoc) -> Error {
 
 pub fn not_a_struct_pointer(syms: &Symbols, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
-        "accessed expression using arrow that was not a struct pointer",
+        "accessed expression using arrow that was not a struct/union pointer",
         loc,
         format!("access happened here (type is {})", ty.display(syms))
     );
@@ -2114,7 +2462,7 @@ pub fn not_a_struct_pointer(syms: &Symbols, ty: TCType, loc: CodeLoc) -> Error {
 
 pub fn not_a_struct(syms: &Symbols, ty: TCType, loc: CodeLoc) -> Error {
     return error!(
-        "tried to access field of non-struct type",
+        "tried to access field of non-struct/union type",
         loc,
         format!("access happened here (type is {})", ty.display(syms))
     );
@@ -2185,4 +2533,8 @@ pub fn bitshift_conversion_error(syms: &Symbols, expr: &TCExpr) -> Error {
         "couldn't use value as bitshift size",
         expr.loc, "value found here"
     );
+}
+
+pub fn neg_arr_size<T>(loc: CodeLoc) -> impl Fn(T) -> Error {
+    return move |t: T| error!("array must have positive size", loc, "size found here");
 }

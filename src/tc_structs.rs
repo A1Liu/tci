@@ -27,8 +27,8 @@ pub enum TypeEnvKind<'a> {
         scope_idx: u32,
         cont_label: n32,
         break_label: n32,
-        parent: *const TypeEnv<'a>,
-        global: *const TypeEnv<'a>,
+        parent: *mut TypeEnv<'a>,
+        global: *mut TypeEnv<'a>,
     },
     LocalSwitch {
         symbols: HashMap<u32, TCVar>,
@@ -36,15 +36,19 @@ pub enum TypeEnvKind<'a> {
         cont_label: n32,
         break_label: u32,
         cases: Vec<(TCExpr, u32)>,
-        parent: *const TypeEnv<'a>,
-        global: *const TypeEnv<'a>,
+        default: n32,
+        default_loc: CodeLoc,
+        parent: *mut TypeEnv<'a>,
+        global: *mut TypeEnv<'a>,
     },
 }
 
 pub struct TypeEnv<'a> {
     pub kind: TypeEnvKind<'a>,
     pub structs: HashMap<LabelOrLoc, TCStruct>,
+    pub unions: HashMap<LabelOrLoc, TCStruct>,
     pub structs_in_progress: HashMap<u32, CodeLoc>,
+    pub unions_in_progress: HashMap<u32, CodeLoc>,
     pub typedefs: HashMap<u32, (&'static TCType, CodeLoc)>,
 }
 
@@ -100,20 +104,6 @@ impl FuncEnv {
     }
 }
 
-// impl<'a> Drop for TypeEnv<'a> {
-//     fn drop(&mut self) {
-//         let scope_idx = match self.kind {
-//             TypeEnvKind::Local { scope_idx, .. } => scope_idx,
-//             TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
-//             TypeEnvKind::Global { .. } => return,
-//         };
-//
-//         if scope_idx != !0 {
-//             panic!("didn't close scope");
-//         }
-//     }
-// }
-
 impl<'a> TypeEnv<'a> {
     pub fn global(file: u32, symbols: &'a Symbols) -> Self {
         Self {
@@ -123,7 +113,9 @@ impl<'a> TypeEnv<'a> {
                 next_var: 0,
             }),
             structs: HashMap::new(),
+            unions: HashMap::new(),
             structs_in_progress: HashMap::new(),
+            unions_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
         }
     }
@@ -188,11 +180,16 @@ impl<'a> TypeEnv<'a> {
             TypeEnvKind::Global { .. } => unreachable!(),
         };
 
+        let global = match self.kind {
+            TypeEnvKind::Local { global, .. } => global,
+            TypeEnvKind::LocalSwitch { global, .. } => global,
+            TypeEnvKind::Global { .. } => self,
+        };
+
         let cont_label = env.label();
         let break_label = env.label();
 
         let scope_idx = env.ops.len() as u32;
-        let (_, global) = self.globals();
 
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
@@ -216,7 +213,9 @@ impl<'a> TypeEnv<'a> {
         let sel = Self {
             kind,
             structs: HashMap::new(),
+            unions: HashMap::new(),
             structs_in_progress: HashMap::new(),
+            unions_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
         };
 
@@ -237,13 +236,18 @@ impl<'a> TypeEnv<'a> {
             } => (cont_label, break_label.into()),
             TypeEnvKind::Global(_) => (n32::NULL, n32::NULL),
         };
+
         let parent_scope = match self.kind {
             TypeEnvKind::Local { scope_idx, .. } => scope_idx,
             TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
             TypeEnvKind::Global { .. } => !0,
         };
 
-        let (_, global) = self.globals();
+        let global = match self.kind {
+            TypeEnvKind::Local { global, .. } => global,
+            TypeEnvKind::LocalSwitch { global, .. } => global,
+            TypeEnvKind::Global { .. } => self,
+        };
 
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
@@ -262,24 +266,31 @@ impl<'a> TypeEnv<'a> {
         Self {
             kind,
             structs: HashMap::new(),
+            unions: HashMap::new(),
             structs_in_progress: HashMap::new(),
+            unions_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
         }
     }
 
-    pub fn switch(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> (Self, u32) {
+    pub fn switch(&mut self, expr: TCExpr, env: &mut FuncEnv, loc: CodeLoc) -> (Self, u32) {
         let cont_label = match self.kind {
             TypeEnvKind::Local { cont_label, .. } => cont_label,
             TypeEnvKind::LocalSwitch { cont_label, .. } => cont_label,
             _ => unreachable!(),
         };
+
         let parent_scope = match self.kind {
             TypeEnvKind::Local { scope_idx, .. } => scope_idx,
             TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
             TypeEnvKind::Global { .. } => !0,
         };
 
-        let (_, global) = self.globals();
+        let global = match self.kind {
+            TypeEnvKind::Local { global, .. } => global,
+            TypeEnvKind::LocalSwitch { global, .. } => global,
+            TypeEnvKind::Global { .. } => self,
+        };
 
         let break_label = env.label();
 
@@ -289,6 +300,8 @@ impl<'a> TypeEnv<'a> {
             cont_label,
             break_label,
             cases: Vec::new(),
+            default: n32::NULL,
+            default_loc: NO_FILE,
             parent: self,
             global,
         };
@@ -297,15 +310,102 @@ impl<'a> TypeEnv<'a> {
             kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
             loc,
         });
+        env.ops.push(TCOpcode {
+            kind: TCOpcodeKind::Switch {
+                expr,
+                cases: &[],
+                default: !0,
+            },
+            loc: expr.loc,
+        });
 
         let sel = Self {
             kind,
             structs: HashMap::new(),
+            unions: HashMap::new(),
             structs_in_progress: HashMap::new(),
+            unions_in_progress: HashMap::new(),
             typedefs: HashMap::new(),
         };
 
         (sel, break_label)
+    }
+
+    pub fn default(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Result<(), Error> {
+        let mut c_env: *mut TypeEnv = self;
+
+        while !c_env.is_null() {
+            let current = unsafe { &mut *c_env };
+
+            let (scope_idx, default, d_loc) = match &mut current.kind {
+                TypeEnvKind::Global { .. } => break,
+                TypeEnvKind::LocalSwitch {
+                    scope_idx,
+                    default,
+                    default_loc,
+                    ..
+                } => (*scope_idx, default, default_loc),
+                TypeEnvKind::Local { parent, .. } => {
+                    c_env = *parent;
+                    continue;
+                }
+            };
+
+            if *default != n32::NULL {
+                return Err(error!(
+                    "default case used multiple times in same switch statement",
+                    *d_loc, "first default case here", loc, "second default case here"
+                ));
+            }
+
+            let label = env.label();
+            *default = label.into();
+            *d_loc = loc;
+
+            let op = TCOpcode {
+                kind: TCOpcodeKind::Label { label, scope_idx },
+                loc,
+            };
+            env.ops.push(op);
+
+            return Ok(());
+        }
+
+        return Err(error!(
+            "default used when not in a switch",
+            loc, "default used here"
+        ));
+    }
+
+    pub fn case(&mut self, env: &mut FuncEnv, case_value: TCExpr) -> bool {
+        let mut c_env: *mut TypeEnv = self;
+
+        while !c_env.is_null() {
+            let current = unsafe { &mut *c_env };
+
+            let (scope_idx, cases) = match &mut current.kind {
+                TypeEnvKind::Global { .. } => break,
+                TypeEnvKind::LocalSwitch {
+                    scope_idx, cases, ..
+                } => (*scope_idx, cases),
+                TypeEnvKind::Local { parent, .. } => {
+                    c_env = *parent;
+                    continue;
+                }
+            };
+
+            let label = env.label();
+            cases.push((case_value, label));
+            let op = TCOpcode {
+                kind: TCOpcodeKind::Label { label, scope_idx },
+                loc: case_value.loc,
+            };
+            env.ops.push(op);
+
+            return false;
+        }
+
+        return true;
     }
 
     pub fn label(&self, env: &mut FuncEnv, label: u32, loc: CodeLoc) {
@@ -470,7 +570,7 @@ impl<'a> TypeEnv<'a> {
         let (scope_end, capa) = (env.ops.len() as u32, symbols.len() * 3 / 2);
         let symbols = symbols.iter().filter_map(|(_, v)| match v.symbol_label {
             LabelOrLoc::Ident(id) => Some((id, v.ty)),
-            LabelOrLoc::Loc(_) => None,
+            LabelOrLoc::Loc(_) => None, // static variable
         });
         let symbols = HashRef::new_iter(&self, capa, symbols);
 
@@ -487,6 +587,30 @@ impl<'a> TypeEnv<'a> {
             },
             loc: env.ops[scope_idx as usize].loc,
         });
+
+        let (s_cases, s_default, br) = match &self.kind {
+            TypeEnvKind::LocalSwitch {
+                cases,
+                default,
+                break_label,
+                ..
+            } => (cases, default, break_label),
+            _ => return,
+        };
+
+        let s_default = s_default.unwrap_or(*br);
+
+        if let TCOpcodeKind::Switch {
+            expr,
+            cases,
+            default,
+        } = &mut env.ops[scope_idx as usize + 1].kind
+        {
+            *cases = self.add_slice(&cases);
+            *default = s_default;
+        } else {
+            panic!("scope_idx pointed to wrong opcode")
+        }
     }
 
     pub fn search_scopes<T, F>(&self, f: F) -> Option<T>
@@ -530,6 +654,82 @@ impl<'a> TypeEnv<'a> {
         });
     }
 
+    pub fn open_union_defn(&mut self, id: n32, decl_loc: CodeLoc) -> Result<LabelOrLoc, Error> {
+        if id == n32::NULL {
+            let (defn, sa) = (None, TC_UNKNOWN_SA);
+            let tc_struct = TCStruct { defn, sa, decl_loc };
+            let prev = self.unions.insert(LabelOrLoc::Loc(decl_loc), tc_struct);
+            assert!(prev.is_none());
+
+            return Ok(LabelOrLoc::Loc(decl_loc));
+        } else {
+            let prev = self.unions_in_progress.insert(id.into(), decl_loc);
+            if let Some(prev) = prev {
+                return Err(error!(
+                    "nested redefinition of union",
+                    prev, "previous definition here", decl_loc, "new definition here"
+                ));
+            }
+
+            return Ok(LabelOrLoc::Ident(id.into()));
+        }
+    }
+
+    pub fn close_union_defn(
+        &mut self,
+        id: LabelOrLoc,
+        sa: SizeAlign,
+        fields: Vec<TCStructField>,
+    ) -> Result<TCTypeBase, Error> {
+        debug_assert!(sa.size != n32::NULL);
+        debug_assert!(sa.align != n32::NULL);
+
+        let fields = self.add_array(fields);
+
+        let ident = match id {
+            LabelOrLoc::Ident(ident) => ident,
+            LabelOrLoc::Loc(loc) => {
+                let tc_struct = self.unions.get_mut(&id).unwrap();
+                tc_struct.defn = Some(TCStructDefn { fields, loc });
+                tc_struct.sa = sa;
+                return Ok(TCTypeBase::UnnamedUnion { loc, sa });
+            }
+        };
+
+        let loc = self.unions_in_progress.remove(&ident).unwrap();
+        let defn = Some(TCStructDefn { fields, loc });
+        match self.unions.entry(id) {
+            Entry::Vacant(v) => {
+                let decl_loc = loc;
+                v.insert(TCStruct { defn, sa, decl_loc });
+            }
+            Entry::Occupied(mut o) => {
+                if let Some(defn) = o.get().defn {
+                    return Err(error!(
+                        "redefinition of union",
+                        defn.loc, "previous defninition here", loc, "redefinition here"
+                    ));
+                }
+
+                o.get_mut().defn = defn;
+                o.get_mut().sa = sa;
+            }
+        }
+
+        return Ok(TCTypeBase::NamedUnion { ident, sa });
+    }
+
+    pub fn check_union_decl(&mut self, ident: u32, decl_loc: CodeLoc) -> TCTypeBase {
+        let label = LabelOrLoc::Ident(ident);
+        if let Some(sa) = self.search_scopes(|te| te.unions.get(&label).map(|a| a.sa)) {
+            return TCTypeBase::NamedUnion { ident, sa };
+        }
+
+        let (defn, sa) = (None, TC_UNKNOWN_SA);
+        self.unions.insert(label, TCStruct { defn, sa, decl_loc });
+        return TCTypeBase::NamedUnion { ident, sa };
+    }
+
     pub fn open_struct_defn(&mut self, id: n32, decl_loc: CodeLoc) -> Result<LabelOrLoc, Error> {
         if id == n32::NULL {
             let (defn, sa) = (None, TC_UNKNOWN_SA);
@@ -555,12 +755,12 @@ impl<'a> TypeEnv<'a> {
         &mut self,
         id: LabelOrLoc,
         sa: SizeAlign,
-        fields: HashMap<u32, TCStructField>,
+        fields: Vec<TCStructField>,
     ) -> Result<TCTypeBase, Error> {
         debug_assert!(sa.size != n32::NULL);
         debug_assert!(sa.align != n32::NULL);
 
-        let fields = HashRef::new(&*self, &fields);
+        let fields = self.add_array(fields);
 
         let ident = match id {
             LabelOrLoc::Ident(ident) => ident,
@@ -606,11 +806,13 @@ impl<'a> TypeEnv<'a> {
         return TCTypeBase::NamedStruct { ident, sa };
     }
 
-    pub fn get_struct_fields(
-        &self,
-        id: LabelOrLoc,
-    ) -> Option<HashRef<'static, u32, TCStructField>> {
+    pub fn get_struct_fields(&self, id: LabelOrLoc) -> Option<&'static [TCStructField]> {
         let opt = self.search_scopes(|env| env.structs.get(&id).map(|a| a.defn));
+        return opt.flatten().map(|d| d.fields);
+    }
+
+    pub fn get_union_fields(&self, id: LabelOrLoc) -> Option<&'static [TCStructField]> {
+        let opt = self.search_scopes(|env| env.unions.get(&id).map(|a| a.defn));
         return opt.flatten().map(|d| d.fields);
     }
 

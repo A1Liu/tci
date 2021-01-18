@@ -14,17 +14,38 @@ pub use std::collections::hash_map::Entry;
 pub use std::collections::HashMap;
 pub use std::io::Write;
 
+pub static COUNTER: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
+pub const LIMIT: usize = (-1isize) as usize;
+
 #[allow(unused_macros)]
 macro_rules! debug {
     ($expr:expr) => {{
-        let expr = &$expr;
-        println!(
-            "DEBUG ({}:{}): {} = {:?}",
-            file!(),
-            line!(),
-            stringify!($expr),
-            expr
-        );
+        if cfg!(debug_assertions) {
+            let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+            if count > LIMIT {
+                panic!("too many debug calls");
+            }
+
+            let expr = &$expr;
+            println!(
+                "DEBUG-{} ({}:{}): {} = {:?}",
+                count,
+                file!(),
+                line!(),
+                stringify!($expr),
+                expr
+            );
+        }
+    }};
+    () => {{
+        if cfg!(debug_assertions) {
+            let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+            if count > LIMIT {
+                panic!("too many debug calls");
+            }
+
+            println!("DEBUG-{} ({}:{})", count, file!(), line!());
+        }
     }};
 }
 

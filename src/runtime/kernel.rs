@@ -7,7 +7,6 @@ use codespan_reporting::files::Files;
 use codespan_reporting::term::termcolor::WriteColor;
 use core::mem;
 use std::io::{Error as IOError, Write};
-use std::ops::{BitAnd, BitOr, BitXor};
 
 /// Exit the program with an error code
 pub const ECALL_EXIT: u32 = 0;
@@ -284,6 +283,11 @@ impl Runtime {
                 self.memory.push(VarPointer::new_stack(var, 0));
             }
 
+            Opcode::PushUndef => {
+                let bytes: u32 = self.memory.read_pc()?;
+                let stack_len = self.memory.expr_stack.len();
+                self.memory.expr_stack.resize(stack_len + bytes as usize, 0);
+            }
             Opcode::Pop => {
                 let bytes = self.memory.read_pc()?;
                 self.memory.pop_bytes(bytes)?;
@@ -364,21 +368,151 @@ impl Runtime {
                 self.memory.write_bytes_from_stack(ptr, bytes)?;
             }
 
+            Opcode::BoolNorm8 => {
+                let bytes: u8 = self.memory.read_pc()?;
+                self.memory.push(if bytes != 0 { 1u8 } else { 0u8 });
+            }
+            Opcode::BoolNorm16 => {
+                let bytes: u16 = self.memory.read_pc()?;
+                self.memory.push(if bytes != 0 { 1u8 } else { 0u8 });
+            }
+            Opcode::BoolNorm32 => {
+                let bytes: u32 = self.memory.read_pc()?;
+                self.memory.push(if bytes != 0 { 1u8 } else { 0u8 });
+            }
+            Opcode::BoolNorm64 => {
+                let bytes: u64 = self.memory.read_pc()?;
+                self.memory.push(if bytes != 0 { 1u8 } else { 0u8 });
+            }
+
+            Opcode::BoolNot8 => {
+                let bytes: u8 = self.memory.read_pc()?;
+                self.memory.push(if bytes == 0 { 1u8 } else { 0u8 });
+            }
+            Opcode::BoolNot16 => {
+                let bytes: u16 = self.memory.read_pc()?;
+                self.memory.push(if bytes == 0 { 1u8 } else { 0u8 });
+            }
+            Opcode::BoolNot32 => {
+                let bytes: u32 = self.memory.read_pc()?;
+                self.memory.push(if bytes == 0 { 1u8 } else { 0u8 });
+            }
+            Opcode::BoolNot64 => {
+                let bytes: u64 = self.memory.read_pc()?;
+                self.memory.push(if bytes == 0 { 1u8 } else { 0u8 });
+            }
+
+            Opcode::CompLeqI8 => {
+                let word2: i8 = self.memory.pop()?;
+                let word1: i8 = self.memory.pop()?;
+                self.memory.push(if word1 <= word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLeqU8 => {
+                let word2: u8 = self.memory.pop()?;
+                let word1: u8 = self.memory.pop()?;
+                self.memory.push(if word1 <= word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLeqI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(if word1 <= word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLeqU32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push(if word1 <= word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLeqU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push(if word1 <= word2 { 1u8 } else { 0u8 });
+            }
+
+            Opcode::CompLtI8 => {
+                let word2 = i8::from_le(self.memory.pop()?);
+                let word1 = i8::from_le(self.memory.pop()?);
+                self.memory.push(if word1 < word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLtU8 => {
+                let word2 = u8::from_le(self.memory.pop()?);
+                let word1 = u8::from_le(self.memory.pop()?);
+                self.memory.push(if word1 < word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLtI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(if word1 < word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLtU32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push(if word1 < word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLtI64 => {
+                let word2 = i64::from_le(self.memory.pop()?);
+                let word1 = i64::from_le(self.memory.pop()?);
+                self.memory.push(if word1 < word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompLtU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push(if word1 < word2 { 1u8 } else { 0u8 });
+            }
+
+            Opcode::CompEq32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompEq64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompEqF32 => {
+                let word2: f32 = self.memory.pop()?;
+                let word1: f32 = self.memory.pop()?;
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompEqF64 => {
+                let word2: f64 = self.memory.pop()?;
+                let word1: f64 = self.memory.pop()?;
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+
+            Opcode::CompNeq32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompNeq64 => {
+                let word2 = i64::from_le(self.memory.pop()?);
+                let word1 = i64::from_le(self.memory.pop()?);
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompNeqF32 => {
+                let word2: f32 = self.memory.pop()?;
+                let word1: f32 = self.memory.pop()?;
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+            Opcode::CompNeqF64 => {
+                let word2: f64 = self.memory.pop()?;
+                let word1: f64 = self.memory.pop()?;
+                self.memory.push(if word1 == word2 { 1u8 } else { 0u8 });
+            }
+
+            Opcode::AddU64 => {
+                let word2 = u64::from_le(self.memory.pop()?);
+                let word1 = u64::from_le(self.memory.pop()?);
+
+                self.memory.push(word1.wrapping_add(word2).to_le());
+            }
             Opcode::AddU32 => {
                 let word2 = u32::from_le(self.memory.pop()?);
                 let word1 = u32::from_le(self.memory.pop()?);
                 self.memory.push(word1.wrapping_add(word2).to_le());
             }
-            Opcode::SubI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push(word1.wrapping_sub(word2).to_le());
-            }
-            Opcode::MulI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push(word1.wrapping_mul(word2).to_le());
-            }
+
             Opcode::DivI32 => {
                 let word2 = i32::from_le(self.memory.pop()?);
                 let word1 = i32::from_le(self.memory.pop()?);
@@ -389,56 +523,31 @@ impl Runtime {
                 let word1 = u64::from_le(self.memory.pop()?);
                 self.memory.push(word1.wrapping_div(word2).to_le());
             }
-
-            Opcode::CompLeqI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push((word1 <= word2) as u8);
-            }
-            Opcode::CompLtI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push((word1 < word2) as u8);
-            }
-
-            Opcode::CompLeqU64 => {
-                let word2 = u64::from_le(self.memory.pop()?);
-                let word1 = u64::from_le(self.memory.pop()?);
-                self.memory.push((word1 <= word2) as u8);
-            }
-            Opcode::CompLtU64 => {
-                let word2 = u64::from_le(self.memory.pop()?);
-                let word1 = u64::from_le(self.memory.pop()?);
-                self.memory.push((word1 < word2) as u8);
-            }
-
-            Opcode::CompEq32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push((word1 == word2) as u8);
-            }
-            Opcode::CompEq64 => {
-                let word2 = u64::from_le(self.memory.pop()?);
-                let word1 = u64::from_le(self.memory.pop()?);
-                self.memory.push((word1 == word2) as u8);
-            }
-
-            Opcode::CompNeq32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push((word1 != word2) as u8);
-            }
-            Opcode::CompNeq64 => {
+            Opcode::DivI64 => {
                 let word2 = i64::from_le(self.memory.pop()?);
                 let word1 = i64::from_le(self.memory.pop()?);
-                self.memory.push((word1 != word2) as u8);
+                self.memory.push(word1.wrapping_div(word2).to_le());
             }
 
-            Opcode::AddU64 => {
-                let word2 = u64::from_le(self.memory.pop()?);
-                let word1 = u64::from_le(self.memory.pop()?);
-
-                self.memory.push(word1.wrapping_add(word2).to_le());
+            Opcode::SubI8 => {
+                let word2: i8 = self.memory.pop()?;
+                let word1: i8 = self.memory.pop()?;
+                self.memory.push(word1.wrapping_sub(word2).to_le());
+            }
+            Opcode::SubU8 => {
+                let word2: u8 = self.memory.pop()?;
+                let word1: u8 = self.memory.pop()?;
+                self.memory.push(word1.wrapping_sub(word2).to_le());
+            }
+            Opcode::SubI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_sub(word2).to_le());
+            }
+            Opcode::SubU32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_sub(word2).to_le());
             }
             Opcode::SubI64 => {
                 let word2 = i64::from_le(self.memory.pop()?);
@@ -450,6 +559,17 @@ impl Runtime {
                 let word1 = u64::from_le(self.memory.pop()?);
                 self.memory.push(word1.wrapping_sub(word2).to_le());
             }
+
+            Opcode::MulU32 => {
+                let word2 = u32::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_mul(word2).to_le());
+            }
+            Opcode::MulI32 => {
+                let word2 = i32::from_le(self.memory.pop()?);
+                let word1 = i32::from_le(self.memory.pop()?);
+                self.memory.push(word1.wrapping_mul(word2).to_le());
+            }
             Opcode::MulI64 => {
                 let word2 = i64::from_le(self.memory.pop()?);
                 let word1 = i64::from_le(self.memory.pop()?);
@@ -460,11 +580,7 @@ impl Runtime {
                 let word1 = u64::from_le(self.memory.pop()?);
                 self.memory.push(word1.wrapping_mul(word2).to_le());
             }
-            Opcode::DivI64 => {
-                let word2 = i64::from_le(self.memory.pop()?);
-                let word1 = i64::from_le(self.memory.pop()?);
-                self.memory.push(word1.wrapping_div(word2).to_le());
-            }
+
             Opcode::ModI32 => {
                 let word2 = u32::from_le(self.memory.pop()?);
                 let word1 = u32::from_le(self.memory.pop()?);
@@ -475,43 +591,73 @@ impl Runtime {
                 let word1 = u64::from_le(self.memory.pop()?);
                 self.memory.push((word1 % word2).to_le());
             }
+
             Opcode::RShiftI32 => {
                 let word2 = u8::from_le(self.memory.pop()?);
                 let word1 = i32::from_le(self.memory.pop()?);
                 let result = word1.wrapping_shr(word2 as u32);
                 self.memory.push(result.to_le());
             }
+
             Opcode::LShiftI32 => {
                 let word2 = u8::from_le(self.memory.pop()?);
                 let word1 = i32::from_le(self.memory.pop()?);
                 let result = word1.wrapping_shl(word2 as u32);
                 self.memory.push(result.to_le());
             }
+            Opcode::LShiftU32 => {
+                let word2 = u8::from_le(self.memory.pop()?);
+                let word1 = u32::from_le(self.memory.pop()?);
+                let result = word1.wrapping_shl(word2 as u32);
+                self.memory.push(result.to_le());
+            }
 
-            Opcode::BitAndI8 => {
-                let word2 = i8::from_le(self.memory.pop()?);
-                let word1 = i8::from_le(self.memory.pop()?);
-                self.memory.push(word1.bitand(word2).to_le());
+            Opcode::BitAnd8 => {
+                let word2: u8 = self.memory.pop()?;
+                let word1: u8 = self.memory.pop()?;
+                self.memory.push(word1 | word2);
             }
-            Opcode::BitAndI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push(word1.bitand(word2).to_le());
+            Opcode::BitAnd32 => {
+                let word2: u32 = self.memory.pop()?;
+                let word1: u32 = self.memory.pop()?;
+                self.memory.push(word1 | word2);
             }
-            Opcode::BitOrI8 => {
-                let word2 = i8::from_le(self.memory.pop()?);
-                let word1 = i8::from_le(self.memory.pop()?);
-                self.memory.push(word1.bitor(word2).to_le());
+            Opcode::BitAnd64 => {
+                let word2: u64 = self.memory.pop()?;
+                let word1: u64 = self.memory.pop()?;
+                self.memory.push(word1 & word2);
             }
-            Opcode::BitOrI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push(word1.bitor(word2).to_le());
+
+            Opcode::BitOr8 => {
+                let word2: u8 = self.memory.pop()?;
+                let word1: u8 = self.memory.pop()?;
+                self.memory.push(word1 | word2);
             }
-            Opcode::BitXorI32 => {
-                let word2 = i32::from_le(self.memory.pop()?);
-                let word1 = i32::from_le(self.memory.pop()?);
-                self.memory.push(word1.bitxor(word2).to_le());
+            Opcode::BitOr32 => {
+                let word2: u32 = self.memory.pop()?;
+                let word1: u32 = self.memory.pop()?;
+                self.memory.push(word1 | word2);
+            }
+            Opcode::BitOr64 => {
+                let word2: u64 = self.memory.pop()?;
+                let word1: u64 = self.memory.pop()?;
+                self.memory.push(word1 | word2);
+            }
+
+            Opcode::BitXor8 => {
+                let word2: u8 = self.memory.pop()?;
+                let word1: u8 = self.memory.pop()?;
+                self.memory.push(word1 ^ word2);
+            }
+            Opcode::BitXor32 => {
+                let word2: u32 = self.memory.pop()?;
+                let word1: u32 = self.memory.pop()?;
+                self.memory.push(word1 ^ word2);
+            }
+            Opcode::BitXor64 => {
+                let word2: u64 = self.memory.pop()?;
+                let word1: u64 = self.memory.pop()?;
+                self.memory.push(word1 ^ word2);
             }
 
             Opcode::Jump => {

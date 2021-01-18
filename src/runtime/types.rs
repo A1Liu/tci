@@ -290,6 +290,7 @@ pub enum Opcode {
     MakeFp,
     MakeSp,
 
+    PushUndef,
     Pop,
     Swap,
     Dup,
@@ -312,13 +313,26 @@ pub enum Opcode {
     Get,
     Set,
 
+    BoolNorm8,
+    BoolNorm16,
+    BoolNorm32,
+    BoolNorm64,
+    BoolNot8,
+    BoolNot16,
+    BoolNot32,
+    BoolNot64,
+
     AddU32,
     AddU64,
 
+    SubI8,
+    SubU8,
     SubI32,
+    SubU32,
     SubI64,
     SubU64,
 
+    MulU32,
     MulI32,
     MulI64,
     MulU64,
@@ -327,27 +341,46 @@ pub enum Opcode {
     DivI64,
     DivU64,
 
+    CompLtI8,
+    CompLtU8,
     CompLtI32,
+    CompLtU32,
+    CompLtI64,
     CompLtU64,
+
+    CompLeqI8,
+    CompLeqU8,
     CompLeqI32,
+    CompLeqU32,
     CompLeqU64,
 
     CompEq32,
     CompEq64,
     CompNeq32,
     CompNeq64,
+    CompEqF32,
+    CompEqF64,
+    CompNeqF32,
+    CompNeqF64,
 
     ModI32,
     ModI64,
 
     RShiftI32,
     LShiftI32,
+    LShiftU32,
 
-    BitAndI8,
-    BitAndI32,
-    BitOrI8,
-    BitOrI32,
-    BitXorI32,
+    BitAnd8,
+    BitAnd32,
+    BitAnd64,
+
+    BitOr8,
+    BitOr32,
+    BitOr64,
+
+    BitXor8,
+    BitXor32,
+    BitXor64,
 
     Jump,
 
