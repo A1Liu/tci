@@ -141,11 +141,15 @@ lazy_static! {
 
                 let ptr = check_expr(&mut *env, &args[0])?;
                 let or_else = || param_conversion_error(void_ptr, &ptr);
-                let ptr = assign_convert(&*env, void_ptr, ptr, call_loc).ok_or_else(or_else)?;
+                let ptr = env
+                    .assign_convert(void_ptr, ptr, call_loc)
+                    .ok_or_else(or_else)?;
 
                 let size = check_expr(&mut *env, &args[1])?;
                 let or_else = || param_conversion_error(uint, &size);
-                let size = assign_convert(&*env, uint, size, call_loc).ok_or_else(or_else)?;
+                let size = env
+                    .assign_convert(uint, size, call_loc)
+                    .ok_or_else(or_else)?;
 
                 return Ok(TCExpr {
                     kind: TCExprKind::Builtin(TCBuiltin::PushTempStack {
@@ -170,7 +174,9 @@ lazy_static! {
 
             let ecall = check_expr(env, &args[0])?;
             let or_else = || param_conversion_error(uint, &ecall);
-            let ecall = assign_convert(&*env, uint, ecall, call_loc).ok_or_else(or_else)?;
+            let ecall = env
+                .assign_convert(uint, ecall, call_loc)
+                .ok_or_else(or_else)?;
 
             return Ok(TCExpr {
                 kind: TCExprKind::Builtin(TCBuiltin::Ecall(&*env.add(ecall))),
@@ -478,7 +484,7 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
 
         StatementKind::Switch { expr, body } => {
             let cond = check_expr(env, &expr)?;
-            let (mut scope, br) = env.switch(cond, out, body.loc);
+            let (mut scope, br) = env.switch(cond, out, body.loc)?;
             check_stmt(&mut scope, out, *body)?;
             scope.close_scope(out);
             env.label(out, br, body.loc);
@@ -488,13 +494,7 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             labeled,
         } => {
             let case_value = check_expr(env, &case_value)?;
-            if env.case(out, case_value) {
-                return Err(error!(
-                    "case used when not in a switch",
-                    stmt.loc, "case used here"
-                ));
-            }
-
+            env.case(out, case_value, stmt.loc)?;
             check_stmt(env, out, *labeled)?;
         }
         StatementKind::DefaultCaseLabeled(labeled) => {
@@ -1206,42 +1206,6 @@ pub fn check_decl_rec(
     return Ok((tc_type, ident));
 }
 
-pub fn assign_convert(
-    alloc: impl Allocator<'static>,
-    ty: TCType,
-    expr: TCExpr,
-    loc: CodeLoc,
-) -> Option<TCExpr> {
-    if TCType::ty_eq(&ty, &expr.ty) {
-        return Some(expr);
-    }
-
-    if ty.is_void() {
-        let mut exprs = vec![expr];
-        exprs.push(TCExpr {
-            kind: TCExprKind::Uninit,
-            ty: TCType::new(TCTypeBase::Void),
-            loc,
-        });
-
-        return Some(TCExpr {
-            kind: TCExprKind::ParenList(alloc.add_array(exprs)),
-            ty: TCType::new(TCTypeBase::Void),
-            loc,
-        });
-    }
-
-    let to = ty.to_prim_type()?;
-    let from = expr.ty.to_prim_type()?;
-    let expr = alloc.add(expr);
-
-    return Some(TCExpr {
-        kind: TCExprKind::Conv { from, to, expr },
-        ty,
-        loc,
-    });
-}
-
 pub fn check_initializer_list(
     locals: &mut TypeEnv,
     mut target: TCTypeOwned,
@@ -1256,8 +1220,9 @@ pub fn check_initializer_list(
         for expr in init {
             let tc_expr = check_expr(&mut *locals, expr)?;
             let or_else = || conversion_error(elem_ty, decl_loc, &tc_expr);
-            let tc_expr =
-                assign_convert(&*locals, elem_ty, tc_expr, decl_loc).ok_or_else(or_else)?;
+            let tc_expr = locals
+                .assign_convert(elem_ty, tc_expr, decl_loc)
+                .ok_or_else(or_else)?;
             tc_exprs.push(tc_expr.kind);
         }
 
@@ -1312,7 +1277,9 @@ pub fn check_initializer_list(
 
         let tc_expr = check_expr(&mut *locals, expr)?;
         let or_else = || conversion_error(field.ty, decl_loc, &tc_expr);
-        let tc_expr = assign_convert(&*locals, field.ty, tc_expr, decl_loc).ok_or_else(or_else)?;
+        let tc_expr = locals
+            .assign_convert(field.ty, tc_expr, decl_loc)
+            .ok_or_else(or_else)?;
         written_fields.push(tc_expr);
     }
 
@@ -1354,7 +1321,8 @@ pub fn check_declaration(
                     let tc_expr = check_expr(&mut *locals, expr)?;
                     let ty = ty.to_ref(&*locals);
                     let or_else = || conversion_error(ty, decl.declarator.loc, &tc_expr);
-                    let tc_expr = assign_convert(&*locals, ty, tc_expr, decl.declarator.loc)
+                    let tc_expr = locals
+                        .assign_convert(ty, tc_expr, decl.declarator.loc)
                         .ok_or_else(or_else)?;
 
                     (tc_expr.kind, ty)
@@ -1547,7 +1515,8 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
                     let op_type = target.ty.to_prim_type().unwrap();
                     let or_else = || bitshift_conversion_error(env.symbols(), &val);
-                    let val = assign_convert(&*env, TCType::new(TCTypeBase::I8), val, expr.loc)
+                    let val = env
+                        .assign_convert(TCType::new(TCTypeBase::I8), val, expr.loc)
                         .ok_or_else(or_else)?;
 
                     let (value, ty) = (env.add(val), target.ty);
@@ -1561,7 +1530,9 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 }
 
                 let or_else = || conversion_error(target.ty, to.loc, &val);
-                let val = assign_convert(&*env, target.ty, val, expr.loc).ok_or_else(or_else)?;
+                let val = env
+                    .assign_convert(target.ty, val, expr.loc)
+                    .ok_or_else(or_else)?;
                 let value = env.add(val);
                 return Ok(TCExpr {
                     kind: TCExprKind::MutAssign {
@@ -1575,7 +1546,9 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 });
             } else {
                 let or_else = || conversion_error(target.ty, to.loc, &val);
-                let val = assign_convert(&*env, target.ty, val, expr.loc).ok_or_else(or_else)?;
+                let val = env
+                    .assign_convert(target.ty, val, expr.loc)
+                    .ok_or_else(or_else)?;
                 let value = env.add(val);
 
                 return Ok(TCExpr {
@@ -1598,7 +1571,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
             let from = check_expr(&mut *env, from)?;
 
             let or_else = || conversion_error(ty, to.loc, &from);
-            return assign_convert(&*env, ty, from, expr.loc).ok_or_else(or_else);
+            return env.assign_convert(ty, from, expr.loc).ok_or_else(or_else);
         }
 
         ExprKind::Ternary {
@@ -1701,7 +1674,8 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                     if idx < ftype_params.types.len() {
                         let param_type = ftype_params.types[idx];
                         let or_else = || param_conversion_error(param_type, &expr);
-                        expr = assign_convert(&*env, param_type, expr, expr.loc)
+                        expr = env
+                            .assign_convert(param_type, expr, expr.loc)
                             .ok_or_else(or_else)?;
                     }
 
@@ -2062,7 +2036,9 @@ pub fn check_bin_op(
 
         let op_type = l.ty.to_prim_type().unwrap();
         let or_else = || bitshift_conversion_error(env.symbols(), &r);
-        let r = assign_convert(&*env, TCType::new(TCTypeBase::I8), r, loc).ok_or_else(or_else)?;
+        let r = env
+            .assign_convert(TCType::new(TCTypeBase::I8), r, loc)
+            .ok_or_else(or_else)?;
 
         let (left, right, ty) = (env.add(l), env.add(r), l.ty);
 

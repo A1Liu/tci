@@ -9,31 +9,57 @@ use core::mem;
 pub struct ASMFunc {
     pub func_type: TCFuncType,
     pub decl_loc: CodeLoc,
-    pub func_header: Option<(VarPointer, CodeLoc)>, // first u32 points into opcodes buffer
+    pub func_header: Option<(VarPointer, CodeLoc)>,
+}
+
+#[derive(Debug)]
+pub struct ASMVar {
+    pub ty: TCType,
+    pub decl_loc: CodeLoc,
+    pub func_header: Option<(VarPointer, CodeLoc)>,
 }
 
 pub struct FuncEnv {
-    pub link_names: HashMap<u32, LinkName>,
     pub opcodes: VecU8,
     pub labels: Vec<LabelData>,
     pub gotos: Vec<u32>,
+    pub var_offsets: Vec<i16>,
 }
 
 impl FuncEnv {
     pub fn new() -> Self {
         Self {
-            link_names: HashMap::new(),
             opcodes: VecU8::new(),
             labels: Vec::new(),
             gotos: Vec::new(),
+            var_offsets: Vec::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.opcodes.data.clear();
+        self.labels.clear();
+        self.gotos.clear();
+        self.var_offsets.clear();
+    }
+}
+
+pub struct FileEnv {
+    pub link_names: HashMap<u32, LinkName>,
+    pub binary_offsets: Vec<VarPointer>,
+}
+
+impl FileEnv {
+    pub fn new() -> Self {
+        Self {
+            link_names: HashMap::new(),
+            binary_offsets: Vec::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.link_names.clear();
-        self.opcodes.data.clear();
-        self.labels.clear();
-        self.gotos.clear();
+        self.binary_offsets.clear();
     }
 }
 
@@ -85,20 +111,8 @@ pub struct Assembler {
     pub functions: Vec<ASMFunc>,
     pub function_temps: Vec<(VarPointer, CodeLoc)>,
     pub func: FuncEnv,
+    pub file: FileEnv,
     pub data: BinaryData,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ASMEnv<'a> {
-    var_offsets: &'a [i16],
-    link_names: &'a HashMap<u32, LinkName>,
-}
-
-pub fn asm_env<'a>(var_offsets: &'a [i16], link_names: &'a HashMap<u32, LinkName>) -> ASMEnv<'a> {
-    ASMEnv {
-        var_offsets,
-        link_names,
-    }
 }
 
 impl Drop for Assembler {
@@ -131,13 +145,13 @@ impl Assembler {
             functions: Vec::new(),
             function_temps: Vec::new(),
             func: FuncEnv::new(),
+            file: FileEnv::new(),
         }
     }
 
     pub fn add_file(&mut self, mut tu: TranslationUnit) -> Result<(), Error> {
-        // Add function return sizes
+        for (ident, global) in &tu.variables {}
 
-        let mut link_names = HashMap::new();
         let mut defns = Vec::new();
 
         for (ident, tc_func) in std::mem::replace(&mut tu.functions, HashMap::new()) {
@@ -147,7 +161,7 @@ impl Assembler {
                 LinkName::new(ident)
             };
 
-            link_names.insert(ident, link_name);
+            self.file.link_names.insert(ident, link_name);
 
             let prev = match self.func_linkage.entry(link_name) {
                 Entry::Occupied(o) => &self.functions[*o.get() as usize],
@@ -192,7 +206,7 @@ impl Assembler {
             self.func.opcodes.push(link_name);
             self.func.opcodes.push(defn.loc);
 
-            self.add_function(&link_names, &defn);
+            self.add_function(&defn);
 
             let fptr = self.data.add_data(&mut self.func.opcodes.data);
 
@@ -213,21 +227,23 @@ impl Assembler {
             self.func.clear();
         }
 
+        self.file.clear();
         return Ok(());
     }
 
-    pub fn add_function(&mut self, link_names: &HashMap<u32, LinkName>, defn: &TCFuncDefn) {
+    pub fn add_function(&mut self, defn: &TCFuncDefn) {
         if defn.ops.len() < 2 {
             unreachable!()
         }
 
         let jumps: Vec<u32> = Vec::new();
-        // maps symbols to variable offsets
-        let mut var_offsets: Vec<i16> = (0..defn.sym_count).map(|_| i16::MAX).collect();
+        self.func
+            .var_offsets
+            .resize(defn.sym_count as usize, i16::MAX);
         let mut next_offset = 0; // where should the next variable be allocated (relative to fp)?
 
         for idx in 0..defn.param_count {
-            var_offsets[idx as usize] = -(idx as i16) - 2;
+            self.func.var_offsets[idx as usize] = -(idx as i16) - 2;
         }
 
         for t_op in defn.ops {
@@ -244,13 +260,13 @@ impl Assembler {
             self.func.opcodes.push(defn.ops[0].loc);
 
             for (&var, &ty) in vars {
-                if var_offsets[var as usize] < 0 {
+                if self.func.var_offsets[var as usize] < 0 {
                     continue;
                 }
 
                 self.func.opcodes.push(Opcode::StackAlloc);
                 self.func.opcodes.push(ty.size());
-                var_offsets[var as usize] = next_offset;
+                self.func.var_offsets[var as usize] = next_offset;
                 next_offset += 1;
             }
         } else {
@@ -267,7 +283,7 @@ impl Assembler {
                         self.func.opcodes.push(Opcode::StackAlloc);
                         self.func.opcodes.push(ty.size());
 
-                        var_offsets[var as usize] = next_offset;
+                        self.func.var_offsets[var as usize] = next_offset;
                         next_offset += 1;
                     }
                 }
@@ -286,8 +302,7 @@ impl Assembler {
                     self.func.opcodes.push(Opcode::Ret);
                 }
                 TCOpcodeKind::RetVal(val) => {
-                    let env = asm_env(&var_offsets, link_names);
-                    self.translate_expr(env, &val);
+                    self.translate_expr(&val);
 
                     self.func.opcodes.push(Opcode::MakeFp);
                     self.func.opcodes.push(-1i16);
@@ -301,8 +316,7 @@ impl Assembler {
                     self.func.opcodes.push(Opcode::Ret);
                 }
                 TCOpcodeKind::Expr(expr) => {
-                    let env = asm_env(&var_offsets, link_names);
-                    self.translate_expr(env, &expr);
+                    self.translate_expr(&expr);
 
                     let bytes = expr.ty.repr_size();
                     self.func.opcodes.push(Opcode::Pop);
@@ -325,8 +339,7 @@ impl Assembler {
                     goto,
                     scope_idx,
                 } => {
-                    let env = asm_env(&var_offsets, link_names);
-                    self.translate_expr(env, &cond);
+                    self.translate_expr(&cond);
 
                     let op = match cond_ty.size() {
                         1 => Opcode::JumpIfZero8,
@@ -346,8 +359,7 @@ impl Assembler {
                     goto,
                     scope_idx,
                 } => {
-                    let env = asm_env(&var_offsets, link_names);
-                    self.translate_expr(env, &cond);
+                    self.translate_expr(&cond);
 
                     let op = match cond_ty.size() {
                         1 => Opcode::JumpIfNotZero8,
@@ -361,7 +373,53 @@ impl Assembler {
                     self.func.gotos.push(self.func.opcodes.data.len() as u32);
                     self.func.opcodes.push(VarPointer::new_binary(0, goto));
                 }
-                x => unimplemented!("{:?}", x),
+
+                TCOpcodeKind::Switch {
+                    expr,
+                    cases,
+                    default,
+                } => {
+                    let bytes = expr.ty.repr_size();
+                    self.translate_expr(&expr);
+
+                    for (case, take_case) in cases {
+                        let skip_case = self.func.labels.len() as u32;
+                        self.func.labels.push(LabelData::uninit());
+
+                        self.func.opcodes.push(Opcode::Dup);
+                        self.func.opcodes.push(bytes);
+                        self.translate_expr(case);
+
+                        let op = match bytes {
+                            1 => Opcode::CompEq8,
+                            2 => Opcode::CompEq16,
+                            4 => Opcode::CompEq32,
+                            8 => Opcode::CompEq64,
+                            _ => unreachable!(),
+                        };
+                        self.func.opcodes.push(op);
+                        self.func.opcodes.push(Opcode::JumpIfZero8);
+                        self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                        let ptr = VarPointer::new_binary(0, skip_case);
+                        self.func.opcodes.push(ptr);
+
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(bytes);
+
+                        self.func.opcodes.push(Opcode::Jump);
+                        self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                        let ptr = VarPointer::new_binary(0, *take_case);
+                        self.func.opcodes.push(ptr);
+
+                        self.func.labels[skip_case as usize].offset =
+                            self.func.opcodes.data.len() as u32;
+                    }
+
+                    self.func.opcodes.push(Opcode::Jump);
+                    self.func.gotos.push(self.func.opcodes.data.len() as u32);
+                    let ptr = VarPointer::new_binary(0, default);
+                    self.func.opcodes.push(ptr);
+                }
             }
         }
 
@@ -434,7 +492,7 @@ impl Assembler {
         }
     }
 
-    pub fn translate_expr(&mut self, env: ASMEnv, expr: &TCExpr) {
+    pub fn translate_expr(&mut self, expr: &TCExpr) {
         match &expr.kind {
             TCExprKind::I8Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
@@ -489,7 +547,7 @@ impl Assembler {
             TCExprKind::LocalIdent { label } => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                let var = env.var_offsets[*label as usize];
+                let var = self.func.var_offsets[*label as usize];
 
                 self.func.opcodes.push(Opcode::MakeFp);
                 self.func.opcodes.push(var);
@@ -502,7 +560,7 @@ impl Assembler {
             TCExprKind::FunctionIdent { ident } => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                let link_name = env.link_names[ident];
+                let link_name = self.file.link_names[ident];
                 let id = self.func_linkage[&link_name];
                 self.func.opcodes.push(Opcode::MakeU64);
 
@@ -510,7 +568,7 @@ impl Assembler {
                 self.function_temps.push((ptr, expr.loc));
                 self.func.opcodes.push(VarPointer::new_binary(0, id));
             }
-
+            // TCExprKind::GlobalIdent { binary_offset } => {}
             TCExprKind::Uninit => {
                 self.func.opcodes.push(Opcode::PushUndef);
                 self.func.opcodes.push(expr.ty.repr_size());
@@ -523,7 +581,7 @@ impl Assembler {
                 };
                 for &expr_kind in elems.iter() {
                     elem.kind = expr_kind;
-                    self.translate_expr(env, &elem);
+                    self.translate_expr(&elem);
                 }
             }
             TCExprKind::StructLiteral(fields, size) => {
@@ -535,7 +593,7 @@ impl Assembler {
                         self.func.opcodes.push(aligned_offset - offset);
                     }
 
-                    self.translate_expr(env, field);
+                    self.translate_expr(field);
                     offset = aligned_offset + field.ty.repr_size();
                 }
 
@@ -546,7 +604,7 @@ impl Assembler {
             }
             TCExprKind::ParenList(exprs) => {
                 for (idx, expr) in exprs.iter().enumerate() {
-                    self.translate_expr(env, expr);
+                    self.translate_expr(expr);
                     let bytes = expr.ty.repr_size();
 
                     if idx + 1 < exprs.len() {
@@ -558,7 +616,7 @@ impl Assembler {
 
             TCExprKind::PostIncr { incr_ty, value } => {
                 use TCPrimType::*;
-                self.translate_assign(env, value);
+                self.translate_assign(value);
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::Dup);
@@ -575,18 +633,18 @@ impl Assembler {
                     I32 | U32 => {
                         self.func.opcodes.push(Opcode::MakeU32);
                         self.func.opcodes.push(1u32);
-                        self.func.opcodes.push(Opcode::AddU32);
+                        self.func.opcodes.push(Opcode::Add32);
                     }
                     I64 | U64 => {
                         self.func.opcodes.push(Opcode::MakeU64);
                         self.func.opcodes.push(1u64);
-                        self.func.opcodes.push(Opcode::AddU64);
+                        self.func.opcodes.push(Opcode::Add64);
                     }
                     Pointer { stride } => {
                         let stride: u32 = stride.into();
                         self.func.opcodes.push(Opcode::MakeU64);
                         self.func.opcodes.push(stride as u64);
-                        self.func.opcodes.push(Opcode::AddU64);
+                        self.func.opcodes.push(Opcode::Add64);
                     }
                     x => unimplemented!("post incr for {:?}", x),
                 }
@@ -599,7 +657,7 @@ impl Assembler {
             }
             TCExprKind::PostDecr { decr_ty, value } => {
                 use TCPrimType::*;
-                self.translate_assign(env, value);
+                self.translate_assign(value);
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
                 self.func.opcodes.push(Opcode::Dup);
@@ -655,8 +713,8 @@ impl Assembler {
                 left,
                 right,
             } => {
-                self.translate_expr(env, left);
-                self.translate_expr(env, right);
+                self.translate_expr(left);
+                self.translate_expr(right);
                 self.translate_bin_op(*op, *op_type, expr.loc);
             }
 
@@ -665,70 +723,138 @@ impl Assembler {
                 op_type,
                 operand,
             } => {
-                self.translate_expr(env, operand);
+                self.translate_expr(operand);
                 self.translate_un_op(*op, *op_type, expr.loc);
             }
 
             TCExprKind::Conv { from, to, expr } => {
-                self.translate_expr(env, expr);
+                self.translate_expr(expr);
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                match (from, to.size()) {
-                    (TCPrimType::U8, 1) => {}
-                    (TCPrimType::U8, 4) => self.func.opcodes.push(Opcode::ZExtend8To32),
-                    (TCPrimType::U8, 8) => self.func.opcodes.push(Opcode::ZExtend8To64),
-                    (TCPrimType::I8, 1) => {}
-                    (TCPrimType::I8, 4) => self.func.opcodes.push(Opcode::SExtend8To32),
-                    (TCPrimType::I8, 8) => self.func.opcodes.push(Opcode::SExtend8To64),
+                match (from, to.size(), to.is_floating_pt()) {
+                    (TCPrimType::I8, 1, false) => {}
+                    (TCPrimType::U8, 1, false) => {}
+                    (TCPrimType::I8, 2, false) => self.func.opcodes.push(Opcode::SExtend8To16),
+                    (TCPrimType::U8, 2, false) => self.func.opcodes.push(Opcode::ZExtend8To16),
+                    (TCPrimType::I8, 4, false) => self.func.opcodes.push(Opcode::SExtend8To32),
+                    (TCPrimType::U8, 4, false) => self.func.opcodes.push(Opcode::ZExtend8To32),
+                    (TCPrimType::I8, 8, false) => self.func.opcodes.push(Opcode::SExtend8To64),
+                    (TCPrimType::U8, 8, false) => self.func.opcodes.push(Opcode::ZExtend8To64),
 
-                    (TCPrimType::U32, 1) => {
+                    (TCPrimType::I16, 1, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(1u32)
+                    }
+                    (TCPrimType::U16, 1, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(1u32)
+                    }
+                    (TCPrimType::I16, 2, false) => {}
+                    (TCPrimType::U16, 2, false) => {}
+                    (TCPrimType::I16, 4, false) => self.func.opcodes.push(Opcode::SExtend16To32),
+                    (TCPrimType::U16, 4, false) => self.func.opcodes.push(Opcode::ZExtend16To32),
+                    (TCPrimType::I16, 8, false) => self.func.opcodes.push(Opcode::SExtend16To64),
+                    (TCPrimType::U16, 8, false) => self.func.opcodes.push(Opcode::ZExtend16To64),
+
+                    (TCPrimType::I32, 1, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(3u32)
                     }
-                    (TCPrimType::U32, 4) => {}
-                    (TCPrimType::U32, 8) => self.func.opcodes.push(Opcode::ZExtend32To64),
-                    (TCPrimType::I32, 1) => {
+                    (TCPrimType::U32, 1, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(3u32)
                     }
-                    (TCPrimType::I32, 4) => {}
-                    (TCPrimType::I32, 8) => self.func.opcodes.push(Opcode::SExtend32To64),
+                    (TCPrimType::I32, 2, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(2u32)
+                    }
+                    (TCPrimType::U32, 2, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(2u32)
+                    }
+                    (TCPrimType::I32, 4, false) => {}
+                    (TCPrimType::U32, 4, false) => {}
+                    (TCPrimType::I32, 8, false) => self.func.opcodes.push(Opcode::SExtend32To64),
+                    (TCPrimType::U32, 8, false) => self.func.opcodes.push(Opcode::ZExtend32To64),
 
-                    (TCPrimType::U64, 1) => {
+                    (TCPrimType::I64, 1, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(7u32)
                     }
-                    (TCPrimType::U64, 4) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(4u32)
-                    }
-                    (TCPrimType::U64, 8) => {}
-                    (TCPrimType::I64, 1) => {
+                    (TCPrimType::U64, 1, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(7u32)
                     }
-                    (TCPrimType::I64, 4) => {
+                    (TCPrimType::I64, 2, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(6u32)
+                    }
+                    (TCPrimType::U64, 2, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(6u32)
+                    }
+                    (TCPrimType::I64, 4, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(4u32)
                     }
-                    (TCPrimType::I64, 8) => {}
+                    (TCPrimType::U64, 4, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(4u32)
+                    }
+                    (TCPrimType::I64, 8, false) => {}
+                    (TCPrimType::U64, 8, false) => {}
 
-                    (TCPrimType::Pointer { .. }, 1) => {
+                    (TCPrimType::I8, 4, true) => self.func.opcodes.push(Opcode::I8ToF32),
+                    (TCPrimType::U8, 4, true) => self.func.opcodes.push(Opcode::U8ToF32),
+                    (TCPrimType::I8, 8, true) => self.func.opcodes.push(Opcode::I8ToF64),
+                    (TCPrimType::U8, 8, true) => self.func.opcodes.push(Opcode::U8ToF64),
+                    (TCPrimType::I16, 4, true) => self.func.opcodes.push(Opcode::I16ToF32),
+                    (TCPrimType::U16, 4, true) => self.func.opcodes.push(Opcode::U16ToF32),
+                    (TCPrimType::I16, 8, true) => self.func.opcodes.push(Opcode::I16ToF64),
+                    (TCPrimType::U16, 8, true) => self.func.opcodes.push(Opcode::U16ToF64),
+                    (TCPrimType::I32, 4, true) => self.func.opcodes.push(Opcode::I32ToF32),
+                    (TCPrimType::U32, 4, true) => self.func.opcodes.push(Opcode::U32ToF32),
+                    (TCPrimType::I32, 8, true) => self.func.opcodes.push(Opcode::I32ToF64),
+                    (TCPrimType::U32, 8, true) => self.func.opcodes.push(Opcode::U32ToF64),
+                    (TCPrimType::I64, 4, true) => self.func.opcodes.push(Opcode::I64ToF32),
+                    (TCPrimType::U64, 4, true) => self.func.opcodes.push(Opcode::U64ToF32),
+                    (TCPrimType::I64, 8, true) => self.func.opcodes.push(Opcode::I64ToF64),
+                    (TCPrimType::U64, 8, true) => self.func.opcodes.push(Opcode::U64ToF64),
+
+                    (TCPrimType::F32, 1, false) => self.func.opcodes.push(Opcode::F32ToI8),
+                    (TCPrimType::F64, 1, false) => self.func.opcodes.push(Opcode::F64ToI8),
+                    (TCPrimType::F32, 2, false) => self.func.opcodes.push(Opcode::F32ToI16),
+                    (TCPrimType::F64, 2, false) => self.func.opcodes.push(Opcode::F64ToI16),
+                    (TCPrimType::F32, 4, false) => self.func.opcodes.push(Opcode::F32ToI32),
+                    (TCPrimType::F64, 4, false) => self.func.opcodes.push(Opcode::F64ToI32),
+                    (TCPrimType::F32, 8, false) => self.func.opcodes.push(Opcode::F32ToI64),
+                    (TCPrimType::F64, 8, false) => self.func.opcodes.push(Opcode::F64ToI64),
+
+                    (TCPrimType::F32, 4, true) => {}
+                    (TCPrimType::F64, 4, true) => self.func.opcodes.push(Opcode::F64ToF32),
+                    (TCPrimType::F32, 8, true) => self.func.opcodes.push(Opcode::F32ToF64),
+                    (TCPrimType::F64, 8, true) => {}
+
+                    (TCPrimType::Pointer { .. }, 1, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(7u32)
                     }
-                    (TCPrimType::Pointer { .. }, 4) => {
+                    (TCPrimType::Pointer { .. }, 2, false) => {
+                        self.func.opcodes.push(Opcode::Pop);
+                        self.func.opcodes.push(6u32)
+                    }
+                    (TCPrimType::Pointer { .. }, 4, false) => {
                         self.func.opcodes.push(Opcode::Pop);
                         self.func.opcodes.push(4u32)
                     }
-                    (TCPrimType::Pointer { .. }, 8) => {}
-                    (_, _) => unreachable!(),
+                    (TCPrimType::Pointer { .. }, 8, false) => {}
+                    x => unimplemented!("conversion {:?}", x),
                 }
             }
 
             // TODO fix this with array members
             &TCExprKind::Member { base, offset } => {
-                self.translate_expr(env, base);
+                self.translate_expr(base);
 
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
@@ -747,7 +873,7 @@ impl Assembler {
                 }
             }
             &TCExprKind::PtrMember { base, offset } => {
-                self.translate_expr(env, base);
+                self.translate_expr(base);
 
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
@@ -755,7 +881,7 @@ impl Assembler {
                 let bytes = expr.ty.repr_size();
                 self.func.opcodes.push(Opcode::MakeU64);
                 self.func.opcodes.push(offset as u64);
-                self.func.opcodes.push(Opcode::AddU64);
+                self.func.opcodes.push(Opcode::Add64);
                 if !expr.ty.is_array() {
                     self.func.opcodes.push(Opcode::Get);
                     self.func.opcodes.push(bytes);
@@ -763,12 +889,12 @@ impl Assembler {
             }
 
             TCExprKind::Assign { target, value } => {
-                self.translate_expr(env, value);
+                self.translate_expr(value);
 
                 let bytes: u32 = target.ty.size().into();
                 self.func.opcodes.push(Opcode::Dup);
                 self.func.opcodes.push(bytes);
-                self.translate_assign(env, target);
+                self.translate_assign(target);
 
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
@@ -782,7 +908,7 @@ impl Assembler {
                 op,
                 op_type,
             } => {
-                self.translate_assign(env, target);
+                self.translate_assign(target);
 
                 self.func.opcodes.push(Opcode::Dup);
                 self.func.opcodes.push(8u32);
@@ -791,7 +917,7 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Get);
                 self.func.opcodes.push(bytes);
 
-                self.translate_expr(env, value);
+                self.translate_expr(value);
 
                 self.translate_bin_op(*op, *op_type, expr.loc);
 
@@ -807,17 +933,17 @@ impl Assembler {
             }
 
             TCExprKind::Deref(ptr) => {
-                self.translate_expr(env, ptr);
+                self.translate_expr(ptr);
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
                 self.func.opcodes.push(Opcode::Get);
                 self.func.opcodes.push(expr.ty.size());
             }
-            TCExprKind::Ref(lvalue) => self.translate_assign(env, lvalue),
+            TCExprKind::Ref(lvalue) => self.translate_assign(lvalue),
 
             TCExprKind::Call { func, params } => {
-                self.translate_expr(env, func); // callee is sequenced before params
+                self.translate_expr(func); // callee is sequenced before params
 
                 // Safety allocation to make sure varargs don't run off the stack
                 self.func.opcodes.push(Opcode::StackAlloc);
@@ -826,7 +952,7 @@ impl Assembler {
                 for (idx, param) in params.iter().rev().enumerate() {
                     let bytes = param.ty.repr_size();
 
-                    self.translate_expr(env, param);
+                    self.translate_expr(param);
                     self.func.opcodes.push(Opcode::StackAlloc);
                     self.func.opcodes.push(bytes);
                     self.func.opcodes.push(Opcode::MakeSp);
@@ -867,7 +993,7 @@ impl Assembler {
                 self.func.labels.push(LabelData::uninit());
                 let end_label = self.func.labels.len() as u32;
                 self.func.labels.push(LabelData::uninit());
-                self.translate_expr(env, condition);
+                self.translate_expr(condition);
 
                 let op = match cond_ty.size() {
                     1 => Opcode::JumpIfZero8,
@@ -882,22 +1008,22 @@ impl Assembler {
                 let ptr = VarPointer::new_binary(0, else_label);
                 self.func.opcodes.push(ptr);
 
-                self.translate_expr(env, if_true);
+                self.translate_expr(if_true);
                 self.func.opcodes.push(Opcode::Jump);
                 self.func.gotos.push(self.func.opcodes.data.len() as u32);
                 self.func.opcodes.push(VarPointer::new_binary(0, end_label));
                 self.func.labels[else_label as usize].offset = self.func.opcodes.data.len() as u32;
-                self.translate_expr(env, if_false);
+                self.translate_expr(if_false);
                 self.func.labels[end_label as usize].offset = self.func.opcodes.data.len() as u32;
             }
 
             TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
-                self.translate_expr(env, ecall);
+                self.translate_expr(ecall);
                 self.func.opcodes.push(Opcode::Ecall);
             }
             TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
-                self.translate_expr(env, size);
-                self.translate_expr(env, ptr);
+                self.translate_expr(size);
+                self.translate_expr(ptr);
 
                 self.func.opcodes.push(Opcode::PushDyn);
             }
@@ -906,28 +1032,28 @@ impl Assembler {
         }
     }
 
-    pub fn translate_assign(&mut self, env: ASMEnv, assign: &TCAssignTarget) {
+    pub fn translate_assign(&mut self, assign: &TCAssignTarget) {
         match assign.kind {
             TCAssignTargetKind::Ptr(expr) => {
-                self.translate_expr(env, expr);
+                self.translate_expr(expr);
                 if assign.offset != 0 {
                     self.func.opcodes.push(Opcode::Loc);
                     self.func.opcodes.push(assign.loc);
                     self.func.opcodes.push(Opcode::MakeU64);
                     self.func.opcodes.push(assign.offset as u64);
-                    self.func.opcodes.push(Opcode::AddU64);
+                    self.func.opcodes.push(Opcode::Add64);
                 }
             }
             TCAssignTargetKind::LocalIdent { label } => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(assign.loc);
 
-                let var = env.var_offsets[label as usize];
+                let var = self.func.var_offsets[label as usize];
                 self.func.opcodes.push(Opcode::MakeFp);
                 self.func.opcodes.push(var);
                 self.func.opcodes.push(Opcode::MakeU64);
                 self.func.opcodes.push(assign.offset as u64);
-                self.func.opcodes.push(Opcode::AddU64);
+                self.func.opcodes.push(Opcode::Add64);
             }
             _ => unimplemented!(),
         }
@@ -941,11 +1067,66 @@ impl Assembler {
         self.func.opcodes.push(loc);
 
         match (op, op_type) {
+            (Neg, I8) => {
+                self.func.opcodes.push(Opcode::MakeI8);
+                self.func.opcodes.push(-1i8);
+                self.func.opcodes.push(Opcode::MulI8);
+            }
+            (Neg, I16) => {
+                self.func.opcodes.push(Opcode::MakeI16);
+                self.func.opcodes.push(-1i16);
+                self.func.opcodes.push(Opcode::MulI16);
+            }
             (Neg, I32) => {
                 self.func.opcodes.push(Opcode::MakeI32);
                 self.func.opcodes.push(-1i32);
                 self.func.opcodes.push(Opcode::MulI32);
             }
+            (Neg, I64) => {
+                self.func.opcodes.push(Opcode::MakeI64);
+                self.func.opcodes.push(-1i64);
+                self.func.opcodes.push(Opcode::MulI64);
+            }
+            (Neg, F32) => {
+                self.func.opcodes.push(Opcode::MakeF32);
+                self.func.opcodes.push(-1f32);
+                self.func.opcodes.push(Opcode::MulF32);
+            }
+            (Neg, F64) => {
+                self.func.opcodes.push(Opcode::MakeF64);
+                self.func.opcodes.push(-1f64);
+                self.func.opcodes.push(Opcode::MulF64);
+            }
+
+            (BoolNorm, I8) => self.func.opcodes.push(Opcode::BoolNorm8),
+            (BoolNorm, U8) => self.func.opcodes.push(Opcode::BoolNorm8),
+            (BoolNorm, I16) => self.func.opcodes.push(Opcode::BoolNorm16),
+            (BoolNorm, U16) => self.func.opcodes.push(Opcode::BoolNorm16),
+            (BoolNorm, I32) => self.func.opcodes.push(Opcode::BoolNorm32),
+            (BoolNorm, U32) => self.func.opcodes.push(Opcode::BoolNorm32),
+            (BoolNorm, I64) => self.func.opcodes.push(Opcode::BoolNorm64),
+            (BoolNorm, U64) => self.func.opcodes.push(Opcode::BoolNorm64),
+            (BoolNorm, Pointer { .. }) => self.func.opcodes.push(Opcode::BoolNorm64),
+
+            (BoolNot, I8) => self.func.opcodes.push(Opcode::BoolNot8),
+            (BoolNot, U8) => self.func.opcodes.push(Opcode::BoolNot8),
+            (BoolNot, I16) => self.func.opcodes.push(Opcode::BoolNot16),
+            (BoolNot, U16) => self.func.opcodes.push(Opcode::BoolNot16),
+            (BoolNot, I32) => self.func.opcodes.push(Opcode::BoolNot32),
+            (BoolNot, U32) => self.func.opcodes.push(Opcode::BoolNot32),
+            (BoolNot, I64) => self.func.opcodes.push(Opcode::BoolNot64),
+            (BoolNot, U64) => self.func.opcodes.push(Opcode::BoolNot64),
+            (BoolNot, Pointer { .. }) => self.func.opcodes.push(Opcode::BoolNot64),
+
+            (BitNot, I8) => self.func.opcodes.push(Opcode::BitNot8),
+            (BitNot, U8) => self.func.opcodes.push(Opcode::BitNot8),
+            (BitNot, I16) => self.func.opcodes.push(Opcode::BitNot16),
+            (BitNot, U16) => self.func.opcodes.push(Opcode::BitNot16),
+            (BitNot, I32) => self.func.opcodes.push(Opcode::BitNot32),
+            (BitNot, U32) => self.func.opcodes.push(Opcode::BitNot32),
+            (BitNot, I64) => self.func.opcodes.push(Opcode::BitNot64),
+            (BitNot, U64) => self.func.opcodes.push(Opcode::BitNot64),
+
             x => unimplemented!("unary op: {:?}", x),
         }
     }
@@ -955,35 +1136,85 @@ impl Assembler {
         self.func.opcodes.push(loc);
 
         let op = match (op, op_type) {
-            (BinOp::Add, TCPrimType::U32) => Opcode::AddU32,
-            (BinOp::Add, TCPrimType::I32) => Opcode::AddU32,
-            (BinOp::Add, TCPrimType::U64) => Opcode::AddU64,
-            (BinOp::Add, TCPrimType::I64) => Opcode::AddU64,
-            (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::AddU64,
+            (BinOp::Add, TCPrimType::I8) => Opcode::Add8,
+            (BinOp::Add, TCPrimType::U8) => Opcode::Add8,
+            (BinOp::Add, TCPrimType::I16) => Opcode::Add16,
+            (BinOp::Add, TCPrimType::U16) => Opcode::Add16,
+            (BinOp::Add, TCPrimType::I32) => Opcode::Add32,
+            (BinOp::Add, TCPrimType::U32) => Opcode::Add32,
+            (BinOp::Add, TCPrimType::I64) => Opcode::Add64,
+            (BinOp::Add, TCPrimType::U64) => Opcode::Add64,
+            (BinOp::Add, TCPrimType::F32) => Opcode::AddF32,
+            (BinOp::Add, TCPrimType::F64) => Opcode::AddF64,
+            (BinOp::Add, TCPrimType::Pointer { .. }) => Opcode::Add64,
 
             (BinOp::Sub, TCPrimType::I8) => Opcode::SubI8,
             (BinOp::Sub, TCPrimType::U8) => Opcode::SubU8,
+            (BinOp::Sub, TCPrimType::I16) => Opcode::SubI16,
+            (BinOp::Sub, TCPrimType::U16) => Opcode::SubU16,
             (BinOp::Sub, TCPrimType::I32) => Opcode::SubI32,
             (BinOp::Sub, TCPrimType::U32) => Opcode::SubU32,
             (BinOp::Sub, TCPrimType::I64) => Opcode::SubI64,
             (BinOp::Sub, TCPrimType::U64) => Opcode::SubU64,
+            (BinOp::Sub, TCPrimType::F32) => Opcode::SubF32,
+            (BinOp::Sub, TCPrimType::F64) => Opcode::SubF64,
             (BinOp::Sub, TCPrimType::Pointer { .. }) => Opcode::SubU64,
 
-            (BinOp::Mul, TCPrimType::U32) => Opcode::MulU32,
+            (BinOp::Mul, TCPrimType::I8) => Opcode::MulI8,
+            (BinOp::Mul, TCPrimType::U8) => Opcode::MulU8,
+            (BinOp::Mul, TCPrimType::I16) => Opcode::MulI16,
+            (BinOp::Mul, TCPrimType::U16) => Opcode::MulU16,
             (BinOp::Mul, TCPrimType::I32) => Opcode::MulI32,
+            (BinOp::Mul, TCPrimType::U32) => Opcode::MulU32,
             (BinOp::Mul, TCPrimType::I64) => Opcode::MulI64,
             (BinOp::Mul, TCPrimType::U64) => Opcode::MulU64,
+            (BinOp::Mul, TCPrimType::F32) => Opcode::MulF32,
+            (BinOp::Mul, TCPrimType::F64) => Opcode::MulF64,
 
+            (BinOp::Div, TCPrimType::I8) => Opcode::DivI8,
+            (BinOp::Div, TCPrimType::U8) => Opcode::DivU8,
+            (BinOp::Div, TCPrimType::I16) => Opcode::DivI16,
+            (BinOp::Div, TCPrimType::U16) => Opcode::DivU16,
             (BinOp::Div, TCPrimType::I32) => Opcode::DivI32,
+            (BinOp::Div, TCPrimType::U32) => Opcode::DivU32,
+            (BinOp::Div, TCPrimType::I64) => Opcode::DivI64,
             (BinOp::Div, TCPrimType::U64) => Opcode::DivU64,
+            (BinOp::Div, TCPrimType::F32) => Opcode::DivF32,
+            (BinOp::Div, TCPrimType::F64) => Opcode::DivF64,
 
+            (BinOp::Mod, TCPrimType::I8) => Opcode::ModI8,
+            (BinOp::Mod, TCPrimType::U8) => Opcode::ModU8,
+            (BinOp::Mod, TCPrimType::I16) => Opcode::ModI16,
+            (BinOp::Mod, TCPrimType::U16) => Opcode::ModU16,
+            (BinOp::Mod, TCPrimType::I32) => Opcode::ModI32,
+            (BinOp::Mod, TCPrimType::U32) => Opcode::ModU32,
+            (BinOp::Mod, TCPrimType::I64) => Opcode::ModI64,
+            (BinOp::Mod, TCPrimType::U64) => Opcode::ModU64,
+            (BinOp::Mod, TCPrimType::F32) => Opcode::ModF32,
+            (BinOp::Mod, TCPrimType::F64) => Opcode::ModF64,
+
+            (BinOp::Eq, TCPrimType::I8) => Opcode::CompEq8,
+            (BinOp::Eq, TCPrimType::U8) => Opcode::CompEq8,
+            (BinOp::Eq, TCPrimType::I16) => Opcode::CompEq16,
+            (BinOp::Eq, TCPrimType::U16) => Opcode::CompEq16,
             (BinOp::Eq, TCPrimType::I32) => Opcode::CompEq32,
+            (BinOp::Eq, TCPrimType::U32) => Opcode::CompEq32,
             (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
+            (BinOp::Eq, TCPrimType::U64) => Opcode::CompEq64,
             (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
+            (BinOp::Eq, TCPrimType::F32) => Opcode::CompEqF32,
             (BinOp::Eq, TCPrimType::F64) => Opcode::CompEqF64,
 
+            (BinOp::Neq, TCPrimType::I8) => Opcode::CompNeq8,
+            (BinOp::Neq, TCPrimType::U8) => Opcode::CompNeq8,
+            (BinOp::Neq, TCPrimType::I16) => Opcode::CompNeq16,
+            (BinOp::Neq, TCPrimType::U16) => Opcode::CompNeq16,
             (BinOp::Neq, TCPrimType::I32) => Opcode::CompNeq32,
+            (BinOp::Neq, TCPrimType::U32) => Opcode::CompNeq32,
+            (BinOp::Neq, TCPrimType::I64) => Opcode::CompNeq64,
             (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
+            (BinOp::Neq, TCPrimType::Pointer { .. }) => Opcode::CompNeq64,
+            (BinOp::Neq, TCPrimType::F32) => Opcode::CompNeqF32,
             (BinOp::Neq, TCPrimType::F64) => Opcode::CompNeqF64,
 
             (BinOp::Gt, TCPrimType::I8) => {
@@ -997,6 +1228,18 @@ impl Assembler {
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(1u32);
                 Opcode::CompLtU8
+            }
+            (BinOp::Gt, TCPrimType::I16) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(22u32);
+                self.func.opcodes.push(2u32);
+                Opcode::CompLtI16
+            }
+            (BinOp::Gt, TCPrimType::U16) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(2u32);
+                self.func.opcodes.push(2u32);
+                Opcode::CompLtU16
             }
             (BinOp::Gt, TCPrimType::I32) => {
                 self.func.opcodes.push(Opcode::Swap);
@@ -1022,11 +1265,40 @@ impl Assembler {
                 self.func.opcodes.push(8u32);
                 Opcode::CompLtU64
             }
+            (BinOp::Gt, TCPrimType::F32) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLtF32
+            }
+            (BinOp::Gt, TCPrimType::F64) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLtF64
+            }
 
+            (BinOp::Lt, TCPrimType::I8) => Opcode::CompLtI8,
+            (BinOp::Lt, TCPrimType::U8) => Opcode::CompLtU8,
+            (BinOp::Lt, TCPrimType::I16) => Opcode::CompLtI16,
+            (BinOp::Lt, TCPrimType::U16) => Opcode::CompLtU16,
             (BinOp::Lt, TCPrimType::I32) => Opcode::CompLtI32,
+            (BinOp::Lt, TCPrimType::U32) => Opcode::CompLtU32,
+            (BinOp::Lt, TCPrimType::I64) => Opcode::CompLtI64,
             (BinOp::Lt, TCPrimType::U64) => Opcode::CompLtU64,
+            (BinOp::Lt, TCPrimType::F32) => Opcode::CompLtF32,
+            (BinOp::Lt, TCPrimType::F64) => Opcode::CompLtF64,
 
+            (BinOp::Leq, TCPrimType::I8) => Opcode::CompLeqI8,
+            (BinOp::Leq, TCPrimType::U8) => Opcode::CompLeqU8,
+            (BinOp::Leq, TCPrimType::I16) => Opcode::CompLeqI16,
+            (BinOp::Leq, TCPrimType::U16) => Opcode::CompLeqU16,
             (BinOp::Leq, TCPrimType::I32) => Opcode::CompLeqI32,
+            (BinOp::Leq, TCPrimType::U32) => Opcode::CompLeqU32,
+            (BinOp::Leq, TCPrimType::I64) => Opcode::CompLeqI64,
+            (BinOp::Leq, TCPrimType::U64) => Opcode::CompLeqU64,
+            (BinOp::Leq, TCPrimType::F32) => Opcode::CompLeqF32,
+            (BinOp::Leq, TCPrimType::F64) => Opcode::CompLeqF64,
 
             (BinOp::Geq, TCPrimType::I8) => {
                 self.func.opcodes.push(Opcode::Swap);
@@ -1040,6 +1312,18 @@ impl Assembler {
                 self.func.opcodes.push(1u32);
                 Opcode::CompLeqU8
             }
+            (BinOp::Geq, TCPrimType::I16) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(22u32);
+                self.func.opcodes.push(2u32);
+                Opcode::CompLeqI16
+            }
+            (BinOp::Geq, TCPrimType::U16) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(2u32);
+                self.func.opcodes.push(2u32);
+                Opcode::CompLeqU16
+            }
             (BinOp::Geq, TCPrimType::I32) => {
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(4u32);
@@ -1052,20 +1336,53 @@ impl Assembler {
                 self.func.opcodes.push(4u32);
                 Opcode::CompLeqU32
             }
+            (BinOp::Geq, TCPrimType::I64) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLeqI64
+            }
             (BinOp::Geq, TCPrimType::U64) => {
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(8u32);
                 self.func.opcodes.push(8u32);
                 Opcode::CompLeqU64
             }
+            (BinOp::Geq, TCPrimType::F32) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLeqF32
+            }
+            (BinOp::Geq, TCPrimType::F64) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLeqF64
+            }
 
+            (BinOp::LShift, TCPrimType::I8) => Opcode::LShiftI8,
+            (BinOp::LShift, TCPrimType::U8) => Opcode::LShiftU8,
+            (BinOp::LShift, TCPrimType::I16) => Opcode::LShiftI16,
+            (BinOp::LShift, TCPrimType::U16) => Opcode::LShiftU16,
             (BinOp::LShift, TCPrimType::I32) => Opcode::LShiftI32,
             (BinOp::LShift, TCPrimType::U32) => Opcode::LShiftU32,
+            (BinOp::LShift, TCPrimType::I64) => Opcode::LShiftI64,
+            (BinOp::LShift, TCPrimType::U64) => Opcode::LShiftU64,
 
+            (BinOp::RShift, TCPrimType::I8) => Opcode::RShiftI8,
+            (BinOp::RShift, TCPrimType::U8) => Opcode::RShiftU8,
+            (BinOp::RShift, TCPrimType::I16) => Opcode::RShiftI16,
+            (BinOp::RShift, TCPrimType::U16) => Opcode::RShiftU16,
             (BinOp::RShift, TCPrimType::I32) => Opcode::RShiftI32,
+            (BinOp::RShift, TCPrimType::U32) => Opcode::RShiftU32,
+            (BinOp::RShift, TCPrimType::I64) => Opcode::RShiftI64,
+            (BinOp::RShift, TCPrimType::U64) => Opcode::RShiftU64,
 
             (BinOp::BitAnd, TCPrimType::I8) => Opcode::BitAnd8,
             (BinOp::BitAnd, TCPrimType::U8) => Opcode::BitAnd8,
+            (BinOp::BitAnd, TCPrimType::I16) => Opcode::BitAnd16,
+            (BinOp::BitAnd, TCPrimType::U16) => Opcode::BitAnd16,
             (BinOp::BitAnd, TCPrimType::I32) => Opcode::BitAnd32,
             (BinOp::BitAnd, TCPrimType::U32) => Opcode::BitAnd32,
             (BinOp::BitAnd, TCPrimType::I64) => Opcode::BitAnd64,
@@ -1073,6 +1390,8 @@ impl Assembler {
 
             (BinOp::BitOr, TCPrimType::I8) => Opcode::BitOr8,
             (BinOp::BitOr, TCPrimType::U8) => Opcode::BitOr8,
+            (BinOp::BitOr, TCPrimType::I16) => Opcode::BitOr16,
+            (BinOp::BitOr, TCPrimType::U16) => Opcode::BitOr16,
             (BinOp::BitOr, TCPrimType::I32) => Opcode::BitOr32,
             (BinOp::BitOr, TCPrimType::U32) => Opcode::BitOr32,
             (BinOp::BitOr, TCPrimType::I64) => Opcode::BitOr64,
@@ -1080,6 +1399,8 @@ impl Assembler {
 
             (BinOp::BitXor, TCPrimType::I8) => Opcode::BitXor8,
             (BinOp::BitXor, TCPrimType::U8) => Opcode::BitXor8,
+            (BinOp::BitXor, TCPrimType::I16) => Opcode::BitXor16,
+            (BinOp::BitXor, TCPrimType::U16) => Opcode::BitXor16,
             (BinOp::BitXor, TCPrimType::I32) => Opcode::BitXor32,
             (BinOp::BitXor, TCPrimType::U32) => Opcode::BitXor32,
             (BinOp::BitXor, TCPrimType::I64) => Opcode::BitXor64,

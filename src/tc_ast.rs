@@ -63,6 +63,14 @@ impl TCPrimType {
     pub fn signed(self) -> bool {
         match self {
             TCPrimType::I8 | TCPrimType::I16 | TCPrimType::I32 | TCPrimType::I64 => return true,
+            TCPrimType::F32 | TCPrimType::F64 => return true,
+            _ => return false,
+        }
+    }
+
+    pub fn is_floating_pt(self) -> bool {
+        match self {
+            TCPrimType::F32 | TCPrimType::F64 => return true,
             _ => return false,
         }
     }

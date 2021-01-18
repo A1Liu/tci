@@ -35,6 +35,7 @@ pub enum TypeEnvKind<'a> {
         scope_idx: u32,
         cont_label: n32,
         break_label: u32,
+        ty: TCType,
         cases: Vec<(TCExpr, u32)>,
         default: n32,
         default_loc: CodeLoc,
@@ -273,7 +274,20 @@ impl<'a> TypeEnv<'a> {
         }
     }
 
-    pub fn switch(&mut self, expr: TCExpr, env: &mut FuncEnv, loc: CodeLoc) -> (Self, u32) {
+    pub fn switch(
+        &mut self,
+        expr: TCExpr,
+        env: &mut FuncEnv,
+        loc: CodeLoc,
+    ) -> Result<(Self, u32), Error> {
+        if !expr.ty.is_integer() {
+            return Err(error!(
+                "switch expression's type must be an integer type",
+                expr.loc,
+                format!("expression has type {}", expr.ty.display(self.symbols()))
+            ));
+        }
+
         let cont_label = match self.kind {
             TypeEnvKind::Local { cont_label, .. } => cont_label,
             TypeEnvKind::LocalSwitch { cont_label, .. } => cont_label,
@@ -299,6 +313,7 @@ impl<'a> TypeEnv<'a> {
             scope_idx: env.ops.len() as u32,
             cont_label,
             break_label,
+            ty: expr.ty,
             cases: Vec::new(),
             default: n32::NULL,
             default_loc: NO_FILE,
@@ -328,7 +343,7 @@ impl<'a> TypeEnv<'a> {
             typedefs: HashMap::new(),
         };
 
-        (sel, break_label)
+        Ok((sel, break_label))
     }
 
     pub fn default(&mut self, env: &mut FuncEnv, loc: CodeLoc) -> Result<(), Error> {
@@ -377,35 +392,63 @@ impl<'a> TypeEnv<'a> {
         ));
     }
 
-    pub fn case(&mut self, env: &mut FuncEnv, case_value: TCExpr) -> bool {
+    pub fn case(&mut self, env: &mut FuncEnv, expr: TCExpr, loc: CodeLoc) -> Result<(), Error> {
+        if !expr.ty.is_integer() {
+            return Err(error!(
+                "case expression's type must be an integer type",
+                expr.loc,
+                format!("expression has type {}", expr.ty.display(self.symbols()))
+            ));
+        }
+
         let mut c_env: *mut TypeEnv = self;
 
         while !c_env.is_null() {
             let current = unsafe { &mut *c_env };
 
-            let (scope_idx, cases) = match &mut current.kind {
+            let (scope_idx, cases, ty) = match &mut current.kind {
                 TypeEnvKind::Global { .. } => break,
                 TypeEnvKind::LocalSwitch {
-                    scope_idx, cases, ..
-                } => (*scope_idx, cases),
+                    scope_idx,
+                    cases,
+                    ty,
+                    ..
+                } => (*scope_idx, cases, *ty),
                 TypeEnvKind::Local { parent, .. } => {
                     c_env = *parent;
                     continue;
                 }
             };
 
+            let or_else = || {
+                error!(
+                    "couldn't convert case value to switch expression type",
+                    expr.loc,
+                    format!(
+                        "case expression (type={}) couldn't be converted to {}",
+                        expr.ty.display(self.symbols()),
+                        ty.display(self.symbols())
+                    )
+                )
+            };
+            let expr = self
+                .assign_convert(ty, expr, expr.loc)
+                .ok_or_else(or_else)?;
             let label = env.label();
-            cases.push((case_value, label));
+            cases.push((expr, label));
             let op = TCOpcode {
                 kind: TCOpcodeKind::Label { label, scope_idx },
-                loc: case_value.loc,
+                loc: expr.loc,
             };
             env.ops.push(op);
 
-            return false;
+            return Ok(());
         }
 
-        return true;
+        return Err(error!(
+            "case used when not in a switch",
+            loc, "case used here"
+        ));
     }
 
     pub fn label(&self, env: &mut FuncEnv, label: u32, loc: CodeLoc) {
@@ -1179,6 +1222,37 @@ impl<'a> TypeEnv<'a> {
 
     pub fn add_typedef(&mut self, ty: TCType, id: u32, loc: CodeLoc) {
         self.typedefs.insert(id, (self.add(ty), loc));
+    }
+
+    pub fn assign_convert(&self, ty: TCType, expr: TCExpr, loc: CodeLoc) -> Option<TCExpr> {
+        if TCType::ty_eq(&ty, &expr.ty) {
+            return Some(expr);
+        }
+
+        if ty.is_void() {
+            let mut exprs = vec![expr];
+            exprs.push(TCExpr {
+                kind: TCExprKind::Uninit,
+                ty: TCType::new(TCTypeBase::Void),
+                loc,
+            });
+
+            return Some(TCExpr {
+                kind: TCExprKind::ParenList(self.add_array(exprs)),
+                ty: TCType::new(TCTypeBase::Void),
+                loc,
+            });
+        }
+
+        let to = ty.to_prim_type()?;
+        let from = expr.ty.to_prim_type()?;
+        let expr = self.add(expr);
+
+        return Some(TCExpr {
+            kind: TCExprKind::Conv { from, to, expr },
+            ty,
+            loc,
+        });
     }
 }
 
