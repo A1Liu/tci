@@ -748,11 +748,17 @@ impl<'a> Lexer<'a> {
             tok = self.expect_tok(lexer, data)?;
             if let TokenKind::Comma = tok {
                 tok = self.expect_tok(lexer, data)?;
+            } else {
+                break;
             }
         }
 
         if tok != TokenKind::RParen {
-            return Err(error!("unexpected token", lexer.loc(), "this token"));
+            return Err(error!(
+                "expected right paren here",
+                lexer.loc(),
+                format!("this token was lexed as {:?}", tok)
+            ));
         }
 
         let mut toks = Vec::new();
@@ -944,11 +950,13 @@ impl SimpleLexer {
                 self.current += 1;
                 self.at_line_begin = true;
                 self.in_macro = false;
+                self.in_number = false;
                 return Ok(Some(RawTok::EndPPLine));
             } else if self.peek_eq_series(data, &CRLF) {
                 self.current += 2;
                 self.at_line_begin = true;
                 self.in_macro = false;
+                self.in_number = false;
                 return Ok(Some(RawTok::EndPPLine));
             }
         }

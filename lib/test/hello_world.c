@@ -8,8 +8,7 @@ int return_code(int hi);
 
 int main() {
   hello(12);
-  //  printf("%s, %s!\n", "Hello", "world");
-  printf("Hello, world!\n");
+  printf("%s, %s!\n", "Hello", "world");
 
   return return_code(12) - return_code(12);
 }

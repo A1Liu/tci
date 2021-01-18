@@ -631,6 +631,7 @@ impl Assembler {
                     let bytes = expr.ty.repr_size();
                     self.translate_expr(&expr);
 
+                    debug!(cases);
                     for (case, take_case) in cases {
                         let skip_case = self.func.labels.len() as u32;
                         self.func.labels.push(LabelData::uninit());
@@ -1290,7 +1291,10 @@ impl Assembler {
                 self.translate_expr(ecall);
                 self.func.opcodes.push(Opcode::Ecall);
             }
-            TCExprKind::Builtin(TCBuiltin::PushTempStack { ptr, size }) => {
+            TCExprKind::Builtin(TCBuiltin::Push(value)) => {
+                self.translate_expr(value);
+            }
+            TCExprKind::Builtin(TCBuiltin::PushDyn { ptr, size }) => {
                 self.translate_expr(size);
                 self.translate_expr(ptr);
 

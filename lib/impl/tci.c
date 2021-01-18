@@ -8,7 +8,7 @@
 
 size_t tci_var_size(void *_var) {
   size_t size = 0;
-  for (char *var = _var; (__tci_builtin_push_stack(&var, sizeof(var)),
+  for (char *var = _var; (__tci_builtin_push_dyn(&var, sizeof(var)),
                           __tci_builtin_ecall(TCI_ECALL_IS_SAFE));
        var = var + 1, size++)
     ;
@@ -29,7 +29,7 @@ void *tci_ecall(int ecall_num, ...) {
   void *next = ((char *)list.current) - diff;
   size_t size = tci_var_size(next);
   for (; size != 0;) {
-    __tci_builtin_push_stack(next, size);
+    __tci_builtin_push_dyn(next, size);
     list.current = next;
     next = ((char *)list.current) - diff;
     size = tci_var_size(next);

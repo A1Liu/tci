@@ -1129,10 +1129,11 @@ impl<'a> TCTy for TCTypeMut<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCBuiltin {
-    PushTempStack {
+    PushDyn {
         ptr: &'static TCExpr,  // always of type void*
         size: &'static TCExpr, // always of type size_t
     },
+    Push(&'static TCExpr),  // Any type
     Ecall(&'static TCExpr), // always of type `int`
 }
 

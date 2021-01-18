@@ -647,7 +647,7 @@ impl<'a> TypeEnv<'a> {
             default,
         } = &mut env.ops[scope_idx as usize + 1].kind
         {
-            *cases = self.add_slice(&cases);
+            *cases = self.add_slice(s_cases);
             *default = s_default;
         } else {
             panic!("scope_idx pointed to wrong opcode")

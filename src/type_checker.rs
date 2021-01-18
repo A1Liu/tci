@@ -125,8 +125,26 @@ lazy_static! {
     pub static ref BUILTINS: HashMap<u32, BuiltinTransform> = {
         let mut m: HashMap<u32, BuiltinTransform> = HashMap::new();
 
+        m.insert(BuiltinSymbol::BuiltinPush as u32, |env, call_loc, args| {
+            if args.len() != 1 {
+                return Err(error!(
+                    "wrong number of arguments to builtin function",
+                    call_loc, "called here"
+                ));
+            }
+
+            let void = TCType::new(TCTypeBase::Void);
+
+            let value = check_expr(&mut *env, &args[0])?;
+            return Ok(TCExpr {
+                kind: TCExprKind::Builtin(TCBuiltin::Push(env.add(value))),
+                ty: void,
+                loc: call_loc,
+            });
+        });
+
         m.insert(
-            BuiltinSymbol::BuiltinPushStack as u32,
+            BuiltinSymbol::BuiltinPushDyn as u32,
             |env, call_loc, args| {
                 if args.len() != 2 {
                     return Err(error!(
@@ -152,7 +170,7 @@ lazy_static! {
                     .ok_or_else(or_else)?;
 
                 return Ok(TCExpr {
-                    kind: TCExprKind::Builtin(TCBuiltin::PushTempStack {
+                    kind: TCExprKind::Builtin(TCBuiltin::PushDyn {
                         ptr: env.add(ptr),
                         size: env.add(size),
                     }),

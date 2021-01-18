@@ -276,7 +276,8 @@ pub enum BuiltinSymbol {
 
     MacroDefined,
 
-    BuiltinPushStack,
+    BuiltinPush,
+    BuiltinPushDyn,
     BuiltinEcall,
 }
 
@@ -292,7 +293,8 @@ impl Symbols {
 
         new_self.add_str("defined");
 
-        new_self.add_str("__tci_builtin_push_stack");
+        new_self.add_str("__tci_builtin_push");
+        new_self.add_str("__tci_builtin_push_dyn");
         new_self.add_str("__tci_builtin_ecall");
 
         new_self
