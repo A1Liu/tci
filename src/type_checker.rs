@@ -433,9 +433,13 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
 
             let cond = check_expr(&mut scope, &condition)?;
 
-            if scope.goto_ifz(out, cond, cb.br, cond.loc) {
+            let pass_goto = out.label();
+            if scope.goto_ifnz(out, cond, pass_goto, cond.loc) {
                 return Err(condition_non_primitive(cond.ty, cond.loc));
             }
+
+            scope.goto(out, cb.br, cond.loc);
+            scope.label(out, pass_goto, cond.loc);
 
             check_stmt(&mut scope, out, *body)?;
 
@@ -1221,14 +1225,14 @@ pub fn check_initializer_list(
             let tc_expr = check_expr(&mut *locals, expr)?;
             let or_else = || conversion_error(elem_ty, decl_loc, &tc_expr);
             let tc_expr = locals
-                .assign_convert(elem_ty, tc_expr, decl_loc)
+                .assign_convert(elem_ty, tc_expr, tc_expr.loc)
                 .ok_or_else(or_else)?;
-            tc_exprs.push(tc_expr.kind);
+            tc_exprs.push((tc_expr.kind, tc_expr.loc));
         }
 
         let array_init = match array_mod {
             TCTypeModifier::Array(arr) => {
-                tc_exprs.resize(*arr as usize, TCExprKind::Uninit);
+                tc_exprs.resize(*arr as usize, (TCExprKind::Uninit, decl_loc));
                 let elems = locals.add_array(tc_exprs);
 
                 TCExprKind::ArrayInit { elems, elem_ty }
@@ -1265,7 +1269,7 @@ pub fn check_initializer_list(
     let mut offset = None;
     for (field, expr) in fields.iter().zip(init.iter()) {
         if let Some(offset) = offset {
-            if field.offset <= offset {
+            if field.offset < offset {
                 return Err(error!(
                     "can only use initializer lists on simple structs",
                     decl_loc,
@@ -1283,11 +1287,8 @@ pub fn check_initializer_list(
         written_fields.push(tc_expr);
     }
 
-    let written_fields = locals.add_array(written_fields);
-    return Ok((
-        TCExprKind::StructLiteral(written_fields, target.repr_size()),
-        target,
-    ));
+    let (fields, size) = (locals.add_array(written_fields), target.repr_size());
+    return Ok((TCExprKind::StructLit { fields, size }, target));
 }
 
 pub fn check_declaration(
@@ -1657,7 +1658,8 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 ));
             };
 
-            if let Some(ftype_params) = func_type.params {
+            let mut tparams = Vec::new();
+            let default_conversion_params = if let Some(ftype_params) = func_type.params {
                 if params.len() < ftype_params.types.len()
                     || (params.len() > ftype_params.types.len() && !ftype_params.varargs)
                 {
@@ -1668,38 +1670,40 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                     ));
                 }
 
-                let mut tparams = Vec::new();
-                for (idx, param) in params.iter().enumerate() {
+                let typed_params = &params[..ftype_params.types.len()];
+                for (idx, param) in typed_params.iter().enumerate() {
                     let mut expr = check_expr(&mut *env, param)?;
-                    if idx < ftype_params.types.len() {
-                        let param_type = ftype_params.types[idx];
-                        let or_else = || param_conversion_error(param_type, &expr);
-                        expr = env
-                            .assign_convert(param_type, expr, expr.loc)
-                            .ok_or_else(or_else)?;
-                    }
+                    let param_type = ftype_params.types[idx];
+                    let or_else = || param_conversion_error(param_type, &expr);
+                    expr = env
+                        .assign_convert(param_type, expr, expr.loc)
+                        .ok_or_else(or_else)?;
 
                     tparams.push(expr);
                 }
 
-                let func = env.add(func);
-                let params = env.add_array(tparams);
+                &params[ftype_params.types.len()..]
+            } else {
+                params
+            };
 
-                return Ok(TCExpr {
-                    kind: TCExprKind::Call { func, params },
-                    ty: func_type.return_type,
-                    loc: expr.loc,
-                });
-            }
+            for param in default_conversion_params {
+                let mut expr = check_expr(env, param)?;
+                if expr.ty.is_integer() && expr.ty.repr_size() < 4 {
+                    expr = env
+                        .assign_convert(TCType::new(TCTypeBase::I32), expr, expr.loc)
+                        .unwrap();
+                } else if expr.ty.is_floating_pt() {
+                    expr = env
+                        .assign_convert(TCType::new(TCTypeBase::F64), expr, expr.loc)
+                        .unwrap();
+                }
 
-            let mut tparams = Vec::new();
-            for (idx, param) in params.iter().enumerate() {
-                tparams.push(check_expr(env, param)?);
+                tparams.push(expr);
             }
 
             let func = env.add(func);
             let params = env.add_array(tparams);
-
             return Ok(TCExpr {
                 kind: TCExprKind::Call { func, params },
                 ty: func_type.return_type,
@@ -2386,6 +2390,7 @@ pub fn check_un_op(
                 loc,
             });
         }
+
         UnaryOp::Neg => {
             let operand = check_expr(&mut *env, obj)?;
             let op_type_o = operand.ty.to_prim_type();
@@ -2402,6 +2407,7 @@ pub fn check_un_op(
                 loc,
             });
         }
+
         UnaryOp::BitNot => {
             let operand = check_expr(env, obj)?;
             let op_type_o = operand.ty.to_prim_type();

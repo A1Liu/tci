@@ -16,7 +16,7 @@ pub struct ASMFunc {
 pub struct ASMVar {
     pub ty: TCType,
     pub decl_loc: CodeLoc,
-    pub func_header: Option<(VarPointer, CodeLoc)>,
+    pub header: Option<(VarPointer, CodeLoc)>,
 }
 
 pub struct FuncEnv {
@@ -46,7 +46,7 @@ impl FuncEnv {
 
 pub struct FileEnv {
     pub link_names: HashMap<u32, LinkName>,
-    pub binary_offsets: Vec<VarPointer>,
+    pub binary_offsets: Vec<u32>,
 }
 
 impl FileEnv {
@@ -88,7 +88,7 @@ lazy_static! {
         data.push(Opcode::MakeSp);
         data.push(0i16);
         data.push(Opcode::Get);
-        data.push(4);
+        data.push(4u32);
         data.push(Opcode::StackDealloc); // for the return value
 
         data.push(Opcode::StackDealloc);
@@ -107,9 +107,15 @@ lazy_static! {
 
 pub struct Assembler {
     pub buckets: BucketListFactory,
+
     pub func_linkage: HashMap<LinkName, u32>,
     pub functions: Vec<ASMFunc>,
     pub function_temps: Vec<(VarPointer, CodeLoc)>,
+
+    pub var_linkage: HashMap<LinkName, u32>,
+    pub vars: Vec<ASMVar>,
+    pub var_temps: Vec<(VarPointer, CodeLoc)>,
+
     pub func: FuncEnv,
     pub file: FileEnv,
     pub data: BinaryData,
@@ -141,16 +147,93 @@ impl Assembler {
         Self {
             buckets: BucketListFactory::new(),
             data: BINARY_INIT.init.clone(),
+
             func_linkage: HashMap::new(),
             functions: Vec::new(),
             function_temps: Vec::new(),
+
+            var_linkage: HashMap::new(),
+            vars: Vec::new(),
+            var_temps: Vec::new(),
+
             func: FuncEnv::new(),
             file: FileEnv::new(),
         }
     }
 
     pub fn add_file(&mut self, mut tu: TranslationUnit) -> Result<(), Error> {
-        for (ident, global) in &tu.variables {}
+        self.file.binary_offsets.resize(tu.var_count as usize, !0);
+
+        for (loc, static_internal) in &tu.static_internal_vars {
+            self.file.binary_offsets[static_internal.var_idx as usize] = self.vars.len() as u32;
+            let (mut init, _) = {
+                let (kind, ty, loc) = (static_internal.init, static_internal.ty, *loc);
+                let expr = TCExpr { kind, ty, loc };
+                self.make_var(expr)?
+            };
+            let vptr = self.data.add_data(&mut init);
+
+            let var = ASMVar {
+                ty: static_internal.ty,
+                decl_loc: *loc,
+                header: Some((vptr, *loc)),
+            };
+
+            self.vars.push(var);
+        }
+
+        for (&ident, global) in &tu.vars {
+            if global.ty.is_function() {
+                continue;
+            }
+
+            let link_name = if global.init.is_static() {
+                LinkName::new_static(ident, tu.file)
+            } else {
+                LinkName::new(ident)
+            };
+
+            self.file.link_names.insert(ident, link_name);
+
+            let prev = match self.var_linkage.entry(link_name) {
+                Entry::Occupied(o) => *o.get(),
+                Entry::Vacant(v) => {
+                    let id = self.vars.len() as u32;
+                    v.insert(id);
+
+                    self.vars.push(ASMVar {
+                        ty: global.ty,
+                        decl_loc: global.loc,
+                        header: None,
+                    });
+
+                    id
+                }
+            };
+
+            self.file.binary_offsets[global.var_idx as usize] = prev;
+
+            let init = match global.init {
+                TCDeclInit::Extern => continue,
+                TCDeclInit::DefaultUninit => TCExprKind::Uninit,
+                TCDeclInit::Default(i) | TCDeclInit::Static(i) | TCDeclInit::ExternInit(i) => i,
+            };
+
+            if let Some((_, prev_loc)) = self.vars[prev as usize].header {
+                return Err(error!(
+                    "defined global variable twice",
+                    prev_loc, "first definition here", global.loc, "second definition here"
+                ));
+            }
+
+            let (mut init, _) = {
+                let (kind, ty, loc) = (init, global.ty, global.loc);
+                let expr = TCExpr { kind, ty, loc };
+                self.make_var(expr)?
+            };
+            let vptr = self.data.add_data(&mut init);
+            self.vars[prev as usize].header = Some((vptr, global.loc));
+        }
 
         let mut defns = Vec::new();
 
@@ -200,7 +283,8 @@ impl Assembler {
             let label_count = defn.label_count as usize;
             self.func.labels.resize(label_count, LabelData::uninit());
 
-            let temps_begin = self.function_temps.len();
+            let func_temps_begin = self.function_temps.len();
+            let var_temps_begin = self.var_temps.len();
 
             self.func.opcodes.push(Opcode::Func);
             self.func.opcodes.push(link_name);
@@ -210,7 +294,11 @@ impl Assembler {
 
             let fptr = self.data.add_data(&mut self.func.opcodes.data);
 
-            for (ptr, _) in &mut self.function_temps[temps_begin..] {
+            for (ptr, _) in &mut self.function_temps[func_temps_begin..] {
+                let offset = ptr.offset();
+                *ptr = fptr.with_offset(offset);
+            }
+            for (ptr, _) in &mut self.var_temps[var_temps_begin..] {
                 let offset = ptr.offset();
                 *ptr = fptr.with_offset(offset);
             }
@@ -231,12 +319,170 @@ impl Assembler {
         return Ok(());
     }
 
+    pub fn make_var(&self, expr: TCExpr) -> Result<(Vec<u8>, u32), Error> {
+        let mut bytes = VecU8::new();
+
+        match expr.kind {
+            TCExprKind::Uninit => {
+                debug!(expr.ty);
+                for _ in 0u32..expr.ty.size().into() {
+                    bytes.push(0u8);
+                }
+            }
+
+            TCExprKind::I8Lit(i) => bytes.push(i),
+            // TCExprKind::U8Lit(i) => bytes.push(i),
+            // TCExprKind::I16Lit(i) => bytes.push(i),
+            // TCExprKind::U16Lit(i) => bytes.push(i),
+            TCExprKind::I32Lit(i) => bytes.push(i),
+            TCExprKind::U32Lit(i) => bytes.push(i),
+            TCExprKind::I64Lit(i) => bytes.push(i),
+            TCExprKind::U64Lit(i) => bytes.push(i),
+            TCExprKind::F32Lit(i) => bytes.push(i),
+            TCExprKind::F64Lit(i) => bytes.push(i),
+
+            TCExprKind::ArrayInit { elems, elem_ty: ty } => {
+                for &(kind, loc) in elems {
+                    let expr = TCExpr { kind, ty, loc };
+                    let (mut data, _align) = self.make_var(expr)?;
+                    bytes.append(&mut data);
+                }
+            }
+            TCExprKind::StructLit { fields, size } => {
+                for &field in fields {
+                    let (mut data, align) = self.make_var(field)?;
+                    bytes.align(align as usize);
+                    bytes.append(&mut data);
+                }
+
+                bytes.data.resize(size as usize, 0);
+            }
+
+            TCExprKind::Conv { from, to, expr } => {
+                use TCPrimType::*;
+
+                let (data, align) = self.make_var(*expr)?;
+                match (from, to) {
+                    (I8, I8) => bytes.push(*u8_slice_as_any::<i8>(&data) as i8),
+                    (I8, U8) => bytes.push(*u8_slice_as_any::<i8>(&data) as u8),
+                    (I8, I16) => bytes.push(*u8_slice_as_any::<i8>(&data) as i16),
+                    (I8, U16) => bytes.push(*u8_slice_as_any::<i8>(&data) as u16),
+                    (I8, I32) => bytes.push(*u8_slice_as_any::<i8>(&data) as i32),
+                    (I8, U32) => bytes.push(*u8_slice_as_any::<i8>(&data) as u32),
+                    (I8, I64) => bytes.push(*u8_slice_as_any::<i8>(&data) as i64),
+                    (I8, U64) => bytes.push(*u8_slice_as_any::<i8>(&data) as u64),
+                    (I8, F32) => bytes.push(*u8_slice_as_any::<i8>(&data) as f32),
+                    (I8, F64) => bytes.push(*u8_slice_as_any::<i8>(&data) as f64),
+
+                    (U8, I8) => bytes.push(*u8_slice_as_any::<u8>(&data) as i8),
+                    (U8, U8) => bytes.push(*u8_slice_as_any::<u8>(&data) as u8),
+                    (U8, I16) => bytes.push(*u8_slice_as_any::<u8>(&data) as i16),
+                    (U8, U16) => bytes.push(*u8_slice_as_any::<u8>(&data) as u16),
+                    (U8, I32) => bytes.push(*u8_slice_as_any::<u8>(&data) as i32),
+                    (U8, U32) => bytes.push(*u8_slice_as_any::<u8>(&data) as u32),
+                    (U8, I64) => bytes.push(*u8_slice_as_any::<u8>(&data) as i64),
+                    (U8, U64) => bytes.push(*u8_slice_as_any::<u8>(&data) as u64),
+                    (U8, F32) => bytes.push(*u8_slice_as_any::<u8>(&data) as f32),
+                    (U8, F64) => bytes.push(*u8_slice_as_any::<u8>(&data) as f64),
+
+                    (I16, I8) => bytes.push(*u8_slice_as_any::<i16>(&data) as i8),
+                    (I16, U8) => bytes.push(*u8_slice_as_any::<i16>(&data) as u8),
+                    (I16, I16) => bytes.push(*u8_slice_as_any::<i16>(&data) as i16),
+                    (I16, U16) => bytes.push(*u8_slice_as_any::<i16>(&data) as u16),
+                    (I16, I32) => bytes.push(*u8_slice_as_any::<i16>(&data) as i32),
+                    (I16, U32) => bytes.push(*u8_slice_as_any::<i16>(&data) as u32),
+                    (I16, I64) => bytes.push(*u8_slice_as_any::<i16>(&data) as i64),
+                    (I16, U64) => bytes.push(*u8_slice_as_any::<i16>(&data) as u64),
+                    (I16, F32) => bytes.push(*u8_slice_as_any::<i16>(&data) as f32),
+                    (I16, F64) => bytes.push(*u8_slice_as_any::<i16>(&data) as f64),
+
+                    (U16, I8) => bytes.push(*u8_slice_as_any::<u16>(&data) as i8),
+                    (U16, U8) => bytes.push(*u8_slice_as_any::<u16>(&data) as u8),
+                    (U16, I16) => bytes.push(*u8_slice_as_any::<u16>(&data) as i16),
+                    (U16, U16) => bytes.push(*u8_slice_as_any::<u16>(&data) as u16),
+                    (U16, I32) => bytes.push(*u8_slice_as_any::<u16>(&data) as i32),
+                    (U16, U32) => bytes.push(*u8_slice_as_any::<u16>(&data) as u32),
+                    (U16, I64) => bytes.push(*u8_slice_as_any::<u16>(&data) as i64),
+                    (U16, U64) => bytes.push(*u8_slice_as_any::<u16>(&data) as u64),
+                    (U16, F32) => bytes.push(*u8_slice_as_any::<u16>(&data) as f32),
+                    (U16, F64) => bytes.push(*u8_slice_as_any::<u16>(&data) as f64),
+
+                    (I32, I8) => bytes.push(*u8_slice_as_any::<i32>(&data) as i8),
+                    (I32, U8) => bytes.push(*u8_slice_as_any::<i32>(&data) as u8),
+                    (I32, I16) => bytes.push(*u8_slice_as_any::<i32>(&data) as i16),
+                    (I32, U16) => bytes.push(*u8_slice_as_any::<i32>(&data) as u16),
+                    (I32, I32) => bytes.push(*u8_slice_as_any::<i32>(&data) as i32),
+                    (I32, U32) => bytes.push(*u8_slice_as_any::<i32>(&data) as u32),
+                    (I32, I64) => bytes.push(*u8_slice_as_any::<i32>(&data) as i64),
+                    (I32, U64) => bytes.push(*u8_slice_as_any::<i32>(&data) as u64),
+                    (I32, F32) => bytes.push(*u8_slice_as_any::<i32>(&data) as f32),
+                    (I32, F64) => bytes.push(*u8_slice_as_any::<i32>(&data) as f64),
+
+                    (U32, I8) => bytes.push(*u8_slice_as_any::<u32>(&data) as i8),
+                    (U32, U8) => bytes.push(*u8_slice_as_any::<u32>(&data) as u8),
+                    (U32, I16) => bytes.push(*u8_slice_as_any::<u32>(&data) as i16),
+                    (U32, U16) => bytes.push(*u8_slice_as_any::<u32>(&data) as u16),
+                    (U32, I32) => bytes.push(*u8_slice_as_any::<u32>(&data) as i32),
+                    (U32, U32) => bytes.push(*u8_slice_as_any::<u32>(&data) as u32),
+                    (U32, I64) => bytes.push(*u8_slice_as_any::<u32>(&data) as i64),
+                    (U32, U64) => bytes.push(*u8_slice_as_any::<u32>(&data) as u64),
+                    (U32, F32) => bytes.push(*u8_slice_as_any::<u32>(&data) as f32),
+                    (U32, F64) => bytes.push(*u8_slice_as_any::<u32>(&data) as f64),
+
+                    (I64, I8) => bytes.push(*u8_slice_as_any::<i64>(&data) as i8),
+                    (I64, U8) => bytes.push(*u8_slice_as_any::<i64>(&data) as u8),
+                    (I64, I16) => bytes.push(*u8_slice_as_any::<i64>(&data) as i16),
+                    (I64, U16) => bytes.push(*u8_slice_as_any::<i64>(&data) as u16),
+                    (I64, I32) => bytes.push(*u8_slice_as_any::<i64>(&data) as i32),
+                    (I64, U32) => bytes.push(*u8_slice_as_any::<i64>(&data) as u32),
+                    (I64, I64) => bytes.push(*u8_slice_as_any::<i64>(&data) as i64),
+                    (I64, U64) => bytes.push(*u8_slice_as_any::<i64>(&data) as u64),
+                    (I64, F32) => bytes.push(*u8_slice_as_any::<i64>(&data) as f32),
+                    (I64, F64) => bytes.push(*u8_slice_as_any::<i64>(&data) as f64),
+
+                    (U64, I8) => bytes.push(*u8_slice_as_any::<u64>(&data) as i8),
+                    (U64, U8) => bytes.push(*u8_slice_as_any::<u64>(&data) as u8),
+                    (U64, I16) => bytes.push(*u8_slice_as_any::<u64>(&data) as i16),
+                    (U64, U16) => bytes.push(*u8_slice_as_any::<u64>(&data) as u16),
+                    (U64, I32) => bytes.push(*u8_slice_as_any::<u64>(&data) as i32),
+                    (U64, U32) => bytes.push(*u8_slice_as_any::<u64>(&data) as u32),
+                    (U64, I64) => bytes.push(*u8_slice_as_any::<u64>(&data) as i64),
+                    (U64, U64) => bytes.push(*u8_slice_as_any::<u64>(&data) as u64),
+                    (U64, F32) => bytes.push(*u8_slice_as_any::<u64>(&data) as f32),
+                    (U64, F64) => bytes.push(*u8_slice_as_any::<u64>(&data) as f64),
+
+                    (Pointer { .. }, I8) => bytes.push(*u8_slice_as_any::<u64>(&data) as i8),
+                    (Pointer { .. }, U8) => bytes.push(*u8_slice_as_any::<u64>(&data) as u8),
+                    (Pointer { .. }, I16) => bytes.push(*u8_slice_as_any::<u64>(&data) as i16),
+                    (Pointer { .. }, U16) => bytes.push(*u8_slice_as_any::<u64>(&data) as u16),
+                    (Pointer { .. }, I32) => bytes.push(*u8_slice_as_any::<u64>(&data) as i32),
+                    (Pointer { .. }, U32) => bytes.push(*u8_slice_as_any::<u64>(&data) as u32),
+                    (Pointer { .. }, I64) => bytes.push(*u8_slice_as_any::<u64>(&data) as i64),
+                    (Pointer { .. }, U64) => bytes.push(*u8_slice_as_any::<u64>(&data) as u64),
+
+                    x => unimplemented!("static conversion {:?}", x),
+                }
+            }
+
+            x => {
+                return Err(error!(
+                    "TCI only supports simple constant expressions right now",
+                    expr.loc,
+                    format!("expression here ({:?}) was too complicated", x)
+                ))
+            }
+        }
+
+        return Ok((bytes.data, expr.ty.align().into()));
+    }
+
     pub fn add_function(&mut self, defn: &TCFuncDefn) {
         if defn.ops.len() < 2 {
             unreachable!()
         }
 
-        let jumps: Vec<u32> = Vec::new();
+        assert_eq!(self.func.var_offsets.len(), 0);
+
         self.func
             .var_offsets
             .resize(defn.sym_count as usize, i16::MAX);
@@ -274,9 +520,6 @@ impl Assembler {
         }
 
         for t_op in &defn.ops[1..(defn.ops.len() - 1)] {
-            self.func.opcodes.push(Opcode::Loc);
-            self.func.opcodes.push(t_op.loc);
-
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, _) => {
                     for (&var, &ty) in vars {
@@ -295,6 +538,9 @@ impl Assembler {
                     next_offset -= count as i16;
                 }
                 TCOpcodeKind::Ret => {
+                    self.func.opcodes.push(Opcode::Loc);
+                    self.func.opcodes.push(t_op.loc);
+
                     for _ in 0..next_offset {
                         self.func.opcodes.push(Opcode::StackDealloc);
                     }
@@ -303,6 +549,9 @@ impl Assembler {
                 }
                 TCOpcodeKind::RetVal(val) => {
                     self.translate_expr(&val);
+
+                    self.func.opcodes.push(Opcode::Loc);
+                    self.func.opcodes.push(t_op.loc);
 
                     self.func.opcodes.push(Opcode::MakeFp);
                     self.func.opcodes.push(-1i16);
@@ -415,6 +664,9 @@ impl Assembler {
                             self.func.opcodes.data.len() as u32;
                     }
 
+                    self.func.opcodes.push(Opcode::Pop);
+                    self.func.opcodes.push(bytes);
+
                     self.func.opcodes.push(Opcode::Jump);
                     self.func.gotos.push(self.func.opcodes.data.len() as u32);
                     let ptr = VarPointer::new_binary(0, default);
@@ -509,36 +761,42 @@ impl Assembler {
             TCExprKind::U32Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 self.func.opcodes.push(Opcode::MakeU32);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::I64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 self.func.opcodes.push(Opcode::MakeI64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::U64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 self.func.opcodes.push(Opcode::MakeU64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::F32Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 self.func.opcodes.push(Opcode::MakeF32);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::F64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 self.func.opcodes.push(Opcode::MakeF64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::StringLit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 let ptr = self.data.add_slice(val.as_bytes());
                 self.data.data.push(0u8);
                 self.func.opcodes.push(Opcode::MakeU64);
@@ -547,8 +805,8 @@ impl Assembler {
             TCExprKind::LocalIdent { label } => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                let var = self.func.var_offsets[*label as usize];
 
+                let var = self.func.var_offsets[*label as usize];
                 self.func.opcodes.push(Opcode::MakeFp);
                 self.func.opcodes.push(var);
 
@@ -560,6 +818,7 @@ impl Assembler {
             TCExprKind::FunctionIdent { ident } => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
+
                 let link_name = self.file.link_names[ident];
                 let id = self.func_linkage[&link_name];
                 self.func.opcodes.push(Opcode::MakeU64);
@@ -568,23 +827,33 @@ impl Assembler {
                 self.function_temps.push((ptr, expr.loc));
                 self.func.opcodes.push(VarPointer::new_binary(0, id));
             }
-            // TCExprKind::GlobalIdent { binary_offset } => {}
+            TCExprKind::GlobalIdent { binary_offset } => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+
+                let id = self.file.binary_offsets[*binary_offset as usize];
+                self.func.opcodes.push(Opcode::MakeU64);
+                let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
+                self.var_temps.push((ptr, expr.loc));
+                self.func.opcodes.push(VarPointer::new_binary(0, id));
+
+                if !expr.ty.is_array() {
+                    self.func.opcodes.push(Opcode::Get);
+                    self.func.opcodes.push(expr.ty.repr_size());
+                }
+            }
+
             TCExprKind::Uninit => {
                 self.func.opcodes.push(Opcode::PushUndef);
                 self.func.opcodes.push(expr.ty.repr_size());
             }
-            TCExprKind::ArrayInit { elems, elem_ty } => {
-                let mut elem = TCExpr {
-                    kind: TCExprKind::Uninit,
-                    ty: *elem_ty,
-                    loc: expr.loc,
-                };
-                for &expr_kind in elems.iter() {
-                    elem.kind = expr_kind;
+            &TCExprKind::ArrayInit { elems, elem_ty: ty } => {
+                for &(kind, loc) in elems {
+                    let elem = TCExpr { kind, ty, loc };
                     self.translate_expr(&elem);
                 }
             }
-            TCExprKind::StructLiteral(fields, size) => {
+            TCExprKind::StructLit { fields, size } => {
                 let mut offset = 0;
                 for field in *fields {
                     let aligned_offset = align_u32(offset, field.ty.align().into());
@@ -949,7 +1218,7 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::StackAlloc);
                 self.func.opcodes.push(0u32);
 
-                for (idx, param) in params.iter().rev().enumerate() {
+                for param in params.iter().rev() {
                     let bytes = param.ty.repr_size();
 
                     self.translate_expr(param);
@@ -1027,8 +1296,6 @@ impl Assembler {
 
                 self.func.opcodes.push(Opcode::PushDyn);
             }
-
-            x => unimplemented!("{:#?}", x),
         }
     }
 
@@ -1051,11 +1318,28 @@ impl Assembler {
                 let var = self.func.var_offsets[label as usize];
                 self.func.opcodes.push(Opcode::MakeFp);
                 self.func.opcodes.push(var);
-                self.func.opcodes.push(Opcode::MakeU64);
-                self.func.opcodes.push(assign.offset as u64);
-                self.func.opcodes.push(Opcode::Add64);
+                if assign.offset != 0 {
+                    self.func.opcodes.push(Opcode::MakeU64);
+                    self.func.opcodes.push(assign.offset as u64);
+                    self.func.opcodes.push(Opcode::Add64);
+                }
             }
-            _ => unimplemented!(),
+            TCAssignTargetKind::GlobalIdent { binary_offset } => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(assign.loc);
+
+                let id = self.file.binary_offsets[binary_offset as usize];
+                self.func.opcodes.push(Opcode::MakeU64);
+                let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
+                self.var_temps.push((ptr, assign.loc));
+                self.func.opcodes.push(VarPointer::new_binary(0, id));
+
+                if assign.offset != 0 {
+                    self.func.opcodes.push(Opcode::MakeU64);
+                    self.func.opcodes.push(assign.offset as u64);
+                    self.func.opcodes.push(Opcode::Add64);
+                }
+            }
         }
     }
 
@@ -1426,6 +1710,19 @@ impl Assembler {
         let (main_ptr, main_loc) = main_func.func_header.ok_or_else(no_main)?;
 
         self.data.write(BINARY_INIT.main_call, main_ptr);
+
+        for (temp, loc) in &self.var_temps {
+            let ptr: VarPointer = self.data.read(*temp).unwrap();
+            let var = &self.vars[ptr.offset() as usize];
+            if let Some((vptr, _loc)) = var.header {
+                self.data.write(*temp, vptr);
+            } else {
+                return Err(error!(
+                    "couldn't find definition for variable",
+                    *loc, "used here", var.decl_loc, "declared here"
+                ));
+            }
+        }
 
         for (temp, loc) in &self.function_temps {
             let ptr: VarPointer = self.data.read(*temp).unwrap();

@@ -36,6 +36,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <tci.h>
 
 // define this globally (e.g. gcc -DPRINTF_INCLUDE_CONFIG_H ...) to include the
 // printf_config.h header file
@@ -116,13 +117,6 @@
 #include <float.h>
 #endif
 
-/**
- * Output a character to a custom device like UART, used by the printf()
- * function This function is declared here only. You have to write your custom
- * implementation somewhere \param character Character to output
- */
-void _putchar(char character);
-
 // output function type
 typedef void (*out_fct_type)(char character, void *buffer, size_t idx,
                              size_t maxlen);
@@ -132,6 +126,29 @@ typedef struct {
   void (*fct)(char character, void *arg);
   void *arg;
 } out_fct_wrap_type;
+
+// output to command line
+static inline void _out_char(char character, void *buffer, size_t idx,
+                             size_t maxlen) {
+  static char out_buffer[1000U];
+  static unsigned int index = 0U;
+
+  (void)buffer;
+  (void)idx;
+  (void)maxlen;
+
+  if (!character) {
+    tci_ecall(TCI_ECALL_PRINT_STRING, out_buffer, index);
+    index = 0U;
+    return;
+  }
+
+  out_buffer[index++] = character;
+  if (index == 1000U || character == '\n') {
+    tci_ecall(TCI_ECALL_PRINT_STRING, out_buffer, index);
+    index = 0U;
+  }
+}
 
 // internal buffer output
 static inline void _out_buffer(char character, void *buffer, size_t idx,
@@ -148,17 +165,6 @@ static inline void _out_null(char character, void *buffer, size_t idx,
   (void)buffer;
   (void)idx;
   (void)maxlen;
-}
-
-// internal _putchar wrapper
-static inline void _out_char(char character, void *buffer, size_t idx,
-                             size_t maxlen) {
-  (void)buffer;
-  (void)idx;
-  (void)maxlen;
-  if (character) {
-    _putchar(character);
-  }
 }
 
 // internal output function wrapper
@@ -599,7 +605,7 @@ static size_t _etoa(out_fct_type out, char *buffer, size_t idx, size_t maxlen,
 static int _vsnprintf(out_fct_type out, char *buffer, const size_t maxlen,
                       const char *format, va_list va) {
   unsigned int flags, width, precision, n;
-  size_t idx = 0U;
+  size_t idx = 1U;
 
   if (!buffer) {
     // use null output function

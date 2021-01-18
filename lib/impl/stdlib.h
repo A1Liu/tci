@@ -14,7 +14,7 @@ void *realloc(void *_buffer, size_t new_size) {
   if (allocation_offset > 0)
     tci_throw_error(
         "InvalidPointer",
-        "called realloc on a pointer in the middle of an allocation");
+        "called realloc on a pointer in the middle of an allocation", 1);
 
   size_t old_size = tci_var_size(buffer);
   char *new_buffer = malloc(new_size);

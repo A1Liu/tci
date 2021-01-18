@@ -233,6 +233,13 @@ impl TCTypeBase {
             TCTypeBase::Typedef { refers_to, .. } => refers_to.align(),
         }
     }
+
+    pub fn is_floating_pt(self) -> bool {
+        match self {
+            TCTypeBase::F32 | TCTypeBase::F64 => return true,
+            _ => return false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
@@ -500,6 +507,17 @@ pub trait TCTy {
             TCTypeBase::NamedUnion { .. } | TCTypeBase::UnnamedUnion { .. } => return false,
             TCTypeBase::Typedef { refers_to, .. } => return refers_to.is_integer(),
             TCTypeBase::InternalTypedef(def) => return def.is_integer(),
+        }
+    }
+
+    fn is_floating_pt(&self) -> bool {
+        if self.mods().len() != 0 {
+            return false;
+        }
+
+        match self.base() {
+            TCTypeBase::F32 | TCTypeBase::F64 => return true,
+            _ => return false,
         }
     }
 
@@ -1141,10 +1159,13 @@ pub enum TCExprKind {
     },
 
     ArrayInit {
-        elems: &'static [TCExprKind],
+        elems: &'static [(TCExprKind, CodeLoc)],
         elem_ty: TCType,
     },
-    StructLiteral(&'static [TCExpr], u32),
+    StructLit {
+        fields: &'static [TCExpr],
+        size: u32,
+    },
     ParenList(&'static [TCExpr]),
 
     BinOp {
@@ -1353,7 +1374,14 @@ pub struct TCGlobalVar {
     pub init: TCDeclInit,
     pub var_idx: u32,
     pub ty: TCType,
-    pub loc: CodeLoc, // we allow extern in include files so the file is not known apriori
+    pub loc: CodeLoc,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TCStaticInternalVar {
+    pub init: TCExprKind,
+    pub ty: TCType,
+    pub var_idx: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1395,11 +1423,16 @@ pub struct TCFunctionDeclarator {
 }
 
 pub struct TranslationUnit {
-    pub file: u32,
     pub buckets: BucketListFactory,
+    pub file: u32,
+
     pub typedefs: HashMap<(u32, CodeLoc), TCType>,
-    pub variables: HashMap<TCIdent, TCGlobalVar>,
+
     pub functions: HashMap<u32, TCFunction>,
+
+    pub var_count: u32,
+    pub vars: HashMap<u32, TCGlobalVar>,
+    pub static_internal_vars: HashMap<CodeLoc, TCStaticInternalVar>,
 }
 
 pub struct TCDecl {
@@ -1448,11 +1481,16 @@ impl Drop for TranslationUnit {
 impl TranslationUnit {
     pub fn new(file: u32) -> Self {
         Self {
-            file,
             buckets: BucketListFactory::new(),
+            file,
+
             typedefs: HashMap::new(),
-            variables: HashMap::new(),
+
             functions: HashMap::new(),
+
+            var_count: 0,
+            static_internal_vars: HashMap::new(),
+            vars: HashMap::new(),
         }
     }
 }

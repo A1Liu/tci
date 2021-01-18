@@ -16,6 +16,11 @@ size_t tci_var_size(void *_var) {
   return size;
 }
 
+void tci_throw_error(const char *name, const char *message,
+                     unsigned int skip_frames) {
+  tci_ecall(TCI_ECALL_THROW_ERROR, name, message, skip_frames + 2);
+}
+
 void *tci_ecall(int ecall_num, ...) {
   va_list list;
   va_start(list, ecall_num);

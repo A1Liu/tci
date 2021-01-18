@@ -178,6 +178,42 @@ impl Memory {
         return Ok(unsafe { out.assume_init() });
     }
 
+    pub fn read_bytes(&self, ptr: VarPointer, len: u32) -> Result<&[u8], IError> {
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var_idx = ptr.var_idx() - 1;
+        let or_else = || invalid_ptr(ptr);
+
+        let from_bytes = if ptr.is_stack() {
+            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.stack_data.len());
+
+            &self.stack_data[lower..upper]
+        } else if ptr.is_heap() {
+            let lower = self.heap.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.shared_data.len());
+
+            &self.shared_data[lower..upper]
+        } else {
+            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
+            let heap_lower = self.heap.get(0).map(|a| a.idx);
+            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+
+            &self.shared_data[lower..upper]
+        };
+
+        let from_len = from_bytes.len() as u32;
+        let range = (ptr.offset() as usize)..(ptr.offset() as usize + len as usize);
+        let or_else = move || invalid_offset(from_len, ptr, len);
+        let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
+        return Ok(from_bytes);
+    }
+
     pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {
         if ptr.var_idx() == 0 {
             return Err(invalid_ptr(ptr));
@@ -374,6 +410,9 @@ pub fn invalid_ptr(ptr: VarPointer) -> IError {
 }
 
 pub fn invalid_offset(valid_len: u32, ptr: VarPointer, len: u32) -> IError {
+    debug!(ptr.is_binary());
+    debug!(ptr.is_heap());
+    debug!(ptr.is_stack());
     let (start, end) = (ptr.with_offset(0), ptr.with_offset(valid_len));
     return ierror!(
         "InvalidPointer",

@@ -56,7 +56,6 @@ pub struct TypeEnv<'a> {
 pub struct GlobalTypeEnv<'a> {
     tu: TranslationUnit,
     symbols: &'a Symbols,
-    next_var: u32,
 }
 
 pub struct LocalTypeEnv<'a> {
@@ -111,7 +110,6 @@ impl<'a> TypeEnv<'a> {
             kind: TypeEnvKind::Global(GlobalTypeEnv {
                 tu: TranslationUnit::new(file),
                 symbols,
-                next_var: 0,
             }),
             structs: HashMap::new(),
             unions: HashMap::new(),
@@ -907,20 +905,19 @@ impl<'a> TypeEnv<'a> {
 
         let (symbol_label, init_expr) = match init {
             TCDeclInit::Extern | TCDeclInit::ExternInit(_) => unimplemented!(),
-            TCDeclInit::Static(_) => {
+            TCDeclInit::Static(init) => {
                 let global_env = self.globals_mut();
-                let global_ident = TCIdent::ScopedIdent { scope: loc, ident };
-                let global_var = TCGlobalVar {
+                let global_ident = LabelOrLoc::Loc(loc);
+                let global_var = TCStaticInternalVar {
                     init,
                     ty,
-                    loc,
-                    var_idx: global_env.next_var,
+                    var_idx: global_env.tu.var_count,
                 };
 
-                global_env.tu.variables.insert(global_ident, global_var);
-                global_env.next_var += 1;
+                global_env.tu.static_internal_vars.insert(loc, global_var);
+                global_env.tu.var_count += 1;
 
-                (LabelOrLoc::Loc(loc), None)
+                (global_ident, None)
             }
             TCDeclInit::DefaultUninit => {
                 let idx = env.symbol();
@@ -997,16 +994,15 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn add_global(global_env: &mut GlobalTypeEnv, decl: &TCDecl) -> Result<(), Error> {
-        let global_ident = TCIdent::Ident(decl.ident);
         let global_var = TCGlobalVar {
             init: decl.init,
             ty: decl.ty,
             loc: decl.loc,
-            var_idx: global_env.next_var,
+            var_idx: global_env.tu.var_count,
         };
-        global_env.next_var += 1;
+        global_env.tu.var_count += 1;
 
-        let mut prev = match global_env.tu.variables.entry(global_ident) {
+        let mut prev = match global_env.tu.vars.entry(decl.ident) {
             Entry::Occupied(o) => o,
             Entry::Vacant(v) => {
                 v.insert(global_var);
@@ -1020,6 +1016,7 @@ impl<'a> TypeEnv<'a> {
                     };
                     global_env.tu.functions.insert(decl.ident, tc_function);
                 }
+
                 return Ok(());
             }
         };
@@ -1119,10 +1116,9 @@ impl<'a> TypeEnv<'a> {
                         loc,
                     });
                 }
-                LabelOrLoc::Loc(scope) => {
+                LabelOrLoc::Loc(label) => {
                     let (global_env, _) = self.globals();
-                    let global_var =
-                        global_env.tu.variables[&TCIdent::ScopedIdent { scope, ident }];
+                    let global_var = global_env.tu.static_internal_vars[&label];
                     let binary_offset = global_var.var_idx;
 
                     return Ok(TCExpr {
@@ -1136,7 +1132,7 @@ impl<'a> TypeEnv<'a> {
 
         // search globals
         let (global_env, _) = self.globals();
-        if let Some(global_var) = global_env.tu.variables.get(&TCIdent::Ident(ident)) {
+        if let Some(global_var) = global_env.tu.vars.get(&ident) {
             if global_var.ty.is_function() {
                 return Ok(TCExpr {
                     kind: TCExprKind::FunctionIdent { ident },
@@ -1179,10 +1175,9 @@ impl<'a> TypeEnv<'a> {
                         offset: 0,
                     });
                 }
-                LabelOrLoc::Loc(scope) => {
+                LabelOrLoc::Loc(label) => {
                     let (global_env, _) = self.globals();
-                    let global_var =
-                        global_env.tu.variables[&TCIdent::ScopedIdent { scope, ident }];
+                    let global_var = global_env.tu.static_internal_vars[&label];
                     let binary_offset = global_var.var_idx;
 
                     return Ok(TCAssignTarget {
@@ -1198,7 +1193,7 @@ impl<'a> TypeEnv<'a> {
 
         // search globals
         let (global_env, _) = self.globals();
-        if let Some(tc_var) = global_env.tu.variables.get(&TCIdent::Ident(ident)) {
+        if let Some(tc_var) = global_env.tu.vars.get(&ident) {
             if tc_var.ty.is_function() {
                 return Err(error!(
                     "can't assign to function type",

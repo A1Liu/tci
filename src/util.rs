@@ -19,6 +19,17 @@ pub const LIMIT: usize = (-1isize) as usize;
 
 #[allow(unused_macros)]
 macro_rules! debug {
+    ($fmt:literal, $( $e:expr ),* ) => {{
+        if cfg!(debug_assertions) {
+            let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+            if count > LIMIT {
+                panic!("too many debug calls");
+            }
+
+            print!("DEBUG-{} ({}:{}): ", count, file!(), line!());
+            println!($fmt, $( $e ),* );
+        }
+    }};
     ($expr:expr) => {{
         if cfg!(debug_assertions) {
             let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
@@ -222,6 +233,11 @@ pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
 
 pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts(p as *const T as *const u8, mem::size_of::<T>()) }
+}
+
+pub fn u8_slice_as_any<T: Sized>(p: &[u8]) -> &T {
+    assert_eq!(mem::size_of::<T>(), p.len());
+    unsafe { &*(p.as_ptr() as *const T) }
 }
 
 pub fn u32_to_u32_tup(value: u32) -> (u32, u32) {
@@ -1190,6 +1206,26 @@ impl Into<u32> for &n32 {
     }
 }
 
+impl Into<usize> for n32 {
+    fn into(self) -> usize {
+        if self == Self::NULL {
+            panic!("NullPointerException");
+        }
+
+        return self.data as usize;
+    }
+}
+
+impl Into<usize> for &n32 {
+    fn into(self) -> usize {
+        if self == &n32::NULL {
+            panic!("NullPointerException");
+        }
+
+        return self.data as usize;
+    }
+}
+
 impl From<u32> for n32 {
     fn from(data: u32) -> Self {
         Self::new(data)
@@ -1345,5 +1381,20 @@ impl VecU8 {
     pub fn push<T: Copy + 'static>(&mut self, t: T) {
         let from_bytes = any_as_u8_slice(&t);
         self.data.extend_from_slice(from_bytes);
+    }
+
+    pub fn push_aligned<T: Copy + 'static>(&mut self, t: T) {
+        self.align(mem::align_of::<T>());
+        let from_bytes = any_as_u8_slice(&t);
+        self.data.extend_from_slice(from_bytes);
+    }
+
+    pub fn append(&mut self, data: &mut Vec<u8>) {
+        self.data.append(data);
+    }
+
+    pub fn align(&mut self, align: usize) {
+        let aligned = align_usize(self.data.len(), align);
+        self.data.resize(aligned, 0);
     }
 }
