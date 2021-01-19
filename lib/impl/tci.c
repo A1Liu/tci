@@ -6,14 +6,16 @@
 
 #pragma tci enable_builtins
 
-size_t tci_var_size(void *_var) {
-  size_t size = 0;
-  for (char *var = _var; (__tci_builtin_push_dyn(&var, sizeof(var)),
-                          __tci_builtin_ecall(TCI_ECALL_IS_SAFE));
-       var = var + 1, size++)
-    ;
+size_t tci_var_size(void *var) {
+  __tci_builtin_push(var);
+  __tci_builtin_push(var);
+  char *begin = __tci_builtin_ecall(TCI_ECALL_ALLOC_BEGIN);
+  char *end = __tci_builtin_ecall(TCI_ECALL_ALLOC_END);
+  if (begin == NULL || end == NULL) {
+    return -1;
+  }
 
-  return size;
+  return end - begin;
 }
 
 void tci_throw_error(const char *name, const char *message,
@@ -25,11 +27,13 @@ void *tci_ecall(int ecall_num, ...) {
   va_list list;
   va_start(list, ecall_num);
 
-  unsigned long diff = ((unsigned long)(unsigned)-1) + 1;
+  const unsigned long diff = ((unsigned long)(unsigned)-1) + 1;
   void *next = ((char *)list.current) - diff;
   size_t size = tci_var_size(next);
-  for (; size != 0;) {
+
+  while (size != -1) {
     __tci_builtin_push_dyn(next, size);
+
     list.current = next;
     next = ((char *)list.current) - diff;
     size = tci_var_size(next);

@@ -51,8 +51,8 @@ macro_rules! debug {
     ($fmt:literal) => {{
          out!($fmt);
     }};
-    ($fmt:literal, $( $e:expr ),* ) => {{
-         out!(@DEBUG, $fmt, $( $e ),* );
+    ($fmt:literal, $( $e:expr ),+ ) => {{
+         out!(@DEBUG, $fmt, $( $e ),+ );
     }};
     ($expr:expr) => {{
          out!(@DEBUG, "{} = {:?}", stringify!($expr), $expr);
@@ -1278,6 +1278,12 @@ impl Into<usize> for &n32 {
 impl From<u32> for n32 {
     fn from(data: u32) -> Self {
         Self::new(data)
+    }
+}
+
+impl From<usize> for n32 {
+    fn from(data: usize) -> Self {
+        Self::new(data as u32)
     }
 }
 

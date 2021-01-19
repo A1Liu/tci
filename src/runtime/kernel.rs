@@ -8,21 +8,34 @@ use codespan_reporting::term::termcolor::WriteColor;
 use core::mem;
 use std::io::{Error as IOError, Write};
 
-/// exit the program with an error code
-pub const ECALL_EXIT: u32 = 0;
-/// get the number of arguments in the program.
-pub const ECALL_ARGC: u32 = 1;
-/// get zero-indexed command line argument. Takes in a single int as a parameter,
-/// and pushes a pointer to the string on the heap as the result.
-pub const ECALL_ARGV: u32 = 2;
-/// returns whether or not the given pointer is safe
-pub const ECALL_IS_SAFE: u32 = 3;
-/// returns a pointer to a buffer on the heap of the specified size.
-pub const ECALL_HEAP_ALLOC: u32 = 4;
-/// throws an IError object up the callstack
-pub const ECALL_THROW_ERROR: u32 = 5;
-/// sends a character to the screen
-pub const ECALL_PRINT_STRING: u32 = 6;
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum Ecall {
+    /// exit the program with an error code
+    Exit = 0,
+    /// get the number of arguments in the program.
+    Argc,
+    /// get zero-indexed command line argument. Takes in a single int as a parameter,
+    /// and pushes a pointer to the string on the heap as the result.
+    Argv,
+
+    /// returns a pointer to the beginning of the allocation, or NULL if the allocation is not
+    /// valid
+    AllocBegin,
+    /// returns a pointer to the byte right after this allocation, or NULL if the allocation is not
+    /// valid
+    AllocEnd,
+
+    /// returns a pointer to a buffer on the heap of the specified size.
+    HeapAlloc,
+    /// frees a buffer on the heap
+    HeapDealloc,
+
+    /// throws an IError object up the callstack
+    ThrowError,
+    /// sends a character to the screen
+    PrintString,
+}
 
 pub struct Runtime {
     output: StringArray<WriteEvent>,
@@ -229,7 +242,7 @@ impl Runtime {
             }
             Opcode::StackAlloc => {
                 let bytes: u32 = self.memory.read_pc()?;
-                self.memory.add_stack_var(bytes);
+                self.memory.add_stack_var(bytes)?;
             }
             Opcode::StackDealloc => {
                 self.memory.pop_stack_var()?;
@@ -1181,19 +1194,31 @@ impl Runtime {
                 self.memory.call(func)?;
             }
             Opcode::Ecall => {
-                let ecall: u32 = self.memory.pop()?;
+                let ecall: Ecall = self.memory.pop()?;
                 match ecall {
-                    ECALL_EXIT => {
+                    Ecall::Exit => {
                         let exit: i32 = self.memory.pop()?;
                         self.status = RuntimeStatus::Exited(exit);
                     }
 
-                    ECALL_IS_SAFE => {
+                    Ecall::AllocBegin => {
                         let var_pointer: VarPointer = self.memory.pop()?;
-                        let result = self.memory.read::<u8>(var_pointer).is_ok();
-                        self.memory.push(result as u64);
+                        if self.memory.read::<u8>(var_pointer).is_ok() {
+                            self.memory.push(var_pointer.with_offset(0));
+                        } else {
+                            self.memory.push(0 as u64);
+                        }
                     }
-                    ECALL_THROW_ERROR => {
+                    Ecall::AllocEnd => {
+                        let var_pointer: VarPointer = self.memory.pop()?;
+                        if let Some(ptr) = self.memory.upper_bound(var_pointer) {
+                            self.memory.push(ptr);
+                        } else {
+                            self.memory.push(0 as u64);
+                        }
+                    }
+
+                    Ecall::ThrowError => {
                         let skip_frames: u32 = self.memory.pop()?;
                         let message_ptr: VarPointer = self.memory.pop()?;
                         let name_ptr: VarPointer = self.memory.pop()?;
@@ -1213,13 +1238,20 @@ impl Runtime {
                         return Err(IError::new(name, message));
                     }
 
-                    ECALL_HEAP_ALLOC => {
+                    Ecall::HeapAlloc => {
+                        let skip: u32 = self.memory.pop()?;
                         let size: u64 = self.memory.pop()?;
-                        let ptr = self.memory.add_heap_var(size as u32);
+                        let ptr = self.memory.add_heap_var(size as u32, skip)?;
                         self.memory.push(ptr);
                     }
+                    Ecall::HeapDealloc => {
+                        let skip: u32 = self.memory.pop()?;
+                        let ptr: VarPointer = self.memory.pop()?;
+                        self.memory.free(ptr, skip)?;
+                        self.memory.push(0u64);
+                    }
 
-                    ECALL_PRINT_STRING => {
+                    Ecall::PrintString => {
                         let len: u32 = self.memory.pop()?;
                         let string: VarPointer = self.memory.pop()?;
 
@@ -1233,7 +1265,11 @@ impl Runtime {
                     }
 
                     call => {
-                        return ierr!("InvalidEnviromentCall", "invalid ecall value of {}", call)
+                        return ierr!(
+                            "InvalidEnviromentCall",
+                            "invalid ecall value of {}",
+                            call as u32
+                        )
                     }
                 }
             }

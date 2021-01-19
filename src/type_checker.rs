@@ -312,6 +312,16 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
         }
         StatementKind::RetVal(expr) => {
             let tc_expr = check_expr(env, &expr)?;
+            let or_else = || {
+                error!(
+                    "couldn't convert expression to return type",
+                    tc_expr.loc, "expression found here"
+                )
+            };
+
+            let tc_expr = env
+                .assign_convert(out.return_type, tc_expr, tc_expr.loc)
+                .ok_or_else(or_else)?;
             op.kind = TCOpcodeKind::RetVal(tc_expr);
             out.ops.push(op);
         }
@@ -806,7 +816,7 @@ pub fn parse_struct_decl(
                 ));
             }
 
-            sa_size = 0.into();
+            sa_size = 0u32.into();
         }
 
         let ty = ty.to_ref(&*locals);
@@ -2122,7 +2132,9 @@ pub fn prim_unify(
         let l = TCExpr {
             kind: TCExprKind::Conv {
                 from: l_prim,
-                to: TCPrimType::Pointer { stride: 1.into() },
+                to: TCPrimType::Pointer {
+                    stride: 1u32.into(),
+                },
                 expr: env.add(l),
             },
             ty: TCType::new_ptr(TCTypeBase::Void),
@@ -2132,7 +2144,9 @@ pub fn prim_unify(
         let r = TCExpr {
             kind: TCExprKind::Conv {
                 from: r_prim,
-                to: TCPrimType::Pointer { stride: 1.into() },
+                to: TCPrimType::Pointer {
+                    stride: 1u32.into(),
+                },
                 expr: env.add(r),
             },
             ty: TCType::new_ptr(TCTypeBase::Void),

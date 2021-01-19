@@ -95,7 +95,7 @@ lazy_static! {
         data.push(Opcode::StackDealloc);
 
         data.push(Opcode::MakeU32);
-        data.push(ECALL_EXIT);
+        data.push(Ecall::Exit);
         data.push(Opcode::Ecall);
 
         let mut init = BinaryData::new();

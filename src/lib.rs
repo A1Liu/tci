@@ -37,6 +37,10 @@ mod wasm {
 #[cfg(target_arch = "wasm32")]
 use wasm::*;
 
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum InMessage {

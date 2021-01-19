@@ -17,9 +17,9 @@ void __dyn_array_ensure_add(void *arr_, size_t size) {
   void *buffer = *arr;
 
   if (buffer == NULL) {
-    uint64_t *buffer_begin = malloc(size * 16 + sizeof(uint64_t) * 2);
+    uint64_t *buffer_begin = malloc(size * 8 + sizeof(uint64_t) * 2);
     buffer = *arr = buffer_begin + 2;
-    *__dyn_array_capacity_ptr(buffer) = 16;
+    *__dyn_array_capacity_ptr(buffer) = 8;
     *__dyn_array_len_ptr(buffer) = 0;
     return;
   }
@@ -44,9 +44,9 @@ uint64_t __dyn_array_add_from(void *arr_, size_t size, void *from, size_t len) {
 
   if (buffer == NULL) {
     initial_len = 0;
-    buf_begin = malloc(size * (16 + len) + sizeof(uint64_t) * 2);
+    buf_begin = malloc(size * (8 + len) + sizeof(uint64_t) * 2);
     buffer = *arr = buf_begin + 2;
-    *__dyn_array_capacity_ptr(buffer) = 16 + len;
+    *__dyn_array_capacity_ptr(buffer) = 8 + len;
     *__dyn_array_len_ptr(buffer) = len;
   } else {
     initial_len = *__dyn_array_len_ptr(buffer);

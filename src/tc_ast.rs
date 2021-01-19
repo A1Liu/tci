@@ -204,10 +204,10 @@ pub enum TCTypeBase {
 impl TCTypeBase {
     pub fn size(&self) -> n32 {
         match self {
-            TCTypeBase::I8 | TCTypeBase::U8 => 1.into(),
-            TCTypeBase::I16 | TCTypeBase::U16 => 2.into(),
-            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4.into(),
-            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8.into(),
+            TCTypeBase::I8 | TCTypeBase::U8 => 1u32.into(),
+            TCTypeBase::I16 | TCTypeBase::U16 => 2u32.into(),
+            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4u32.into(),
+            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8u32.into(),
             TCTypeBase::Void => return n32::NULL,
             TCTypeBase::NamedStruct { sa, .. } => sa.size,
             TCTypeBase::UnnamedStruct { sa, .. } => sa.size,
@@ -220,10 +220,10 @@ impl TCTypeBase {
 
     pub fn align(&self) -> n32 {
         match self {
-            TCTypeBase::I8 | TCTypeBase::U8 => 1.into(),
-            TCTypeBase::I16 | TCTypeBase::U16 => 2.into(),
-            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4.into(),
-            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8.into(),
+            TCTypeBase::I8 | TCTypeBase::U8 => 1u32.into(),
+            TCTypeBase::I16 | TCTypeBase::U16 => 2u32.into(),
+            TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4u32.into(),
+            TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8u32.into(),
             TCTypeBase::Void => return n32::NULL,
             TCTypeBase::NamedStruct { sa, .. } => sa.align,
             TCTypeBase::UnnamedStruct { sa, .. } => sa.align,
@@ -600,7 +600,7 @@ pub trait TCTy {
     fn align(&self) -> n32 {
         for modifier in self.mods() {
             match modifier {
-                TCTypeModifier::Pointer => return 8.into(),
+                TCTypeModifier::Pointer => return 8u32.into(),
                 TCTypeModifier::BeginParam(_)
                 | TCTypeModifier::NoParams
                 | TCTypeModifier::UnknownParams => return n32::NULL,
@@ -622,7 +622,7 @@ pub trait TCTy {
                     if is_array {
                         return (multiplier * 8).into();
                     } else {
-                        return 8.into();
+                        return 8u32.into();
                     }
                 }
                 TCTypeModifier::BeginParam(_)

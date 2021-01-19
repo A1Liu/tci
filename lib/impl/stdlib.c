@@ -3,17 +3,14 @@
 
 int __tci_errno;
 
-void *malloc(size_t size) { return tci_ecall(TCI_ECALL_HEAP_ALLOC, size); }
+void *malloc(size_t size) { return tci_ecall(TCI_ECALL_HEAP_ALLOC, size, 2); }
 
 void *realloc(void *_buffer, size_t new_size) {
   char *buffer = _buffer;
 
-  size_t allocation_offset = 0;
-  for (; tci_ecall(TCI_ECALL_IS_SAFE, buffer - 1 - allocation_offset);
-       allocation_offset++)
-    ;
+  char *alloc_begin = tci_ecall(TCI_ECALL_ALLOC_BEGIN, buffer);
 
-  if (allocation_offset > 0)
+  if (buffer != alloc_begin)
     tci_throw_error(
         "InvalidPointer",
         "called realloc on a pointer in the middle of an allocation", 1);
@@ -30,6 +27,6 @@ void *realloc(void *_buffer, size_t new_size) {
   return new_buffer;
 }
 
-void free(void *buffer) {}
+void free(void *buffer) { return tci_ecall(TCI_ECALL_HEAP_DEALLOC, buffer, 2); }
 
 void exit(int status) { tci_ecall(TCI_ECALL_EXIT, status); }
