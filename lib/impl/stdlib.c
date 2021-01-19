@@ -34,3 +34,6 @@ void free(void *buffer) {}
 void exit(int status) { tci_ecall(TCI_ECALL_EXIT, status); }
 
 long strtol(const char *restrict str, char **restrict str_end, int base) {}
+
+unsigned long strtoul(const char *restrict str, char **restrict str_end,
+                      int base) {}

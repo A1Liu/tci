@@ -25,6 +25,13 @@ void *memcpy(void *_dest, void *_src, size_t n) {
   return dest;
 }
 
+void *memset(void *s, int c, size_t n) {
+  unsigned char *p = s;
+  while (n--)
+    *p++ = (unsigned char)c;
+  return s;
+}
+
 size_t strlen(char *str) {
   size_t len = 0;
   for (; *str; len++, str = str + 1)

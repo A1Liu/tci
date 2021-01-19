@@ -821,7 +821,8 @@ impl<'a> TypeEnv<'a> {
             let (defn, sa) = (None, TC_UNKNOWN_SA);
             let tc_struct = TCStruct { defn, sa, decl_loc };
             let prev = self.structs.insert(LabelOrLoc::Loc(decl_loc), tc_struct);
-            assert!(prev.is_none());
+
+            // if prev is not none, a file defining an anonymous struct was included multiple times
 
             return Ok(LabelOrLoc::Loc(decl_loc));
         } else {
