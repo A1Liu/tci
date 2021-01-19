@@ -143,7 +143,7 @@ pub enum TypeSpecifier {
 pub enum TypeQualifierKind {
     Const,
     Volatile,
-    // Restrict,
+    Restrict,
     Atomic,
 }
 

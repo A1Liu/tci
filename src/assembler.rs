@@ -1487,9 +1487,9 @@ impl Assembler {
             (BinOp::Eq, TCPrimType::U32) => Opcode::CompEq32,
             (BinOp::Eq, TCPrimType::I64) => Opcode::CompEq64,
             (BinOp::Eq, TCPrimType::U64) => Opcode::CompEq64,
-            (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
             (BinOp::Eq, TCPrimType::F32) => Opcode::CompEqF32,
             (BinOp::Eq, TCPrimType::F64) => Opcode::CompEqF64,
+            (BinOp::Eq, TCPrimType::Pointer { .. }) => Opcode::CompEq64,
 
             (BinOp::Neq, TCPrimType::I8) => Opcode::CompNeq8,
             (BinOp::Neq, TCPrimType::U8) => Opcode::CompNeq8,
@@ -1499,9 +1499,9 @@ impl Assembler {
             (BinOp::Neq, TCPrimType::U32) => Opcode::CompNeq32,
             (BinOp::Neq, TCPrimType::I64) => Opcode::CompNeq64,
             (BinOp::Neq, TCPrimType::U64) => Opcode::CompNeq64,
-            (BinOp::Neq, TCPrimType::Pointer { .. }) => Opcode::CompNeq64,
             (BinOp::Neq, TCPrimType::F32) => Opcode::CompNeqF32,
             (BinOp::Neq, TCPrimType::F64) => Opcode::CompNeqF64,
+            (BinOp::Neq, TCPrimType::Pointer { .. }) => Opcode::CompNeq64,
 
             (BinOp::Gt, TCPrimType::I8) => {
                 self.func.opcodes.push(Opcode::Swap);
@@ -1563,6 +1563,12 @@ impl Assembler {
                 self.func.opcodes.push(8u32);
                 Opcode::CompLtF64
             }
+            (BinOp::Gt, TCPrimType::Pointer { .. }) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLtU64
+            }
 
             (BinOp::Lt, TCPrimType::I8) => Opcode::CompLtI8,
             (BinOp::Lt, TCPrimType::U8) => Opcode::CompLtU8,
@@ -1574,6 +1580,7 @@ impl Assembler {
             (BinOp::Lt, TCPrimType::U64) => Opcode::CompLtU64,
             (BinOp::Lt, TCPrimType::F32) => Opcode::CompLtF32,
             (BinOp::Lt, TCPrimType::F64) => Opcode::CompLtF64,
+            (BinOp::Lt, TCPrimType::Pointer { .. }) => Opcode::CompLtU64,
 
             (BinOp::Leq, TCPrimType::I8) => Opcode::CompLeqI8,
             (BinOp::Leq, TCPrimType::U8) => Opcode::CompLeqU8,
@@ -1585,6 +1592,7 @@ impl Assembler {
             (BinOp::Leq, TCPrimType::U64) => Opcode::CompLeqU64,
             (BinOp::Leq, TCPrimType::F32) => Opcode::CompLeqF32,
             (BinOp::Leq, TCPrimType::F64) => Opcode::CompLeqF64,
+            (BinOp::Leq, TCPrimType::Pointer { .. }) => Opcode::CompLeqU64,
 
             (BinOp::Geq, TCPrimType::I8) => {
                 self.func.opcodes.push(Opcode::Swap);
@@ -1645,6 +1653,12 @@ impl Assembler {
                 self.func.opcodes.push(8u32);
                 self.func.opcodes.push(8u32);
                 Opcode::CompLeqF64
+            }
+            (BinOp::Geq, TCPrimType::Pointer { .. }) => {
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(8u32);
+                self.func.opcodes.push(8u32);
+                Opcode::CompLeqU64
             }
 
             (BinOp::LShift, TCPrimType::I8) => Opcode::LShiftI8,

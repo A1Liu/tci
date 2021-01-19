@@ -18,27 +18,24 @@ pub use std::io::Write;
 #[allow(unused_macros)]
 macro_rules! panic {
     ( $( $arg:tt )* ) => {{
-        out!(@CLEAN, "{:?}\n", backtrace::Backtrace::new());
         debug!( $( $arg )* );
-        std::process::exit(1)
+        std::panic!();
     }};
 }
 
 #[allow(unused_macros)]
 macro_rules! unimplemented {
     ( $( $arg:tt )* ) => {{
-        out!(@CLEAN, "{:?}\n", backtrace::Backtrace::new());
         debug!( $( $arg )* );
-        std::process::exit(1)
+        std::panic!();
     }};
 }
 
 #[allow(unused_macros)]
 macro_rules! unreachable {
     ( $( $arg:tt )* ) => {{
-        out!(@CLEAN, "{:?}\n", backtrace::Backtrace::new());
         debug!( $( $arg )* );
-        std::process::exit(1)
+        std::panic!();
     }};
 }
 
@@ -88,9 +85,8 @@ macro_rules! out {
     (@LIMITED, $str:expr, $( $e:expr ),+ ) => {{
         let count = $crate::COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count > $crate::LIMIT {
-            out!(@CLEAN, "{:?}", backtrace::Backtrace::new());
             out!(@CLEAN, "{}", "debug statement limit reached");
-            std::process::exit(1);
+            std::panic!();
         }
 
         out!(@CLEAN, std::concat!("{} ", $str), count, $( $e ),+ );

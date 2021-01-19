@@ -62,6 +62,7 @@ pub enum TokenKind {
     Typedef,
     Volatile,
     Inline,
+    Restrict,
 
     If,
     Else,
@@ -185,7 +186,7 @@ lazy_static! {
         set.insert("int", TokenKind::Int);
         set.insert("long", TokenKind::Long);
         set.insert("register", TokenKind::Unimplemented);
-        set.insert("restrict", TokenKind::Unimplemented);
+        set.insert("restrict", TokenKind::Restrict);
         set.insert("return", TokenKind::Return);
         set.insert("short", TokenKind::Short);
         set.insert("signed", TokenKind::Signed);
@@ -1649,10 +1650,46 @@ impl SimpleLexer {
 
             match self.expect(data)? {
                 b'n' => return Ok(b'\n'),
-                b'\n' => continue,
+                b't' => return Ok(b'\t'),
                 b'\'' => return Ok(b'\''),
                 b'"' => return Ok(b'"'),
-                b'0' => return Ok(b'\0'),
+
+                // \nnn where each 'n' is an octal digit
+                x @ b'0'..=b'7' => {
+                    let mut c = x - b'0';
+                    if !self.peek_check(data, |c| c >= b'0' && c <= b'7') {
+                        return Ok(c);
+                    }
+
+                    c *= 8;
+                    c += data[self.current] - b'0';
+                    self.current += 1;
+
+                    if !self.peek_check(data, |c| c >= b'0' && c <= b'7') {
+                        return Ok(c);
+                    }
+
+                    c *= 8;
+                    c += data[self.current] - b'0';
+                    self.current += 1;
+
+                    return Ok(c);
+                }
+
+                b'\n' => continue,
+                b'\r' => {
+                    if self.peek_eq(data, b'\n') {
+                        self.current += 1;
+                        continue;
+                    } else {
+                        return Err(error!(
+                            "encoding of the file is probably messed up",
+                            l(self.current as u32 - 1, self.current as u32, self.file),
+                            "invalid character here"
+                        ));
+                    }
+                }
+
                 _ => {
                     return Err(error!(
                         "invalid escape sequence",

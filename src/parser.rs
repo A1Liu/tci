@@ -992,6 +992,12 @@ rule specifier_qualifier_qualifier0() -> SpecifierQualifier = q:type_qualifier()
 }
 
 rule type_qualifier() -> TypeQualifier =
+    pos:position!() [Restrict] {
+        TypeQualifier {
+            kind: TypeQualifierKind::Restrict,
+            loc: env.locs[pos],
+        }
+    } /
     pos:position!() [Const] {
         TypeQualifier {
             kind: TypeQualifierKind::Const,

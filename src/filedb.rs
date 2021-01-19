@@ -113,12 +113,15 @@ lazy_static! {
         new_file!(@HEADER, "stdarg.h");
         new_file!(@HEADER, "stdbool.h");
         new_file!(@HEADER, "float.h");
+        new_file!(@HEADER, "ctype.h");
+        new_file!(@HEADER, "errno.h");
 
         new_file!(@IMPL, "tci.c");
         new_file!(@IMPL, "printf.c");
-        new_file!(@IMPL, "stdlib.h");
-        new_file!(@IMPL, "string.h");
-        new_file!(@IMPL, "stdarg.h");
+        new_file!(@IMPL, "sscanf.c");
+        new_file!(@IMPL, "stdlib.c");
+        new_file!(@IMPL, "string.c");
+        new_file!(@IMPL, "ctype.c");
 
         m
     };

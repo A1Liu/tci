@@ -10,7 +10,7 @@ pub struct ContBr {
 
 pub struct FuncEnv {
     pub ops: Vec<TCOpcode>,
-    pub symbol_to_label: HashMap<u32, u32>,
+    pub symbol_to_label: HashMap<u32, (u32, CodeLoc)>,
     pub translate_gotos: Vec<u32>,
     pub next_label: u32,
     pub next_symbol_label: u32,
@@ -461,6 +461,51 @@ impl<'a> TypeEnv<'a> {
             loc,
         };
 
+        env.ops.push(op);
+    }
+
+    pub fn user_label(
+        &self,
+        env: &mut FuncEnv,
+        user_label: u32,
+        loc: CodeLoc,
+    ) -> Result<(), Error> {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        let label = env.label();
+        if let Some((_, prev_loc)) = env.symbol_to_label.insert(user_label, (label, loc)) {
+            return Err(error!(
+                "label defined multiple times in same function",
+                prev_loc, "first definition here", loc, "second definition here"
+            ));
+        }
+
+        let op = TCOpcode {
+            kind: TCOpcodeKind::Label { label, scope_idx },
+            loc,
+        };
+
+        env.ops.push(op);
+        return Ok(());
+    }
+
+    pub fn user_goto(&self, env: &mut FuncEnv, goto: u32, loc: CodeLoc) {
+        let scope_idx = match self.kind {
+            TypeEnvKind::Local { scope_idx, .. } => scope_idx,
+            TypeEnvKind::LocalSwitch { scope_idx, .. } => scope_idx,
+            TypeEnvKind::Global { .. } => unreachable!(),
+        };
+
+        let op = TCOpcode {
+            kind: TCOpcodeKind::Goto { goto, scope_idx },
+            loc,
+        };
+
+        env.translate_gotos.push(env.ops.len() as u32);
         env.ops.push(op);
     }
 
@@ -1069,7 +1114,7 @@ impl<'a> TypeEnv<'a> {
         return Ok(());
     }
 
-    pub fn complete_func_defn(&mut self, ident: u32, env: FuncEnv) -> Result<(), Error> {
+    pub fn complete_func_defn(&mut self, ident: u32, mut env: FuncEnv) -> Result<(), Error> {
         let global_env = match &mut self.kind {
             TypeEnvKind::Global(g) => g,
             _ => unreachable!(),
@@ -1077,7 +1122,10 @@ impl<'a> TypeEnv<'a> {
         let func = if let Some(func) = global_env.tu.functions.get_mut(&ident) {
             func
         } else {
-            panic!("function being defined doesn't exist")
+            return Err(error!(
+                "function being defined doesn't exist (this is a bug in TCI)",
+                env.decl_loc, "function definition here"
+            ));
         };
 
         if let Some(prev) = func.defn {
@@ -1092,6 +1140,25 @@ impl<'a> TypeEnv<'a> {
         } else {
             0
         };
+
+        let or_else = |loc: CodeLoc| {
+            move || error!("couldn't find label", loc, "referenced by goto found here")
+        };
+        for goto_idx in env.translate_gotos {
+            let op = &mut env.ops[goto_idx as usize];
+            let goto = match &mut op.kind {
+                TCOpcodeKind::Goto { goto, scope_idx } => goto,
+                _ => {
+                    return Err(error!(
+                        "goto index was incorrect (this is a bug in TCI)",
+                        op.loc, "this was supposed to be a goto"
+                    ))
+                }
+            };
+
+            let (label, loc) = env.symbol_to_label.get(&goto).ok_or_else(or_else(op.loc))?;
+            *goto = *label;
+        }
 
         func.defn = Some(TCFuncDefn {
             ops: global_env.tu.buckets.add_array(env.ops),

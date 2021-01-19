@@ -487,6 +487,9 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             env.label(out, cb.br, body.loc);
         }
 
+        StatementKind::Goto { label, label_loc } => {
+            env.user_goto(out, label, stmt.loc);
+        }
         StatementKind::Continue => {
             if env.cont(out, stmt.loc) {
                 return Err(error!(
@@ -523,8 +526,14 @@ pub fn check_stmt(env: &mut TypeEnv, out: &mut FuncEnv, stmt: Statement) -> Resu
             env.default(out, stmt.loc)?;
             check_stmt(env, out, *labeled)?;
         }
-
-        x => unimplemented!("{:#?}", x),
+        StatementKind::Labeled {
+            label,
+            label_loc,
+            labeled,
+        } => {
+            env.user_label(out, label, label_loc)?;
+            check_stmt(env, out, *labeled)?;
+        }
     }
 
     return Ok(());
@@ -2046,7 +2055,8 @@ pub fn check_bin_op(
                     ty: ptr.ty,
                 });
             }
-            BinOp::Eq => {}
+            BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {}
+            BinOp::Eq | BinOp::Neq => {}
             _ => return Err(invalid_bin_op(&l, &r)),
         }
     }

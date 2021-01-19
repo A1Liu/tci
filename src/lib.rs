@@ -25,7 +25,6 @@ use codespan_reporting::term::termcolor::WriteColor;
 use filedb::FileDb;
 use runtime::*;
 use std::collections::HashMap;
-use util::Error as CompErr;
 use util::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -50,7 +49,7 @@ pub enum OutMessage {
     FileIds(HashMap<u32, String>),
     CompileError {
         rendered: String,
-        errors: Vec<CompErr>,
+        errors: Vec<Error>,
     },
     InvalidInput(String),
     JumpTo(CodeLoc),
@@ -174,8 +173,8 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
 }
 
 fn compile_filter<'a, In, T>(
-    mut a: impl FnMut(In) -> Result<T, CompErr> + 'a,
-    errs: &'a mut Vec<CompErr>,
+    mut a: impl FnMut(In) -> Result<T, Error> + 'a,
+    errs: &'a mut Vec<Error>,
 ) -> impl FnMut(In) -> Option<T> + 'a {
     return move |idx| match a(idx) {
         Ok(t) => return Some(t),
@@ -186,8 +185,8 @@ fn compile_filter<'a, In, T>(
     };
 }
 
-fn compile(env: &FileDb) -> Result<BinaryData, Vec<CompErr>> {
-    let mut errors: Vec<CompErr> = Vec::new();
+fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
+    let mut errors: Vec<Error> = Vec::new();
     let mut lexer = lexer::Lexer::new(env);
 
     let files_list = env.impls();
@@ -242,7 +241,7 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<CompErr>> {
     return Ok(program);
 }
 
-fn emit_err(errs: &[CompErr], files: &FileDb, writer: &mut impl WriteColor) {
+fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
     let config = codespan_reporting::term::Config::default();
     for err in errs {
         codespan_reporting::term::emit(writer, &config, files, &err.diagnostic()).unwrap();
