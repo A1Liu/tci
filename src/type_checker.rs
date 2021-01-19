@@ -929,6 +929,7 @@ pub fn parse_decl_specs(
             Typedef => {
                 sc = StorageClass::Typedef;
             }
+            Register => {}
 
             TypeQualifier(qual) => {}
             Inline => {}

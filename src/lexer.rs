@@ -48,18 +48,24 @@ pub enum TokenKind {
 
     Void,
     Char,
+    Short,
     Int,
     Long,
     Float,
     Double,
     Unsigned,
-    Static,
     Signed,
     Struct,
     Union,
     Enum,
     Sizeof,
+
     Typedef,
+    Extern,
+    Static,
+    Register,
+
+    Const,
     Volatile,
     Inline,
     Restrict,
@@ -126,11 +132,8 @@ pub enum TokenKind {
 
     Unimplemented,
     Case,
-    Const,
     Default,
-    Extern,
     Switch,
-    Short,
 }
 
 pub enum MacroTok {
@@ -185,7 +188,7 @@ lazy_static! {
         set.insert("inline", TokenKind::Inline);
         set.insert("int", TokenKind::Int);
         set.insert("long", TokenKind::Long);
-        set.insert("register", TokenKind::Unimplemented);
+        set.insert("register", TokenKind::Register);
         set.insert("restrict", TokenKind::Restrict);
         set.insert("return", TokenKind::Return);
         set.insert("short", TokenKind::Short);

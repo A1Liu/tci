@@ -268,6 +268,10 @@ rule dec_number_type() -> LiteralType = parts:dec_number_type_part()* {?
 
     if unsigned == 0 && long == 0 {
         Ok(LiteralType::Int)
+    } else if unsigned == 0 && long == 1 {
+        Ok(LiteralType::Long)
+    } else if unsigned == 0 && long == 2 {
+        Ok(LiteralType::LongLong)
     } else if unsigned == 1 && long == 0 {
         Ok(LiteralType::Unsigned)
     } else if unsigned == 1 && long == 1 {
@@ -275,7 +279,7 @@ rule dec_number_type() -> LiteralType = parts:dec_number_type_part()* {?
     } else if unsigned == 1 && long == 2 {
         Ok(LiteralType::UnsignedLongLong)
     } else {
-        Err("invalid integer literal suffix")
+        Err("integer suffix")
     }
 }
 
@@ -287,7 +291,7 @@ rule float_number() -> Expr =
 
         let mult = if dash.is_some() { -1f32 } else { 1f32 };
         let opt = str::parse::<f32>(&bef).ok().zip(str::parse::<f32>(&aft).ok());
-        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|float| {
+        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("exponential").map(|float| {
             Expr {
                 kind: ExprKind::FloatLit(float),
                 loc,
@@ -300,7 +304,7 @@ rule float_number() -> Expr =
 
         let mult = if dash.is_some() { -1f64 } else { 1f64 };
         let opt = str::parse::<f64>(&bef).ok().zip(str::parse::<f64>(&aft).ok());
-        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("failed to parse exponential").map(|double| {
+        opt.map(|(bef, aft)| bef.powf(mult * aft)).ok_or("exponential").map(|double| {
             Expr {
                 kind: ExprKind::DoubleLit(double),
                 loc,
@@ -310,7 +314,7 @@ rule float_number() -> Expr =
     pos:position!() n:float_number_lit_seq() [IntChar(_F)] pos2:position!() {?
         let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
 
-        str::parse::<f32>(&n).map_err(|e| "couldn't parse float constant").map(|float| {
+        str::parse::<f32>(&n).map_err(|e| "float constant").map(|float| {
             Expr {
                 kind: ExprKind::FloatLit(float),
                 loc,
@@ -320,7 +324,7 @@ rule float_number() -> Expr =
     pos:position!() n:float_number_lit_seq_strict() pos2:position!() {?
         let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
 
-        str::parse::<f64>(&n).map_err(|e| "couldn't parse double constant").map(|double| {
+        str::parse::<f64>(&n).map_err(|e| "double constant").map(|double| {
             Expr {
                 kind: ExprKind::DoubleLit(double),
                 loc,
@@ -342,7 +346,7 @@ rule dec_number() -> Expr =
             LiteralType::UnsignedLongLong => u64::from_str_radix(&n ,16).map(|n| ExprKind::ULongLit(n)),
         };
 
-        kind.map_err(|e| "couldn't parse hex integer constant").map(|kind| Expr { kind, loc })
+        kind.map_err(|e| "hex integer constant").map(|kind| Expr { kind, loc })
     } /
     pos:position!() n:number_lit_seq() ty:dec_number_type() pos2:position!() {?
         let loc = l_from(env.locs[pos], env.locs[pos2 - 1]);
@@ -356,7 +360,7 @@ rule dec_number() -> Expr =
             LiteralType::UnsignedLongLong => u64::from_str_radix(&n ,10).map(|n| ExprKind::ULongLit(n)),
         };
 
-        kind.map_err(|e| "couldn't parse hex integer constant").map(|kind| Expr { kind, loc })
+        kind.map_err(|e| "integer constant").map(|kind| Expr { kind, loc })
     }
 
 rule char() -> (i8, CodeLoc) = pos:position!() n:$[CharLit(_)] {
@@ -835,6 +839,12 @@ rule type_declarator() -> InitDeclarator = d:declarator() {
 ////
 
 rule storage_class_specifier() -> DeclarationSpecifier =
+    pos:position!() [Register] {
+        DeclarationSpecifier {
+            kind: DeclarationSpecifierKind::Register,
+            loc: env.locs[pos],
+        }
+    } /
     pos:position!() [Extern] {
         DeclarationSpecifier {
             kind: DeclarationSpecifierKind::Extern,

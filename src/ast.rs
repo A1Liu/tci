@@ -104,6 +104,7 @@ pub enum DeclarationSpecifierKind {
     Extern,
     Static,
     Typedef,
+    Register,
     TypeSpecifier(TypeSpecifier),
     TypeQualifier(TypeQualifier),
     Inline,   // __inline__

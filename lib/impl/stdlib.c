@@ -1,6 +1,7 @@
-#include <errno.h>
 #include <stdlib.h>
 #include <tci.h>
+
+int __tci_errno;
 
 void *malloc(size_t size) { return tci_ecall(TCI_ECALL_HEAP_ALLOC, size); }
 
@@ -32,8 +33,3 @@ void *realloc(void *_buffer, size_t new_size) {
 void free(void *buffer) {}
 
 void exit(int status) { tci_ecall(TCI_ECALL_EXIT, status); }
-
-long strtol(const char *restrict str, char **restrict str_end, int base) {}
-
-unsigned long strtoul(const char *restrict str, char **restrict str_end,
-                      int base) {}

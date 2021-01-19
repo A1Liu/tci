@@ -1067,6 +1067,22 @@ impl<'a> TypeEnv<'a> {
             }
         };
 
+        if let TCDeclInit::Extern = prev.get().init {
+            if !TCType::ty_eq(&prev.get().ty, &decl.ty) {
+                return Err(error!(
+                    "previous declaration of variable had different type",
+                    prev.get().loc,
+                    "previous declaration was extern so there's no redeclaration error",
+                    decl.loc,
+                    "new declaration was here with different type"
+                ));
+            }
+
+            prev.get_mut().init = decl.init;
+            prev.get_mut().loc = decl.loc;
+            return Ok(());
+        }
+
         let (prev_ty, prev_loc, decl_loc) = (prev.get().ty, prev.get().loc, decl.loc);
         let or_else = move || variable_redeclaration(prev_loc, decl_loc);
         let (rt, params) = decl.ty.func_parts_strict().ok_or_else(or_else)?;

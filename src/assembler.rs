@@ -1358,20 +1358,64 @@ impl Assembler {
                 self.func.opcodes.push(-1i8);
                 self.func.opcodes.push(Opcode::MulI8);
             }
+            (Neg, U8) => {
+                self.func.opcodes.push(Opcode::MakeU8);
+                self.func.opcodes.push(u8::MAX);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(Opcode::SubU8);
+                self.func.opcodes.push(Opcode::MakeU8);
+                self.func.opcodes.push(1u8);
+                self.func.opcodes.push(Opcode::Add8);
+            }
             (Neg, I16) => {
                 self.func.opcodes.push(Opcode::MakeI16);
                 self.func.opcodes.push(-1i16);
                 self.func.opcodes.push(Opcode::MulI16);
+            }
+            (Neg, U16) => {
+                self.func.opcodes.push(Opcode::MakeU16);
+                self.func.opcodes.push(u16::MAX);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(Opcode::SubU16);
+                self.func.opcodes.push(Opcode::MakeU16);
+                self.func.opcodes.push(1u16);
+                self.func.opcodes.push(Opcode::Add16);
             }
             (Neg, I32) => {
                 self.func.opcodes.push(Opcode::MakeI32);
                 self.func.opcodes.push(-1i32);
                 self.func.opcodes.push(Opcode::MulI32);
             }
+            (Neg, U32) => {
+                self.func.opcodes.push(Opcode::MakeU32);
+                self.func.opcodes.push(u32::MAX);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(Opcode::SubU32);
+                self.func.opcodes.push(Opcode::MakeU32);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(Opcode::Add32);
+            }
             (Neg, I64) => {
                 self.func.opcodes.push(Opcode::MakeI64);
                 self.func.opcodes.push(-1i64);
                 self.func.opcodes.push(Opcode::MulI64);
+            }
+            (Neg, U64) => {
+                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(u64::MAX);
+                self.func.opcodes.push(Opcode::Swap);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(1u32);
+                self.func.opcodes.push(Opcode::SubU64);
+                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(1u64);
+                self.func.opcodes.push(Opcode::Add64);
             }
             (Neg, F32) => {
                 self.func.opcodes.push(Opcode::MakeF32);
