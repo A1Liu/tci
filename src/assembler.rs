@@ -324,7 +324,6 @@ impl Assembler {
 
         match expr.kind {
             TCExprKind::Uninit => {
-                debug!(expr.ty);
                 for _ in 0u32..expr.ty.size().into() {
                     bytes.push(0u8);
                 }
@@ -631,7 +630,6 @@ impl Assembler {
                     let bytes = expr.ty.repr_size();
                     self.translate_expr(&expr);
 
-                    debug!(cases);
                     for (case, take_case) in cases {
                         let skip_case = self.func.labels.len() as u32;
                         self.func.labels.push(LabelData::uninit());

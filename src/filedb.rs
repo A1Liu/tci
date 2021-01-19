@@ -335,7 +335,7 @@ pub fn parent_if_file<'a>(path: &'a str) -> &'a str {
     let mut idx = bytes.len() - 1;
     while bytes[idx] != PATH_SEP {
         if idx == 0 {
-            panic!("got relative file path {}", path);
+            return ""; // idk man this works
         }
         idx -= 1;
     }

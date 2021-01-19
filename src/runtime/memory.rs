@@ -410,9 +410,6 @@ pub fn invalid_ptr(ptr: VarPointer) -> IError {
 }
 
 pub fn invalid_offset(valid_len: u32, ptr: VarPointer, len: u32) -> IError {
-    debug!(ptr.is_binary());
-    debug!(ptr.is_heap());
-    debug!(ptr.is_stack());
     let (start, end) = (ptr.with_offset(0), ptr.with_offset(valid_len));
     return ierror!(
         "InvalidPointer",

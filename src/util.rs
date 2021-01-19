@@ -4,60 +4,113 @@ use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
 use core::{fmt, marker, mem, ops, slice, str};
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io;
-use std::sync::*;
+use std::sync::atomic::AtomicUsize;
 
 pub use lazy_static::lazy_static;
 pub use std::collections::hash_map::Entry;
 pub use std::collections::HashMap;
 pub use std::io::Write;
 
-pub static COUNTER: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
-pub const LIMIT: usize = (-1isize) as usize;
+#[allow(unused_macros)]
+macro_rules! panic {
+    ( $( $arg:tt )* ) => {{
+        out!(@CLEAN, "{:?}\n", backtrace::Backtrace::new());
+        debug!( $( $arg )* );
+        std::process::exit(1)
+    }};
+}
+
+#[allow(unused_macros)]
+macro_rules! unimplemented {
+    ( $( $arg:tt )* ) => {{
+        out!(@CLEAN, "{:?}\n", backtrace::Backtrace::new());
+        debug!( $( $arg )* );
+        std::process::exit(1)
+    }};
+}
+
+#[allow(unused_macros)]
+macro_rules! unreachable {
+    ( $( $arg:tt )* ) => {{
+        out!(@CLEAN, "{:?}\n", backtrace::Backtrace::new());
+        debug!( $( $arg )* );
+        std::process::exit(1)
+    }};
+}
+
+#[allow(unused_macros)]
+macro_rules! println {
+    ( $( $arg:tt )* ) => {{
+        debug!( $( $arg )* );
+    }};
+}
 
 #[allow(unused_macros)]
 macro_rules! debug {
+    ($fmt:literal) => {{
+         out!($fmt);
+    }};
     ($fmt:literal, $( $e:expr ),* ) => {{
-        if cfg!(debug_assertions) {
-            let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-            if count > LIMIT {
-                panic!("too many debug calls");
-            }
-
-            print!("DEBUG-{} ({}:{}): ", count, file!(), line!());
-            println!($fmt, $( $e ),* );
-        }
+         out!(@DEBUG, $fmt, $( $e ),* );
     }};
     ($expr:expr) => {{
-        if cfg!(debug_assertions) {
-            let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-            if count > LIMIT {
-                panic!("too many debug calls");
-            }
-
-            let expr = &$expr;
-            println!(
-                "DEBUG-{} ({}:{}): {} = {:?}",
-                count,
-                file!(),
-                line!(),
-                stringify!($expr),
-                expr
-            );
-        }
+         out!(@DEBUG, "{} = {:?}", stringify!($expr), $expr);
     }};
     () => {{
-        if cfg!(debug_assertions) {
-            let count = COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-            if count > LIMIT {
-                panic!("too many debug calls");
-            }
+        out!("Nothing to see here");
+    }};
+}
 
-            println!("DEBUG-{} ({}:{})", count, file!(), line!());
+thread_local! {
+    pub static OUTPUT: RefCell<Option<Box<dyn Fn(String)>>>= RefCell::new(None);
+}
+
+pub static COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub const LIMIT: usize = (-1isize) as usize;
+
+#[allow(unused_macros)]
+macro_rules! out {
+    ($str:literal) => {{
+        out!(@DEBUG, "{}", $str);
+    }};
+    (@DEBUG, $str:expr, $( $e:expr ),+ ) => {{
+        if cfg!(debug_assertions) {
+            out!(@LIMITED, std::concat!("DEBUG ({}:{}): ", $str, "\n"), file!(), line!(), $( $e ),+ );
         }
     }};
+    (@LOG, $str:expr, $( $e:expr ),+ ) => {{
+        out!(@CLEAN, std::concat!("LOG ({}:{}): ", $str, "\n"), file!(), line!(), $( $e ),+ );
+    }};
+    (@LIMITED, $str:expr, $( $e:expr ),+ ) => {{
+        let count = $crate::COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if count > $crate::LIMIT {
+            out!(@CLEAN, "{:?}", backtrace::Backtrace::new());
+            out!(@CLEAN, "{}", "debug statement limit reached");
+            std::process::exit(1);
+        }
+
+        out!(@CLEAN, std::concat!("{} ", $str), count, $( $e ),+ );
+    }};
+    (@CLEAN, $str:expr, $( $e:expr ),+ ) => {{
+        let s = std::format!( $str, $( $e ),+ );
+
+        $crate::OUTPUT.with(|out| {
+            let borrow = out.borrow();
+            if let Some(func) = &*borrow {
+                func(s);
+            } else {
+                std::print!("{}", s);
+            }
+        });
+    }};
+}
+
+pub fn register_output(f: impl Fn(String) + 'static) {
+    OUTPUT.with(|out| out.borrow_mut().replace(Box::new(f)));
 }
 
 macro_rules! error {
@@ -1265,32 +1318,6 @@ impl Serialize for n32 {
             serializer.serialize_u32(self.data)
         }
     }
-}
-
-lazy_static! {
-    pub static ref INDENT: Mutex<String> = Mutex::new("".to_string());
-}
-
-#[allow(unused_macros)]
-macro_rules! indent {
-    ($format:literal) => {{
-        print!("{}", INDENT.lock().unwrap());
-        println!($format);
-    }};
-    ($format:literal,$($e:expr),* ) => {{
-        print!("{}", INDENT.lock().unwrap());
-        println!($format, $( $e ),*);
-    }};
-}
-
-pub fn indent_go_down() {
-    *INDENT.lock().unwrap() += "  ";
-}
-
-pub fn indent_return() {
-    let mut i = INDENT.lock().unwrap();
-    i.pop();
-    i.pop();
 }
 
 pub struct Defer<F: FnOnce()> {

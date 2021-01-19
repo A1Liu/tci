@@ -23,12 +23,20 @@ mod test;
 
 use codespan_reporting::term::termcolor::WriteColor;
 use filedb::FileDb;
-use js_sys::{Function as Func, Promise};
 use runtime::*;
 use std::collections::HashMap;
+use util::Error as CompErr;
 use util::*;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    pub use js_sys::{Function as Func, Promise};
+    pub use wasm_bindgen::prelude::*;
+    pub use wasm_bindgen_futures::JsFuture;
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm::*;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
@@ -42,7 +50,7 @@ pub enum OutMessage {
     FileIds(HashMap<u32, String>),
     CompileError {
         rendered: String,
-        errors: Vec<Error>,
+        errors: Vec<CompErr>,
     },
     InvalidInput(String),
     JumpTo(CodeLoc),
@@ -51,6 +59,7 @@ pub enum OutMessage {
     Stderr(String),
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
     use InMessage as In;
@@ -62,6 +71,11 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         send.call1(&JsValue::UNDEFINED, &JsValue::from_str(&writer.to_string()))?;
         return Ok(());
     };
+
+    let global_send = send.clone();
+    register_output(move |s| {
+        global_send(Out::Debug(s)).ok();
+    });
 
     let recv = || -> Result<Option<In>, JsValue> {
         let value = recv.call0(&JsValue::UNDEFINED)?;
@@ -92,24 +106,6 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         let promise = Promise::from(wait.call1(&JsValue::UNDEFINED, &timeout)?);
         return Ok(JsFuture::from(promise));
     };
-
-    #[allow(unused_macros)]
-    macro_rules! debug {
-        ($str:literal) => {{
-            #[cfg(debug_assertions)]
-            send(Out::Debug( format!($str) ))?;
-        }};
-        ($str:literal, $( $val:expr ),* ) => {{
-            #[cfg(debug_assertions)]
-            send(Out::Debug( format!($str, $( $val ),*) ))?;
-        }};
-        (@LOG, $str:literal) => {{
-            send(Out::Debug( format!($str) ))?;
-        }};
-        (@LOG, $str:literal, $( $val:expr ),* ) => {{
-            send(Out::Debug( format!($str, $( $val ),*) ))?;
-        }};
-    }
 
     let mut files = FileDb::new();
     let mut runtime = None;
@@ -145,7 +141,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
             }
         }
 
-        let mut timeout = 1;
+        let mut timeout = 0;
         if let Some(runtime) = runtime.as_mut() {
             let status = runtime.run_op_count(5000);
 
@@ -154,7 +150,9 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                     timeout = 0;
                     runtime.print_callstack(&files);
                 }
-                _ => {}
+                RuntimeStatus::Running => {
+                    timeout = 1;
+                }
             }
 
             for TS(tag, s) in &runtime.events() {
@@ -176,8 +174,8 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
 }
 
 fn compile_filter<'a, In, T>(
-    mut a: impl FnMut(In) -> Result<T, Error> + 'a,
-    errs: &'a mut Vec<Error>,
+    mut a: impl FnMut(In) -> Result<T, CompErr> + 'a,
+    errs: &'a mut Vec<CompErr>,
 ) -> impl FnMut(In) -> Option<T> + 'a {
     return move |idx| match a(idx) {
         Ok(t) => return Some(t),
@@ -188,8 +186,8 @@ fn compile_filter<'a, In, T>(
     };
 }
 
-fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
-    let mut errors: Vec<Error> = Vec::new();
+fn compile(env: &FileDb) -> Result<BinaryData, Vec<CompErr>> {
+    let mut errors: Vec<CompErr> = Vec::new();
     let mut lexer = lexer::Lexer::new(env);
 
     let files_list = env.impls();
@@ -244,7 +242,7 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
     return Ok(program);
 }
 
-fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
+fn emit_err(errs: &[CompErr], files: &FileDb, writer: &mut impl WriteColor) {
     let config = codespan_reporting::term::Config::default();
     for err in errs {
         codespan_reporting::term::emit(writer, &config, files, &err.diagnostic()).unwrap();
