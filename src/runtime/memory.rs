@@ -27,10 +27,10 @@ pub struct Memory {
     pub heap: Vec<Var<AllocInfo>>,
     pub freed: usize,
 
+    // Per thread
     pub expr_stack: Vec<u8>,
     pub stack_data: Vec<u8>,
     pub stack: Vec<Var<()>>,
-
     pub callstack: Vec<CallFrame>,
     pub current_func: LinkName,
     pub fp: u16,
@@ -143,10 +143,10 @@ impl Memory {
     pub fn add_stack_var(&mut self, len: u32) -> Result<VarPointer, IError> {
         let stack_len = self.stack_data.len();
         let new_len = stack_len + len as usize;
-        if new_len > 1024 * 16 {
+        if new_len > 1024 * 8 {
             return Err(ierror!(
                 "StackOverflow",
-                "stack size would be over 16KB after this declaration"
+                "stack size would be over 8KB after this declaration"
             ));
         }
 
@@ -312,50 +312,6 @@ impl Memory {
         return Some(ptr.with_offset(offset as u32));
     }
 
-    pub fn read<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
-        let or_else = || invalid_ptr(ptr);
-
-        let from_bytes = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
-
-            &self.stack_data[lower..upper]
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
-            if lower_var.meta.len != n32::NULL {
-                return Err(freed_ptr(ptr));
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            &self.shared_data[lower..upper]
-        } else {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
-
-            &self.shared_data[lower..upper]
-        };
-
-        let (len, from_len) = (mem::size_of::<T>() as u32, from_bytes.len() as u32);
-        let range = (ptr.offset() as usize)..(ptr.offset() as usize + len as usize);
-        let or_else = move || invalid_offset(from_len, ptr, len);
-        let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
-
-        let mut out = mem::MaybeUninit::uninit();
-        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
-        return Ok(unsafe { out.assume_init() });
-    }
-
     pub fn read_bytes(&self, ptr: VarPointer, len: u32) -> Result<&[u8], IError> {
         if ptr.var_idx() == 0 {
             return Err(invalid_ptr(ptr));
@@ -395,6 +351,57 @@ impl Memory {
         let or_else = move || invalid_offset(from_len, ptr, len);
         let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
         return Ok(from_bytes);
+    }
+
+    pub fn read<T: Copy>(&self, ptr: VarPointer) -> Result<T, IError> {
+        let len = mem::size_of::<T>() as u32;
+        let from_bytes = self.read_bytes(ptr, len)?;
+
+        let mut out = mem::MaybeUninit::uninit();
+        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
+        return Ok(unsafe { out.assume_init() });
+    }
+
+    pub fn write_bytes(&mut self, ptr: VarPointer, buffer: &[u8]) -> Result<(), IError> {
+        if ptr.var_idx() == 0 {
+            return Err(invalid_ptr(ptr));
+        }
+
+        let var_idx = ptr.var_idx() - 1;
+        let or_else = || invalid_ptr(ptr);
+
+        let to_bytes = if ptr.is_stack() {
+            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.stack_data.len());
+
+            &mut self.stack_data[lower..upper]
+        } else if ptr.is_heap() {
+            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
+            if lower_var.meta.len != n32::NULL {
+                return Err(freed_ptr(ptr));
+            }
+
+            let lower = lower_var.idx;
+            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
+            let upper = upper.unwrap_or(self.shared_data.len());
+
+            &mut self.shared_data[lower..upper]
+        } else {
+            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
+            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
+            let heap_lower = self.heap.get(0).map(|a| a.idx);
+            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+
+            &mut self.shared_data[lower..upper]
+        };
+
+        let to_len = to_bytes.len() as u32;
+        let range = (ptr.offset() as usize)..(ptr.offset() as usize + buffer.len());
+        let or_else = move || invalid_offset(to_len, ptr, buffer.len() as u32);
+        let to_bytes = to_bytes.get_mut(range).ok_or_else(or_else)?;
+        to_bytes.copy_from_slice(buffer);
+        return Ok(());
     }
 
     pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {

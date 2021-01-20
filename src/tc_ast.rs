@@ -1138,6 +1138,9 @@ pub enum TCBuiltin {
 pub enum TCExprKind {
     Uninit,
     I8Lit(i8),
+    U8Lit(u8),
+    I16Lit(i16),
+    U16Lit(u16),
     I32Lit(i32),
     U32Lit(u32),
     I64Lit(i64),
@@ -1155,6 +1158,8 @@ pub enum TCExprKind {
     FunctionIdent {
         ident: u32,
     },
+
+    TypePun(&'static TCExpr),
 
     ArrayInit {
         elems: &'static [(TCExprKind, CodeLoc)],

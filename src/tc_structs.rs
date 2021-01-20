@@ -1188,8 +1188,6 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn ident(&self, ident: u32, loc: CodeLoc) -> Result<TCExpr, Error> {
-        debug_assert!(!self.is_global());
-
         // search locals
         if let Some(tc_var) = self.search_local_scopes(|sel| sel.symbols.get(&ident).map(|a| *a)) {
             match tc_var.symbol_label {
@@ -1324,14 +1322,35 @@ impl<'a> TypeEnv<'a> {
         }
 
         let to = ty.to_prim_type()?;
-        let from = expr.ty.to_prim_type()?;
-        let expr = self.add(expr);
 
-        return Some(TCExpr {
-            kind: TCExprKind::Conv { from, to, expr },
-            ty,
-            loc,
-        });
+        use TCExprKind::*;
+        use TCPrimType::*;
+        let kind = match (expr.kind, to) {
+            (I32Lit(i), I8) => I8Lit(i as i8),
+            (I32Lit(i), U8) => U8Lit(i as u8),
+            (I32Lit(i), I16) => I16Lit(i as i16),
+            (I32Lit(i), U16) => U16Lit(i as u16),
+            (I32Lit(i), I32) => I32Lit(i as i32),
+            (I32Lit(i), U32) => U32Lit(i as u32),
+            (I32Lit(i), I64) => I64Lit(i as i64),
+            (I32Lit(i), U64) => U64Lit(i as u64),
+            (I32Lit(i), F32) => F32Lit(i as f32),
+            (I32Lit(i), F64) => F64Lit(i as f64),
+            (I32Lit(i), Pointer { .. }) => U64Lit(i as u64),
+
+            (kind, to) => {
+                let from = expr.ty.to_prim_type()?;
+                let expr = self.add(expr);
+
+                if std::mem::discriminant(&from) == std::mem::discriminant(&to) {
+                    TypePun(expr)
+                } else {
+                    Conv { from, to, expr }
+                }
+            }
+        };
+
+        return Some(TCExpr { kind, ty, loc });
     }
 }
 

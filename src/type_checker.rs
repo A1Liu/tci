@@ -1314,7 +1314,7 @@ pub fn check_initializer_list(
         let tc_expr = check_expr(&mut *locals, expr)?;
         let or_else = || conversion_error(field.ty, decl_loc, &tc_expr);
         let tc_expr = locals
-            .assign_convert(field.ty, tc_expr, decl_loc)
+            .assign_convert(field.ty, tc_expr, tc_expr.loc)
             .ok_or_else(or_else)?;
         written_fields.push(tc_expr);
     }

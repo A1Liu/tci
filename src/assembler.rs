@@ -24,6 +24,8 @@ pub struct FuncEnv {
     pub labels: Vec<LabelData>,
     pub gotos: Vec<u32>,
     pub var_offsets: Vec<i16>,
+    pub var_temps: Vec<u32>,
+    pub func_temps: Vec<u32>,
 }
 
 impl FuncEnv {
@@ -33,6 +35,8 @@ impl FuncEnv {
             labels: Vec::new(),
             gotos: Vec::new(),
             var_offsets: Vec::new(),
+            var_temps: Vec::new(),
+            func_temps: Vec::new(),
         }
     }
 
@@ -41,6 +45,8 @@ impl FuncEnv {
         self.labels.clear();
         self.gotos.clear();
         self.var_offsets.clear();
+        self.var_temps.clear();
+        self.func_temps.clear();
     }
 }
 
@@ -79,7 +85,7 @@ lazy_static! {
         data.push(Opcode::StackAlloc);
         data.push(4u32);
 
-        data.push(Opcode::MakeU64);
+        data.push(Opcode::Make64);
         let main_call = data.data.len() as u32;
 
         data.push(0u64);
@@ -94,7 +100,7 @@ lazy_static! {
         data.push(Opcode::StackDealloc);
         data.push(Opcode::StackDealloc);
 
-        data.push(Opcode::MakeU32);
+        data.push(Opcode::Make32);
         data.push(Ecall::Exit);
         data.push(Opcode::Ecall);
 
@@ -164,19 +170,19 @@ impl Assembler {
     pub fn add_file(&mut self, mut tu: TranslationUnit) -> Result<(), Error> {
         self.file.binary_offsets.resize(tu.var_count as usize, !0);
 
+        let mut to_init = Vec::new();
+
         for (loc, static_internal) in &tu.static_internal_vars {
             self.file.binary_offsets[static_internal.var_idx as usize] = self.vars.len() as u32;
-            let (mut init, _) = {
-                let (kind, ty, loc) = (static_internal.init, static_internal.ty, *loc);
-                let expr = TCExpr { kind, ty, loc };
-                self.make_var(expr)?
-            };
-            let vptr = self.data.add_data(&mut init);
+            let vptr = self.data.reserve(static_internal.ty.size().into());
+            let (kind, ty, loc) = (static_internal.init, static_internal.ty, *loc);
+            let expr = TCExpr { kind, ty, loc };
+            to_init.push((vptr, expr));
 
             let var = ASMVar {
                 ty: static_internal.ty,
-                decl_loc: *loc,
-                header: Some((vptr, *loc)),
+                decl_loc: loc,
+                header: Some((vptr, loc)),
             };
 
             self.vars.push(var);
@@ -226,13 +232,16 @@ impl Assembler {
                 ));
             }
 
-            let (mut init, _) = {
-                let (kind, ty, loc) = (init, global.ty, global.loc);
-                let expr = TCExpr { kind, ty, loc };
-                self.make_var(expr)?
-            };
-            let vptr = self.data.add_data(&mut init);
+            let vptr = self.data.reserve(global.ty.size().into());
+            let (kind, ty, loc) = (init, global.ty, global.loc);
+            let expr = TCExpr { kind, ty, loc };
+            to_init.push((vptr, expr));
+
             self.vars[prev as usize].header = Some((vptr, global.loc));
+        }
+
+        for (vptr, expr) in to_init {
+            self.make_var(vptr, expr)?;
         }
 
         let mut defns = Vec::new();
@@ -319,148 +328,57 @@ impl Assembler {
         return Ok(());
     }
 
-    pub fn make_var(&self, expr: TCExpr) -> Result<(Vec<u8>, u32), Error> {
-        let mut bytes = VecU8::new();
+    pub fn make_var(&mut self, mut ptr: VarPointer, expr: TCExpr) -> Result<VarPointer, Error> {
+        ptr = ptr.align(expr.ty.align().unwrap() as u64);
 
         match expr.kind {
-            TCExprKind::Uninit => {
-                for _ in 0u32..expr.ty.size().into() {
-                    bytes.push(0u8);
-                }
+            TCExprKind::Uninit => {}
+
+            TCExprKind::I8Lit(i) => self.data.write(ptr, i),
+            TCExprKind::U8Lit(i) => self.data.write(ptr, i),
+            TCExprKind::I16Lit(i) => self.data.write(ptr, i),
+            TCExprKind::U16Lit(i) => self.data.write(ptr, i),
+            TCExprKind::I32Lit(i) => self.data.write(ptr, i),
+            TCExprKind::U32Lit(i) => self.data.write(ptr, i),
+            TCExprKind::I64Lit(i) => self.data.write(ptr, i),
+            TCExprKind::U64Lit(i) => self.data.write(ptr, i),
+            TCExprKind::F32Lit(i) => self.data.write(ptr, i),
+            TCExprKind::F64Lit(i) => self.data.write(ptr, i),
+
+            TCExprKind::TypePun(expr) => {
+                self.make_var(ptr, *expr)?;
             }
 
-            TCExprKind::I8Lit(i) => bytes.push(i),
-            // TCExprKind::U8Lit(i) => bytes.push(i),
-            // TCExprKind::I16Lit(i) => bytes.push(i),
-            // TCExprKind::U16Lit(i) => bytes.push(i),
-            TCExprKind::I32Lit(i) => bytes.push(i),
-            TCExprKind::U32Lit(i) => bytes.push(i),
-            TCExprKind::I64Lit(i) => bytes.push(i),
-            TCExprKind::U64Lit(i) => bytes.push(i),
-            TCExprKind::F32Lit(i) => bytes.push(i),
-            TCExprKind::F64Lit(i) => bytes.push(i),
+            TCExprKind::GlobalIdent { binary_offset } => {
+                if expr.ty.is_array() {
+                    let id = self.file.binary_offsets[binary_offset as usize];
+
+                    self.var_temps.push((ptr, expr.loc));
+                    self.data.write(ptr, VarPointer::new_binary(0, id));
+                    return Ok(ptr.add(expr.ty.repr_size() as u64));
+                }
+
+                return Err(error!(
+                    "static initializer should be constant expression",
+                    expr.loc, "found here"
+                ));
+            }
 
             TCExprKind::ArrayInit { elems, elem_ty: ty } => {
+                let size: u32 = ty.size().into();
                 for &(kind, loc) in elems {
                     let expr = TCExpr { kind, ty, loc };
-                    let (mut data, _align) = self.make_var(expr)?;
-                    bytes.append(&mut data);
+                    ptr = self.make_var(ptr, expr)?;
                 }
+
+                return Ok(ptr);
             }
             TCExprKind::StructLit { fields, size } => {
                 for &field in fields {
-                    let (mut data, align) = self.make_var(field)?;
-                    bytes.align(align as usize);
-                    bytes.append(&mut data);
+                    ptr = self.make_var(ptr, field)?;
                 }
 
-                bytes.data.resize(size as usize, 0);
-            }
-
-            TCExprKind::Conv { from, to, expr } => {
-                use TCPrimType::*;
-
-                let (data, align) = self.make_var(*expr)?;
-                match (from, to) {
-                    (I8, I8) => bytes.push(*u8_slice_as_any::<i8>(&data) as i8),
-                    (I8, U8) => bytes.push(*u8_slice_as_any::<i8>(&data) as u8),
-                    (I8, I16) => bytes.push(*u8_slice_as_any::<i8>(&data) as i16),
-                    (I8, U16) => bytes.push(*u8_slice_as_any::<i8>(&data) as u16),
-                    (I8, I32) => bytes.push(*u8_slice_as_any::<i8>(&data) as i32),
-                    (I8, U32) => bytes.push(*u8_slice_as_any::<i8>(&data) as u32),
-                    (I8, I64) => bytes.push(*u8_slice_as_any::<i8>(&data) as i64),
-                    (I8, U64) => bytes.push(*u8_slice_as_any::<i8>(&data) as u64),
-                    (I8, F32) => bytes.push(*u8_slice_as_any::<i8>(&data) as f32),
-                    (I8, F64) => bytes.push(*u8_slice_as_any::<i8>(&data) as f64),
-
-                    (U8, I8) => bytes.push(*u8_slice_as_any::<u8>(&data) as i8),
-                    (U8, U8) => bytes.push(*u8_slice_as_any::<u8>(&data) as u8),
-                    (U8, I16) => bytes.push(*u8_slice_as_any::<u8>(&data) as i16),
-                    (U8, U16) => bytes.push(*u8_slice_as_any::<u8>(&data) as u16),
-                    (U8, I32) => bytes.push(*u8_slice_as_any::<u8>(&data) as i32),
-                    (U8, U32) => bytes.push(*u8_slice_as_any::<u8>(&data) as u32),
-                    (U8, I64) => bytes.push(*u8_slice_as_any::<u8>(&data) as i64),
-                    (U8, U64) => bytes.push(*u8_slice_as_any::<u8>(&data) as u64),
-                    (U8, F32) => bytes.push(*u8_slice_as_any::<u8>(&data) as f32),
-                    (U8, F64) => bytes.push(*u8_slice_as_any::<u8>(&data) as f64),
-
-                    (I16, I8) => bytes.push(*u8_slice_as_any::<i16>(&data) as i8),
-                    (I16, U8) => bytes.push(*u8_slice_as_any::<i16>(&data) as u8),
-                    (I16, I16) => bytes.push(*u8_slice_as_any::<i16>(&data) as i16),
-                    (I16, U16) => bytes.push(*u8_slice_as_any::<i16>(&data) as u16),
-                    (I16, I32) => bytes.push(*u8_slice_as_any::<i16>(&data) as i32),
-                    (I16, U32) => bytes.push(*u8_slice_as_any::<i16>(&data) as u32),
-                    (I16, I64) => bytes.push(*u8_slice_as_any::<i16>(&data) as i64),
-                    (I16, U64) => bytes.push(*u8_slice_as_any::<i16>(&data) as u64),
-                    (I16, F32) => bytes.push(*u8_slice_as_any::<i16>(&data) as f32),
-                    (I16, F64) => bytes.push(*u8_slice_as_any::<i16>(&data) as f64),
-
-                    (U16, I8) => bytes.push(*u8_slice_as_any::<u16>(&data) as i8),
-                    (U16, U8) => bytes.push(*u8_slice_as_any::<u16>(&data) as u8),
-                    (U16, I16) => bytes.push(*u8_slice_as_any::<u16>(&data) as i16),
-                    (U16, U16) => bytes.push(*u8_slice_as_any::<u16>(&data) as u16),
-                    (U16, I32) => bytes.push(*u8_slice_as_any::<u16>(&data) as i32),
-                    (U16, U32) => bytes.push(*u8_slice_as_any::<u16>(&data) as u32),
-                    (U16, I64) => bytes.push(*u8_slice_as_any::<u16>(&data) as i64),
-                    (U16, U64) => bytes.push(*u8_slice_as_any::<u16>(&data) as u64),
-                    (U16, F32) => bytes.push(*u8_slice_as_any::<u16>(&data) as f32),
-                    (U16, F64) => bytes.push(*u8_slice_as_any::<u16>(&data) as f64),
-
-                    (I32, I8) => bytes.push(*u8_slice_as_any::<i32>(&data) as i8),
-                    (I32, U8) => bytes.push(*u8_slice_as_any::<i32>(&data) as u8),
-                    (I32, I16) => bytes.push(*u8_slice_as_any::<i32>(&data) as i16),
-                    (I32, U16) => bytes.push(*u8_slice_as_any::<i32>(&data) as u16),
-                    (I32, I32) => bytes.push(*u8_slice_as_any::<i32>(&data) as i32),
-                    (I32, U32) => bytes.push(*u8_slice_as_any::<i32>(&data) as u32),
-                    (I32, I64) => bytes.push(*u8_slice_as_any::<i32>(&data) as i64),
-                    (I32, U64) => bytes.push(*u8_slice_as_any::<i32>(&data) as u64),
-                    (I32, F32) => bytes.push(*u8_slice_as_any::<i32>(&data) as f32),
-                    (I32, F64) => bytes.push(*u8_slice_as_any::<i32>(&data) as f64),
-
-                    (U32, I8) => bytes.push(*u8_slice_as_any::<u32>(&data) as i8),
-                    (U32, U8) => bytes.push(*u8_slice_as_any::<u32>(&data) as u8),
-                    (U32, I16) => bytes.push(*u8_slice_as_any::<u32>(&data) as i16),
-                    (U32, U16) => bytes.push(*u8_slice_as_any::<u32>(&data) as u16),
-                    (U32, I32) => bytes.push(*u8_slice_as_any::<u32>(&data) as i32),
-                    (U32, U32) => bytes.push(*u8_slice_as_any::<u32>(&data) as u32),
-                    (U32, I64) => bytes.push(*u8_slice_as_any::<u32>(&data) as i64),
-                    (U32, U64) => bytes.push(*u8_slice_as_any::<u32>(&data) as u64),
-                    (U32, F32) => bytes.push(*u8_slice_as_any::<u32>(&data) as f32),
-                    (U32, F64) => bytes.push(*u8_slice_as_any::<u32>(&data) as f64),
-
-                    (I64, I8) => bytes.push(*u8_slice_as_any::<i64>(&data) as i8),
-                    (I64, U8) => bytes.push(*u8_slice_as_any::<i64>(&data) as u8),
-                    (I64, I16) => bytes.push(*u8_slice_as_any::<i64>(&data) as i16),
-                    (I64, U16) => bytes.push(*u8_slice_as_any::<i64>(&data) as u16),
-                    (I64, I32) => bytes.push(*u8_slice_as_any::<i64>(&data) as i32),
-                    (I64, U32) => bytes.push(*u8_slice_as_any::<i64>(&data) as u32),
-                    (I64, I64) => bytes.push(*u8_slice_as_any::<i64>(&data) as i64),
-                    (I64, U64) => bytes.push(*u8_slice_as_any::<i64>(&data) as u64),
-                    (I64, F32) => bytes.push(*u8_slice_as_any::<i64>(&data) as f32),
-                    (I64, F64) => bytes.push(*u8_slice_as_any::<i64>(&data) as f64),
-
-                    (U64, I8) => bytes.push(*u8_slice_as_any::<u64>(&data) as i8),
-                    (U64, U8) => bytes.push(*u8_slice_as_any::<u64>(&data) as u8),
-                    (U64, I16) => bytes.push(*u8_slice_as_any::<u64>(&data) as i16),
-                    (U64, U16) => bytes.push(*u8_slice_as_any::<u64>(&data) as u16),
-                    (U64, I32) => bytes.push(*u8_slice_as_any::<u64>(&data) as i32),
-                    (U64, U32) => bytes.push(*u8_slice_as_any::<u64>(&data) as u32),
-                    (U64, I64) => bytes.push(*u8_slice_as_any::<u64>(&data) as i64),
-                    (U64, U64) => bytes.push(*u8_slice_as_any::<u64>(&data) as u64),
-                    (U64, F32) => bytes.push(*u8_slice_as_any::<u64>(&data) as f32),
-                    (U64, F64) => bytes.push(*u8_slice_as_any::<u64>(&data) as f64),
-
-                    (Pointer { .. }, I8) => bytes.push(*u8_slice_as_any::<u64>(&data) as i8),
-                    (Pointer { .. }, U8) => bytes.push(*u8_slice_as_any::<u64>(&data) as u8),
-                    (Pointer { .. }, I16) => bytes.push(*u8_slice_as_any::<u64>(&data) as i16),
-                    (Pointer { .. }, U16) => bytes.push(*u8_slice_as_any::<u64>(&data) as u16),
-                    (Pointer { .. }, I32) => bytes.push(*u8_slice_as_any::<u64>(&data) as i32),
-                    (Pointer { .. }, U32) => bytes.push(*u8_slice_as_any::<u64>(&data) as u32),
-                    (Pointer { .. }, I64) => bytes.push(*u8_slice_as_any::<u64>(&data) as i64),
-                    (Pointer { .. }, U64) => bytes.push(*u8_slice_as_any::<u64>(&data) as u64),
-
-                    x => unimplemented!("static conversion {:?}", x),
-                }
+                return Ok(ptr);
             }
 
             x => {
@@ -472,7 +390,7 @@ impl Assembler {
             }
         }
 
-        return Ok((bytes.data, expr.ty.align().into()));
+        return Ok(ptr.add(expr.ty.size().unwrap() as u64));
     }
 
     pub fn add_function(&mut self, defn: &TCFuncDefn) {
@@ -748,48 +666,66 @@ impl Assembler {
             TCExprKind::I8Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                self.func.opcodes.push(Opcode::MakeI8);
+                self.func.opcodes.push(Opcode::Make8);
+                self.func.opcodes.push(*val);
+            }
+            TCExprKind::U8Lit(val) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::Make8);
+                self.func.opcodes.push(*val);
+            }
+            TCExprKind::I16Lit(val) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::Make16);
+                self.func.opcodes.push(*val);
+            }
+            TCExprKind::U16Lit(val) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+                self.func.opcodes.push(Opcode::Make16);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::I32Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                self.func.opcodes.push(Opcode::MakeI32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::U32Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
-                self.func.opcodes.push(Opcode::MakeU32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::I64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
-                self.func.opcodes.push(Opcode::MakeI64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::U64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::F32Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
-                self.func.opcodes.push(Opcode::MakeF32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::F64Lit(val) => {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
-                self.func.opcodes.push(Opcode::MakeF64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(*val);
             }
             TCExprKind::StringLit(val) => {
@@ -798,7 +734,7 @@ impl Assembler {
 
                 let ptr = self.data.add_slice(val.as_bytes());
                 self.data.data.push(0u8);
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(ptr);
             }
             TCExprKind::LocalIdent { label } => {
@@ -820,7 +756,7 @@ impl Assembler {
 
                 let link_name = self.file.link_names[ident];
                 let id = self.func_linkage[&link_name];
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
 
                 let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
                 self.function_temps.push((ptr, expr.loc));
@@ -831,7 +767,7 @@ impl Assembler {
                 self.func.opcodes.push(expr.loc);
 
                 let id = self.file.binary_offsets[*binary_offset as usize];
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
                 self.var_temps.push((ptr, expr.loc));
                 self.func.opcodes.push(VarPointer::new_binary(0, id));
@@ -846,6 +782,7 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::PushUndef);
                 self.func.opcodes.push(expr.ty.repr_size());
             }
+            TCExprKind::TypePun(expr) => self.translate_expr(expr),
             &TCExprKind::ArrayInit { elems, elem_ty: ty } => {
                 for &(kind, loc) in elems {
                     let elem = TCExpr { kind, ty, loc };
@@ -899,18 +836,18 @@ impl Assembler {
 
                 match incr_ty {
                     I32 | U32 => {
-                        self.func.opcodes.push(Opcode::MakeU32);
+                        self.func.opcodes.push(Opcode::Make32);
                         self.func.opcodes.push(1u32);
                         self.func.opcodes.push(Opcode::Add32);
                     }
                     I64 | U64 => {
-                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(Opcode::Make64);
                         self.func.opcodes.push(1u64);
                         self.func.opcodes.push(Opcode::Add64);
                     }
                     Pointer { stride } => {
                         let stride: u32 = stride.into();
-                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(Opcode::Make64);
                         self.func.opcodes.push(stride as u64);
                         self.func.opcodes.push(Opcode::Add64);
                     }
@@ -940,28 +877,28 @@ impl Assembler {
 
                 match decr_ty {
                     I32 => {
-                        self.func.opcodes.push(Opcode::MakeI32);
+                        self.func.opcodes.push(Opcode::Make32);
                         self.func.opcodes.push(1u32);
                         self.func.opcodes.push(Opcode::SubI32);
                     }
                     U32 => {
-                        self.func.opcodes.push(Opcode::MakeU32);
+                        self.func.opcodes.push(Opcode::Make32);
                         self.func.opcodes.push(1u32);
                         self.func.opcodes.push(Opcode::SubU32);
                     }
                     I64 => {
-                        self.func.opcodes.push(Opcode::MakeI64);
+                        self.func.opcodes.push(Opcode::Make64);
                         self.func.opcodes.push(1u64);
                         self.func.opcodes.push(Opcode::SubI64);
                     }
                     U64 => {
-                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(Opcode::Make64);
                         self.func.opcodes.push(1u64);
                         self.func.opcodes.push(Opcode::SubU64);
                     }
                     Pointer { stride } => {
                         let stride: u32 = stride.into();
-                        self.func.opcodes.push(Opcode::MakeU64);
+                        self.func.opcodes.push(Opcode::Make64);
                         self.func.opcodes.push(stride as u64);
                         self.func.opcodes.push(Opcode::SubU64);
                     }
@@ -1147,7 +1084,7 @@ impl Assembler {
                 self.func.opcodes.push(expr.loc);
 
                 let bytes = expr.ty.repr_size();
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(offset as u64);
                 self.func.opcodes.push(Opcode::Add64);
                 if !expr.ty.is_array() {
@@ -1304,7 +1241,7 @@ impl Assembler {
                 if assign.offset != 0 {
                     self.func.opcodes.push(Opcode::Loc);
                     self.func.opcodes.push(assign.loc);
-                    self.func.opcodes.push(Opcode::MakeU64);
+                    self.func.opcodes.push(Opcode::Make64);
                     self.func.opcodes.push(assign.offset as u64);
                     self.func.opcodes.push(Opcode::Add64);
                 }
@@ -1317,7 +1254,7 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::MakeFp);
                 self.func.opcodes.push(var);
                 if assign.offset != 0 {
-                    self.func.opcodes.push(Opcode::MakeU64);
+                    self.func.opcodes.push(Opcode::Make64);
                     self.func.opcodes.push(assign.offset as u64);
                     self.func.opcodes.push(Opcode::Add64);
                 }
@@ -1327,13 +1264,13 @@ impl Assembler {
                 self.func.opcodes.push(assign.loc);
 
                 let id = self.file.binary_offsets[binary_offset as usize];
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
                 self.var_temps.push((ptr, assign.loc));
                 self.func.opcodes.push(VarPointer::new_binary(0, id));
 
                 if assign.offset != 0 {
-                    self.func.opcodes.push(Opcode::MakeU64);
+                    self.func.opcodes.push(Opcode::Make64);
                     self.func.opcodes.push(assign.offset as u64);
                     self.func.opcodes.push(Opcode::Add64);
                 }
@@ -1350,76 +1287,76 @@ impl Assembler {
 
         match (op, op_type) {
             (Neg, I8) => {
-                self.func.opcodes.push(Opcode::MakeI8);
+                self.func.opcodes.push(Opcode::Make8);
                 self.func.opcodes.push(-1i8);
                 self.func.opcodes.push(Opcode::MulI8);
             }
             (Neg, U8) => {
-                self.func.opcodes.push(Opcode::MakeU8);
+                self.func.opcodes.push(Opcode::Make8);
                 self.func.opcodes.push(u8::MAX);
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(Opcode::SubU8);
-                self.func.opcodes.push(Opcode::MakeU8);
+                self.func.opcodes.push(Opcode::Make8);
                 self.func.opcodes.push(1u8);
                 self.func.opcodes.push(Opcode::Add8);
             }
             (Neg, I16) => {
-                self.func.opcodes.push(Opcode::MakeI16);
+                self.func.opcodes.push(Opcode::Make16);
                 self.func.opcodes.push(-1i16);
                 self.func.opcodes.push(Opcode::MulI16);
             }
             (Neg, U16) => {
-                self.func.opcodes.push(Opcode::MakeU16);
+                self.func.opcodes.push(Opcode::Make16);
                 self.func.opcodes.push(u16::MAX);
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(Opcode::SubU16);
-                self.func.opcodes.push(Opcode::MakeU16);
+                self.func.opcodes.push(Opcode::Make16);
                 self.func.opcodes.push(1u16);
                 self.func.opcodes.push(Opcode::Add16);
             }
             (Neg, I32) => {
-                self.func.opcodes.push(Opcode::MakeI32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(-1i32);
                 self.func.opcodes.push(Opcode::MulI32);
             }
             (Neg, U32) => {
-                self.func.opcodes.push(Opcode::MakeU32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(u32::MAX);
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(Opcode::SubU32);
-                self.func.opcodes.push(Opcode::MakeU32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(Opcode::Add32);
             }
             (Neg, I64) => {
-                self.func.opcodes.push(Opcode::MakeI64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(-1i64);
                 self.func.opcodes.push(Opcode::MulI64);
             }
             (Neg, U64) => {
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(u64::MAX);
                 self.func.opcodes.push(Opcode::Swap);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(1u32);
                 self.func.opcodes.push(Opcode::SubU64);
-                self.func.opcodes.push(Opcode::MakeU64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(1u64);
                 self.func.opcodes.push(Opcode::Add64);
             }
             (Neg, F32) => {
-                self.func.opcodes.push(Opcode::MakeF32);
+                self.func.opcodes.push(Opcode::Make32);
                 self.func.opcodes.push(-1f32);
                 self.func.opcodes.push(Opcode::MulF32);
             }
             (Neg, F64) => {
-                self.func.opcodes.push(Opcode::MakeF64);
+                self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(-1f64);
                 self.func.opcodes.push(Opcode::MulF64);
             }

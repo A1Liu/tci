@@ -1,4 +1,5 @@
 use super::error::*;
+use super::files::*;
 use super::interpreter::*;
 use super::memory::*;
 use super::types::*;
@@ -7,22 +8,24 @@ use crate::util::*;
 use core::mem;
 
 pub struct Runtime {
+    pub files: FileSystem,
+    pub status: RuntimeStatus,
+
+    // per process
     pub output: StringArray<WriteEvent>,
     pub memory: Memory,
-    pub status: RuntimeStatus,
+    pub fd_list: Vec<usize>,
 }
 
 impl Runtime {
     pub fn new(binary: &BinaryData) -> Self {
         Self {
             output: StringArray::new(),
+            files: FileSystem::new(),
             memory: Memory::new(&binary),
             status: RuntimeStatus::Running,
+            fd_list: Vec::new(),
         }
-    }
-
-    pub fn loc(&self) -> CodeLoc {
-        return self.memory.loc;
     }
 
     pub fn run_debug(&mut self, files: &FileDb) -> Result<i32, IError> {
@@ -85,6 +88,92 @@ impl Runtime {
             Ecall::Exit => {
                 let exit: i32 = self.memory.pop()?;
                 return Ok(Some(exit));
+            }
+
+            Ecall::OpenFd => {
+                let name: VarPointer = self.memory.pop()?;
+                let open_mode: OpenMode = self.memory.pop()?;
+                let name = self.memory.cstring_bytes(name)?;
+                let id = match open_mode {
+                    OpenMode::Read => self.files.open(name),
+                    OpenMode::Create => self.files.open_create(name),
+                    OpenMode::CreateClear => self.files.open_create_clear(name),
+                };
+
+                let err = match id {
+                    Err(e) => e,
+                    Ok(idx) => {
+                        self.memory.push(idx as u64);
+                        return Ok(None);
+                    }
+                };
+
+                self.memory.push((err as u32 as u64) << 32);
+            }
+            Ecall::ReadFd => {
+                let buf: VarPointer = self.memory.pop()?;
+                let len: u32 = self.memory.pop()?;
+                let begin: u32 = self.memory.pop()?;
+                let fd: u32 = self.memory.pop()?;
+
+                let file_buffer = match self.files.read_file_range(fd, begin, len) {
+                    Ok(buf) => buf,
+                    Err(e) => {
+                        self.memory.push((e as u32 as u64) << 32);
+                        return Ok(None);
+                    }
+                };
+
+                self.memory.write_bytes(buf, file_buffer)?;
+                self.memory.push(0u64);
+            }
+            Ecall::WriteFd => {
+                let buf: VarPointer = self.memory.pop()?;
+                let len: u32 = self.memory.pop()?;
+                let begin: u32 = self.memory.pop()?;
+                let fd: u32 = self.memory.pop()?;
+
+                let buffer = self.memory.read_bytes(buf, len)?;
+
+                let e = match self.files.write_to_file_range(fd, begin, buffer) {
+                    Ok(len) => {
+                        self.memory.push(len as u64);
+                        return Ok(None);
+                    }
+                    Err(err) => err,
+                };
+
+                self.memory.push((e as u32 as u64) << 32);
+            }
+            Ecall::AppendFd => {
+                let buf: VarPointer = self.memory.pop()?;
+                let len: u32 = self.memory.pop()?;
+                let fd: u32 = self.memory.pop()?;
+
+                let buffer = self.memory.read_bytes(buf, len)?;
+
+                let e = match self.files.append_to_file(fd, buffer) {
+                    Ok(len) => {
+                        self.memory.push(len as u64);
+                        return Ok(None);
+                    }
+                    Err(err) => err,
+                };
+
+                self.memory.push((e as u32 as u64) << 32);
+            }
+            Ecall::FdLen => {
+                let fd: u32 = self.memory.pop()?;
+
+                let e = match self.files.len(fd) {
+                    Ok(len) => {
+                        self.memory.push(len as u64);
+                        return Ok(None);
+                    }
+                    Err(err) => err,
+                };
+
+                self.memory.push((e as u32 as u64) << 32);
             }
 
             Ecall::PrintString => {

@@ -26,44 +26,20 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<Ecall>, IError> {
             memory.pop_stack_var()?;
         }
 
-        Opcode::MakeI8 => {
-            let val: i8 = memory.read_pc()?;
-            memory.push(val);
-        }
-        Opcode::MakeU8 => {
+        Opcode::Make8 => {
             let val: u8 = memory.read_pc()?;
             memory.push(val);
         }
-        Opcode::MakeI16 => {
-            let val: i16 = memory.read_pc()?;
-            memory.push(val);
-        }
-        Opcode::MakeU16 => {
+        Opcode::Make16 => {
             let val: u16 = memory.read_pc()?;
             memory.push(val);
         }
-        Opcode::MakeI32 => {
-            let val: i32 = memory.read_pc()?;
-            memory.push(val);
-        }
-        Opcode::MakeU32 => {
+        Opcode::Make32 => {
             let val: u32 = memory.read_pc()?;
             memory.push(val);
         }
-        Opcode::MakeI64 => {
-            let val: i64 = memory.read_pc()?;
-            memory.push(val);
-        }
-        Opcode::MakeU64 => {
+        Opcode::Make64 => {
             let val: u64 = memory.read_pc()?;
-            memory.push(val);
-        }
-        Opcode::MakeF32 => {
-            let val: f32 = memory.read_pc()?;
-            memory.push(val);
-        }
-        Opcode::MakeF64 => {
-            let val: f64 = memory.read_pc()?;
             memory.push(val);
         }
         Opcode::MakeSp => {

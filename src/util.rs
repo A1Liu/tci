@@ -275,6 +275,14 @@ pub fn align_u32(size: u32, align: u32) -> u32 {
     return result;
 }
 
+pub fn align_u64(size: u64, align: u64) -> u64 {
+    if size == 0 {
+        return 0;
+    }
+
+    ((size - 1) / align * align) + align
+}
+
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
 pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
     std::slice::from_raw_parts_mut(p as *mut T as *mut u8, mem::size_of::<T>())
@@ -861,7 +869,9 @@ impl<'a, T, E> IntoIterator for &'a mut TaggedMultiArray<T, E> {
 }
 
 impl<T, E> Drop for TaggedMultiArray<T, E> {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        while let Some(_) = self.pop() {}
+    }
 }
 
 #[repr(C)]
@@ -1213,6 +1223,14 @@ impl n32 {
         }
 
         return Ok(self.data);
+    }
+
+    pub fn unwrap(self) -> u32 {
+        if self == Self::NULL {
+            panic!("NullPointerException");
+        }
+
+        return self.data;
     }
 
     pub fn unwrap_or(self, f: u32) -> u32 {

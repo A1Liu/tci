@@ -124,6 +124,7 @@ lazy_static! {
         new_file!(@IMPL, "str_to_x.c");
         new_file!(@IMPL, "string.c");
         new_file!(@IMPL, "ctype.c");
+        new_file!(@IMPL, "files.c");
 
         m
     };

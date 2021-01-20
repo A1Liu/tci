@@ -28,6 +28,17 @@ impl BinaryData {
         }
     }
 
+    pub fn reserve(&mut self, len: u32) -> VarPointer {
+        let data_len = self.data.len();
+
+        for _ in 0..len {
+            self.data.push(0);
+        }
+
+        self.vars.push(Var::new(data_len, ()));
+        return VarPointer::new_binary(self.vars.len() as u32, 0);
+    }
+
     pub fn add_data(&mut self, data: &mut Vec<u8>) -> VarPointer {
         let data_len = self.data.len();
         self.data.append(data);
@@ -81,157 +92,100 @@ impl BinaryData {
 }
 
 #[derive(Clone, Copy)]
-#[repr(C)]
-pub struct VarPointerFields {
-    _offset: u32,
-    _idx: u16,
-    _tid: u16,
-}
-
-#[derive(Clone, Copy)]
-pub union VarPointer {
-    fields: VarPointerFields,
-    value: u64,
-}
+pub struct VarPointer(u64);
 
 impl fmt::Display for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let fields = self.fields();
-
-        return write!(
-            formatter,
-            "0x{:x}{:0>4x}{:0>8x}",
-            u16::from_le(fields._tid),
-            u16::from_le(fields._idx),
-            u32::from_le(fields._offset)
-        );
+        return write!(formatter, "0x{:0>16x}", self.0);
     }
 }
 
 impl fmt::Debug for VarPointer {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let fields = self.fields();
-
-        return write!(
-            formatter,
-            "0x{:x}{:0>4x}{:0>8x}",
-            u16::from_le(fields._tid),
-            u16::from_le(fields._idx),
-            u32::from_le(fields._offset)
-        );
+        return write!(formatter, "0x{:0>16x}", self.0);
     }
 }
 impl VarPointer {
-    pub const BINARY_BIT: u16 = 1u16 << 15;
-    pub const STACK_BIT: u16 = 1u16 << 14;
-    pub const RESERVED_BITS: u16 = Self::BINARY_BIT | Self::STACK_BIT;
+    pub const BINARY_BIT: u64 = 1u64 << 63;
+    pub const STACK_BIT: u64 = 1u64 << 62;
+    pub const RESERVED_BITS: u64 = Self::BINARY_BIT | Self::STACK_BIT;
 
-    #[inline]
-    pub fn fields(&self) -> VarPointerFields {
-        unsafe { self.fields }
-    }
-
-    #[inline]
-    pub fn fields_mut(&mut self) -> &mut VarPointerFields {
-        unsafe { &mut self.fields }
-    }
+    pub const TOP_BITS: u64 = (u32::MAX as u64) << 32;
+    pub const BOTTOM_BITS: u64 = u32::MAX as u64;
+    pub const THREAD_BITS: u64 = ((u16::MAX as u64) << 48) ^ Self::RESERVED_BITS;
 
     pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
-        Self {
-            fields: VarPointerFields {
-                _tid: Self::STACK_BIT.to_le(),
-                _idx: idx.to_le(),
-                _offset: offset.to_le(),
-            },
-        }
+        let (idx, offset) = (idx as u64, offset as u64);
+        return Self(Self::STACK_BIT | (idx << 32) | offset);
     }
 
     pub fn new_heap(idx: u32, offset: u32) -> VarPointer {
-        let tid = (idx >> 16) as u16;
-        if tid & Self::RESERVED_BITS != 0 {
+        let (idx, offset) = ((idx as u64) << 32, offset as u64);
+        if idx & Self::RESERVED_BITS != 0 {
             panic!("idx is too large");
         }
 
-        Self {
-            fields: VarPointerFields {
-                _tid: tid.to_le(),
-                _idx: (idx as u16).to_le(),
-                _offset: offset.to_le(),
-            },
-        }
+        return Self(idx | offset);
     }
 
     pub fn new_binary(idx: u32, offset: u32) -> VarPointer {
-        let tid = (idx >> 16) as u16;
-        if tid & Self::RESERVED_BITS != 0 {
+        let (idx, offset) = ((idx as u64) << 32, offset as u64);
+        if idx & Self::RESERVED_BITS != 0 {
             panic!("idx is too large");
         }
 
-        let tid = tid | Self::BINARY_BIT;
-
-        Self {
-            fields: VarPointerFields {
-                _tid: tid.to_le(),
-                _idx: (idx as u16).to_le(),
-                _offset: offset.to_le(),
-            },
-        }
+        return Self(Self::BINARY_BIT | idx | offset);
     }
 
-    pub fn is_stack(&self) -> bool {
-        return (u16::from_le(self.fields()._tid) & Self::STACK_BIT) != 0;
+    pub fn is_stack(self) -> bool {
+        return (self.0 & Self::RESERVED_BITS) == Self::STACK_BIT;
     }
 
-    pub fn is_binary(&self) -> bool {
-        return (u16::from_le(self.fields()._tid) & Self::BINARY_BIT) != 0;
+    pub fn is_binary(self) -> bool {
+        return (self.0 & Self::RESERVED_BITS) == Self::BINARY_BIT;
     }
 
-    pub fn is_heap(&self) -> bool {
-        return (u16::from_le(self.fields()._tid) & Self::RESERVED_BITS) == 0;
+    pub fn is_heap(self) -> bool {
+        return (self.0 & Self::RESERVED_BITS) == 0;
     }
 
     // returns u16::MAX if not attached to a thread
-    pub fn tid(&self) -> u16 {
+    pub fn tid(self) -> u16 {
         if self.is_stack() {
-            return u16::from_le(self.fields()._tid) & !Self::RESERVED_BITS;
+            return ((self.0 & Self::THREAD_BITS) >> 48) as u16;
         }
 
         return u16::MAX;
     }
 
     pub fn var_idx(self) -> usize {
-        if self.is_stack() {
-            return u16::from_le(self.fields()._idx) as usize;
-        }
+        let top = if self.is_stack() {
+            self.0 & !(Self::THREAD_BITS | Self::RESERVED_BITS)
+        } else {
+            self.0 & !Self::RESERVED_BITS
+        };
 
-        let top = ((u16::from_le(self.fields()._tid) & !Self::RESERVED_BITS) as u32) << 16;
-        return (top | u16::from_le(self.fields()._idx) as u32) as usize;
+        return (top >> 32) as usize;
     }
 
     pub fn with_offset(self, offset: u32) -> Self {
-        let mut ptr = self;
-        ptr.fields_mut()._offset = offset.to_le();
-        return ptr;
+        return Self((self.0 & Self::TOP_BITS) | (offset as u64));
     }
 
     pub fn offset(self) -> u32 {
-        u32::from_le(self.fields()._offset)
-    }
-
-    pub fn set_offset(&mut self, offset: u32) {
-        self.fields_mut()._offset = offset.to_le();
+        return (self.0 & Self::BOTTOM_BITS) as u32;
     }
 
     pub fn add(self, add: u64) -> Self {
-        Self {
-            value: (u64::from_le(unsafe { self.value }).wrapping_add(add)).to_le(),
-        }
+        return Self(self.0.wrapping_add(add));
     }
 
-    pub fn sub(self, add: u64) -> Self {
-        Self {
-            value: (u64::from_le(unsafe { self.value }).wrapping_sub(1)).to_le(),
-        }
+    pub fn sub(self, sub: u64) -> Self {
+        return Self(self.0.wrapping_sub(sub));
+    }
+
+    pub fn align(self, align: u64) -> Self {
+        return Self(align_u64(self.0, align));
     }
 }
 
@@ -280,16 +234,10 @@ pub enum Opcode {
     StackAlloc,
     StackDealloc,
 
-    MakeI8,
-    MakeU8,
-    MakeI16,
-    MakeU16,
-    MakeI32,
-    MakeU32,
-    MakeI64,
-    MakeU64,
-    MakeF32,
-    MakeF64,
+    Make8,
+    Make16,
+    Make32,
+    Make64,
     MakeFp,
     MakeSp,
 
@@ -535,6 +483,36 @@ pub enum Ecall {
     /// get zero-indexed command line argument. Takes in a single int as a parameter,
     /// and pushes a pointer to the string on the heap as the result.
     Argv,
+
     /// sends a character to the screen
     PrintString,
+
+    /// Open a file descriptor (with options)
+    OpenFd,
+    /// read from a file descriptor
+    ReadFd,
+    /// write to a file descriptor
+    WriteFd,
+    /// append to a file descriptor
+    AppendFd,
+    /// get length of file descriptor
+    FdLen,
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy)]
+pub enum FileError {
+    DoesntExist,
+    NameNotUTF8,
+    TooManyFiles,
+    FilesToLarge,
+    OutOfRange,
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy)]
+pub enum OpenMode {
+    Read,
+    Create,
+    CreateClear,
 }
