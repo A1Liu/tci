@@ -23,7 +23,8 @@ int sscanf(const char *restrict buffer, const char *restrict format, ...);
 int vsscanf(const char *restrict buffer, const char *restrict format,
             va_list vlist);
 
-typedef struct {
+// TODO remove definition from header
+typedef struct __tci_file {
   // the buffer
   char *buffer;
   unsigned int buffer_position;
@@ -67,9 +68,11 @@ extern FILE *__tci_stdin;
 
 FILE *fopen(const char *filename, const char *mode);
 int fclose(FILE *fp);
+int remove(const char *filename);
 
 int fputc(int c, FILE *fp);
 int fputs(const char *s, FILE *fp);
+int fflush(FILE *fp);
 
 int fgetc(FILE *fp);
 char *fgets(char *buf, int n, FILE *fp);

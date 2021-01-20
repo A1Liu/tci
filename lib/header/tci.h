@@ -8,6 +8,12 @@
 
 #define TCI_ECALL_PRINT_STRING 3
 
+#define TCI_ECALL_OPEN_FD 4
+#define TCI_ECALL_READ_FD 5
+#define TCI_ECALL_WRITE_FD 6
+#define TCI_ECALL_APPEND_FD 7
+#define TCI_ECALL_FD_LEN 8
+
 size_t tci_var_size(void *var);
 
 void tci_throw_error(const char *name, const char *message,

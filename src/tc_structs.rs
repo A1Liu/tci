@@ -1236,8 +1236,6 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn assign_ident(&self, ident: u32, loc: CodeLoc) -> Result<TCAssignTarget, Error> {
-        debug_assert!(!self.is_global());
-
         // search locals
         if let Some(tc_var) = self.search_local_scopes(|sel| sel.symbols.get(&ident).map(|a| *a)) {
             if tc_var.ty.is_function() {
@@ -1352,6 +1350,25 @@ impl<'a> TypeEnv<'a> {
 
         return Some(TCExpr { kind, ty, loc });
     }
+
+    // TODO size checks require a lookup because definitions can be completed later
+    // pub fn ty_base_size(&self, base: TCTypeBase) -> n32 {
+    //     match self {
+    //         TCTypeBase::I8 | TCTypeBase::U8 => 1u32.into(),
+    //         TCTypeBase::I16 | TCTypeBase::U16 => 2u32.into(),
+    //         TCTypeBase::U32 | TCTypeBase::I32 | TCTypeBase::F32 => 4u32.into(),
+    //         TCTypeBase::U64 | TCTypeBase::I64 | TCTypeBase::F64 => 8u32.into(),
+    //         TCTypeBase::Void => return n32::NULL,
+    //         TCTypeBase::NamedStruct { ident, .. } => sa.size,
+    //         TCTypeBase::UnnamedStruct { loc, .. } => sa.size,
+    //         TCTypeBase::NamedUnion { ident, .. } => sa.size,
+    //         TCTypeBase::UnnamedUnion { loc, .. } => sa.size,
+    //         TCTypeBase::InternalTypedef(def) => self.ty_size(def),
+    //         TCTypeBase::Typedef { refers_to, .. } => self.ty_size(refers_to),
+    //     }
+    // }
+
+    // pub fn ty_size(&self, ty: &impl TCTy) -> n32 {}
 }
 
 pub fn mismatched_return_types(prev_loc: CodeLoc, decl_loc: CodeLoc) -> Error {

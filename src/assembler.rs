@@ -354,7 +354,7 @@ impl Assembler {
                     let id = self.file.binary_offsets[binary_offset as usize];
 
                     self.var_temps.push((ptr, expr.loc));
-                    self.data.write(ptr, VarPointer::new_binary(0, id));
+                    self.data.write(ptr, VarPointer::new_binary(id, 0));
                     return Ok(ptr.add(expr.ty.repr_size() as u64));
                 }
 
@@ -362,6 +362,17 @@ impl Assembler {
                     "static initializer should be constant expression",
                     expr.loc, "found here"
                 ));
+            }
+            TCExprKind::Ref(TCAssignTarget {
+                kind: TCAssignTargetKind::GlobalIdent { binary_offset },
+                ty,
+                defn_loc,
+                offset,
+                loc,
+            }) => {
+                let id = self.file.binary_offsets[binary_offset as usize];
+                self.var_temps.push((ptr, expr.loc));
+                self.data.write(ptr, VarPointer::new_binary(id, offset));
             }
 
             TCExprKind::ArrayInit { elems, elem_ty: ty } => {
@@ -770,7 +781,7 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Make64);
                 let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
                 self.var_temps.push((ptr, expr.loc));
-                self.func.opcodes.push(VarPointer::new_binary(0, id));
+                self.func.opcodes.push(VarPointer::new_binary(id, 0));
 
                 if !expr.ty.is_array() {
                     self.func.opcodes.push(Opcode::Get);
@@ -1267,7 +1278,7 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Make64);
                 let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
                 self.var_temps.push((ptr, assign.loc));
-                self.func.opcodes.push(VarPointer::new_binary(0, id));
+                self.func.opcodes.push(VarPointer::new_binary(id, 0));
 
                 if assign.offset != 0 {
                     self.func.opcodes.push(Opcode::Make64);
@@ -1706,9 +1717,10 @@ impl Assembler {
 
         for (temp, loc) in &self.var_temps {
             let ptr: VarPointer = self.data.read(*temp).unwrap();
-            let var = &self.vars[ptr.offset() as usize];
+            let offset = ptr.offset();
+            let var = &self.vars[ptr.var_idx()];
             if let Some((vptr, _loc)) = var.header {
-                self.data.write(*temp, vptr);
+                self.data.write(*temp, vptr.add(offset as u64));
             } else {
                 return Err(error!(
                     "couldn't find definition for variable",
