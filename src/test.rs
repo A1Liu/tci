@@ -162,7 +162,8 @@ gen_test_should_succeed!(
     exit,
     dyn_array_ptr,
     arrays,
-    statics
+    statics,
+    memory
 );
 
 // gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

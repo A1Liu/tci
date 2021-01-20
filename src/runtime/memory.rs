@@ -265,6 +265,8 @@ impl Memory {
             var.idx = write_to;
             write_to += len;
         }
+
+        self.shared_data.resize(write_to, 0); // should never increase the size of the buffer
     }
 
     pub fn pop_stack_var(&mut self) -> Result<(), IError> {
