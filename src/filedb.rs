@@ -188,7 +188,7 @@ impl FileDb {
         Ok(file_id)
     }
 
-    pub fn display_loc(&self, loc: CodeLoc) -> Option<String> {
+    pub fn display_loc(&self, loc: CodeLoc) -> String {
         use codespan_reporting::diagnostic::*;
         use codespan_reporting::term::*;
 
@@ -206,7 +206,16 @@ impl FileDb {
             Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);
         emit(&mut out, &config, self, &diagnostic).unwrap();
 
-        return Some(out.into_string());
+        return out.into_string();
+    }
+
+    pub fn loc_to_string(&self, loc: CodeLoc) -> String {
+        let mut out = StringWriter::new();
+
+        let file = self.files[loc.file as usize];
+        let line = file.line_index(loc.start as usize).unwrap() + 1;
+        write!(out, "{}:{}", file.name, line).unwrap();
+        return out.into_string();
     }
 
     pub fn resolve_include(&self, include: &str, file: u32) -> Result<u32, io::Error> {
@@ -282,8 +291,7 @@ pub enum BuiltinSymbol {
     MacroDefined,
 
     BuiltinPush,
-    BuiltinPushDyn,
-    BuiltinEcall,
+    BuiltinOp,
 }
 
 impl Symbols {
@@ -299,8 +307,7 @@ impl Symbols {
         new_self.add_str("defined");
 
         new_self.add_str("__tci_builtin_push");
-        new_self.add_str("__tci_builtin_push_dyn");
-        new_self.add_str("__tci_builtin_ecall");
+        new_self.add_str("__tci_builtin_op");
 
         new_self
     }

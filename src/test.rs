@@ -20,12 +20,13 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     println!("compiled");
     let mut runtime = Runtime::new(&program);
 
-    let code = runtime.run();
-    println!("return code: {}", code);
-
-    if code != 0 {
-        runtime.print_callstack(&*files);
-    }
+    match runtime.run() {
+        Err(err) => {
+            let s = print_error(&err, &runtime.memory, files);
+            panic!("{}", s);
+        }
+        _ => {}
+    };
 
     let mut writer = StringWriter::new();
     for TS(_, s) in &runtime.events() {
@@ -33,11 +34,6 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     }
 
     let output = writer.into_string();
-
-    if code != 0 {
-        println!("{}", output);
-        panic!();
-    }
 
     println!("{}", output);
     if let Some(output_file) = output_file {

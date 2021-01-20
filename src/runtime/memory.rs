@@ -530,9 +530,11 @@ impl Memory {
         let to_bytes = to_bytes.get_mut(range).ok_or_else(or_else)?;
 
         let stack_len = self.expr_stack.len();
+        if len as usize > stack_len {
+            return Err(expr_stack_too_short(stack_len, len as usize));
+        }
         let new_stack_len = stack_len - len as usize;
-        let or_else = move || expr_stack_too_short(stack_len, len as usize);
-        let from_bytes = self.expr_stack.get(new_stack_len..).ok_or_else(or_else)?;
+        let from_bytes = &self.expr_stack[new_stack_len..];
         to_bytes.copy_from_slice(from_bytes);
 
         self.expr_stack.resize(new_stack_len, 0);

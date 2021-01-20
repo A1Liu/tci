@@ -4,13 +4,11 @@
 
 #include <stdio.h>
 
-#pragma tci enable_builtins
-
 size_t tci_var_size(void *var) {
   __tci_builtin_push(var);
   __tci_builtin_push(var);
-  char *begin = __tci_builtin_ecall(TCI_ECALL_ALLOC_BEGIN);
-  char *end = __tci_builtin_ecall(TCI_ECALL_ALLOC_END);
+  char *begin = __tci_builtin_op("AllocBegin", sizeof(char *));
+  char *end = __tci_builtin_op("AllocEnd", sizeof(char *));
   if (begin == NULL || end == NULL) {
     return -1;
   }
@@ -20,7 +18,10 @@ size_t tci_var_size(void *var) {
 
 void tci_throw_error(const char *name, const char *message,
                      unsigned int skip_frames) {
-  tci_ecall(TCI_ECALL_THROW_ERROR, name, message, skip_frames + 2);
+  __tci_builtin_push(name);
+  __tci_builtin_push(message);
+  __tci_builtin_push(skip_frames + 1);
+  __tci_builtin_op("Throw", sizeof(void));
 }
 
 void *tci_ecall(int ecall_num, ...) {
@@ -32,7 +33,9 @@ void *tci_ecall(int ecall_num, ...) {
   size_t size = tci_var_size(next);
 
   while (size != -1) {
-    __tci_builtin_push_dyn(next, size);
+    __tci_builtin_push((unsigned int)size);
+    __tci_builtin_push(next);
+    __tci_builtin_op("PushDyn", sizeof(void));
 
     list.current = next;
     next = ((char *)list.current) - diff;
@@ -41,5 +44,6 @@ void *tci_ecall(int ecall_num, ...) {
 
   va_end(list);
 
-  return __tci_builtin_ecall(ecall_num);
+  __tci_builtin_push(ecall_num);
+  return __tci_builtin_op("Ecall", sizeof(void *));
 }

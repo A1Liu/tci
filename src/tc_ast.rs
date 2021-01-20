@@ -1,5 +1,6 @@
 use crate::buckets::*;
 use crate::filedb::*;
+use crate::runtime::Opcode;
 use crate::util::*;
 use serde::Serialize;
 use std::io::Write;
@@ -1129,12 +1130,8 @@ impl<'a> TCTy for TCTypeMut<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum TCBuiltin {
-    PushDyn {
-        ptr: &'static TCExpr,  // always of type void*
-        size: &'static TCExpr, // always of type size_t
-    },
-    Push(&'static TCExpr),  // Any type
-    Ecall(&'static TCExpr), // always of type `int`
+    Push(&'static TCExpr), // Any type
+    Opcode(Opcode),
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::buckets::*;
 use crate::filedb::*;
+use crate::runtime::Opcode;
 use crate::tc_ast::*;
 use crate::tc_structs::*;
 use crate::util::*;
@@ -143,62 +144,55 @@ lazy_static! {
             });
         });
 
-        m.insert(
-            BuiltinSymbol::BuiltinPushDyn as u32,
-            |env, call_loc, args| {
-                if args.len() != 2 {
-                    return Err(error!(
-                        "wrong number of arguments to builtin function",
-                        call_loc, "called here"
-                    ));
-                }
-
-                let void_ptr = TCType::new_ptr(TCTypeBase::Void);
-                let void = TCType::new(TCTypeBase::Void);
-                let uint = TCType::new(TCTypeBase::U32);
-
-                let ptr = check_expr(&mut *env, &args[0])?;
-                let or_else = || param_conversion_error(void_ptr, &ptr);
-                let ptr = env
-                    .assign_convert(void_ptr, ptr, call_loc)
-                    .ok_or_else(or_else)?;
-
-                let size = check_expr(&mut *env, &args[1])?;
-                let or_else = || param_conversion_error(uint, &size);
-                let size = env
-                    .assign_convert(uint, size, call_loc)
-                    .ok_or_else(or_else)?;
-
-                return Ok(TCExpr {
-                    kind: TCExprKind::Builtin(TCBuiltin::PushDyn {
-                        ptr: env.add(ptr),
-                        size: env.add(size),
-                    }),
-                    ty: void,
-                    loc: call_loc,
-                });
-            },
-        );
-
-        m.insert(BuiltinSymbol::BuiltinEcall as u32, |env, call_loc, args| {
-            if args.len() != 1 {
+        m.insert(BuiltinSymbol::BuiltinOp as u32, |env, call_loc, args| {
+            if args.len() != 2 {
                 return Err(error!(
                     "wrong number of arguments to builtin function",
                     call_loc, "called here"
                 ));
             }
 
-            let uint = TCType::new(TCTypeBase::U32);
+            let void = TCType::new(TCTypeBase::Void);
 
-            let ecall = check_expr(env, &args[0])?;
-            let or_else = || param_conversion_error(uint, &ecall);
-            let ecall = env
-                .assign_convert(uint, ecall, call_loc)
-                .ok_or_else(or_else)?;
+            let op = match args[0].kind {
+                ExprKind::StringLit(lit) => lit,
+                _ => {
+                    return Err(error!(
+                        "first opcode argument must be string literal",
+                        args[0].loc, "this argument"
+                    ))
+                }
+            };
+            let ast_ty = match args[1].kind {
+                ExprKind::SizeofTy(ty) => ty,
+                _ => {
+                    return Err(error!(
+                        "second opcode argument must be a sizeof(type) expression",
+                        args[1].loc, "this argument"
+                    ))
+                }
+            };
+
+            let or_else = |_| {
+                error!(
+                    "opcode argument wasn't a real opcode",
+                    args[0].loc, "this opcode argument"
+                )
+            };
+            let op = op.parse::<Opcode>().map_err(or_else)?;
+
+            let base = parse_spec_quals(&mut *env, ast_ty.specifiers)?;
+            let ty = if let Some(decl) = ast_ty.declarator {
+                let (ty, id) = check_decl(&mut *env, base, &decl)?;
+                assert!(id == n32::NULL);
+                ty.to_ref(&*env)
+            } else {
+                TCType { base, mods: &[] }
+            };
 
             return Ok(TCExpr {
-                kind: TCExprKind::Builtin(TCBuiltin::Ecall(&*env.add(ecall))),
-                ty: TCType::new(TCTypeBase::U64),
+                kind: TCExprKind::Builtin(TCBuiltin::Opcode(op)),
+                ty,
                 loc: call_loc,
             });
         });

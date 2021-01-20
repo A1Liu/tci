@@ -3,12 +3,17 @@
 
 int __tci_errno;
 
-void *malloc(size_t size) { return tci_ecall(TCI_ECALL_HEAP_ALLOC, size, 2); }
+void *malloc(size_t size) {
+  __tci_builtin_push(size);
+  __tci_builtin_push(2);
+  return __tci_builtin_op("HeapAlloc", sizeof(void *));
+}
 
 void *realloc(void *_buffer, size_t new_size) {
   char *buffer = _buffer;
 
-  char *alloc_begin = tci_ecall(TCI_ECALL_ALLOC_BEGIN, buffer);
+  __tci_builtin_push(buffer);
+  char *alloc_begin = __tci_builtin_op("AllocBegin", sizeof(char *));
 
   if (buffer != alloc_begin)
     tci_throw_error(
@@ -27,6 +32,10 @@ void *realloc(void *_buffer, size_t new_size) {
   return new_buffer;
 }
 
-void free(void *buffer) { return tci_ecall(TCI_ECALL_HEAP_DEALLOC, buffer, 2); }
+void free(void *buffer) {
+  __tci_builtin_push(buffer);
+  __tci_builtin_push(2);
+  return __tci_builtin_op("HeapDealloc", sizeof(void *));
+}
 
 void exit(int status) { tci_ecall(TCI_ECALL_EXIT, status); }

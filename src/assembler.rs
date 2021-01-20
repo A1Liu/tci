@@ -1285,18 +1285,14 @@ impl Assembler {
                 self.func.labels[end_label as usize].offset = self.func.opcodes.data.len() as u32;
             }
 
-            TCExprKind::Builtin(TCBuiltin::Ecall(ecall)) => {
-                self.translate_expr(ecall);
-                self.func.opcodes.push(Opcode::Ecall);
-            }
             TCExprKind::Builtin(TCBuiltin::Push(value)) => {
                 self.translate_expr(value);
             }
-            TCExprKind::Builtin(TCBuiltin::PushDyn { ptr, size }) => {
-                self.translate_expr(size);
-                self.translate_expr(ptr);
+            TCExprKind::Builtin(TCBuiltin::Opcode(op)) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
 
-                self.func.opcodes.push(Opcode::PushDyn);
+                self.func.opcodes.push(*op);
             }
         }
     }

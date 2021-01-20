@@ -271,7 +271,7 @@ impl CallFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumString)]
 #[repr(u8)]
 pub enum Opcode {
     Func,
@@ -502,6 +502,14 @@ pub enum Opcode {
 
     Ret,
     Call,
+
+    AllocBegin,
+    AllocEnd,
+    HeapAlloc,
+    HeapDealloc,
+
+    Throw,
+
     Ecall,
 }
 
@@ -515,4 +523,18 @@ pub enum WriteEvent {
 pub enum RuntimeStatus {
     Running,
     Exited(i32),
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u32)]
+pub enum Ecall {
+    /// exit the program with an error code
+    Exit = 0,
+    /// get the number of arguments in the program.
+    Argc,
+    /// get zero-indexed command line argument. Takes in a single int as a parameter,
+    /// and pushes a pointer to the string on the heap as the result.
+    Argv,
+    /// sends a character to the screen
+    PrintString,
 }
