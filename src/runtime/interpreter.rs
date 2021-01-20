@@ -6,8 +6,6 @@ use crate::util::*;
 pub fn run_op(memory: &mut Memory) -> Result<Option<Ecall>, IError> {
     let op: Opcode = memory.read_pc()?;
 
-    println!("{:?}", op);
-
     match op {
         Opcode::Func => {
             // this opcode is handled by Memory

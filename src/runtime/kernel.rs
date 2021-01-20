@@ -88,7 +88,6 @@ impl Runtime {
             }
 
             Ecall::PrintString => {
-                println!(self.memory.expr_stack);
                 let len: u32 = self.memory.pop()?;
                 let string: VarPointer = self.memory.pop()?;
 

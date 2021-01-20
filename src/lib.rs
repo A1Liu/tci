@@ -146,16 +146,19 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
 
         let mut timeout = 0;
         if let Some(runtime) = runtime.as_mut() {
-            let status = runtime.run_op_count(5000);
+            let result = runtime.run_op_count(5000);
+            let status = match result {
+                Ok(s) => s,
+                Err(e) => {
+                    let e_str = print_error(&e, &runtime.memory, &files);
+                    runtime.output.push(WriteEvent::StderrWrite, &e_str);
+                    RuntimeStatus::Exited(1)
+                }
+            };
 
             match status {
-                RuntimeStatus::Exited(code) => {
-                    timeout = 0;
-                    runtime.print_callstack(&files);
-                }
-                RuntimeStatus::Running => {
-                    timeout = 1;
-                }
+                RuntimeStatus::Exited(code) => timeout = 0,
+                RuntimeStatus::Running => timeout = 1,
             }
 
             for TS(tag, s) in &runtime.events() {
