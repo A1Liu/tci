@@ -11,25 +11,26 @@
 #define FLAG_LINE_BUF ((uint16_t)4)
 #define FLAG_FULL_BUF ((uint16_t)8)
 
-#define FLAGS_IO ((uint16_t)112) // 16 + 32 + 64
 #define FLAG_IO_INPUT ((uint16_t)16)
 #define FLAG_IO_OUTPUT ((uint16_t)32)
 #define FLAG_IO_APPEND ((uint16_t)64)
+#define FLAGS_IO ((uint16_t)112) // 16 + 32 + 64
 
 #define FLAG_BINARY ((uint16_t)128)
 #define FLAG_EOF ((uint16_t)256)
+#define FLAG_CLOSED ((uint16_t)512)
 
-#define FLAG_CREATE ((uint16_t)512)
-#define FLAG_CLEAR ((uint16_t)1024)
+#define FLAG_CREATE ((uint16_t)1024)
+#define FLAG_CLEAR ((uint16_t)2048)
 
 #define FLAG_STDOUT_INIT ((uint16_t)68) // FLAG_IO_APPEND + FLAG_LINE_BUF
 
 char __tci_stdout_buffer[BUFSIZ];
-FILE __tci_stdout_struct = {__tci_stdout_buffer, 0, BUFSIZ, 0, 0, 1, 0,
-                            FLAG_STDOUT_INIT};
+FILE __tci_stdout_struct = {0, __tci_stdout_buffer, 0, BUFSIZ, 0, 1,
+                            0, FLAG_STDOUT_INIT};
 char __tci_stderr_buffer[BUFSIZ];
-FILE __tci_stderr_struct = {__tci_stderr_buffer, 0, BUFSIZ, 0, 0, 2, 0,
-                            FLAG_STDOUT_INIT};
+FILE __tci_stderr_struct = {0, __tci_stderr_buffer, 0, BUFSIZ, 0, 2,
+                            0, FLAG_STDOUT_INIT};
 
 FILE *__tci_stdout = &__tci_stdout_struct;
 FILE *__tci_stderr = &__tci_stderr_struct;
@@ -74,7 +75,7 @@ FILE *fopen(const char *name, const char *mode) {
   flags &= ~(FLAG_CLEAR | FLAG_CREATE); // clear the flags
   uint32_t open_mode = should_create + should_clear;
 
-  unsigned long fd = tci_ecall(TCI_ECALL_OPEN_FD, name, open_mode);
+  uint64_t fd = tci_ecall(TCI_ECALL_OPEN_FD, name, open_mode);
   switch (fd >> 32) {
   case 0:
     break;
@@ -94,21 +95,139 @@ FILE *fopen(const char *name, const char *mode) {
 
   case TCI_FILE_ERR_OUT_OF_RANGE:
   default:
-    tci_throw_error("InvalidFileError", "something messed up", 0);
+    tci_throw_error("InvalidFileError",
+                    "got the wrong file error (this is a bug in TCI)", 0);
   }
 
-  FILE *file = malloc(sizeof(FILE) + BUFSIZ);
-  file->buffer = (char *)(file + 1);
+  FILE *file = (uint8_t *)malloc(8 + sizeof(FILE) + BUFSIZ) + 8U;
+  file->buffer = (uint8_t *)(file + 1);
+  file->buffer_position = 0;
+  file->buffer_capacity = BUFSIZ;
+  file->position = 0;
+  file->lock = 0;
+  file->fd = fd;
+  file->error = 0;
+  file->flags = flags;
 
   return file;
 }
 
-int fclose(FILE *fp);
+int fclose(FILE *fp) {
+  fp->buffer; // cause seg-fault early
 
-int fputc(int c, FILE *fp);
-int fputs(const char *s, FILE *fp);
+  int err = fflush(fp);
+  if (err)
+    return err;
 
-int fflush(FILE *fp);
+  if (fp->fd < 4) {
+    fp->flags &= FLAG_CLOSED;
+    return 0;
+  }
+
+  free((char *)fp - 8U);
+  return 0;
+}
+
+// Assumes flags have already been checked for errors
+static inline fpos_t tci_write_out(unsigned int fd, fpos_t position,
+                                   char *buffer, unsigned int len,
+                                   uint16_t flags) {
+  if (flags & FLAG_IO_OUTPUT) {
+    __tci_builtin_push(fd);
+    __tci_builtin_push(position);
+    __tci_builtin_push(buffer);
+    __tci_builtin_push(len);
+
+    __tci_builtin_push(TCI_ECALL_WRITE_FD);
+  } else {
+    __tci_builtin_push(fd);
+    __tci_builtin_push(buffer);
+    __tci_builtin_push(len);
+
+    __tci_builtin_push(TCI_ECALL_APPEND_FD);
+  }
+
+  uint64_t result = __tci_builtin_op("Ecall", sizeof(uint64_t));
+  switch (result >> 32) {
+  case 0:
+    break;
+
+  case TCI_FILE_ERR_DOESNT_EXIST:
+    tci_throw_error("FileWasDeleted",
+                    "file was deleted while we still had it open", 2);
+
+  case TCI_FILE_ERR_OUT_OF_RANGE:
+    tci_throw_error("FileIndexInvalid",
+                    "wrote outside of file's length (this is a bug in TCI)", 0);
+
+  case TCI_FILE_ERR_FILES_TOO_LARGE:
+    errno = TCI_ERRNO_FILES_TOO_LARGE;
+    return EOF;
+
+  case TCI_FILE_ERR_TOO_MANY_FILES:
+  case TCI_FILE_ERR_NAME_NOT_UTF8:
+  default:
+    tci_throw_error("InvalidFileError",
+                    "got the wrong file error (this is a bug in TCI)", 0);
+  }
+
+  return (flags & FLAG_IO_OUTPUT) ? position + len : result;
+}
+
+int fputc(int c, FILE *fp) {
+  if (fp->flags & FLAG_CLOSED)
+    tci_throw_error("FileIsClosed", "tried to use an already closed file", 1);
+
+  const uint16_t output_mask = FLAG_IO_OUTPUT | FLAG_IO_APPEND;
+  if (!(fp->flags & output_mask))
+    tci_throw_error("FileIsNotOutput",
+                    "tried to flush a file that isn't an output file", 1);
+
+  if (fp->buffer_capacity == 0) {
+    fpos_t ret = tci_write_out(fp->fd, fp->position, &c, 1, fp->flags);
+    return (ret == EOF) ? EOF : c;
+  }
+
+  if (fp->buffer_position == fp->buffer_capacity) {
+    int ret = fflush(fp);
+    if (ret)
+      return ret;
+  }
+
+  return fp->buffer[fp->buffer_position++] = c;
+}
+
+int fputs(const char *s, FILE *fp) {
+  int ret;
+  while (*s && (ret = fputc(*s, fp)) != EOF)
+    ;
+
+  return (ret == EOF) ? EOF : 1;
+}
+
+int fflush(FILE *fp) {
+  // TODO handle null pointer case
+
+  if (fp->flags & FLAG_CLOSED)
+    tci_throw_error("FileIsClosed", "tried to use an already closed file", 1);
+
+  const uint16_t output_mask = FLAG_IO_OUTPUT | FLAG_IO_APPEND;
+  if (!(fp->flags & output_mask))
+    tci_throw_error("FileIsNotOutput",
+                    "tried to flush a file that isn't an output file", 1);
+
+  if (fp->buffer_position == 0) // nothing to flush
+    return 0;
+
+  fpos_t ret = tci_write_out(fp->fd, fp->position, &fp->buffer,
+                             fp->buffer_position, fp->flags);
+  if (ret == EOF)
+    return EOF;
+
+  fp->position = ret;
+  fp->buffer_position = 0;
+  return 0;
+}
 
 int fgetc(FILE *fp);
 char *fgets(char *buf, int n, FILE *fp);

@@ -25,6 +25,9 @@ int vsscanf(const char *restrict buffer, const char *restrict format,
 
 // TODO remove definition from header
 typedef struct __tci_file {
+  // reentrant lock (required as of C11)
+  unsigned long lock;
+
   // the buffer
   char *buffer;
   unsigned int buffer_position;
@@ -34,12 +37,9 @@ typedef struct __tci_file {
   // type mbstate_t)
   fpos_t position;
 
-  // reentrant lock (required as of C11)
-  unsigned int lock;
-
   // platform-specific identifier of the associated I/O device, such as a file
   // descriptor
-  int fd;
+  unsigned int fd;
 
   // error indicator
   int error;
@@ -68,6 +68,7 @@ extern FILE *__tci_stdin;
 #define stderr __tci_stderr
 #define stdin __tci_stdin
 #define BUFSIZ 1024
+#define EOF (-1)
 
 FILE *fopen(const char *filename, const char *mode);
 int fclose(FILE *fp);
