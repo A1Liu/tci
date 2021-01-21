@@ -125,7 +125,7 @@ impl Runtime {
                 };
 
                 self.memory.write_bytes(buf, file_buffer)?;
-                self.memory.push(0u64);
+                self.memory.push(file_buffer.len() as u32);
             }
             Ecall::WriteFd => {
                 let len: u32 = self.memory.pop()?;

@@ -1364,7 +1364,7 @@ rule labeled_statement() -> Statement =
             }
         }
     } /
-    pos:position!() [Case] w() i:constant_expr() w() [Colon] w() s:statement() {
+    pos:position!() [Case] w() i:assignment_expr() w() [Colon] w() s:statement() {
         Statement {
             loc: l_from(env.locs[pos], s.loc),
             kind: StatementKind::CaseLabeled {
