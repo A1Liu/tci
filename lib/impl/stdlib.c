@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include <tci.h>
 
-int __tci_errno;
-
 void *malloc(size_t size) {
   __tci_builtin_push(size);
   __tci_builtin_push(2);

@@ -51,10 +51,13 @@ typedef struct __tci_file {
   // bits 2,3 stream buffering state indicator (unbuffered, line buffered, fully
   // buffered)
   //
-  // bits 4,5 I/O mode indicator (input stream, output stream, or update stream)
-  // bit 6 binary/text mode indicator
-  // 7 end-of-file indicator
-  unsigned char flags;
+  // bits 4,5,6 I/O mode indicator (input stream, output stream, or update
+  // stream)
+  //
+  // bit 7 binary/text mode indicator
+  //
+  // bit 8 end-of-file indicator
+  unsigned short flags;
 } FILE;
 
 extern FILE *__tci_stdout;

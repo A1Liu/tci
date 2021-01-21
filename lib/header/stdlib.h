@@ -1,3 +1,6 @@
+#ifndef __TCI_STDLIB_H
+#define __TCI_STDLIB_H
+
 #define NULL ((void *)0)
 
 typedef unsigned long size_t;
@@ -25,3 +28,5 @@ unsigned long long strtoull(const char *restrict str, char **restrict str_end,
 float strtof(const char *restrict str, char **restrict str_end);
 double strtod(const char *restrict str, char **restrict str_end);
 // long double strtold(const char *restrict str, char **restrict str_end);
+
+#endif

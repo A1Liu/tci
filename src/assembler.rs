@@ -344,6 +344,11 @@ impl Assembler {
             TCExprKind::U64Lit(i) => self.data.write(ptr, i),
             TCExprKind::F32Lit(i) => self.data.write(ptr, i),
             TCExprKind::F64Lit(i) => self.data.write(ptr, i),
+            TCExprKind::StringLit(s) => {
+                let string = self.data.add_slice(s.as_bytes());
+                self.data.data.push(0u8);
+                self.data.write(ptr, string);
+            }
 
             TCExprKind::TypePun(expr) => {
                 self.make_var(ptr, *expr)?;

@@ -100,7 +100,7 @@ impl FileSystem {
 
         self.size += extend.len();
         if self.size > 1024 * 1024 * 64 {
-            return Err(FileError::FilesToLarge);
+            return Err(FileError::FilesTooLarge);
         }
 
         file.extend_from_slice(extend);
@@ -113,7 +113,7 @@ impl FileSystem {
 
         self.size += buffer.len();
         if self.size > 1024 * 1024 * 64 {
-            return Err(FileError::FilesToLarge);
+            return Err(FileError::FilesTooLarge);
         }
 
         file.extend_from_slice(buffer);

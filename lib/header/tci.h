@@ -14,6 +14,16 @@
 #define TCI_ECALL_APPEND_FD 7
 #define TCI_ECALL_FD_LEN 8
 
+#define TCI_FILE_ERR_DOESNT_EXIST 1U
+#define TCI_FILE_ERR_NAME_NOT_UTF8 2U
+#define TCI_FILE_ERR_TOO_MANY_FILES 3U
+#define TCI_FILE_ERR_FILES_TOO_LARGE 4U
+#define TCI_FILE_ERR_OUT_OF_RANGE 5U
+
+#define TCI_ERRNO_DOESNT_EXIST 4U
+#define TCI_ERRNO_TOO_MANY_FILES 5U
+#define TCI_ERRNO_FILES_TOO_LARGE 6U
+
 size_t tci_var_size(void *var);
 
 void tci_throw_error(const char *name, const char *message,

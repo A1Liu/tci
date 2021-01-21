@@ -97,6 +97,12 @@ lazy_static! {
                 let lib = unsafe { str::from_utf8_unchecked(lib) };
                 m.push(File::new_static(FileType::System, &*buckets, file, lib));
             }};
+            (@IMPL_HEADER, $file:literal) => {{
+                let file = concat!("libs/", $file);
+                let lib: &[u8] = include_bytes!(concat!("../lib/impl/", $file));
+                let lib = unsafe { str::from_utf8_unchecked(lib) };
+                m.push(File::new_static(FileType::Header, &*buckets, file, lib));
+            }};
             (@HEADER, $file:literal) => {{
                 let header: &[u8] = include_bytes!(concat!("../lib/header/", $file));
                 let header = unsafe { str::from_utf8_unchecked(header) };
@@ -117,6 +123,8 @@ lazy_static! {
         new_file!(@HEADER, "errno.h");
         new_file!(@HEADER, "limits.h");
 
+        // new_file!(@IMPL_HEADER, "tci.c");
+
         new_file!(@IMPL, "tci.c");
         new_file!(@IMPL, "printf.c");
         new_file!(@IMPL, "sscanf.c");
@@ -125,6 +133,7 @@ lazy_static! {
         new_file!(@IMPL, "string.c");
         new_file!(@IMPL, "ctype.c");
         new_file!(@IMPL, "files.c");
+        new_file!(@IMPL, "errors.c");
 
         m
     };

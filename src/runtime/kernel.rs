@@ -111,8 +111,8 @@ impl Runtime {
                 self.memory.push((err as u32 as u64) << 32);
             }
             Ecall::ReadFd => {
-                let buf: VarPointer = self.memory.pop()?;
                 let len: u32 = self.memory.pop()?;
+                let buf: VarPointer = self.memory.pop()?;
                 let begin: u32 = self.memory.pop()?;
                 let fd: u32 = self.memory.pop()?;
 
@@ -128,8 +128,8 @@ impl Runtime {
                 self.memory.push(0u64);
             }
             Ecall::WriteFd => {
-                let buf: VarPointer = self.memory.pop()?;
                 let len: u32 = self.memory.pop()?;
+                let buf: VarPointer = self.memory.pop()?;
                 let begin: u32 = self.memory.pop()?;
                 let fd: u32 = self.memory.pop()?;
 
@@ -146,8 +146,8 @@ impl Runtime {
                 self.memory.push((e as u32 as u64) << 32);
             }
             Ecall::AppendFd => {
-                let buf: VarPointer = self.memory.pop()?;
                 let len: u32 = self.memory.pop()?;
+                let buf: VarPointer = self.memory.pop()?;
                 let fd: u32 = self.memory.pop()?;
 
                 let buffer = self.memory.read_bytes(buf, len)?;

@@ -502,17 +502,17 @@ pub enum Ecall {
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum FileError {
-    DoesntExist,
+    DoesntExist = 1,
     NameNotUTF8,
     TooManyFiles,
-    FilesToLarge,
+    FilesTooLarge,
     OutOfRange,
 }
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum OpenMode {
-    Read,
-    Create,
-    CreateClear,
+    Read = 0,
+    Create = 1,
+    CreateClear = 2,
 }
