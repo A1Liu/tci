@@ -22,6 +22,7 @@
 
 #define FLAG_CREATE ((uint16_t)1024)
 #define FLAG_CLEAR ((uint16_t)2048)
+#define FLAG_CAN_READ ((uint16_t)4096)
 
 #define FLAG_STDOUT_INIT ((uint16_t)68) // FLAG_IO_APPEND + FLAG_LINE_BUF
 
@@ -99,27 +100,30 @@ FILE *fopen(const char *name, const char *mode) {
                     "got the wrong file error (this is a bug in TCI)", 0);
   }
 
-  FILE *file = (uint8_t *)malloc(8 + sizeof(FILE) + BUFSIZ) + 8U;
-  file->buffer = (uint8_t *)(file + 1);
-  file->buffer_position = 0;
-  file->buffer_capacity = BUFSIZ;
-  file->position = 0;
-  file->lock = 0;
-  file->fd = fd;
-  file->error = 0;
-  file->flags = flags;
+  FILE *fp = (uint8_t *)malloc(8U + sizeof(FILE) + BUFSIZ) + 8U;
+  fp->buffer = (uint8_t *)(fp + 1);
+  fp->buffer_position = 0;
+  fp->buffer_capacity = BUFSIZ;
+  fp->position = 0;
+  fp->lock = 0;
+  fp->fd = fd;
+  fp->error = 0;
+  fp->flags = flags;
 
-  return file;
+  return fp;
 }
 
 int fclose(FILE *fp) {
   fp->buffer; // cause seg-fault early
 
-  int err = fflush(fp);
-  if (err)
-    return err;
+  const uint16_t output_mask = FLAG_IO_OUTPUT | FLAG_IO_APPEND;
+  if (fp->flags & output_mask) {
+    int err = fflush(fp);
+    if (err)
+      return err;
+  }
 
-  if (fp->fd < 4) {
+  if (fp->fd < 3) {
     fp->flags &= FLAG_CLOSED;
     return 0;
   }
@@ -194,12 +198,11 @@ static inline uint64_t tci_read_in(unsigned int fd, fpos_t position,
                     "file was deleted while we still had it open", 2);
 
   case TCI_FILE_ERR_OUT_OF_RANGE:
-    tci_throw_error("FileIndexInvalid",
-                    "wrote outside of file's length (this is a bug in TCI)", 0);
+    tci_throw_error(
+        "FileIndexInvalid",
+        "tried to read outside of file's length (this is a bug in TCI)", 0);
 
   case TCI_FILE_ERR_FILES_TOO_LARGE:
-    return (uint64_t)TCI_ERRNO_FILES_TOO_LARGE << 32;
-
   case TCI_FILE_ERR_TOO_MANY_FILES:
   case TCI_FILE_ERR_NAME_NOT_UTF8:
   default:
@@ -211,7 +214,6 @@ static inline uint64_t tci_read_in(unsigned int fd, fpos_t position,
 }
 
 int fputc(int _c, FILE *fp) {
-  char c = (char)_c;
   if (fp->flags & FLAG_CLOSED)
     tci_throw_error("FileIsClosed", "tried to use an already closed file", 1);
 
@@ -220,6 +222,7 @@ int fputc(int _c, FILE *fp) {
     tci_throw_error("FileIsNotOutput",
                     "tried to flush a file that isn't an output file", 1);
 
+  char c = _c;
   if (fp->buffer_capacity == 0) {
     uint64_t ret = tci_write_out(fp->fd, fp->position, &c, 1, fp->flags);
     if (ret >> 32) {
@@ -241,7 +244,7 @@ int fputc(int _c, FILE *fp) {
 
 int fputs(const char *s, FILE *fp) {
   int ret;
-  while (*s && (ret = fputc(*s, fp)) != EOF)
+  for (; *s && (ret = fputc(*s, fp)) != EOF; s++)
     ;
 
   return (ret == EOF) ? EOF : 1;
@@ -261,7 +264,7 @@ int fflush(FILE *fp) {
   if (fp->buffer_position == 0) // nothing to flush
     return 0;
 
-  uint64_t ret = tci_write_out(fp->fd, fp->position, &fp->buffer,
+  uint64_t ret = tci_write_out(fp->fd, fp->position, fp->buffer,
                                fp->buffer_position, fp->flags);
   if (ret >> 32) {
     fp->error = ret >> 32;
@@ -270,6 +273,7 @@ int fflush(FILE *fp) {
 
   fp->position = ret;
   fp->buffer_position = 0;
+  fp->flags &= ~FLAG_CAN_READ;
   return 0;
 }
 
@@ -284,7 +288,7 @@ int fgetc(FILE *fp) {
   if (fp->flags & FLAG_EOF)
     return EOF;
 
-  if (fp->buffer_position < fp->buffer_capacity)
+  if (fp->buffer_position < fp->buffer_capacity && (fp->flags & FLAG_CAN_READ))
     return fp->buffer[fp->buffer_position++];
 
   if (fp->buffer_capacity == 0) {
@@ -300,35 +304,35 @@ int fgetc(FILE *fp) {
       return EOF;
     }
 
-    return (char)c;
+    return c;
   }
 
-  uint64_t ret = tci_read_in(fp->fd, fp->position, &fp->buffer,
-                             fp->buffer_position, fp->flags);
+  uint64_t ret = tci_read_in(fp->fd, fp->position, fp->buffer,
+                             fp->buffer_capacity, fp->flags);
   if (ret >> 32) {
     fp->error = ret >> 32;
     return EOF;
   }
 
+  fp->position += ret;
   if (ret == 0) {
     fp->flags |= FLAG_EOF;
     return EOF;
   }
 
+  fp->flags |= FLAG_CAN_READ;
   fp->buffer_position = 1;
   fp->buffer_capacity = ret;
   return fp->buffer[0];
 }
 
 char *fgets(char *restrict str, int count, FILE *restrict fp) {
+  char *original = str;
   for (int i = 1, c; i < count; i++, str++) {
     switch (c = fgetc(fp)) {
     case '\n':
       *str++ = '\n';
-      *str = '\0';
-      goto end;
     case EOF:
-      *str = '\0';
       goto end;
     default:
       *str = c;
@@ -337,7 +341,7 @@ char *fgets(char *restrict str, int count, FILE *restrict fp) {
 
 end:
   *str = '\0';
-  return str;
+  return original;
 }
 
 size_t fread(void *ptr, size_t size_of_elements, size_t number_of_elements,

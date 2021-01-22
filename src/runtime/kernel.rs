@@ -91,8 +91,9 @@ impl Runtime {
             }
 
             Ecall::OpenFd => {
-                let name: VarPointer = self.memory.pop()?;
                 let open_mode: OpenMode = self.memory.pop()?;
+                let name: VarPointer = self.memory.pop()?;
+
                 let name = self.memory.cstring_bytes(name)?;
                 let id = match open_mode {
                     OpenMode::Read => self.files.open(name),
@@ -125,7 +126,7 @@ impl Runtime {
                 };
 
                 self.memory.write_bytes(buf, file_buffer)?;
-                self.memory.push(file_buffer.len() as u32);
+                self.memory.push(file_buffer.len() as u64);
             }
             Ecall::WriteFd => {
                 let len: u32 = self.memory.pop()?;

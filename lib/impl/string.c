@@ -41,7 +41,7 @@ size_t strlen(char *str) {
 }
 
 int strcmp(const char *left, const char *right) {
-  for (; *left && (*left - *right); left++, right++)
+  for (; *left && !(*left - *right); left++, right++)
     ;
 
   return *left - *right;

@@ -1,6 +1,7 @@
 use super::types::*;
 use std::collections::BTreeMap;
 
+#[derive(Debug)]
 pub struct FileSystem {
     pub files: Vec<Vec<u8>>,
     pub names: BTreeMap<String, usize>,
@@ -19,17 +20,18 @@ impl FileSystem {
     pub fn open(&self, name: &[u8]) -> Result<u32, FileError> {
         let name = core::str::from_utf8(name).map_err(|e| FileError::NameNotUTF8)?;
 
-        let idx = 3 + *self.names.get(name).ok_or(FileError::DoesntExist)?;
+        let idx = *self.names.get(name).ok_or(FileError::DoesntExist)?;
         return Ok(idx as u32);
     }
 
     pub fn open_create(&mut self, name: &[u8]) -> Result<u32, FileError> {
         let name = core::str::from_utf8(name).map_err(|e| FileError::NameNotUTF8)?;
 
-        let idx = self.names.get(name).map(|a| 3 + *a).unwrap_or_else(|| {
-            let len = self.files.len();
+        let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
+            let idx = self.files.len() + 3;
             self.files.push(Vec::new());
-            len + 3
+            self.names.insert(name.to_string(), idx);
+            idx
         });
 
         if self.files.len() > 4000 {
@@ -42,18 +44,19 @@ impl FileSystem {
     pub fn open_create_clear(&mut self, name: &[u8]) -> Result<u32, FileError> {
         let name = core::str::from_utf8(name).map_err(|e| FileError::NameNotUTF8)?;
 
-        let idx = self.names.get(name).map(|a| 3 + *a).unwrap_or_else(|| {
-            let len = self.files.len();
+        let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
+            let idx = self.files.len() + 3;
             self.files.push(Vec::new());
-            len + 3
+            self.names.insert(name.to_string(), idx);
+            idx
         });
 
         if self.files.len() > 4000 {
             return Err(FileError::TooManyFiles);
         }
 
-        self.size -= self.files[idx].len();
-        self.files[idx].clear();
+        self.size -= self.files[idx - 3].len();
+        self.files[idx - 3].clear();
 
         return Ok(idx as u32);
     }
@@ -76,7 +79,7 @@ impl FileSystem {
 
         let file = self.files.get(fd - 3).ok_or(FileError::DoesntExist)?;
         let from_buffer = file
-            .get(begin..(begin + len))
+            .get(begin..std::cmp::min(begin + len, file.len()))
             .ok_or(FileError::OutOfRange)?;
         return Ok(from_buffer);
     }

@@ -21,11 +21,28 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     let mut runtime = Runtime::new(&program);
 
     match runtime.run() {
-        Err(err) => {
-            let s = print_error(&err, &runtime.memory, files);
-            panic!("{}", s);
+        Ok(0) => {}
+        Ok(code) => {
+            let mut writer = StringWriter::new();
+            for TS(_, s) in &runtime.events() {
+                writer.write(s.as_bytes()).unwrap();
+            }
+
+            println!("\n{}", writer.into_string());
+            println!("\n{:?}", runtime.files);
+            panic!("Nonzero return code");
         }
-        _ => {}
+        Err(err) => {
+            let mut writer = StringWriter::new();
+            for TS(_, s) in &runtime.events() {
+                writer.write(s.as_bytes()).unwrap();
+            }
+
+            println!("\n{}", writer.into_string());
+            let s = print_error(&err, &runtime.memory, files);
+            println!("{}", s);
+            panic!("\n{:?}", runtime.files);
+        }
     };
 
     let mut writer = StringWriter::new();
@@ -163,7 +180,8 @@ gen_test_should_succeed!(
     dyn_array_ptr,
     arrays,
     statics,
-    memory
+    memory,
+    files
 );
 
 // gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
