@@ -32,6 +32,7 @@ mod wasm {
     pub use js_sys::{Function as Func, Promise};
     pub use wasm_bindgen::prelude::*;
     pub use wasm_bindgen_futures::JsFuture;
+    pub use web_sys::Window;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -44,12 +45,16 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum InMessage {
-    Sources(HashMap<String, String>),
+    Source(String, String),
+    // DeleteSource(String),
+    // Compile,
+    Run,
 }
 
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum OutMessage {
+    Startup,
     FileIds(HashMap<u32, String>),
     CompileError {
         rendered: String,
@@ -111,6 +116,8 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
         return Ok(JsFuture::from(promise));
     };
 
+    send(Out::Startup)?;
+
     let mut files = FileDb::new();
     let mut runtime = None;
 
@@ -119,16 +126,10 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
 
         while let Some(input) = recv()? {
             match input {
-                In::Sources(input_files) => {
-                    files = FileDb::new();
-                    let mut out = HashMap::new();
-                    for (name, contents) in input_files {
-                        let file_id = files.add(&name, &contents).unwrap();
-                        out.insert(file_id, name);
-                    }
-
-                    send(Out::FileIds(out))?;
-
+                In::Source(name, contents) => {
+                    let file_id = files.add(&name, &contents).unwrap();
+                }
+                In::Run => {
                     let program = match compile(&mut files) {
                         Ok(p) => p,
                         Err(errors) => {
