@@ -18,27 +18,23 @@ const initialState = {
 const appReducer = (state = initialState, action) => {
   const { type, payload } = action;
 
+  console.log(action);
+
   switch (type) {
     case "Debug":
       console.log(payload);
       return state;
-    case "SetFile": {
-      const files = { ...state.files };
-      files[payload.path] = payload.data;
-      return { ...state, files };
-    }
-    case "FileIds":
-      return { ...state, fileIds: payload };
+
     case "Stdout":
       return { ...state, terminal: state.terminal + payload };
     case "Stderr":
       return { ...state, terminal: state.terminal + payload };
+
     case "Compiled":
-      return { ...state, terminal: "" };
-    case "Compile":
       return { ...state, terminal: "" };
     case "CompileError":
       return { ...state, terminal: payload.rendered };
+
     default:
       return state;
   }
@@ -54,8 +50,13 @@ const tciMiddleware = (store) => {
 
     switch (type) {
       case "Compile":
-        worker.postMessage({ type: "Sources", payload: files });
-        return next(action);
+        worker.postMessage({ type: "Source", payload: files });
+        break;
+
+      case "Startup":
+        worker.postMessage({ type: "Source", payload: files });
+        break;
+
       default:
         return next(action);
     }

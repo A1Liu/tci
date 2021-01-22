@@ -29,10 +29,11 @@ use util::*;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    pub use js_sys::{Function as Func, Promise};
+    pub use core::convert::TryInto;
+    pub use js_sys::{Function as Func, Promise, Uint8Array};
     pub use wasm_bindgen::prelude::*;
+    pub use wasm_bindgen::JsCast;
     pub use wasm_bindgen_futures::JsFuture;
-    pub use web_sys::Window;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -47,7 +48,6 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 pub enum InMessage {
     Source(String, String),
     // DeleteSource(String),
-    // Compile,
     Run,
 }
 
@@ -68,63 +68,72 @@ pub enum OutMessage {
     Stdlog(String),
 }
 
+#[rustfmt::skip] // rustfmt deletes the keyword async
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
+extern "C" {
+    pub type RunEnv;
+
+    #[wasm_bindgen(method)]
+    async fn wait(this: &RunEnv, timeout: u32);
+    #[wasm_bindgen(method)]
+    fn send(this: &RunEnv, message: String);
+    #[wasm_bindgen(method)]
+    fn recv(this: &RunEnv) -> Option<String>;
+
+    #[wasm_bindgen(method, js_name = get)]
+    async fn get_file(this: &RunEnv, key: &str) -> JsValue;
+    #[wasm_bindgen(method, js_name = set)]
+    async fn set_file(this: &RunEnv, key: &str, val: Vec<u8>);
+    // #[wasm_bindgen(method, js_name = del)]
+    // async fn del_file(this: &RunEnv, key: &str);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub async fn run(env: RunEnv) -> Result<(), JsValue> {
     use InMessage as In;
     use OutMessage as Out;
 
-    let send = move |mes: Out| -> Result<(), JsValue> {
+    let for_send = env.clone();
+    let send = move |mes: Out| {
         let mut writer = StringWriter::new();
         serde_json::to_writer(&mut writer, &mes).unwrap();
-        send.call1(&JsValue::UNDEFINED, &JsValue::from_str(&writer.to_string()))?;
-        return Ok(());
+        let for_send: RunEnv = for_send.clone().unchecked_into();
+        for_send.send(writer.into_string());
     };
 
     let global_send = send.clone();
-    register_output(move |s| {
-        global_send(Out::Debug(s)).ok();
-    });
+    register_output(move |s| global_send(Out::Debug(s)));
 
-    let recv = || -> Result<Option<In>, JsValue> {
-        let value = recv.call0(&JsValue::UNDEFINED)?;
-        if value.is_undefined() || value.is_null() {
-            return Ok(None);
-        }
-
-        let string = if let Some(s) = value.as_string() {
-            s
-        } else {
-            send(Out::InvalidInput("didn't get a string".to_string()))?;
-            return Ok(None);
-        };
+    let recv = || -> Option<In> {
+        let string = env.recv()?;
 
         let out = match serde_json::from_slice(string.as_bytes()) {
             Ok(o) => o,
             Err(e) => {
-                send(Out::InvalidInput(format!("invalid input `{}`", string)))?;
-                return Ok(None);
+                send(Out::InvalidInput(format!("invalid input `{}`", string)));
+                return None;
             }
         };
 
-        return Ok(Some(out));
+        return Some(out);
     };
 
-    let wait = |timeout: u32| -> Result<JsFuture, JsValue> {
-        let timeout = JsValue::from_f64(timeout as f64);
-        let promise = Promise::from(wait.call1(&JsValue::UNDEFINED, &timeout)?);
-        return Ok(JsFuture::from(promise));
-    };
-
-    send(Out::Startup)?;
+    async fn get_env(env: &RunEnv, key: &str) -> Vec<u8> {
+        let buf = env.get_file(key).await;
+        return buf.unchecked_into::<Uint8Array>().to_vec();
+    }
 
     let mut files = FileDb::new();
     let mut runtime = None;
 
+    send(Out::Startup);
+
     loop {
         debug!("running another iteration of loop...");
 
-        while let Some(input) = recv()? {
+        while let Some(input) = recv() {
             match input {
                 In::Source(name, contents) => {
                     let file_id = files.add(&name, &contents).unwrap();
@@ -136,7 +145,7 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                             let mut writer = StringWriter::new();
                             emit_err(&errors, &files, &mut writer);
                             let rendered = writer.to_string();
-                            send(Out::CompileError { rendered, errors })?;
+                            send(Out::CompileError { rendered, errors });
                             continue;
                         }
                     };
@@ -166,21 +175,21 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
             for TS(tag, s) in &runtime.events() {
                 match tag {
                     WriteEvent::StdoutWrite => {
-                        send(Out::Stdout(s.to_string()))?;
+                        send(Out::Stdout(s.to_string()));
                     }
                     WriteEvent::StderrWrite => {
-                        send(Out::Stderr(s.to_string()))?;
+                        send(Out::Stderr(s.to_string()));
                     }
                     WriteEvent::StdlogWrite => {
-                        send(Out::Stdlog(s.to_string()))?;
+                        send(Out::Stdlog(s.to_string()));
                     }
                 }
             }
 
-            send(Out::JumpTo(runtime.loc()))?;
+            send(Out::JumpTo(runtime.loc()));
         }
 
-        wait(timeout)?.await?;
+        env.wait(timeout).await;
     }
 }
 
