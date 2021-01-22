@@ -287,7 +287,7 @@ int fgetc(FILE *fp) {
 
   if (fp->buffer_capacity == 0) {
     char c;
-    uint64_t ret = tci_read_in(fp->fd, fp->position, &c, 1, fp->flags);
+    uint64_t ret = tci_read_in(fp->fd, fp->position++, &c, 1, fp->flags);
     if (ret >> 32) {
       fp->error = ret >> 32;
       return EOF;
@@ -301,14 +301,20 @@ int fgetc(FILE *fp) {
     return c;
   }
 
-  uint64_t ret = tci_read_in(fp->fd, fp->position, fp->buffer,
-                             fp->buffer_capacity, fp->flags);
+  uint64_t ret;
+  if (fp->flags & FLAG_CAN_READ) {
+    ret = tci_read_in(fp->fd, fp->position += fp->buffer_capacity, fp->buffer,
+                      fp->buffer_capacity, fp->flags);
+  } else {
+    ret = tci_read_in(fp->fd, fp->position, fp->buffer, fp->buffer_capacity,
+                      fp->flags);
+  }
+
   if (ret >> 32) {
     fp->error = ret >> 32;
     return EOF;
   }
 
-  fp->position += ret;
   if (ret == 0) {
     fp->flags |= FLAG_EOF;
     return EOF;
