@@ -129,24 +129,16 @@ typedef struct {
 // output to command line
 static inline void _out_char(char character, void *buffer, size_t idx,
                              size_t maxlen) {
-  static char out_buffer[1000U];
-  static unsigned int index = 0U;
-
   (void)buffer;
   (void)idx;
   (void)maxlen;
 
   if (!character) {
-    tci_ecall(TCI_ECALL_PRINT_STRING, out_buffer, index);
-    index = 0U;
+    fflush(stdout);
     return;
   }
 
-  out_buffer[index++] = character;
-  if (index == 1000U || character == '\n') {
-    tci_ecall(TCI_ECALL_PRINT_STRING, out_buffer, index);
-    index = 0U;
-  }
+  fputc(character, stdout);
 }
 
 // internal buffer output
