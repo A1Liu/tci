@@ -226,21 +226,6 @@ impl Runtime {
                 self.memory.push(val);
             }
 
-            Ecall::PrintString => {
-                let len: u32 = self.memory.pop()?;
-                let string: VarPointer = self.memory.pop()?;
-
-                let bytes = self.memory.read_bytes(string, len)?;
-
-                let mut string = StringWriter::new();
-                write_utf8_lossy(&mut string, bytes).unwrap();
-
-                self.output
-                    .push(WriteEvent::StdoutWrite, &string.into_string());
-
-                self.memory.push(0u64);
-            }
-
             call => {
                 return ierr!(
                     "InvalidEnviromentCall",

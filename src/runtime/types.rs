@@ -485,9 +485,6 @@ pub enum Ecall {
     /// and pushes a pointer to the string on the heap as the result.
     Argv,
 
-    /// sends a character to the screen
-    PrintString,
-
     /// Open a file descriptor (with options)
     OpenFd,
     /// read from a file descriptor
