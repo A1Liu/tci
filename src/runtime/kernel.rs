@@ -104,12 +104,12 @@ impl Runtime {
                 let err = match id {
                     Err(e) => e,
                     Ok(idx) => {
-                        self.memory.push(idx as u64);
+                        self.memory.push(idx as u64 + 4);
                         return Ok(None);
                     }
                 };
 
-                self.memory.push((err as u32 as u64) << 32);
+                self.memory.push(err.to_u64());
             }
             Ecall::ReadFd => {
                 let len: u32 = self.memory.pop()?;
@@ -117,16 +117,23 @@ impl Runtime {
                 let begin: u32 = self.memory.pop()?;
                 let fd: u32 = self.memory.pop()?;
 
-                let file_buffer = match self.files.read_file_range(fd, begin, len) {
-                    Ok(buf) => buf,
-                    Err(e) => {
-                        self.memory.push((e as u32 as u64) << 32);
-                        return Ok(None);
+                let to_ret = match fd {
+                    0 => {
+                        unimplemented!("stdin")
                     }
+                    1 => EcallError::ReadStdout.to_u64(),
+                    2 => EcallError::ReadStderr.to_u64(),
+                    3 => (EcallError::ReadStdlog as u32 as u64) << 32,
+                    fd => match self.files.read_file_range(fd - 4, begin, len) {
+                        Ok(file_buffer) => {
+                            self.memory.write_bytes(buf, file_buffer)?;
+                            file_buffer.len() as u64
+                        }
+                        Err(e) => e.to_u64(),
+                    },
                 };
 
-                self.memory.write_bytes(buf, file_buffer)?;
-                self.memory.push(file_buffer.len() as u64);
+                self.memory.push(to_ret);
             }
             Ecall::WriteFd => {
                 let len: u32 = self.memory.pop()?;
@@ -136,15 +143,35 @@ impl Runtime {
 
                 let buffer = self.memory.read_bytes(buf, len)?;
 
-                let e = match self.files.write_to_file_range(fd, begin, buffer) {
-                    Ok(len) => {
-                        self.memory.push(len as u64);
+                let write_event = match fd {
+                    0 => {
+                        self.memory.push(EcallError::WriteStdin.to_u64());
                         return Ok(None);
                     }
-                    Err(err) => err,
+                    1 => WriteEvent::StdoutWrite,
+                    2 => WriteEvent::StderrWrite,
+                    3 => WriteEvent::StdlogWrite,
+                    fd => match self.files.write_to_file_range(fd - 4, begin, buffer) {
+                        Ok(len) => {
+                            self.memory.push(len as u64);
+                            return Ok(None);
+                        }
+                        Err(err) => {
+                            self.memory.push((err as u32 as u64) << 32);
+                            return Ok(None);
+                        }
+                    },
                 };
 
-                self.memory.push((e as u32 as u64) << 32);
+                let bytes = self.memory.read_bytes(buf, len)?;
+
+                let mut string = StringWriter::new();
+                write_utf8_lossy(&mut string, bytes).unwrap();
+
+                self.output.push(write_event, &string.into_string());
+
+                self.memory.push(0u64);
+                return Ok(None);
             }
             Ecall::AppendFd => {
                 let len: u32 = self.memory.pop()?;
@@ -153,28 +180,50 @@ impl Runtime {
 
                 let buffer = self.memory.read_bytes(buf, len)?;
 
-                let e = match self.files.append_to_file(fd, buffer) {
-                    Ok(len) => {
-                        self.memory.push(len as u64);
+                let write_event = match fd {
+                    0 => {
+                        self.memory.push(EcallError::WriteStdin.to_u64());
                         return Ok(None);
                     }
-                    Err(err) => err,
+                    1 => WriteEvent::StdoutWrite,
+                    2 => WriteEvent::StderrWrite,
+                    3 => WriteEvent::StdlogWrite,
+                    fd => match self.files.append_to_file(fd - 4, buffer) {
+                        Ok(len) => {
+                            self.memory.push(len as u64);
+                            return Ok(None);
+                        }
+                        Err(err) => {
+                            self.memory.push(err.to_u64());
+                            return Ok(None);
+                        }
+                    },
                 };
 
-                self.memory.push((e as u32 as u64) << 32);
+                let bytes = self.memory.read_bytes(buf, len)?;
+
+                let mut string = StringWriter::new();
+                write_utf8_lossy(&mut string, bytes).unwrap();
+
+                self.output.push(write_event, &string.into_string());
+
+                self.memory.push(0u64);
+                return Ok(None);
             }
             Ecall::FdLen => {
                 let fd: u32 = self.memory.pop()?;
 
-                let e = match self.files.len(fd) {
-                    Ok(len) => {
-                        self.memory.push(len as u64);
-                        return Ok(None);
-                    }
-                    Err(err) => err,
+                if fd < 4 {
+                    self.memory.push(EcallError::StreamLen.to_u64());
+                    return Ok(None);
+                }
+
+                let val = match self.files.len(fd - 4) {
+                    Ok(len) => len as u64,
+                    Err(err) => err.to_u64(),
                 };
 
-                self.memory.push((e as u32 as u64) << 32);
+                self.memory.push(val);
             }
 
             Ecall::PrintString => {

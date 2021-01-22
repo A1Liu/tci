@@ -465,6 +465,7 @@ pub enum Opcode {
 pub enum WriteEvent {
     StdoutWrite,
     StderrWrite,
+    StdlogWrite,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -501,12 +502,26 @@ pub enum Ecall {
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
-pub enum FileError {
+pub enum EcallError {
+    // Files
     DoesntExist = 1,
-    NameNotUTF8,
-    TooManyFiles,
-    FilesTooLarge,
-    OutOfRange,
+    NameNotUTF8 = 2,
+    TooManyFiles = 3,
+    FilesTooLarge = 4,
+    OutOfRange = 5,
+
+    // stdin/stdout/stderr misuse
+    ReadStdout = 6,
+    ReadStderr = 7,
+    ReadStdlog = 8,
+    WriteStdin = 9,
+    StreamLen = 10,
+}
+
+impl EcallError {
+    pub fn to_u64(self) -> u64 {
+        (self as u32 as u64) << 32
+    }
 }
 
 #[repr(u32)]

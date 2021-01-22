@@ -94,7 +94,6 @@ FILE *fopen(const char *name, const char *mode) {
     errno = TCI_ERRNO_FILES_TOO_LARGE;
     return NULL;
 
-  case TCI_FILE_ERR_OUT_OF_RANGE:
   default:
     tci_throw_error("InvalidFileError",
                     "got the wrong file error (this is a bug in TCI)", 0);
@@ -167,8 +166,6 @@ static inline uint64_t tci_write_out(unsigned int fd, fpos_t position,
   case TCI_FILE_ERR_FILES_TOO_LARGE:
     return (uint64_t)TCI_ERRNO_FILES_TOO_LARGE << 32;
 
-  case TCI_FILE_ERR_TOO_MANY_FILES:
-  case TCI_FILE_ERR_NAME_NOT_UTF8:
   default:
     tci_throw_error("InvalidFileError",
                     "got the wrong file error (this is a bug in TCI)", 0);
@@ -202,9 +199,6 @@ static inline uint64_t tci_read_in(unsigned int fd, fpos_t position,
         "FileIndexInvalid",
         "tried to read outside of file's length (this is a bug in TCI)", 0);
 
-  case TCI_FILE_ERR_FILES_TOO_LARGE:
-  case TCI_FILE_ERR_TOO_MANY_FILES:
-  case TCI_FILE_ERR_NAME_NOT_UTF8:
   default:
     tci_throw_error("InvalidFileError",
                     "got the wrong file error (this is a bug in TCI)", 0);
