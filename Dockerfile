@@ -7,7 +7,7 @@ RUN apt-get update
 RUN apt-get install -y curl build-essential
 RUN apt-get install zlib1g-dev libtinfo-dev libxml2-dev -y
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -q -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup target add wasm32-unknown-unknown
 RUN cargo install --color=never wasm-pack

@@ -28,6 +28,10 @@ impl Runtime {
         }
     }
 
+    pub fn loc(&self) -> CodeLoc {
+        self.memory.loc
+    }
+
     pub fn run_debug(&mut self, files: &FileDb) -> Result<i32, IError> {
         if let RuntimeStatus::Exited(code) = self.status {
             return Ok(code);

@@ -122,7 +122,7 @@ int fclose(FILE *fp) {
       return err;
   }
 
-  if (fp->fd < 3) {
+  if (fp->fd < 4) {
     fp->flags &= FLAG_CLOSED;
     return 0;
   }

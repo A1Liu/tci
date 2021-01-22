@@ -60,6 +60,7 @@ pub enum OutMessage {
     Debug(String),
     Stdout(String),
     Stderr(String),
+    Stdlog(String),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -168,6 +169,9 @@ pub async fn run(send: Func, recv: Func, wait: Func) -> Result<(), JsValue> {
                     }
                     WriteEvent::StderrWrite => {
                         send(Out::Stderr(s.to_string()))?;
+                    }
+                    WriteEvent::StdlogWrite => {
+                        send(Out::Stdlog(s.to_string()))?;
                     }
                 }
             }
