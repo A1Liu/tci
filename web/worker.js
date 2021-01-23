@@ -14,8 +14,13 @@ self.onmessage = (e) => {
   messages.push(e.data);
 };
 
-const send = (data) => postMessage(JSON.parse(data));
-const recv = () => JSON.stringify(messages.shift());
+const send = (data) => {
+  postMessage(data);
+};
+const recv = () => {
+  const msg = messages.shift();
+  return msg;
+};
 
 const wait = async (timeout) => {
   if (timeout === 0 || timeout === undefined) {
@@ -31,7 +36,7 @@ const wait = async (timeout) => {
 const nonstop = async () => {
   while (true) {
     try {
-      await run({ send, recv, wait, get, set });
+      await run({ send, recv, wait });
     } catch (e) {
       send(e);
     }

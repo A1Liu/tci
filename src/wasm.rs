@@ -38,7 +38,6 @@ pub enum OutMessage {
 #[rustfmt::skip] // rustfmt deletes the keyword async
 #[wasm_bindgen]
 extern "C" {
-
     #[wasm_bindgen(js_namespace = JSON)]
     #[wasm_bindgen(catch)]
     pub fn stringify(val: JsValue) -> Result<JsValue, JsValue>;
@@ -69,6 +68,9 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
     let recv = || -> Result<Option<In>, JsValue> {
         let js_value = env.recv();
+        if js_value.is_undefined() || js_value.is_null() {
+            return Ok(None);
+        }
 
         let out = match js_value.into_serde::<In>() {
             Ok(o) => o,
@@ -153,6 +155,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             continue;
         }
 
-        env.wait(1).await;
+        env.wait(0).await;
     }
 }

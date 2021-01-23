@@ -50,11 +50,7 @@ const tciMiddleware = (store) => {
 
     switch (type) {
       case "Compile":
-        worker.postMessage({ type: "Source", payload: files });
-        break;
-
-      case "Startup":
-        worker.postMessage({ type: "Source", payload: files });
+        worker.postMessage({ type: "Source", payload: ["main.c", files["main.c"]] });
         break;
 
       default:
