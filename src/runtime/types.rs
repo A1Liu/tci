@@ -91,7 +91,7 @@ impl BinaryData {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct VarPointer(u64);
 
 impl fmt::Display for VarPointer {
@@ -468,7 +468,7 @@ pub enum WriteEvent {
     StdlogWrite,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum RuntimeStatus {
     Running,
     Blocked(EcallExt),
@@ -497,7 +497,8 @@ pub enum Ecall {
     AppendFd,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", content = "payload")]
 pub enum EcallExt {
     Exit(i32),
 
@@ -522,18 +523,18 @@ pub enum EcallExt {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "type", content = "payload")]
 pub enum EcallResult {
     None,
     Error(EcallError),
     ReadFd { buf: VarPointer, content: Vec<u8> },
-    WriteFd { buf: Vec<u8>, begin: u32, fd: u32 },
     AppendFd { position: u32 },
 }
 
 // ABI matters here. This enum is linked to /lib/header/tci.h
 #[repr(u32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde_repr::Deserialize_repr)]
 pub enum EcallError {
     // Files
     DoesntExist = 1,
@@ -558,7 +559,7 @@ impl EcallError {
 
 // ABI matters here. This enum is linked to /lib/impl/files.c
 #[repr(u32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde_repr::Serialize_repr)]
 pub enum OpenMode {
     Read = 0,
     Create = 1,

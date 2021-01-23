@@ -2,7 +2,6 @@ use crate::filedb::FileDb;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
-use js_sys::Uint8Array;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -14,7 +13,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[serde(tag = "type", content = "payload")]
 pub enum InMessage {
     Source(String, String),
-    // DeleteSource(String),
+    Ecall(EcallResult),
     Run,
 }
 
@@ -33,28 +32,25 @@ pub enum OutMessage {
     Stdout(String),
     Stderr(String),
     Stdlog(String),
+    Ecall(EcallExt),
 }
 
 #[rustfmt::skip] // rustfmt deletes the keyword async
 #[wasm_bindgen]
 extern "C" {
+
+    #[wasm_bindgen(js_namespace = JSON)]
+    #[wasm_bindgen(catch)]
+    pub fn stringify(val: JsValue) -> Result<JsValue, JsValue>;
+
     pub type RunEnv;
 
     #[wasm_bindgen(method)]
-    async fn wait(this: &RunEnv, timeout: u32);
+    pub async fn wait(this: &RunEnv, timeout: u32);
     #[wasm_bindgen(method)]
-    fn send(this: &RunEnv, message: String);
+    pub fn send(this: &RunEnv, message: JsValue);
     #[wasm_bindgen(method)]
-    fn recv(this: &RunEnv) -> Option<String>;
-
-    #[wasm_bindgen(method, js_name = get)]
-    async fn get_file(this: &RunEnv, key: &str) -> JsValue;
-    #[wasm_bindgen(method, js_name = set)]
-    async fn set_file(this: &RunEnv, key: &str, val: Vec<u8>);
-    #[wasm_bindgen(method, js_name = update)]
-    async fn update_file(this: &RunEnv, key:&str, closure: JsValue);
-    // #[wasm_bindgen(method, js_name = del)]
-    // async fn del_file(this: &RunEnv, key: &str);
+    pub fn recv(this: &RunEnv) -> JsValue;
 }
 
 #[wasm_bindgen]
@@ -64,49 +60,58 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
     let for_send = env.clone();
     let send = move |mes: Out| {
-        let mut writer = StringWriter::new();
-        serde_json::to_writer(&mut writer, &mes).unwrap();
         let for_send: RunEnv = for_send.clone().unchecked_into();
-        for_send.send(writer.into_string());
+        for_send.send(JsValue::from_serde(&mes).unwrap());
     };
 
     let global_send = send.clone();
     register_output(move |s| global_send(Out::Debug(s)));
 
-    let recv = || -> Option<In> {
-        let string = env.recv()?;
+    let recv = || -> Result<Option<In>, JsValue> {
+        let js_value = env.recv();
 
-        let out = match serde_json::from_slice(string.as_bytes()) {
+        let out = match js_value.into_serde::<In>() {
             Ok(o) => o,
             Err(e) => {
-                send(Out::InvalidInput(format!("invalid input `{}`", string)));
-                return None;
+                send(Out::InvalidInput(stringify(js_value)?.as_string().unwrap()));
+                return Ok(None);
             }
         };
 
-        return Some(out);
+        return Ok(Some(out));
     };
 
-    async fn get_file(env: &RunEnv, key: &str) -> Vec<u8> {
-        let buf = env.get_file(key).await;
-        return buf.unchecked_into::<Uint8Array>().to_vec();
-    }
-
     let mut files = FileDb::new();
-    let mut memory = None;
+    let mut kernel: Option<Kernel> = None;
 
     send(Out::Startup);
 
     loop {
         debug!("running another iteration of loop...");
 
-        while let Some(input) = recv() {
+        while let Some(input) = recv()? {
             match input {
                 In::Source(mut name, contents) => {
                     name += ":source";
                     let file_id = files.add(&name, &contents).unwrap();
-                    env.set_file(&name, contents.into_bytes()).await;
                 }
+                In::Ecall(res) => {
+                    let kernel = match &mut kernel {
+                        Some(k) => k,
+                        None => panic!("idk man"),
+                    };
+
+                    match kernel.resolve_result(res) {
+                        Ok(()) => {}
+                        Err(err) => {
+                            let e_str = print_error(&err, &kernel.memory, &files);
+                            send(Out::Stderr(e_str));
+                            env.wait(0).await;
+                            continue;
+                        }
+                    }
+                }
+
                 In::Run => {
                     let program = match compile(&mut files) {
                         Ok(p) => p,
@@ -119,40 +124,33 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                         }
                     };
 
-                    memory = Some(Memory::new(&program));
+                    kernel = Some(Kernel::new(&program));
                 }
             }
         }
 
-        if let Some(memory) = &mut memory {
-            let ecall_req = match run_op_count(memory, 5000) {
-                Ok(None) => {
+        if let Some(kernel) = &mut kernel {
+            let ecall_req = match kernel.run_op_count(5000) {
+                Ok(RuntimeStatus::Running) => {
                     env.wait(1).await;
                     continue;
                 }
-                Ok(Some(req)) => req,
-                Err(e) => {
-                    let e_str = print_error(&e, &memory, &files);
-                    send(Out::Stderr(e_str));
-                    EcallExt::Exit(1)
-                }
-            };
-
-            match ecall_req {
-                EcallExt::Exit(exit) => {
+                Ok(RuntimeStatus::Blocked(req)) => req,
+                Ok(RuntimeStatus::Exited(code)) => {
                     env.wait(0).await;
                     continue;
                 }
-                EcallExt::OpenFd { name, open_mode } => {}
-                EcallExt::ReadFd {
-                    len,
-                    buf,
-                    begin,
-                    fd,
-                } => {}
-                EcallExt::WriteFd { buf, begin, fd } => {}
-                EcallExt::AppendFd { buf, fd } => {}
-            }
+                Err(e) => {
+                    let e_str = print_error(&e, &kernel.memory, &files);
+                    send(Out::Stderr(e_str));
+                    env.wait(0).await;
+                    continue;
+                }
+            };
+
+            send(Out::Ecall(ecall_req));
+            env.wait(1).await;
+            continue;
         }
 
         env.wait(1).await;

@@ -4,7 +4,6 @@ use super::memory::*;
 use super::types::*;
 use crate::util::*;
 use core::mem;
-use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy)]
 enum IRtStat {
@@ -16,7 +15,7 @@ enum IRtStat {
 
 // Yeah this technically isn't what a kernel does, but like, idk it's what it is.
 pub struct Kernel {
-    pub requests: VecDeque<EcallExt>,
+    pub requests: Vec<EcallExt>,
 
     // per process
     pub memory: Memory,
@@ -27,7 +26,7 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(binary: &BinaryData) -> Self {
         Self {
-            requests: VecDeque::new(),
+            requests: Vec::new(),
 
             memory: Memory::new(&binary),
             status: IRtStat::Running,
@@ -64,6 +63,21 @@ impl Kernel {
             Some(ecall) => return Ok(RuntimeStatus::Blocked(ecall)),
             None => return Ok(RuntimeStatus::Running),
         }
+    }
+
+    pub fn resolve_result(&mut self, result: EcallResult) -> Result<(), IError> {
+        match result {
+            EcallResult::None => self.memory.push(0u64),
+            EcallResult::Error(err) => self.memory.push(err.to_u64()),
+            EcallResult::AppendFd { position } => self.memory.push(position as u64),
+            EcallResult::ReadFd { buf, content } => self.memory.write_bytes(buf, &content)?,
+        }
+
+        return Ok(());
+    }
+
+    pub fn requests(&mut self) -> Vec<EcallExt> {
+        return mem::replace(&mut self.requests, Vec::new());
     }
 
     pub fn events(&mut self) -> StringArray<WriteEvent> {

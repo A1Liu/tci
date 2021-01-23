@@ -10,6 +10,7 @@ pub mod types;
 
 pub use error::*;
 pub use interpreter::*;
+pub use kernel::*;
 pub use memory::*;
 pub use test_kernel::*;
 pub use types::*;
