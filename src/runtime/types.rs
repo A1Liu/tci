@@ -468,14 +468,16 @@ pub enum WriteEvent {
     StdlogWrite,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum RuntimeStatus {
     Running,
+    Blocked(EcallExt),
     Exited(i32),
 }
 
-#[derive(Debug, Clone, Copy)]
+// ABI matters here. This enum is linked to /lib/header/tci.h
 #[repr(u32)]
+#[derive(Debug, Clone, Copy)]
 pub enum Ecall {
     /// exit the program with an error code
     Exit = 0,
@@ -493,10 +495,43 @@ pub enum Ecall {
     WriteFd,
     /// append to a file descriptor
     AppendFd,
-    /// get length of file descriptor
-    FdLen,
 }
 
+#[derive(Debug, Clone)]
+pub enum EcallExt {
+    Exit(i32),
+
+    OpenFd {
+        name: Vec<u8>,
+        open_mode: OpenMode,
+    },
+    ReadFd {
+        len: u32,
+        buf: VarPointer,
+        begin: u32,
+        fd: u32,
+    },
+    WriteFd {
+        buf: Vec<u8>,
+        begin: u32,
+        fd: u32,
+    },
+    AppendFd {
+        buf: Vec<u8>,
+        fd: u32,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum EcallResult {
+    None,
+    Error(EcallError),
+    ReadFd { buf: VarPointer, content: Vec<u8> },
+    WriteFd { buf: Vec<u8>, begin: u32, fd: u32 },
+    AppendFd { position: u32 },
+}
+
+// ABI matters here. This enum is linked to /lib/header/tci.h
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum EcallError {
@@ -521,6 +556,7 @@ impl EcallError {
     }
 }
 
+// ABI matters here. This enum is linked to /lib/impl/files.c
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum OpenMode {

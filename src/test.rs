@@ -18,7 +18,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     };
 
     println!("compiled");
-    let mut runtime = Runtime::new(&program);
+    let mut runtime = TestKernel::new(&program);
 
     match runtime.run() {
         Ok(0) => {}

@@ -3,7 +3,17 @@ use super::memory::*;
 use super::types::*;
 use crate::util::*;
 
-pub fn run_op(memory: &mut Memory) -> Result<Option<Ecall>, IError> {
+pub fn run_op_count(memory: &mut Memory, count: u32) -> Result<Option<EcallExt>, IError> {
+    for _ in 0..count {
+        if let Some(ecall) = run_op(memory)? {
+            return Ok(Some(ecall));
+        }
+    }
+
+    return Ok(None);
+}
+
+pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
     let op: Opcode = memory.read_pc()?;
 
     match op {
@@ -998,7 +1008,54 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<Ecall>, IError> {
             memory.push(0u64);
         }
 
-        Opcode::Ecall => return Ok(Some(memory.pop()?)),
+        Opcode::Ecall => match memory.pop()? {
+            Ecall::Exit => {
+                let exit: i32 = memory.pop()?;
+                return Ok(Some(EcallExt::Exit(exit)));
+            }
+
+            Ecall::OpenFd => {
+                let open_mode: OpenMode = memory.pop()?;
+                let name: VarPointer = memory.pop()?;
+                let name = memory.cstring_bytes(name)?.to_vec();
+
+                return Ok(Some(EcallExt::OpenFd { name, open_mode }));
+            }
+            Ecall::ReadFd => {
+                let len: u32 = memory.pop()?;
+                let buf: VarPointer = memory.pop()?;
+                let begin: u32 = memory.pop()?;
+                let fd: u32 = memory.pop()?;
+
+                #[rustfmt::skip]
+                return Ok(Some(EcallExt::ReadFd { len, buf, begin, fd, }));
+            }
+            Ecall::WriteFd => {
+                let len: u32 = memory.pop()?;
+                let buf: VarPointer = memory.pop()?;
+                let begin: u32 = memory.pop()?;
+                let fd: u32 = memory.pop()?;
+                let buf = memory.read_bytes(buf, len)?.to_vec();
+
+                return Ok(Some(EcallExt::WriteFd { buf, begin, fd }));
+            }
+            Ecall::AppendFd => {
+                let len: u32 = memory.pop()?;
+                let buf: VarPointer = memory.pop()?;
+                let fd: u32 = memory.pop()?;
+                let buf = memory.read_bytes(buf, len)?.to_vec();
+
+                return Ok(Some(EcallExt::AppendFd { buf, fd }));
+            }
+
+            call => {
+                return ierr!(
+                    "InvalidEnviromentCall",
+                    "invalid ecall value of {}",
+                    call as u32
+                )
+            }
+        },
     }
 
     return Ok(None);

@@ -2,13 +2,13 @@ use super::types::*;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
-pub struct FileSystem {
+pub struct TestFS {
     pub files: Vec<Vec<u8>>,
     pub names: BTreeMap<String, usize>,
     pub size: usize,
 }
 
-impl FileSystem {
+impl TestFS {
     pub fn new() -> Self {
         Self {
             files: Vec::new(),

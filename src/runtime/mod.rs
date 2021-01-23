@@ -1,16 +1,17 @@
 #[macro_use]
 pub mod error;
 
-pub mod files;
 pub mod interpreter;
 pub mod kernel;
 pub mod memory;
+pub mod test_fs;
+pub mod test_kernel;
 pub mod types;
 
 pub use error::*;
 pub use interpreter::*;
-pub use kernel::*;
 pub use memory::*;
+pub use test_kernel::*;
 pub use types::*;
 
 use crate::filedb::FileDb;
