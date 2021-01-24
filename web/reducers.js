@@ -1,4 +1,4 @@
-import { get, getMany, set, setMany, update } from "idb-keyval";
+import { get, getMany, set, setMany, update, del } from "idb-keyval";
 import { applyMiddleware, createStore } from "redux";
 
 const initialFile = `// Online C compiler to run C program online
@@ -25,7 +25,6 @@ const appReducer = (state = initialState, action) => {
   console.log(action);
 
   if (!state.initialized) {
-    // don't allow edits while state is still uninit
     if (type === "Init") {
       return {
         ...state,
@@ -35,6 +34,7 @@ const appReducer = (state = initialState, action) => {
       };
     }
 
+    // don't allow edits while state is still uninit
     return state;
   }
 
@@ -52,8 +52,23 @@ const appReducer = (state = initialState, action) => {
       return { ...state, current, files };
     }
 
-    case "SetCurrent":
-      return { ...state, current: payload };
+    case "DelFile": {
+      const files = { ...state.files };
+      delete files[payload];
+      const current =
+        files[state.current] !== undefined
+          ? state.current
+          : Object.keys(files)[0];
+
+      return { ...state, current, files };
+    }
+
+    case "SetCurrent": {
+      const current =
+        state.files[payload] !== undefined ? payload : state.current;
+
+      return { ...state, current };
+    }
 
     case "WriteCurrent":
       const files = { ...state.files };
@@ -85,7 +100,7 @@ const tciMiddleware = (store) => {
     if (files === undefined) {
       await setMany([
         ["sources", { "main.c": 0 }],
-        ["source:main.c", initialFile]
+        ["source:main.c", initialFile],
       ]);
       const payload = { "main.c": initialFile };
       return store.dispatch({ type: "Init", payload });
@@ -94,7 +109,10 @@ const tciMiddleware = (store) => {
     const filePaths = Object.keys(files);
     const keys = filePaths.map((file) => "source:" + file);
     const values = await getMany(keys);
-    const payload = filePaths.reduce((acc, k, i) => ((acc[k] = values[i]), acc), {});
+    const payload = filePaths.reduce(
+      (acc, k, i) => ((acc[k] = values[i]), acc),
+      {}
+    );
     return store.dispatch({ type: "Init", payload });
   };
 
@@ -110,6 +128,15 @@ const tciMiddleware = (store) => {
       case "WriteCurrent":
         update("source:" + current, (_) => payload);
         return next(action);
+
+      case "DelFile":
+        update("sources", (files) => {
+          delete files[payload.name];
+          return files;
+        });
+        del("source:" + payload.name);
+        return next(action);
+
       case "AddFile":
         update("sources", (files) => ({
           ...files,

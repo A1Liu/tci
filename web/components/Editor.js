@@ -14,12 +14,12 @@ const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
       focused={file === currentFile}
     >
       <p>{file}</p>
-      {/*<EditorTabClose
+      <EditorTabClose
         type="button"
-        onClick={() => dispatch({ type: "RemoveFile", payload: file })}
+        onClick={() => dispatch({ type: "DelFile", payload: file })}
       >
         <span>×</span>
-      </EditorTabClose>*/}
+      </EditorTabClose>
     </EditorTabDiv>
   );
 };
