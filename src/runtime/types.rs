@@ -501,9 +501,10 @@ pub enum Ecall {
 #[serde(tag = "type", content = "payload")]
 pub enum EcallExt {
     Exit(i32),
+    Error(EcallError),
 
     OpenFd {
-        name: Vec<u8>,
+        name: String,
         open_mode: OpenMode,
     },
     ReadFd {
@@ -534,7 +535,7 @@ pub enum EcallResult {
 
 // ABI matters here. This enum is linked to /lib/header/tci.h
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, serde_repr::Deserialize_repr)]
+#[derive(Debug, Clone, Copy, serde_repr::Serialize_repr, serde_repr::Deserialize_repr)]
 pub enum EcallError {
     // Files
     DoesntExist = 1,

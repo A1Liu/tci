@@ -7,8 +7,8 @@ export default function NavBar() {
   const hiddenFileInput = useRef(undefined);
   const dispatch = useDispatch();
 
-  const next = () => dispatch({ type: "DebugNext" });
-  const prev = () => dispatch({ type: "DebugPrev" });
+  // const next = () => dispatch({ type: "DebugNext" });
+  // const prev = () => dispatch({ type: "DebugPrev" });
 
   const uploadFileTrigger = (event) => {
     event.preventDefault();
@@ -28,8 +28,8 @@ export default function NavBar() {
 
   const uploadFile = async (event) => {
     Object.values(event.target.files).forEach(async (file) => {
-      const data = await readFile(file);
-      dispatch({ type: "SetFile", payload: { path: file.name, data } });
+      const contents = await readFile(file);
+      dispatch({ type: "AddFile", payload: { name: file.name, contents } });
     });
   };
 

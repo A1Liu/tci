@@ -57,7 +57,7 @@ const appReducer = (state = initialState, action) => {
 
     case "WriteCurrent":
       const files = { ...state.files };
-      files[stat.current] = payload;
+      files[state.current] = payload;
       return { ...state, files };
 
     case "Stdout":
@@ -80,37 +80,44 @@ const tciMiddleware = (store) => {
   worker.onmessage = (e) => store.dispatch(e.data);
 
   const setupState = async () => {
-    const files = await get("source");
+    const files = await get("sources");
 
     if (files === undefined) {
       await setMany([
-        ["sources", { "main.c": undefined }],
+        ["sources", { "main.c": 0 }],
         ["source:main.c", initialFile]
       ]);
       const payload = { "main.c": initialFile };
       return store.dispatch({ type: "Init", payload });
     }
 
-    const keys = Object.keys(files).map((file) => "source:" + file);
+    const filePaths = Object.keys(files);
+    const keys = filePaths.map((file) => "source:" + file);
     const values = await getMany(keys);
-    const payload = keys.reduce((acc, k, i) => ((acc[k] = values[i]), acc), {});
+    const payload = filePaths.reduce((acc, k, i) => ((acc[k] = values[i]), acc), {});
     return store.dispatch({ type: "Init", payload });
   };
 
   setupState();
 
   return (next) => (action) => {
-    const { files, initialized } = store.getState();
+    const { files, current, initialized } = store.getState();
     if (!initialized) return next(action);
 
     const { type, payload } = action;
 
     switch (type) {
+      case "WriteCurrent":
+        update("source:" + current, (_) => payload);
+        return next(action);
       case "AddFile":
         update("sources", (files) => ({
           ...files,
-          [payload.name]: payload.content,
+          [payload.name]: 0,
         }));
+
+        update("source:" + payload.name, (_) => payload.contents);
+        return next(action);
       case "Run":
         worker.postMessage({ type: "Run", payload: files });
         break;

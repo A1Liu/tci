@@ -15,8 +15,6 @@ enum IRtStat {
 
 // Yeah this technically isn't what a kernel does, but like, idk it's what it is.
 pub struct Kernel {
-    pub requests: Vec<EcallExt>,
-
     // per process
     pub memory: Memory,
     status: IRtStat,
@@ -26,8 +24,6 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(binary: &BinaryData) -> Self {
         Self {
-            requests: Vec::new(),
-
             memory: Memory::new(&binary),
             status: IRtStat::Running,
             output: StringArray::new(),
@@ -55,13 +51,95 @@ impl Kernel {
             }
         }
 
-        match run_op_count(&mut self.memory, count)? {
-            Some(EcallExt::Exit(code)) => {
+        let ecall = match run_op_count(&mut self.memory, count)? {
+            Some(ecall) => ecall,
+            None => return Ok(RuntimeStatus::Running),
+        };
+
+        match ecall {
+            EcallExt::Exit(code) => {
                 self.status = IRtStat::Exited(code);
                 return Ok(RuntimeStatus::Exited(code));
             }
-            Some(ecall) => return Ok(RuntimeStatus::Blocked(ecall)),
-            None => return Ok(RuntimeStatus::Running),
+
+            EcallExt::ReadFd {
+                len,
+                buf,
+                begin,
+                fd,
+            } => {
+                let to_ret = match fd {
+                    0 => unimplemented!("stdin"),
+                    1 => EcallExt::Error(EcallError::ReadStdout),
+                    2 => EcallExt::Error(EcallError::ReadStderr),
+                    3 => EcallExt::Error(EcallError::ReadStdlog),
+                    fd => EcallExt::ReadFd {
+                        len,
+                        buf,
+                        begin,
+                        fd: fd - 4,
+                    },
+                };
+
+                return Ok(RuntimeStatus::Blocked(to_ret));
+            }
+
+            EcallExt::WriteFd { buf, begin, fd } => {
+                let write_event = match fd {
+                    0 => {
+                        return Ok(RuntimeStatus::Blocked(EcallExt::Error(
+                            EcallError::WriteStdin,
+                        )))
+                    }
+                    1 => WriteEvent::StdoutWrite,
+                    2 => WriteEvent::StderrWrite,
+                    3 => WriteEvent::StdlogWrite,
+                    fd => {
+                        return Ok(RuntimeStatus::Blocked(EcallExt::WriteFd {
+                            buf,
+                            begin,
+                            fd: fd - 4,
+                        }))
+                    }
+                };
+
+                let mut string = StringWriter::new();
+                write_utf8_lossy(&mut string, &buf).unwrap();
+
+                self.output.push(write_event, &string.into_string());
+
+                self.memory.push(0u64);
+                return Ok(RuntimeStatus::Running);
+            }
+
+            EcallExt::AppendFd { buf, fd } => {
+                let write_event = match fd {
+                    0 => {
+                        return Ok(RuntimeStatus::Blocked(EcallExt::Error(
+                            EcallError::WriteStdin,
+                        )))
+                    }
+                    1 => WriteEvent::StdoutWrite,
+                    2 => WriteEvent::StderrWrite,
+                    3 => WriteEvent::StdlogWrite,
+                    fd => {
+                        return Ok(RuntimeStatus::Blocked(EcallExt::AppendFd {
+                            buf,
+                            fd: fd - 4,
+                        }))
+                    }
+                };
+
+                let mut string = StringWriter::new();
+                write_utf8_lossy(&mut string, &buf).unwrap();
+
+                self.output.push(write_event, &string.into_string());
+
+                self.memory.push(0u64);
+                return Ok(RuntimeStatus::Running);
+            }
+
+            ecall => return Ok(RuntimeStatus::Blocked(ecall)),
         }
     }
 
@@ -74,10 +152,6 @@ impl Kernel {
         }
 
         return Ok(());
-    }
-
-    pub fn requests(&mut self) -> Vec<EcallExt> {
-        return mem::replace(&mut self.requests, Vec::new());
     }
 
     pub fn events(&mut self) -> StringArray<WriteEvent> {

@@ -1018,8 +1018,10 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
                 let open_mode: OpenMode = memory.pop()?;
                 let name: VarPointer = memory.pop()?;
                 let name = memory.cstring_bytes(name)?.to_vec();
-
-                return Ok(Some(EcallExt::OpenFd { name, open_mode }));
+                match String::from_utf8(name) {
+                    Ok(name) => return Ok(Some(EcallExt::OpenFd { name, open_mode })),
+                    Err(e) => return Ok(Some(EcallExt::Error(EcallError::NameNotUTF8))),
+                }
             }
             Ecall::ReadFd => {
                 let len: u32 = memory.pop()?;

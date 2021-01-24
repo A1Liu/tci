@@ -17,16 +17,12 @@ impl TestFS {
         }
     }
 
-    pub fn open(&self, name: &[u8]) -> Result<u32, EcallError> {
-        let name = core::str::from_utf8(name).map_err(|e| EcallError::NameNotUTF8)?;
-
+    pub fn open(&self, name: &str) -> Result<u32, EcallError> {
         let idx = *self.names.get(name).ok_or(EcallError::DoesntExist)?;
         return Ok(idx as u32);
     }
 
-    pub fn open_create(&mut self, name: &[u8]) -> Result<u32, EcallError> {
-        let name = core::str::from_utf8(name).map_err(|e| EcallError::NameNotUTF8)?;
-
+    pub fn open_create(&mut self, name: &str) -> Result<u32, EcallError> {
         let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
             let idx = self.files.len();
             self.files.push(Vec::new());
@@ -41,9 +37,7 @@ impl TestFS {
         return Ok(idx as u32);
     }
 
-    pub fn open_create_clear(&mut self, name: &[u8]) -> Result<u32, EcallError> {
-        let name = core::str::from_utf8(name).map_err(|e| EcallError::NameNotUTF8)?;
-
+    pub fn open_create_clear(&mut self, name: &str) -> Result<u32, EcallError> {
         let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
             let idx = self.files.len();
             self.files.push(Vec::new());

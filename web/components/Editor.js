@@ -33,7 +33,7 @@ const BasicEditor = () => {
   const monacoRef = useRef(undefined);
 
   const onValueChange = (ev, content) => {
-    store.dispatch({ type: "WriteCurrent", payload: content });
+    dispatch({ type: "WriteCurrent", payload: content });
   };
 
   return (

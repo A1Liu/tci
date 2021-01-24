@@ -174,6 +174,8 @@ impl TestKernel {
                 self.memory.push(0u64);
                 return Ok(None);
             }
+
+            _ => unimplemented!(),
         }
 
         return Ok(None);

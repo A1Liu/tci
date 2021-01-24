@@ -20,6 +20,7 @@ pub enum InMessage {
 #[serde(tag = "type", content = "payload")]
 pub enum OutMessage {
     Startup,
+    Compiled,
     FileIds(HashMap<u32, String>),
     CompileError {
         rendered: String,
@@ -109,6 +110,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                         }
                     };
 
+                    send(Out::Compiled);
                     kernel = Some(Kernel::new(&program));
                 }
                 In::Ecall(res) => {
@@ -131,7 +133,17 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         }
 
         if let Some(kernel) = &mut kernel {
-            let ecall_req = match kernel.run_op_count(5000) {
+            let result = kernel.run_op_count(5000);
+
+            for TS(tag, s) in &kernel.events() {
+                match tag {
+                    WriteEvent::StdoutWrite => send(Out::Stdout(s.to_string())),
+                    WriteEvent::StderrWrite => send(Out::Stderr(s.to_string())),
+                    WriteEvent::StdlogWrite => send(Out::Stdlog(s.to_string())),
+                }
+            }
+
+            let ecall_req = match result {
                 Ok(RuntimeStatus::Running) => {
                     env.wait(1).await;
                     continue;
