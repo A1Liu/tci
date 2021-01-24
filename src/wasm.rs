@@ -12,9 +12,8 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum InMessage {
-    Source(String, String),
+    Run(HashMap<String, String>),
     Ecall(EcallResult),
-    Run,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -93,9 +92,24 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
         while let Some(input) = recv()? {
             match input {
-                In::Source(name, contents) => {
+                In::Run(sources) => {
                     files = FileDb::new();
-                    files.add(&name, &contents).unwrap();
+                    for (name, contents) in sources {
+                        files.add(&name, &contents).unwrap();
+                    }
+
+                    let program = match compile(&mut files) {
+                        Ok(p) => p,
+                        Err(errors) => {
+                            let mut writer = StringWriter::new();
+                            emit_err(&errors, &files, &mut writer);
+                            let rendered = writer.to_string();
+                            send(Out::CompileError { rendered, errors });
+                            continue;
+                        }
+                    };
+
+                    kernel = Some(Kernel::new(&program));
                 }
                 In::Ecall(res) => {
                     let kernel = match &mut kernel {
@@ -112,21 +126,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                             continue;
                         }
                     }
-                }
-
-                In::Run => {
-                    let program = match compile(&mut files) {
-                        Ok(p) => p,
-                        Err(errors) => {
-                            let mut writer = StringWriter::new();
-                            emit_err(&errors, &files, &mut writer);
-                            let rendered = writer.to_string();
-                            send(Out::CompileError { rendered, errors });
-                            continue;
-                        }
-                    };
-
-                    kernel = Some(Kernel::new(&program));
                 }
             }
         }

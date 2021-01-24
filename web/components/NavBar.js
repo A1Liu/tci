@@ -15,7 +15,7 @@ export default function NavBar() {
     hiddenFileInput.current.click();
   };
 
-  const compile = () => dispatch({ type: "Compile" });
+  const compile = () => dispatch({ type: "Run" });
 
   const readFile = (file) => {
     return new Promise((resolve, reject) => {
@@ -33,6 +33,16 @@ export default function NavBar() {
     });
   };
 
+  // <StepButton left onClick={prev}>
+  //   <Vertical left />
+  //   <Arrow left />
+  // </StepButton>
+
+  // <StepButton type="button" onClick={next}>
+  //   <Arrow />
+  //   <Vertical />
+  // </StepButton>
+
   return (
     <NavBarDiv>
       <div>
@@ -49,17 +59,7 @@ export default function NavBar() {
         </UploadButton>
       </div>
 
-      <StepButton left onClick={prev}>
-        <Vertical left />
-        <Arrow left />
-      </StepButton>
-
       <PlayButton onClick={compile} />
-
-      <StepButton type="button" onClick={next}>
-        <Arrow />
-        <Vertical />
-      </StepButton>
     </NavBarDiv>
   );
 }

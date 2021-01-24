@@ -24,8 +24,7 @@ const send = (data) => {
       resolver.ecallListener = undefined;
     }
 
-    ecalls.push(payload);
-    return;
+    return ecalls.push(payload);
   }
 
   return postMessage(data);
@@ -54,6 +53,14 @@ const ecallHandler = async () => {
     }
 
     const { type, payload } = ecall;
+
+    switch (type) {
+    case "":
+      break;
+    default:
+      break;
+    }
+
     send(ecall);
   }
 };

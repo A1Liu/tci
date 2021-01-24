@@ -4,44 +4,44 @@ import { useRef, useState } from "preact/hooks";
 import { useDispatch, useSelector } from "react-redux";
 import styled from "styled-components";
 
-// const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
-//   return (
-//     <EditorTabDiv
-//       role="button"
-//       tabIndex={index + 1}
-//       onClick={setCurrentFile}
-//       onKeyDown={setCurrentFile}
-//       focused={file === currentFile}
-//     >
-//       <p>{file}</p>
-//       <EditorTabClose
-//         type="button"
-//         onClick={() => dispatch({ type: "RemoveFile", payload: file })}
-//       >
-//         <span>×</span>
-//       </EditorTabClose>
-//     </EditorTabDiv>
-//   );
-// };
+const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
+  return (
+    <EditorTabDiv
+      role="button"
+      tabIndex={index + 1}
+      onClick={setCurrentFile}
+      onKeyDown={setCurrentFile}
+      focused={file === currentFile}
+    >
+      <p>{file}</p>
+      {/*<EditorTabClose
+        type="button"
+        onClick={() => dispatch({ type: "RemoveFile", payload: file })}
+      >
+        <span>×</span>
+      </EditorTabClose>*/}
+    </EditorTabDiv>
+  );
+};
 
 const BasicEditor = () => {
   const dispatch = useDispatch();
-  const source = useSelector((state) => state.source);
+  const files = useSelector((state) => state.files);
+  const current = useSelector((state) => state.current);
 
   const editorRef = useRef(undefined);
   const monacoRef = useRef(undefined);
 
   const onValueChange = (ev, content) => {
+    store.dispatch({ type: "WriteCurrent", payload: content });
   };
 
-  /*
+  return (
+    <div style={{ height: "100%" }}>
       <EditorNav>
         {Object.keys(files).map((name, index) => {
-          const changeTab = () => {
-            if (name !== file.current) {
-              file.current = name;
-            }
-          };
+          const changeTab = () =>
+            dispatch({ type: "SetCurrent", payload: name });
 
           return (
             <EditorTab
@@ -49,22 +49,18 @@ const BasicEditor = () => {
               index={index}
               dispatch={dispatch}
               file={name}
-              currentFile={file.current}
+              currentFile={current}
               setCurrentFile={changeTab}
             />
           );
         })}
       </EditorNav>
-      */
-
-  return (
-    <div style={{ height: "100%" }}>
 
       <ControlledEditor
         height="100%"
         theme="vs-dark"
         language="c"
-        value={source}
+        value={files[current]}
         onChange={onValueChange}
         editorDidMount={(_, ref) => {
           monaco.init().then((ref) => {

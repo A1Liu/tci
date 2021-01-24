@@ -18,7 +18,7 @@ mod tc_ast;
 mod tc_structs;
 mod type_checker;
 
-// #[cfg(target_arch = "wasm32")]
+#[cfg(target_arch = "wasm32")]
 mod wasm;
 
 #[cfg(test)]
@@ -29,6 +29,7 @@ use filedb::FileDb;
 use runtime::*;
 use util::*;
 
+#[cfg(target_arch = "wasm32")]
 pub use wasm::run;
 
 fn compile_filter<'a, In, T>(
