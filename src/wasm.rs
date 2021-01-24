@@ -95,6 +95,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             match input {
                 In::Run(sources) => {
                     files = FileDb::new();
+                    kernel = None;
                     for (name, contents) in sources {
                         files.add(&name, &contents).unwrap();
                     }
@@ -132,10 +133,10 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             }
         }
 
-        if let Some(kernel) = &mut kernel {
-            let result = kernel.run_op_count(5000);
+        if let Some(kern) = &mut kernel {
+            let result = kern.run_op_count(5000);
 
-            for TS(tag, s) in &kernel.events() {
+            for TS(tag, s) in &kern.events() {
                 match tag {
                     WriteEvent::StdoutWrite => send(Out::Stdout(s.to_string())),
                     WriteEvent::StderrWrite => send(Out::Stderr(s.to_string())),
@@ -150,12 +151,14 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                 }
                 Ok(RuntimeStatus::Blocked(req)) => req,
                 Ok(RuntimeStatus::Exited(code)) => {
+                    kernel = None;
                     env.wait(0).await;
                     continue;
                 }
                 Err(e) => {
-                    let e_str = print_error(&e, &kernel.memory, &files);
+                    let e_str = print_error(&e, &kern.memory, &files);
                     send(Out::Stderr(e_str));
+                    kernel = None;
                     env.wait(0).await;
                     continue;
                 }
