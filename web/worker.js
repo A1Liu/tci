@@ -1,46 +1,62 @@
-import { get, set } from "idb-keyval";
+import { get, set, update } from "idb-keyval";
 import { run } from "../Cargo.toml";
 
-const resolver = {};
+const resolver = { wasmListener: undefined, ecallListener: undefined };
 const postMessage = self.postMessage;
-const indexedDb = self.indexedDb;
 
+const ecalls = [];
 const messages = [];
+
 self.onmessage = (e) => {
-  if (resolver.current !== undefined) {
-    resolver.current();
-    resolver.current = undefined;
+  if (resolver.wasmListener !== undefined) {
+    resolver.wasmListener(undefined);
+    resolver.wasmListener = undefined;
   }
+
   messages.push(e.data);
 };
 
 const send = (data) => {
-  postMessage(data);
-};
-const recv = () => {
-  const msg = messages.shift();
-  return msg;
+  const { type, payload } = data;
+  if (type === "Ecall") {
+    if (resolver.ecallListener !== undefined) {
+      resolver.ecallListener(undefined);
+      resolver.ecallListener = undefined;
+    }
+
+    ecalls.push(payload);
+    return;
+  }
+
+  return postMessage(data);
 };
 
-const wait = async (timeout) => {
+const recv = () => messages.shift();
+
+const wait = (timeout) => {
   if (timeout === 0 || timeout === undefined) {
     if (messages.length !== 0) return;
-    return await new Promise((resolve) => {
-      resolver.current = resolve;
+
+    return new Promise((resolve) => {
+      resolver.wasmListener = resolve;
     });
   }
 
-  await new Promise((resolve) => setTimeout(resolve, timeout));
+  return new Promise((resolve) => setTimeout(resolve, timeout));
 };
 
-const nonstop = async () => {
+const ecallHandler = async () => {
   while (true) {
-    try {
-      await run({ send, recv, wait });
-    } catch (e) {
-      send(e);
+    const ecall = ecalls.shift();
+    if (ecall === undefined) {
+      await new Promise((resolve) => { resolver.ecallListener = resolve; });
+      continue;
     }
+
+    const { type, payload } = ecall;
+    send(ecall);
   }
 };
 
-nonstop();
+ecallHandler();
+run({ send, recv, wait });

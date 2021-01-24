@@ -4,71 +4,37 @@ import { useRef, useState } from "preact/hooks";
 import { useDispatch, useSelector } from "react-redux";
 import styled from "styled-components";
 
-const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
-  return (
-    <EditorTabDiv
-      role="button"
-      tabIndex={index + 1}
-      onClick={setCurrentFile}
-      onKeyDown={setCurrentFile}
-      focused={file === currentFile}
-    >
-      <p>{file}</p>
-      <EditorTabClose
-        type="button"
-        onClick={() => dispatch({ type: "RemoveFile", payload: file })}
-      >
-        <span>×</span>
-      </EditorTabClose>
-    </EditorTabDiv>
-  );
-};
+// const EditorTab = ({ index, dispatch, file, currentFile, setCurrentFile }) => {
+//   return (
+//     <EditorTabDiv
+//       role="button"
+//       tabIndex={index + 1}
+//       onClick={setCurrentFile}
+//       onKeyDown={setCurrentFile}
+//       focused={file === currentFile}
+//     >
+//       <p>{file}</p>
+//       <EditorTabClose
+//         type="button"
+//         onClick={() => dispatch({ type: "RemoveFile", payload: file })}
+//       >
+//         <span>×</span>
+//       </EditorTabClose>
+//     </EditorTabDiv>
+//   );
+// };
 
 const BasicEditor = () => {
   const dispatch = useDispatch();
-  const files = useSelector((state) => state.files);
-  const currentCodeLoc = useSelector((state) => state.currentCodeLoc);
-
-  const codeLocRef = useRef(undefined);
-  const codeLocChanged = codeLocRef.current !== currentCodeLoc;
-  codeLocRef.current = currentCodeLoc;
+  const source = useSelector((state) => state.source);
 
   const editorRef = useRef(undefined);
   const monacoRef = useRef(undefined);
-  const file = useRef(undefined);
 
   const onValueChange = (ev, content) => {
-    if (file.current !== undefined)
-      dispatch({
-        type: "SetFile",
-        payload: { path: file.current, data: content },
-      });
   };
 
-  const setupEditor = () => {
-    if (file.current === undefined) {
-      const keys = Object.keys(files);
-      if (keys.length === 0) return;
-
-      return file.current = keys[0];
-    }
-
-    if (files[file.current] === undefined) {
-      const keys = Object.keys(files);
-      const f = keys.length === 0 ? undefined : keys[keys.length - 1];
-      file.current = f;
-    }
-
-    return undefined;
-  };
-
-  setupEditor();
-
-  const [code, readOnly] =
-    file.current === undefined ? ["", true] : [files[file.current], false];
-
-  return (
-    <div style={{ height: "100%" }}>
+  /*
       <EditorNav>
         {Object.keys(files).map((name, index) => {
           const changeTab = () => {
@@ -89,16 +55,17 @@ const BasicEditor = () => {
           );
         })}
       </EditorNav>
+      */
+
+  return (
+    <div style={{ height: "100%" }}>
 
       <ControlledEditor
         height="100%"
         theme="vs-dark"
         language="c"
-        value={code}
+        value={source}
         onChange={onValueChange}
-        options={{
-          readOnly,
-        }}
         editorDidMount={(_, ref) => {
           monaco.init().then((ref) => {
             monacoRef.current = ref;

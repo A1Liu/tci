@@ -93,9 +93,9 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
         while let Some(input) = recv()? {
             match input {
-                In::Source(mut name, contents) => {
-                    name += ":source";
-                    let file_id = files.add(&name, &contents).unwrap();
+                In::Source(name, contents) => {
+                    files = FileDb::new();
+                    files.add(&name, &contents).unwrap();
                 }
                 In::Ecall(res) => {
                     let kernel = match &mut kernel {
@@ -151,8 +151,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             };
 
             send(Out::Ecall(ecall_req));
-            env.wait(1).await;
-            continue;
         }
 
         env.wait(0).await;

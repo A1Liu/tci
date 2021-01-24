@@ -1,17 +1,8 @@
 import { applyMiddleware, createStore } from "redux";
 
-const initialFile = `// Online C compiler to run C program online
-#include <stdio.h>
-int main() {
-    // Write C code here
-    printf("Hello, world!\\n");
-    return 0;
-}
-`;
-
 const initialState = {
-  files: { "main.c": initialFile },
-  fileIds: {},
+  source: undefined,
+
   terminal: "",
 };
 
@@ -45,14 +36,10 @@ const tciMiddleware = (store) => {
   worker.onmessage = (e) => store.dispatch(e.data);
 
   return (next) => (action) => {
-    const { files } = store.getState();
+    const { source } = store.getState();
     const { type, payload } = action;
 
     switch (type) {
-      case "Compile":
-        worker.postMessage({ type: "Source", payload: ["main.c", files["main.c"]] });
-        break;
-
       default:
         return next(action);
     }
