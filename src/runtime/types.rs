@@ -505,6 +505,7 @@ pub enum EcallExt {
 
     OpenFd {
         name: String,
+        #[serde(rename(serialize = "openMode"))]
         open_mode: OpenMode,
     },
     ReadFd {
@@ -529,6 +530,7 @@ pub enum EcallExt {
 pub enum EcallResult {
     None,
     Error(EcallError),
+    Fd(u32),
     ReadFd { buf: VarPointer, content: Vec<u8> },
     AppendFd { position: u32 },
 }
@@ -550,6 +552,8 @@ pub enum EcallError {
     ReadStdlog = 8,
     WriteStdin = 9,
     StreamLen = 10,
+
+    InvalidOpenMode = 11,
 }
 
 impl EcallError {

@@ -1,4 +1,4 @@
-import { ControlledEditor, monaco } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import { h } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { useDispatch, useSelector } from "react-redux";
@@ -30,11 +30,24 @@ const BasicEditor = () => {
   const current = useSelector((state) => state.current);
 
   const editorRef = useRef(undefined);
-  const monacoRef = useRef(undefined);
 
-  const onValueChange = (ev, content) => {
+  const prevCurrent = useRef(undefined);
+  const changedTab = useRef(undefined);
+  changedTab.current = prevCurrent.current !== current;
+  prevCurrent.current = current;
+
+  const onValueChange = (content, ev) => {
+    if (changedTab.current) {
+      changedTab.current = false;
+      return;
+    }
+
+    console.log("changed");
     dispatch({ type: "WriteCurrent", payload: content });
   };
+
+  const readOnly = files[current] === undefined;
+  const value = (changedTab.current ? files[current] : editorRef.current?.getValue?.()) ?? "";
 
   return (
     <div style={{ height: "100%" }}>
@@ -56,18 +69,15 @@ const BasicEditor = () => {
         })}
       </EditorNav>
 
-      <ControlledEditor
+      <Editor
         height="100%"
         theme="vs-dark"
         language="c"
-        value={files[current]}
+        value={value}
+        options={{ readOnly }}
         onChange={onValueChange}
-        editorDidMount={(_, ref) => {
-          monaco.init().then((ref) => {
-            monacoRef.current = ref;
-          });
-
-          editorRef.current = ref;
+        onMount={(editor, _) => {
+          editorRef.current = editor;
         }}
       />
     </div>

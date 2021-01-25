@@ -28,8 +28,8 @@ const throttleWriteFile = (limit) => {
     if (prev !== undefined) return;
 
     setTimeout(() => {
-
-      update("source:" + file, (_) => waiting[file]);
+      const f = waiting[file];
+      update("source:" + file, (_) => f);
       delete waiting[file];
     }, limit);
   };
@@ -37,26 +37,14 @@ const throttleWriteFile = (limit) => {
 
 const writeFile = throttleWriteFile(300);
 
-const throttle = (callback, limit) => {
-  var waiting = false; // Initially, we're not waiting
-  return () => {
-    // We return a throttled function
-    if (!waiting) {
-      // If we're not waiting
-      callback.apply(this, arguments); // Execute users function
-      waiting = true; // Prevent future invocations
-      setTimeout(() => (waiting = false), limit);
-    }
-  };
-};
-
 const appReducer = (state = initialState, action) => {
   const { type, payload } = action;
 
-  console.log(action);
+  // console.log(action);
 
   if (!state.initialized) {
     if (type === "Init") {
+      console.log(action);
       return {
         ...state,
         files: payload,
@@ -161,8 +149,9 @@ const tciMiddleware = (store) => {
         return next(action);
 
       case "DelFile":
+        console.log("hello");
         update("sources", (files) => {
-          delete files[payload.name];
+          delete files[payload];
           return files;
         });
         del("source:" + payload.name);

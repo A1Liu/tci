@@ -164,6 +164,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                 }
             };
 
+            // debug!("Sending an ecall");
             send(Out::Ecall(ecall_req));
         }
 
