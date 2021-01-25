@@ -19,6 +19,37 @@ const initialState = {
   terminal: "",
 };
 
+const throttleWriteFile = (limit) => {
+  const waiting = {};
+
+  return (file, newValue) => {
+    const prev = waiting[file];
+    waiting[file] = newValue;
+    if (prev !== undefined) return;
+
+    setTimeout(() => {
+
+      update("source:" + file, (_) => waiting[file]);
+      delete waiting[file];
+    }, limit);
+  };
+};
+
+const writeFile = throttleWriteFile(300);
+
+const throttle = (callback, limit) => {
+  var waiting = false; // Initially, we're not waiting
+  return () => {
+    // We return a throttled function
+    if (!waiting) {
+      // If we're not waiting
+      callback.apply(this, arguments); // Execute users function
+      waiting = true; // Prevent future invocations
+      setTimeout(() => (waiting = false), limit);
+    }
+  };
+};
+
 const appReducer = (state = initialState, action) => {
   const { type, payload } = action;
 
@@ -126,7 +157,7 @@ const tciMiddleware = (store) => {
 
     switch (type) {
       case "WriteCurrent":
-        update("source:" + current, (_) => payload);
+        writeFile(current, payload);
         return next(action);
 
       case "DelFile":
