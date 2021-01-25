@@ -62,6 +62,10 @@ const appReducer = (state = initialState, action) => {
       console.log(payload);
       return state;
 
+    case "InvalidInput":
+      console.log("invalid input", payload);
+      return state;
+
     case "AddFile": {
       const { name, contents } = payload;
       const current = state.current ?? name;
@@ -149,7 +153,6 @@ const tciMiddleware = (store) => {
         return next(action);
 
       case "DelFile":
-        console.log("hello");
         update("sources", (files) => {
           delete files[payload];
           return files;

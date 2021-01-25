@@ -42,7 +42,6 @@ const BasicEditor = () => {
       return;
     }
 
-    console.log("changed");
     dispatch({ type: "WriteCurrent", payload: content });
   };
 

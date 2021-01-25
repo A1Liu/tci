@@ -145,11 +145,14 @@ impl Kernel {
 
     pub fn resolve_result(&mut self, result: EcallResult) -> Result<(), IError> {
         match result {
-            EcallResult::None => self.memory.push(0u64),
-            EcallResult::Fd(fd) => self.memory.push(fd as u64),
+            EcallResult::Zeroed => self.memory.push(0u64),
+            EcallResult::Fd(fd) => self.memory.push(fd as u64 + 4),
             EcallResult::Error(err) => self.memory.push(err.to_u64()),
             EcallResult::AppendFd { position } => self.memory.push(position as u64),
-            EcallResult::ReadFd { buf, content } => self.memory.write_bytes(buf, &content)?,
+            EcallResult::ReadFd { buf, content } => {
+                self.memory.write_bytes(buf, &content)?;
+                self.memory.push(content.len() as u64);
+            }
         }
 
         return Ok(());

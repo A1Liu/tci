@@ -528,7 +528,7 @@ pub enum EcallExt {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum EcallResult {
-    None,
+    Zeroed,
     Error(EcallError),
     Fd(u32),
     ReadFd { buf: VarPointer, content: Vec<u8> },
