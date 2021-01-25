@@ -171,7 +171,6 @@ const ecallHandler = async () => {
       resolver.wasmListener = undefined;
     }
 
-    postMessage({ type: "Debug", payload: ["hello", payload] });
     messages.push({ type: "Ecall", payload });
 
     await new Promise((resolve) => {
