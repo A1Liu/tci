@@ -1,9 +1,9 @@
 import { get, getMany, set, setMany, update, del } from "idb-keyval";
 import { applyMiddleware, createStore } from "redux";
 
-const initialFile = `// Online C compiler to run C program online
+const initialFile = `#include <stdio.h>
 
-#include <stdio.h>
+// In-browser C interpreter to run C programs
 int main() {
     // Write C code here
     printf("Hello, world!\\n");
