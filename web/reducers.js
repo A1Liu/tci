@@ -93,10 +93,11 @@ const appReducer = (state = initialState, action) => {
       return { ...state, current };
     }
 
-    case "WriteCurrent":
+    case "WriteCurrent": {
       const files = { ...state.files };
       files[state.current] = payload;
       return { ...state, files };
+    }
 
     case "Stdout":
       return { ...state, terminal: state.terminal + payload };
