@@ -15,15 +15,7 @@ better error messages and more runtime diagnostic tools.
 - Fully replayable memory (WIP)
 - Includes
 - Stack traces on segmentation fault
-- Segmentation fault on dereference of pointers to stack locals
-
-## Tasks
-- React front end for debugger
-- Better support for websocket interface
-- Support for macros
-- Support for multi-type pointer arithmetic
-- Support for arrays in the binary
-- Support for break and continue
+- Segmentation fault on use-after-free and buffer overflow
 
 ## Restrictions and Incompatibilities
 - Implicit types on functions aren't supported
@@ -33,8 +25,7 @@ better error messages and more runtime diagnostic tools.
 # Credit
 - TCI uses [`codespan-reporting`](https://github.com/brendanzab/codespan) to make
   nice error messages.
-- TCI uses [`embedded-websocket`](https://github.com/ninjasource/embedded-websocket)
-  to do handle websocket connections
-- TCI uses [`lang-c`](https://github.com/vickenty/lang-c) to handle parsing the C language
+- TCI uses a parser plagiarized from [`lang-c`](https://github.com/vickenty/lang-c)
+  to handle parsing the C language
 
 
