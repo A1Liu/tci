@@ -16,7 +16,7 @@ jobs:
       - run: cargo test
         shell: bash
       - uses: jetli/wasm-pack-action@v0.3.0
-      - uses: actions/setup-node@v1.4.3
+      - uses: actions/setup-node@v2
       - run: yarn install --frozen-lockfile
         shell: bash
       - run : yarn build
