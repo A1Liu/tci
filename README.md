@@ -28,17 +28,7 @@ better error messages and more runtime diagnostic tools.
 ## Restrictions and Incompatibilities
 - Implicit types on functions aren't supported
 - Implicit function declarations aren't supported
-- Higher order functions and function pointers aren't supported
 - No support for multithreading
-- No support for multi-declarations in global context
-- No support for user-defined varargs
-- Type declarations are not allowed inside functions
-- Type declarations are not allowed inside other type declarations
-- No support for Goto
-- Typedefs must begin with an uppercase letter, or end with `_t`, with the exception of `va_list`
-- Variables and function names must begin with a lowercase letter, and cannot end with `_t`
-- This interpreter is always big endian
-
 
 # Credit
 - TCI uses [`codespan-reporting`](https://github.com/brendanzab/codespan) to make
