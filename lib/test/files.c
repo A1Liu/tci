@@ -3,13 +3,14 @@
 #include <string.h>
 
 int main() {
-  char *hello_world = "Hello, world!";
+  char *hello_world = "Hello, world!\n";
   FILE *fptr = fopen("/output.txt", "w");
   if (fptr == NULL) {
     perror("idk man");
     return 1;
   }
 
+  fprintf(fptr, "%s", hello_world);
   fputs(hello_world, fptr);
   fclose(fptr);
 
@@ -19,8 +20,8 @@ int main() {
   fclose(fptr);
 
   if (strcmp(buf, hello_world)) {
-    printf("left:  %s\n", buf);
-    printf("right: %s\n", hello_world);
+    printf("left:  %s", buf);
+    printf("right: %s", hello_world);
     return 1;
   }
 

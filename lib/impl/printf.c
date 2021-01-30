@@ -120,11 +120,13 @@
 typedef void (*out_fct_type)(char character, void *buffer, size_t idx,
                              size_t maxlen);
 
-// wrapper (used as buffer) for output function type
-typedef struct {
-  void (*fct)(char character, void *arg);
-  void *arg;
-} out_fct_wrap_type;
+static inline void _out_file(char character, void *buffer, size_t idx,
+                             size_t maxlen) {
+  (void)idx;
+  (void)maxlen;
+
+  fputc(character, (FILE *)buffer);
+}
 
 // output to command line
 static inline void _out_char(char character, void *buffer, size_t idx,
@@ -159,17 +161,6 @@ static inline void _out_null(char character, void *buffer, size_t idx,
 }
 
 // internal output function wrapper
-static inline void _out_fct(char character, void *buffer, size_t idx,
-                            size_t maxlen) {
-  (void)idx;
-  (void)maxlen;
-  if (character) {
-    // buffer is the output fct pointer
-    ((out_fct_wrap_type *)buffer)
-        ->fct(character, ((out_fct_wrap_type *)buffer)->arg);
-  }
-}
-
 // internal secure strlen
 // \return The length of the string (excluding the terminating 0) limited by
 // 'maxsize'
@@ -925,6 +916,22 @@ int printf(const char *format, ...) {
   return ret;
 }
 
+int vprintf(const char *format, va_list va) {
+  char buffer[1];
+  return _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+}
+
+int fprintf(FILE *stream, const char *format, ...) {
+  va_list va;
+  va_start(va, format);
+  const int ret = _vsnprintf(_out_file, (char *)stream, (size_t)-1, format, va);
+  va_end(va);
+  return ret;
+}
+int vfprintf(FILE *stream, const char *format, va_list va) {
+  return _vsnprintf(_out_file, (char *)stream, (size_t)-1, format, va);
+}
+
 int sprintf(char *buffer, const char *format, ...) {
   va_list va;
   va_start(va, format);
@@ -939,11 +946,6 @@ int snprintf(char *buffer, size_t count, const char *format, ...) {
   const int ret = _vsnprintf(_out_buffer, buffer, count, format, va);
   va_end(va);
   return ret;
-}
-
-int vprintf(const char *format, va_list va) {
-  char buffer[1];
-  return _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
 }
 
 int vsnprintf(char *buffer, size_t count, const char *format, va_list va) {

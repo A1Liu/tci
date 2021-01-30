@@ -10,19 +10,6 @@ typedef unsigned int fpos_t;
 //   unsigned int idx;
 // } fpos_t;
 
-int printf(const char *format, ...);
-
-int sprintf(char *buffer, const char *format, ...);
-int snprintf(char *buffer, size_t count, const char *format, ...);
-
-int vprintf(const char *format, va_list va);
-int vsnprintf(char *buffer, size_t count, const char *format, va_list va);
-
-int sscanf(const char *restrict buffer, const char *restrict format, ...);
-
-int vsscanf(const char *restrict buffer, const char *restrict format,
-            va_list vlist);
-
 // TODO remove definition from header
 typedef struct __tci_file {
   // reentrant lock (required as of C11)
@@ -87,5 +74,20 @@ size_t fwrite(const void *ptr, size_t size_of_elements,
               size_t number_of_elements, FILE *a_file);
 
 void perror(const char *s);
+
+int printf(const char *format, ...);
+int fprintf(FILE *stream, const char *format, ...);
+int vfprintf(FILE *stream, const char *format, va_list arg);
+
+int sprintf(char *buffer, const char *format, ...);
+int snprintf(char *buffer, size_t count, const char *format, ...);
+
+int vprintf(const char *format, va_list va);
+int vsnprintf(char *buffer, size_t count, const char *format, va_list va);
+
+int sscanf(const char *restrict buffer, const char *restrict format, ...);
+
+int vsscanf(const char *restrict buffer, const char *restrict format,
+            va_list vlist);
 
 #endif
