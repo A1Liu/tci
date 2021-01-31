@@ -334,6 +334,9 @@ int fgetc(FILE *fp) {
 
   fp->flags |= FLAG_CAN_READ;
   fp->buffer_position = 1;
+
+  // TODO this future fseeks and stuff like that. Fix with a new member that
+  // tracks how much can be read
   fp->buffer_capacity = ret;
   return fp->buffer[0];
 }
