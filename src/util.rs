@@ -2,7 +2,7 @@ use crate::buckets::*;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
 use core::borrow::Borrow;
-use core::{fmt, marker, mem, ops, slice, str};
+use core::{fmt, marker, mem, ops, ptr, slice, str};
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -776,9 +776,9 @@ impl<T, E> TaggedMultiArray<T, E> {
             mem::transmute::<&mut [T], &mut TE<T, E>>(fat_ptr)
         };
 
-        let tag = unsafe { core::ptr::read(tag) };
+        let tag = unsafe { ptr::read(tag) };
         for e in elems.iter_mut() {
-            unsafe { core::ptr::drop_in_place(e) };
+            unsafe { ptr::drop_in_place(e) };
         }
 
         self.elements.resize(idx, 0);
@@ -1573,14 +1573,15 @@ impl<T, E> TaggedMultiVec<T, E> {
             mem::transmute::<&mut [T], &mut TE<T, E>>(fat_ptr)
         };
 
-        let tag = unsafe { core::ptr::read(tag) };
+        let tag = unsafe { ptr::read(tag) };
         for e in elems.iter_mut() {
-            unsafe { core::ptr::drop_in_place(e) };
+            unsafe { ptr::drop_in_place(e) };
         }
 
         return Some(tag);
     }
 
+    #[inline]
     pub fn last_mut(&mut self) -> Option<TMVec<T, E>> {
         self.tags.last()?;
         Some(TMVec {
@@ -1589,6 +1590,7 @@ impl<T, E> TaggedMultiVec<T, E> {
         })
     }
 
+    #[inline]
     pub fn get_mut(&mut self, idx: usize) -> Option<TMVec<T, E>> {
         self.tags.get(idx)?;
         Some(TMVec { tmv: self, idx })
@@ -1604,13 +1606,62 @@ impl<T, E> TaggedMultiVec<T, E> {
     }
 }
 
+impl<T, E> Drop for TaggedMultiVec<T, E> {
+    fn drop(&mut self) {
+        while let Some(t) = self.pop() {}
+    }
+}
+
 impl<'a, T, E> TMVec<'a, T, E> {
-    pub fn push(&mut self, elem: E) {}
+    pub fn reserve(&mut self, len: usize) {
+        let mut block = self.tmv.tags[self.idx];
+        if block.elem_capa - block.elem_len >= len {
+            return;
+        }
+
+        let new_capa = std::cmp::max(block.elem_len * 3 / 2 + len, block.elem_capa * 3 / 2);
+        let padded_len = align_usize(self.tmv.elements.len(), mem::align_of::<T>());
+        let bytes = padded_len + mem::size_of::<T>();
+        let new_elem_idx = align_usize(bytes, mem::align_of::<E>());
+        let final_len = new_elem_idx + new_capa * mem::size_of::<E>();
+        let bytes = final_len - self.tmv.elements.len();
+
+        self.tmv.elements.reserve(bytes);
+        unsafe { self.tmv.elements.set_len(padded_len) };
+
+        let vec_end = block.elem_idx + block.elem_len * mem::size_of::<E>();
+        for idx in block.tag_idx..vec_end {
+            self.tmv.elements.push(self.tmv.elements[idx]);
+        }
+
+        unsafe { self.tmv.elements.set_len(final_len) };
+
+        block.tag_idx = padded_len;
+        block.elem_idx = new_elem_idx;
+        block.elem_capa = new_capa;
+
+        self.tmv.tags[self.idx] = block;
+    }
+
+    pub fn push(&mut self, elem: E) {
+        self.reserve(1);
+
+        let block = &mut self.tmv.tags[self.idx];
+        let next_idx = block.elem_idx + block.elem_len * mem::size_of::<E>();
+        let next_ptr = &mut self.tmv.elements[next_idx] as *mut u8 as *mut E;
+
+        unsafe { ptr::write(next_ptr, elem) };
+        block.elem_len += 1;
+    }
 
     pub fn extend_from_slice(&mut self, elems: &[E])
     where
         E: Clone,
     {
+        self.reserve(elems.len());
+        for e in elems {
+            self.push(e.clone());
+        }
     }
 }
 
