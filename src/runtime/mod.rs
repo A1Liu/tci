@@ -1,6 +1,7 @@
 #[macro_use]
 pub mod error;
 
+pub mod fs;
 pub mod interpreter;
 pub mod kernel;
 pub mod memory;
@@ -9,6 +10,7 @@ pub mod test_kernel;
 pub mod types;
 
 pub use error::*;
+pub use fs::*;
 pub use interpreter::*;
 pub use kernel::*;
 pub use memory::*;

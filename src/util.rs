@@ -822,11 +822,31 @@ where
     }
 }
 
+impl<T, E> ops::Index<u32> for TaggedMultiArray<T, E> {
+    type Output = TE<T, E>;
+
+    fn index(&self, idx: u32) -> &TE<T, E> {
+        return self.get(idx as usize).unwrap();
+    }
+}
+
+impl<T, E> ops::IndexMut<u32> for TaggedMultiArray<T, E> {
+    fn index_mut(&mut self, idx: u32) -> &mut TE<T, E> {
+        return self.get_mut(idx as usize).unwrap();
+    }
+}
+
 impl<T, E> ops::Index<usize> for TaggedMultiArray<T, E> {
     type Output = TE<T, E>;
 
     fn index(&self, idx: usize) -> &TE<T, E> {
         return self.get(idx).unwrap();
+    }
+}
+
+impl<T, E> ops::IndexMut<usize> for TaggedMultiArray<T, E> {
+    fn index_mut(&mut self, idx: usize) -> &mut TE<T, E> {
+        return self.get_mut(idx).unwrap();
     }
 }
 
@@ -1443,5 +1463,198 @@ impl VecU8 {
     pub fn align(&mut self, align: usize) {
         let aligned = align_usize(self.data.len(), align);
         self.data.resize(aligned, 0);
+    }
+}
+
+pub struct TMVec<'a, T, E> {
+    tmv: &'a mut TaggedMultiVec<T, E>,
+    idx: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct TMVBlock {
+    tag_idx: usize,
+    elem_idx: usize, // TODO technically computable from tag_idx, but I'm too lazy
+    elem_len: usize,
+    elem_capa: usize,
+}
+
+pub struct TMVIter<'a, T, E> {
+    tmv: &'a TaggedMultiVec<T, E>,
+    idx: usize,
+}
+
+pub struct TaggedMultiVec<T, E> {
+    elements: Vec<u8>,
+    tags: Vec<TMVBlock>,
+    phantom: marker::PhantomData<(T, E)>,
+}
+
+impl<T, E> TaggedMultiVec<T, E> {
+    pub fn new() -> Self {
+        Self {
+            elements: Vec::new(),
+            tags: Vec::new(),
+            phantom: marker::PhantomData,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        return self.tags.len();
+    }
+
+    pub fn push(&mut self, tag: T, data: Vec<E>) {
+        let begin = align_usize(self.elements.len(), mem::align_of::<T>());
+        let (len, capa) = (data.len(), data.capacity());
+        self.elements.resize(begin, 0);
+        self.elements.extend_from_slice(any_as_u8_slice(&tag));
+        mem::forget(tag);
+        let elem_begin = align_usize(self.elements.len(), mem::align_of::<E>());
+        self.elements.resize(elem_begin, 0);
+
+        self.elements.reserve(mem::size_of::<E>() * capa);
+        let elem_idx = self.elements.len();
+
+        for elem in data {
+            self.elements.extend_from_slice(any_as_u8_slice(&elem));
+            mem::forget(elem);
+        }
+
+        unsafe { self.elements.set_len(self.elements.len() + capa - len) };
+
+        let block = TMVBlock {
+            tag_idx: begin,
+            elem_idx,
+            elem_len: len,
+            elem_capa: capa,
+        };
+
+        self.tags.push(block);
+    }
+
+    pub fn push_from(&mut self, tag: T, data: &[E])
+    where
+        E: Clone,
+    {
+        let begin = align_usize(self.elements.len(), mem::align_of::<T>());
+        let (len, capa) = (data.len(), data.len() * 3 / 2);
+        self.elements.resize(begin, 0);
+        self.elements.extend_from_slice(any_as_u8_slice(&tag));
+        mem::forget(tag);
+        let elem_begin = align_usize(self.elements.len(), mem::align_of::<E>());
+        self.elements.resize(elem_begin, 0);
+
+        self.elements.reserve(mem::size_of::<E>() * capa);
+        let elem_idx = self.elements.len();
+        for elem in data {
+            let elem = elem.clone();
+            self.elements.extend_from_slice(any_as_u8_slice(&elem));
+            mem::forget(elem);
+        }
+
+        unsafe { self.elements.set_len(self.elements.len() + capa - len) };
+
+        let block = TMVBlock {
+            tag_idx: begin,
+            elem_idx,
+            elem_len: len,
+            elem_capa: capa,
+        };
+
+        self.tags.push(block);
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        let block = self.tags.pop()?;
+
+        let ptr = &mut self.elements[block.tag_idx] as *mut u8 as *mut T;
+        let TE(tag, elems) = unsafe {
+            let fat_ptr = slice::from_raw_parts_mut(ptr, block.elem_len);
+            mem::transmute::<&mut [T], &mut TE<T, E>>(fat_ptr)
+        };
+
+        let tag = unsafe { core::ptr::read(tag) };
+        for e in elems.iter_mut() {
+            unsafe { core::ptr::drop_in_place(e) };
+        }
+
+        return Some(tag);
+    }
+
+    pub fn last_mut(&mut self) -> Option<TMVec<T, E>> {
+        self.tags.last()?;
+        Some(TMVec {
+            idx: self.tags.len() - 1,
+            tmv: self,
+        })
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Option<TMVec<T, E>> {
+        self.tags.get(idx)?;
+        Some(TMVec { tmv: self, idx })
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&TE<T, E>> {
+        let block = *self.tags.get(idx)?;
+        let ptr = &self.elements[block.tag_idx] as *const u8 as *const T;
+        unsafe {
+            let fat_ptr = slice::from_raw_parts(ptr, block.elem_len);
+            return Some(mem::transmute::<&[T], &TE<T, E>>(fat_ptr));
+        }
+    }
+}
+
+impl<'a, T, E> TMVec<'a, T, E> {
+    pub fn push(&mut self, elem: E) {}
+
+    pub fn extend_from_slice(&mut self, elems: &[E])
+    where
+        E: Clone,
+    {
+    }
+}
+
+impl<T, E> fmt::Debug for TaggedMultiVec<T, E>
+where
+    T: fmt::Debug,
+    E: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_list().entries(self.into_iter()).finish()
+    }
+}
+
+impl<T, E> ops::Index<u32> for TaggedMultiVec<T, E> {
+    type Output = TE<T, E>;
+
+    fn index(&self, idx: u32) -> &TE<T, E> {
+        return self.get(idx as usize).unwrap();
+    }
+}
+
+impl<T, E> ops::Index<usize> for TaggedMultiVec<T, E> {
+    type Output = TE<T, E>;
+
+    fn index(&self, idx: usize) -> &TE<T, E> {
+        return self.get(idx).unwrap();
+    }
+}
+
+impl<'a, T, E> Iterator for TMVIter<'a, T, E> {
+    type Item = &'a TE<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let val = self.tmv.get(self.idx)?;
+        self.idx += 1;
+        return Some(val);
+    }
+}
+
+impl<'a, T, E> IntoIterator for &'a TaggedMultiVec<T, E> {
+    type Item = &'a TE<T, E>;
+    type IntoIter = TMVIter<'a, T, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return TMVIter { tmv: self, idx: 0 };
     }
 }
