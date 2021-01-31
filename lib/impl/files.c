@@ -6,29 +6,33 @@
 #include <string.h>
 #include <tci.h>
 
-#define FLAG_NARROW ((uint16_t)1)
-#define FLAG_WIDE ((uint16_t)2)
-#define FLAG_LINE_BUF ((uint16_t)4)
-#define FLAG_FULL_BUF ((uint16_t)8)
+#define FLAG_NARROW ((uint16_t)0x1)
+#define FLAG_WIDE ((uint16_t)0x2)
+#define FLAG_LINE_BUF ((uint16_t)0x4)
+#define FLAG_FULL_BUF ((uint16_t)0x8)
+#define FLAGS_BUF ((uint16_t)0xC)
 
-#define FLAG_IO_INPUT ((uint16_t)16)
-#define FLAG_IO_OUTPUT ((uint16_t)32)
-#define FLAG_IO_APPEND ((uint16_t)64)
-#define FLAGS_IO ((uint16_t)112) // 16 + 32 + 64
+#define FLAG_IO_INPUT ((uint16_t)0x10)
+#define FLAG_IO_OUTPUT ((uint16_t)0x20)
+#define FLAG_IO_APPEND ((uint16_t)0x40)
+#define FLAGS_IO ((uint16_t)0x70)
 
-#define FLAG_BINARY ((uint16_t)128)
-#define FLAG_EOF ((uint16_t)256)
-#define FLAG_CLOSED ((uint16_t)512)
+#define FLAG_BINARY ((uint16_t)0x80)
+#define FLAG_EOF ((uint16_t)0x100)
+#define FLAG_CLOSED ((uint16_t)0x200)
 
-#define FLAG_CREATE ((uint16_t)1024)
-#define FLAG_CLEAR ((uint16_t)2048)
-#define FLAG_CAN_READ ((uint16_t)4096)
+#define FLAG_CREATE ((uint16_t)0x400)
+#define FLAG_CLEAR ((uint16_t)0x800)
+#define FLAG_CAN_READ ((uint16_t)0x1000)
 
-#define FLAG_STDOUT_INIT ((uint16_t)68) // FLAG_IO_APPEND + FLAG_LINE_BUF
+#define FLAG_READ_ONE ((uint16_t)0x2000)
+
+#define FLAG_STDOUT_INIT ((uint16_t)0x44) // FLAG_IO_APPEND + FLAG_LINE_BUF
 
 char __tci_stdout_buffer[BUFSIZ];
 FILE __tci_stdout_struct = {0, __tci_stdout_buffer, 0, BUFSIZ, 0, 1,
                             0, FLAG_STDOUT_INIT};
+
 char __tci_stderr_buffer[BUFSIZ];
 FILE __tci_stderr_struct = {0, __tci_stderr_buffer, 0, BUFSIZ, 0, 2,
                             0, FLAG_STDOUT_INIT};
@@ -279,6 +283,14 @@ int fgetc(FILE *fp) {
     tci_throw_error("FileIsNotInput",
                     "tried to fgetc a file that isn't an input file", 1);
 
+  if (fp->flags & FLAG_READ_ONE) {
+    fp->flags &= ~FLAG_READ_ONE;
+    if (fp->flags & FLAGS_BUF)
+      return fp->buffer[fp->buffer_position++];
+
+    return *(char *)&fp->buffer;
+  }
+
   if (fp->flags & FLAG_EOF)
     return EOF;
 
@@ -324,6 +336,33 @@ int fgetc(FILE *fp) {
   fp->buffer_position = 1;
   fp->buffer_capacity = ret;
   return fp->buffer[0];
+}
+
+int ungetc(int c, FILE *fp) {
+  if (fp->flags & FLAG_CLOSED)
+    tci_throw_error("FileIsClosed", "tried to use an already closed file", 1);
+
+  if (!(fp->flags & FLAG_IO_INPUT))
+    tci_throw_error("FileIsNotInput",
+                    "tried to ungetc a file that isn't an input file", 1);
+
+  if (c == EOF)
+    return c;
+
+  fp->flags &= ~FLAG_EOF;
+  fp->flags |= FLAG_READ_ONE;
+
+  if (!(fp->flags & FLAGS_BUF))
+    return *(char *)&fp->buffer = c;
+
+  if (fp->flags & FLAG_CAN_READ) {
+    if (!fp->buffer_position)
+      return EOF;
+
+    return fp->buffer[--fp->buffer_position] = c;
+  }
+
+  return fp->buffer[fp->buffer_position] = c;
 }
 
 char *fgets(char *restrict str, int count, FILE *restrict fp) {

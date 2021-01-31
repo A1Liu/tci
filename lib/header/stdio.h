@@ -31,19 +31,7 @@ typedef struct __tci_file {
   // error indicator
   int error;
 
-  // bit numberings from low to high
-  //
-  // bits 0,1 character width (unset, narrow, or wide)
-  //
-  // bits 2,3 stream buffering state indicator (unbuffered, line buffered, fully
-  // buffered)
-  //
-  // bits 4,5,6 I/O mode indicator (input stream, output stream, or update
-  // stream)
-  //
-  // bit 7 binary/text mode indicator
-  //
-  // bit 8 end-of-file indicator
+  // Flags
   unsigned short flags;
 } FILE;
 
@@ -66,6 +54,7 @@ int fputs(const char *s, FILE *fp);
 int fflush(FILE *fp);
 
 int fgetc(FILE *fp);
+int ungetc(int c, FILE *fp);
 char *fgets(char *restrict str, int count, FILE *restrict stream);
 int feof(FILE *fp);
 
