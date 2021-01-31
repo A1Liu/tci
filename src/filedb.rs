@@ -123,8 +123,6 @@ lazy_static! {
         new_file!(@HEADER, "errno.h");
         new_file!(@HEADER, "limits.h");
 
-        // new_file!(@IMPL_HEADER, "tci.c");
-
         new_file!(@IMPL, "tci.c");
         new_file!(@IMPL, "printf.c");
         new_file!(@IMPL, "sscanf.c");

@@ -67,6 +67,7 @@ int fflush(FILE *fp);
 
 int fgetc(FILE *fp);
 char *fgets(char *restrict str, int count, FILE *restrict stream);
+int feof(FILE *fp);
 
 size_t fread(void *ptr, size_t size_of_elements, size_t number_of_elements,
              FILE *a_file);
