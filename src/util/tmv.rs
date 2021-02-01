@@ -1,0 +1,152 @@
+use super::vec::*;
+use core::mem::MaybeUninit;
+use core::{fmt, mem, ptr};
+
+#[derive(Debug)]
+pub struct TMVec<'a, T, E> {
+    tag: &'a T,
+    data: &'a [E],
+}
+
+pub struct TMVecMut<'a, T, E> {
+    tmv: &'a mut TaggedMultiVec<T, E>,
+    idx: usize,
+}
+
+pub struct TMVBlock<T> {
+    tag: T,
+    elem_idx: usize,
+    elem_len: usize,
+    elem_capa: usize,
+}
+
+pub struct TaggedMultiVec<T, E> {
+    elements: Vec<MaybeUninit<E>>,
+    tags: Vec<TMVBlock<T>>,
+}
+
+pub struct TMVIter<'a, T, E> {
+    tmv: &'a TaggedMultiVec<T, E>,
+    idx: usize,
+}
+
+impl<T, E> TaggedMultiVec<T, E> {
+    pub fn new() -> Self {
+        Self {
+            elements: Vec::new(),
+            tags: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        return self.tags.len();
+    }
+
+    pub fn reserve_gc(&mut self, len: usize) {
+        let tags = &mut self.tags;
+        vec_reserve_gc(&mut self.elements, len, |old, new| unsafe {
+            let mut write = 0;
+
+            for block in tags {
+                let new_idx = write;
+
+                for elem in &old[block.elem_idx..(block.elem_idx + block.elem_len)] {
+                    ptr::write(new[write].as_mut_ptr(), ptr::read(elem));
+                    write += 1;
+                }
+
+                write += block.elem_capa - block.elem_len;
+                block.elem_idx = new_idx;
+            }
+
+            write
+        });
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        let block = self.tags.pop()?;
+
+        for idx in block.elem_idx..(block.elem_idx + block.elem_len) {
+            unsafe { ptr::drop_in_place(self.elements[idx].as_mut_ptr()) }
+        }
+
+        return Some(block.tag);
+    }
+
+    pub fn push(&mut self, tag: T, data: Vec<E>) {
+        let (elem_idx, elem_len, elem_capa) = (self.elements.len(), data.len(), data.capacity());
+
+        for e in data {
+            self.elements.push(MaybeUninit::new(e));
+        }
+
+        for _ in elem_len..elem_capa {
+            self.elements.push(MaybeUninit::uninit());
+        }
+
+        self.tags.push(TMVBlock {
+            tag,
+            elem_idx,
+            elem_len,
+            elem_capa,
+        });
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Option<TMVecMut<T, E>> {
+        if idx >= self.tags.len() {
+            return None;
+        }
+
+        return Some(TMVecMut { tmv: self, idx });
+    }
+
+    pub fn get(&self, idx: usize) -> Option<TMVec<T, E>> {
+        let block = self.tags.get(idx)?;
+        let tag = &block.tag;
+        let elements = &self.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
+        let data = unsafe { mem::transmute::<&[MaybeUninit<E>], &[E]>(elements) };
+
+        return Some(TMVec { tag, data });
+    }
+}
+
+impl<T, E> Drop for TaggedMultiVec<T, E> {
+    fn drop(&mut self) {
+        while let Some(t) = self.pop() {}
+    }
+}
+
+impl<'a, T, E> TMVec<'a, T, E> {
+    pub fn as_slice(&self) -> &[E] {
+        return self.data;
+    }
+}
+
+impl<T, E> fmt::Debug for TaggedMultiVec<T, E>
+where
+    T: fmt::Debug,
+    E: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_list().entries(self.into_iter()).finish()
+    }
+}
+
+impl<'a, T, E> Iterator for TMVIter<'a, T, E> {
+    type Item = TMVec<'a, T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let val = self.tmv.get(self.idx)?;
+        self.idx += 1;
+        return Some(val);
+    }
+}
+
+impl<'a, T, E> IntoIterator for &'a TaggedMultiVec<T, E> {
+    type Item = TMVec<'a, T, E>;
+    type IntoIter = TMVIter<'a, T, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return TMVIter { tmv: self, idx: 0 };
+    }
+}
