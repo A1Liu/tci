@@ -13,6 +13,7 @@ const App = () => {
     <div>
       <NameBox>
         <Name href="/"> TCI </Name>
+        <Name href="https://github.com/A1Liu/tci"> Check out TCI on Github!</Name>
       </NameBox>
 
       <NavBar />
@@ -47,6 +48,7 @@ const App = () => {
 
 const NameBox = styled.div`
   display: flex;
+  justify-content: space-between;
   height: 2.5rem;
   padding-left: 0.5rem;
   padding-right: 0.5rem;
