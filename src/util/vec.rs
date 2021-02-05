@@ -4,14 +4,14 @@ use std::alloc::{alloc, dealloc, Layout};
 
 pub fn vec_reserve_gc<T, F>(vec: &mut Vec<T>, additional: usize, gc: F)
 where
-    F: FnOnce(&mut [T], &mut [mem::MaybeUninit<T>]) -> usize,
+    F: FnOnce(&[T], &mut [mem::MaybeUninit<T>]) -> usize,
 {
-    let old_capa = vec.capacity();
-    if old_capa - vec.len() >= additional {
+    let (len, old_capa) = (vec.len(), vec.capacity());
+    if len + additional <= old_capa {
         return;
     }
 
-    let new_capa = std::cmp::max(vec.len() * 3 / 2 + additional, vec.capacity() * 3 / 2);
+    let new_capa = std::cmp::max(len * 3 / 2 + additional, vec.capacity() * 3 / 2);
     let new_layout = Layout::array::<T>(new_capa).unwrap();
 
     let new_buf = unsafe {
@@ -19,13 +19,17 @@ where
         slice::from_raw_parts_mut(buf, new_capa)
     };
 
-    let elements = mem::replace(vec, Vec::new()).leak();
+    let mut elements_vec = mem::replace(vec, Vec::new());
+    let elements = unsafe { slice::from_raw_parts_mut(elements_vec.as_mut_ptr(), len) };
+    mem::forget(elements_vec);
 
     let new_len = gc(elements, new_buf);
 
     let (new_buf, old_buf) = (new_buf.as_mut_ptr(), elements.as_mut_ptr() as *mut u8);
     unsafe {
-        dealloc(old_buf, Layout::array::<T>(old_capa).unwrap());
+        if old_capa != 0 {
+            dealloc(old_buf, Layout::array::<T>(old_capa).unwrap());
+        }
         *vec = Vec::from_raw_parts(new_buf as *mut T, new_len, new_capa);
     }
 }

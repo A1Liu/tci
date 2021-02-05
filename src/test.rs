@@ -2,6 +2,8 @@ use crate::filedb::*;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
+use interloc::*;
+use std::alloc::System;
 use std::fs::{read_dir, read_to_string};
 
 fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
@@ -185,3 +187,63 @@ gen_test_should_succeed!(
 );
 
 // gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));
+//
+//
+
+pub struct TestMonitor {
+    local: ThreadMonitor,
+}
+
+impl TestMonitor {
+    // This needs to be const to be usable in static functions
+    pub const fn new() -> Self {
+        Self {
+            local: ThreadMonitor::new(),
+        }
+    }
+
+    pub fn local_info(&self) -> interloc::AllocInfo {
+        self.local.info()
+    }
+}
+
+// use std::sync::atomic::*;
+// static SHOULD_FAIL: AtomicBool = AtomicBool::new(false);
+
+impl AllocMonitor for TestMonitor {
+    fn monitor(&self, layout: Layout, action: AllocAction) {
+        // if let AllocAction::Realloc { .. } = action {
+        //     if SHOULD_FAIL.load(Ordering::SeqCst) {
+        //         unsafe { std::ptr::null_mut::<i32>().write(42) };
+        //     }
+        // }
+
+        self.local.monitor(layout, action);
+    }
+}
+
+pub static TEST_MONITOR: TestMonitor = TestMonitor::new();
+
+#[global_allocator]
+static GLOBAL: InterAlloc<System, TestMonitor> = InterAlloc {
+    inner: System,
+    monitor: &TEST_MONITOR,
+};
+
+pub fn before_alloc() -> interloc::AllocInfo {
+    // SHOULD_FAIL.store(true, Ordering::SeqCst);
+    TEST_MONITOR.local_info()
+}
+
+pub fn after_alloc<T>(obj: T, before: interloc::AllocInfo) -> interloc::AllocInfo {
+    core::mem::drop(obj);
+    let diff = TEST_MONITOR.local_info().relative_to(&before);
+    assert!(
+        diff.bytes_alloc == diff.bytes_dealloc,
+        "Diff is {:#?} before is {:?}",
+        diff,
+        before
+    );
+
+    return diff;
+}
