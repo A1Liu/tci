@@ -12,6 +12,7 @@ where
     }
 
     let new_capa = std::cmp::max(len * 3 / 2 + additional, vec.capacity() * 3 / 2);
+    let new_capa = std::cmp::max(new_capa, 8);
     let new_layout = Layout::array::<T>(new_capa).unwrap();
 
     let new_buf = unsafe {

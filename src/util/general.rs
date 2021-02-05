@@ -80,7 +80,7 @@ macro_rules! out {
             std::panic!();
         }
 
-        out!(@CLEAN, std::concat!("{} ", $str), count, $( $e ),+ );
+        out!(@CLEAN, std::concat!("{:<3} ", $str), count, $( $e ),+ );
     }};
     (@CLEAN, $str:expr, $( $e:expr ),+ ) => {{
         let s = std::format!( $str, $( $e ),+ );

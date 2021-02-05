@@ -45,21 +45,36 @@ impl<T, E> TaggedMultiVec<T, E> {
     }
 
     pub fn compact_gc(&mut self) {
-        let mut write = 0;
-        for block in &mut self.tags {
-            let new_idx = write;
-
-            for read in block.elem_idx..(block.elem_idx + block.elem_len) {
-                let elem = unsafe { ptr::read(&self.elements[read]).assume_init() };
-                unsafe { ptr::write(self.elements[write].as_mut_ptr(), elem) };
-                write += 1;
-            }
-
-            write += block.elem_capa - block.elem_len;
-            block.elem_idx = new_idx;
+        struct TMVBlock {
+            tag_idx: usize,
+            elem_idx: usize,
+            elem_len: usize,
+            elem_capa: usize,
         }
 
-        assert_eq!(write, self.size);
+        let mut blocks = Vec::new();
+        for (tag_idx, block) in self.tags.iter().enumerate() {
+            blocks.push(TMVBlock {
+                tag_idx,
+                elem_idx: block.elem_idx,
+                elem_len: block.elem_len,
+                elem_capa: block.elem_capa,
+            });
+        }
+
+        // need to traverse the blocks in order
+        blocks.sort_by_key(|b| b.elem_idx);
+
+        let mut write = 0;
+        for block in &mut blocks {
+            let to_space = unsafe { mem::transmute(&mut self.elements[write]) };
+            unsafe { ptr::copy(&self.elements[block.elem_idx], to_space, block.elem_len) };
+
+            self.tags[block.tag_idx].elem_idx = write;
+            write += block.elem_capa;
+        }
+
+        debug_assert_eq!(write, self.size);
 
         unsafe { self.elements.set_len(write) };
     }
@@ -67,6 +82,7 @@ impl<T, E> TaggedMultiVec<T, E> {
     pub fn reserve_gc(&mut self, len: usize) {
         if self.size + len <= self.elements.capacity() {
             self.compact_gc();
+            return;
         }
 
         let tags = &mut self.tags;
@@ -74,17 +90,14 @@ impl<T, E> TaggedMultiVec<T, E> {
             let mut write = 0;
 
             for block in tags {
-                let new_idx = write;
+                let to_space = mem::transmute(&mut new[write]);
+                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_capa);
 
-                for elem in &old[block.elem_idx..(block.elem_idx + block.elem_len)] {
-                    ptr::write(new[write].as_mut_ptr(), ptr::read(elem));
-                    write += 1;
-                }
-
-                write += block.elem_capa - block.elem_len;
-                block.elem_idx = new_idx;
+                block.elem_idx = write;
+                write += block.elem_capa;
             }
 
+            debug_assert!(write <= new.len());
             write
         });
     }
@@ -97,10 +110,10 @@ impl<T, E> TaggedMultiVec<T, E> {
         }
 
         let new_capa = std::cmp::max(elem_len * 3 / 2 + additional, elem_capa * 3 / 2);
-        if self.size + new_capa <= self.elements.capacity() {
-            self.compact_gc();
-            let new_idx = self.elements.len();
-            for read in self.tags[idx].elem_idx..elem_len {
+        let new_capa = std::cmp::max(new_capa, 8);
+        if self.elements.len() + new_capa < self.elements.capacity() {
+            let (elem_idx, new_idx) = (self.tags[idx].elem_idx, self.elements.len());
+            for read in elem_idx..(elem_idx + elem_len) {
                 let elem = unsafe { ptr::read(&self.elements[read]) };
                 self.elements.push(elem);
             }
@@ -115,50 +128,67 @@ impl<T, E> TaggedMultiVec<T, E> {
             return;
         }
 
-        let tags = &mut self.tags;
+        if self.size + new_capa <= self.elements.capacity() {
+            self.compact_gc();
+            let (elem_idx, new_idx) = (self.tags[idx].elem_idx, self.elements.len());
+            for read in elem_idx..(elem_idx + elem_len) {
+                let elem = unsafe { ptr::read(&self.elements[read]) };
+                self.elements.push(elem);
+            }
+
+            for _ in elem_len..new_capa {
+                self.elements.push(MaybeUninit::uninit());
+            }
+
+            self.tags[idx].elem_idx = new_idx;
+            self.tags[idx].elem_capa = new_capa;
+            self.size += new_capa - elem_capa;
+            return;
+        }
+
+        let (size, tags) = (&mut self.size, &mut self.tags);
         vec_reserve_gc(&mut self.elements, new_capa, |old, new| unsafe {
             let mut write = 0;
 
             for (block_idx, block) in tags.iter_mut().enumerate() {
-                let new_idx = write;
-
-                for elem in &old[block.elem_idx..(block.elem_idx + block.elem_len)] {
-                    ptr::write(new[write].as_mut_ptr(), ptr::read(elem));
-                    write += 1;
-                }
+                let to_space = mem::transmute(&mut new[write]);
+                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_capa);
 
                 if block_idx == idx {
+                    for offset in block.elem_capa..new_capa {
+                        new[write + offset] = MaybeUninit::uninit();
+                    }
+
                     block.elem_capa = new_capa;
                 }
 
-                write += block.elem_capa - block.elem_len;
-                block.elem_idx = new_idx;
+                block.elem_idx = write;
+                write += block.elem_capa;
             }
 
+            debug_assert!(write <= new.len());
+            *size = write;
             write
         });
-
-        self.size += new_capa - elem_capa;
     }
 
     pub fn pop(&mut self) -> Option<T> {
         let block = self.tags.pop()?;
-        self.size -= block.elem_capa;
 
         for idx in block.elem_idx..(block.elem_idx + block.elem_len) {
-            unsafe { ptr::drop_in_place(self.elements[idx].as_mut_ptr()) }
+            unsafe { ptr::drop_in_place(self.elements[idx].as_mut_ptr()) };
         }
 
+        self.size -= block.elem_capa;
         return Some(block.tag);
     }
 
     pub fn push(&mut self, tag: T, data: Vec<E>) {
-        let (elem_idx, elem_len, elem_capa) = (self.elements.len(), data.len(), data.capacity());
+        let (elem_len, elem_capa) = (data.len(), data.capacity());
         self.reserve_gc(elem_capa);
 
-        let capa = self.elements.capacity();
-
-        assert!(self.elements.len() + elem_capa <= self.elements.capacity());
+        let (elem_idx, capa) = (self.elements.len(), self.elements.capacity());
+        debug_assert!(elem_idx + elem_capa <= capa);
 
         for e in data {
             self.elements.push(MaybeUninit::new(e));
@@ -168,8 +198,7 @@ impl<T, E> TaggedMultiVec<T, E> {
             self.elements.push(MaybeUninit::uninit());
         }
 
-        assert_eq!(capa, self.elements.capacity());
-
+        debug_assert_eq!(capa, self.elements.capacity());
         self.tags.push(TMVBlock {
             tag,
             elem_idx,
@@ -209,7 +238,15 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         self.tmv.reserve_element_gc(self.idx, 1);
         let block = &mut self.tmv.tags[self.idx];
 
-        assert!(block.elem_len < block.elem_capa);
+        debug_assert!(block.elem_len < block.elem_capa);
+        debug_assert!(
+            block.elem_capa + block.elem_idx <= self.tmv.elements.len(),
+            "{} + {} > {}",
+            block.elem_capa,
+            block.elem_idx,
+            self.tmv.elements.len()
+        );
+
         self.tmv.elements[block.elem_idx + block.elem_len] = MaybeUninit::new(value);
         block.elem_len += 1;
     }
@@ -285,8 +322,16 @@ fn test_tmv() {
 
     let mut tmv: TaggedMultiVec<u32, Vec<u32>> = TaggedMultiVec::new();
     tmv.push(12, new_vec2());
+    tmv.push(12, new_vec2());
+    tmv.push(12, new_vec2());
+    tmv.push(12, new_vec2());
 
-    let mut vec = tmv.get_mut(0).unwrap();
+    let mut vec = tmv.get_mut(1).unwrap();
+    for _ in 0..64 {
+        vec.push(new_vec());
+    }
+
+    let mut vec = tmv.get_mut(2).unwrap();
     for _ in 0..64 {
         vec.push(new_vec());
     }
