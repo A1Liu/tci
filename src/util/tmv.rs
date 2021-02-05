@@ -1,8 +1,8 @@
 use super::vec::*;
 use core::mem::MaybeUninit;
-use core::{fmt, mem, ptr};
+use core::{fmt, mem, ops, ptr};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct TMVec<'a, T, E> {
     pub tag: &'a T,
     pub data: &'a [E],
@@ -91,7 +91,7 @@ impl<T, E> TaggedMultiVec<T, E> {
 
             for block in tags {
                 let to_space = mem::transmute(&mut new[write]);
-                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_capa);
+                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_len);
 
                 block.elem_idx = write;
                 write += block.elem_capa;
@@ -152,7 +152,7 @@ impl<T, E> TaggedMultiVec<T, E> {
 
             for (block_idx, block) in tags.iter_mut().enumerate() {
                 let to_space = mem::transmute(&mut new[write]);
-                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_capa);
+                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_len);
 
                 if block_idx == idx {
                     for offset in block.elem_capa..new_capa {
@@ -234,6 +234,22 @@ impl<T, E> Drop for TaggedMultiVec<T, E> {
 }
 
 impl<'a, T, E> TMVecMut<'a, T, E> {
+    pub fn tag(&self) -> &T {
+        return &self.tmv.tags[self.idx].tag;
+    }
+
+    pub fn tag_mut(&mut self) -> &mut T {
+        return &mut self.tmv.tags[self.idx].tag;
+    }
+
+    pub fn len(&self) -> usize {
+        return self.tmv.tags[self.idx].elem_len;
+    }
+
+    pub fn capacity(&self) -> usize {
+        return self.tmv.tags[self.idx].elem_capa;
+    }
+
     pub fn push(&mut self, value: E) {
         self.tmv.reserve_element_gc(self.idx, 1);
         let block = &mut self.tmv.tags[self.idx];
@@ -251,6 +267,22 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         block.elem_len += 1;
     }
 
+    pub fn clear(&mut self) {
+        while let Some(e) = self.pop() {}
+    }
+
+    pub fn pop(&mut self) -> Option<E> {
+        let block = &mut self.tmv.tags[self.idx];
+        if block.elem_len == 0 {
+            return None;
+        }
+
+        let elem =
+            unsafe { ptr::read(self.tmv.elements[block.elem_idx + block.elem_len].as_mut_ptr()) };
+        block.elem_len -= 1;
+        return Some(elem);
+    }
+
     pub fn as_slice(&self) -> &[E] {
         let block = &self.tmv.tags[self.idx];
         let elements = &self.tmv.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
@@ -263,6 +295,14 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         let elements = &mut self.tmv.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
         let data = unsafe { mem::transmute::<&mut [MaybeUninit<E>], &mut [E]>(elements) };
         return data;
+    }
+}
+
+impl<'a, T, E> ops::Deref for TMVec<'a, T, E> {
+    type Target = [E];
+
+    fn deref(&self) -> &Self::Target {
+        return self.data;
     }
 }
 

@@ -31,7 +31,7 @@ impl FileSystem {
     pub fn open_create(&mut self, name: &str) -> Result<u32, EcallError> {
         let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
             let internal_idx = self.data.len();
-            self.data.push_from((), &FILE_INIT);
+            self.data.push((), Vec::new());
             let idx = self.files.len();
             self.files.push(internal_idx as u32);
             self.names.insert(name.to_string(), idx as u32);
@@ -45,34 +45,31 @@ impl FileSystem {
         return Ok(idx);
     }
 
-    // pub fn open_create_clear(&mut self, name: &str) -> Result<u32, EcallError> {
-    //     let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
-    //         let internal_idx = self.data.len();
-    //         self.data.push_from(0, &FILE_INIT);
-    //         let idx = self.files.len();
-    //         self.files.push(internal_idx as u32);
-    //         self.names.insert(name.to_string(), idx as u32);
-    //         idx as u32
-    //     });
+    pub fn open_create_clear(&mut self, name: &str) -> Result<u32, EcallError> {
+        let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
+            let internal_idx = self.data.len();
+            self.data.push((), Vec::new());
+            let idx = self.files.len();
+            self.files.push(internal_idx as u32);
+            self.names.insert(name.to_string(), idx as u32);
+            idx as u32
+        });
 
-    //     if self.files.len() > 4000 {
-    //         return Err(EcallError::TooManyFiles);
-    //     }
+        if self.files.len() > 4000 {
+            return Err(EcallError::TooManyFiles);
+        }
 
-    //     let TE(size, data) = &mut self.data[self.files[idx as usize]];
-    //     self.size -= *size as usize;
-    //     *size = 0;
+        self.data.get_mut(idx as usize).unwrap().clear();
+        return Ok(idx);
+    }
 
-    //     return Ok(idx);
-    // }
+    pub fn read_file_range(&self, fd: u32, begin: u32, len: u32) -> Result<&[u8], EcallError> {
+        let (fd, begin, len) = (fd as usize, begin as usize, len as usize);
 
-    // pub fn read_file_range(&self, fd: u32, begin: u32, len: u32) -> Result<&[u8], EcallError> {
-    //     let (fd, begin, len) = (fd as usize, begin as usize, len as usize);
-
-    //     let file = *self.files.get(fd).ok_or(EcallError::DoesntExist)?;
-    //     let TE(file_len, data) = &self.data[file];
-    //     let from_buffer_o = data.get(begin..std::cmp::min(begin + len, *file_len as usize));
-    //     let from_buffer = from_buffer_o.ok_or(EcallError::OutOfRange)?;
-    //     return Ok(from_buffer);
-    // }
+        let file = *self.files.get(fd).ok_or(EcallError::DoesntExist)?;
+        let data = self.data.get(file as usize).unwrap();
+        let from_buffer_o = data.data.get(begin..std::cmp::min(begin + len, data.len()));
+        let from_buffer = from_buffer_o.ok_or(EcallError::OutOfRange)?;
+        return Ok(from_buffer);
+    }
 }
