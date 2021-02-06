@@ -5,7 +5,6 @@ pub mod fs;
 pub mod interpreter;
 pub mod kernel;
 pub mod memory;
-pub mod test_fs;
 pub mod test_kernel;
 pub mod types;
 

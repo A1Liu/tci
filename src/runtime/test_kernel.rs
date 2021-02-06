@@ -1,14 +1,14 @@
 use super::error::*;
+use super::fs::*;
 use super::interpreter::*;
 use super::memory::*;
-use super::test_fs::*;
 use super::types::*;
 use crate::filedb::*;
 use crate::util::*;
 use core::mem;
 
 pub struct TestKernel {
-    pub files: TestFS,
+    pub files: FileSystem,
 
     // per process
     pub output: StringArray<WriteEvent>,
@@ -19,7 +19,7 @@ pub struct TestKernel {
 impl TestKernel {
     pub fn new(binary: &BinaryData) -> Self {
         Self {
-            files: TestFS::new(),
+            files: FileSystem::new(),
 
             output: StringArray::new(),
             memory: Memory::new(&binary),

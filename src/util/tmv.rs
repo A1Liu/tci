@@ -90,8 +90,10 @@ impl<T, E> TaggedMultiVec<T, E> {
             let mut write = 0;
 
             for block in tags {
-                let to_space = mem::transmute(&mut new[write]);
-                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_len);
+                if block.elem_len != 0 {
+                    let to_space = mem::transmute(&mut new[write]);
+                    ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_len);
+                }
 
                 block.elem_idx = write;
                 write += block.elem_capa;
@@ -151,14 +153,12 @@ impl<T, E> TaggedMultiVec<T, E> {
             let mut write = 0;
 
             for (block_idx, block) in tags.iter_mut().enumerate() {
-                let to_space = mem::transmute(&mut new[write]);
-                ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_len);
+                if block.elem_len != 0 {
+                    let to_space = mem::transmute(&mut new[write]);
+                    ptr::copy_nonoverlapping(&old[block.elem_idx], to_space, block.elem_len);
+                }
 
                 if block_idx == idx {
-                    for offset in block.elem_capa..new_capa {
-                        new[write + offset] = MaybeUninit::uninit();
-                    }
-
                     block.elem_capa = new_capa;
                 }
 
@@ -295,6 +295,39 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         let elements = &mut self.tmv.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
         let data = unsafe { mem::transmute::<&mut [MaybeUninit<E>], &mut [E]>(elements) };
         return data;
+    }
+}
+
+impl<'a, T, E> TMVecMut<'a, T, E>
+where
+    E: Clone,
+{
+    pub fn extend_from_slice(&mut self, slice: &[E]) {
+        let slice_len = slice.len();
+        self.tmv.reserve_element_gc(self.idx, slice_len);
+        let block = &mut self.tmv.tags[self.idx];
+
+        debug_assert!(block.elem_len + slice_len <= block.elem_capa);
+        debug_assert!(block.elem_capa + block.elem_idx <= self.tmv.elements.len());
+
+        for elem in slice {
+            self.tmv.elements[block.elem_idx + block.elem_len] = MaybeUninit::new(elem.clone());
+            block.elem_len += 1;
+        }
+    }
+}
+
+impl<'a, T, E> ops::Deref for TMVecMut<'a, T, E> {
+    type Target = [E];
+
+    fn deref(&self) -> &Self::Target {
+        return self.as_slice();
+    }
+}
+
+impl<'a, T, E> ops::DerefMut for TMVecMut<'a, T, E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        return self.as_slice_mut();
     }
 }
 
