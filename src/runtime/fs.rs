@@ -2,22 +2,19 @@ use super::types::*;
 use crate::util::*;
 
 // this system is complicated because it has to be.
+// TODO add file descriptor garbage collection in form of freelist
 #[derive(Debug)]
 pub struct FileSystem {
-    pub data: TaggedMultiVec<usize, u8>, // maps internal file id -> freelist index [data]
-    pub files: Vec<u32>,                 // maps external file id -> internal file id
+    pub files: TaggedMultiVec<bool, u8>, // maps external file id -> freelist index [data]
     pub names: HashMap<String, u32>,     // maps external file path -> external file id
-    pub freelist_head: usize,
     pub size: usize,
 }
 
 impl FileSystem {
     pub fn new() -> Self {
         Self {
-            data: TaggedMultiVec::new(),
-            files: Vec::new(),
+            files: TaggedMultiVec::new(),
             names: HashMap::new(),
-            freelist_head: !0,
             size: 0,
         }
     }
@@ -28,30 +25,18 @@ impl FileSystem {
     }
 
     pub fn remove(&mut self, name: &str) -> Result<(), EcallError> {
-        let file = self.names.remove(name).ok_or(EcallError::DoesntExist)?;
-        let internal = self.files[file as usize];
-        let mut data = self.data.get_mut(internal as usize).unwrap();
-        data.clear_pod();
-        data.shrink_to_fit();
-        *data.tag_mut() = self.freelist_head;
-        self.freelist_head = internal as usize;
+        let fd = self.names.remove(name).ok_or(EcallError::DoesntExist)?;
+        let mut file = self.files.get_mut(fd as usize).unwrap();
+        file.clear_pod();
+        file.shrink_to_fit();
+        *file.tag_mut() = false;
         return Ok(());
     }
 
     pub fn open_create(&mut self, name: &str) -> Result<u32, EcallError> {
         let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
-            let internal_idx = if self.freelist_head == !0 {
-                let idx = self.data.len();
-                self.data.push(!0, Vec::new());
-                idx
-            } else {
-                let idx = self.freelist_head;
-                self.freelist_head = *self.data.get(self.freelist_head).unwrap().tag;
-                idx
-            };
-
             let idx = self.files.len();
-            self.files.push(internal_idx as u32);
+            self.files.push(true, Vec::new());
             self.names.insert(name.to_string(), idx as u32);
             idx as u32
         });
@@ -64,38 +49,32 @@ impl FileSystem {
     }
 
     pub fn open_create_clear(&mut self, name: &str) -> Result<u32, EcallError> {
-        let idx_o = self.names.get(name).map(|a| (*a, self.files[*a as usize]));
-        let (idx, internal_idx) = idx_o.unwrap_or_else(|| {
-            let internal_idx = if self.freelist_head == !0 {
-                let idx = self.data.len();
-                self.data.push(!0, Vec::new());
-                idx
-            } else {
-                let idx = self.freelist_head;
-                self.freelist_head = *self.data.get(self.freelist_head).unwrap().tag;
-                idx
-            };
-
+        let idx_o = self.names.get(name).map(|a| *a);
+        let idx = idx_o.unwrap_or_else(|| {
             let idx = self.files.len();
-            self.files.push(internal_idx as u32);
+            self.files.push(true, Vec::new());
             self.names.insert(name.to_string(), idx as u32);
-            (idx as u32, internal_idx as u32)
+            idx as u32
         });
 
         if self.files.len() > 4000 {
             return Err(EcallError::TooManyFiles);
         }
 
-        self.data.get_mut(internal_idx as usize).unwrap().clear();
+        self.files.get_mut(idx as usize).unwrap().clear();
         return Ok(idx);
     }
 
     pub fn read_file_range(&self, fd: u32, begin: u32, len: u32) -> Result<&[u8], EcallError> {
         let (fd, begin, len) = (fd as usize, begin as usize, len as usize);
 
-        let file = *self.files.get(fd).ok_or(EcallError::DoesntExist)?;
-        let data = self.data.get(file as usize).unwrap();
-        let from_buffer_o = data.data.get(begin..std::cmp::min(begin + len, data.len()));
+        let file = self.files.get(fd).ok_or(EcallError::DoesntExist)?;
+        if !*file.tag {
+            return Err(EcallError::DoesntExist);
+        }
+        let file = file.data;
+
+        let from_buffer_o = file.get(begin..std::cmp::min(begin + len, file.len()));
         let from_buffer = from_buffer_o.ok_or(EcallError::OutOfRange)?;
         return Ok(from_buffer);
     }
@@ -108,8 +87,11 @@ impl FileSystem {
     ) -> Result<u32, EcallError> {
         let (fd, begin) = (fd as usize, begin as usize);
 
-        let internal = *self.files.get_mut(fd).ok_or(EcallError::DoesntExist)?;
-        let mut file = self.data.get_mut(internal as usize).unwrap();
+        let mut file = self.files.get_mut(fd).ok_or(EcallError::DoesntExist)?;
+        if !*file.tag() {
+            return Err(EcallError::DoesntExist);
+        }
+
         let to_buffer = file.get_mut(begin..).ok_or(EcallError::OutOfRange)?;
         let copy_len = std::cmp::min(to_buffer.len(), buffer.len());
         let (copy, extend) = buffer.split_at(copy_len);
@@ -132,8 +114,10 @@ impl FileSystem {
 
         self.size += buffer.len();
         #[rustfmt::skip]
-        let internal = *self.files.get_mut(fd as usize).ok_or(EcallError::DoesntExist)?;
-        let mut file = self.data.get_mut(internal as usize).unwrap();
+        let mut file = self.files.get_mut(fd as usize).ok_or(EcallError::DoesntExist)?;
+        if !*file.tag() {
+            return Err(EcallError::DoesntExist);
+        }
 
         file.extend_from_slice(buffer);
         return Ok(file.len() as u32);
