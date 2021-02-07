@@ -70,15 +70,15 @@ impl<T, E> TaggedMultiVec<T, E> {
         // need to traverse the blocks in order
         blocks.sort_by_key(|b| b.elem_idx);
 
-        let (mut write, tags, elements) = (0, &mut self.tags, &mut self.elements);
+        let (mut write, tags, buffer) = (0, &mut self.tags, self.elements.as_mut_ptr());
         for block in &mut blocks {
-            let elem_len = tags[block.tag_idx].elem_len;
-            let elem_capa = tags[block.tag_idx].elem_capa;
+            let from = buffer.wrapping_add(block.elem_idx);
+            let to = buffer.wrapping_add(write);
 
-            unsafe { ptr::copy(&elements[block.elem_idx], &mut elements[write], elem_len) };
+            unsafe { ptr::copy(from, to, tags[block.tag_idx].elem_len) };
 
             tags[block.tag_idx].elem_idx = write;
-            write += elem_capa;
+            write += tags[block.tag_idx].elem_capa;
         }
 
         debug_assert_eq!(write, self.size);
@@ -222,24 +222,24 @@ where
     E: Clone,
 {
     pub fn push_from(&mut self, tag: T, data: &[E]) {
-        let (elem_len, elem_capa, elem_ptr) = (data.len(), data.len(), data.as_ptr());
-        self.reserve_gc(elem_capa);
+        self.reserve_gc(data.len());
 
-        let (to_buf, elems) = (self.elements.as_mut_ptr(), &mut self.elements);
-        let (elem_idx, to_ptr) = (elems.len(), to_buf.wrapping_add(elems.len()));
-        debug_assert!(elem_idx + elem_capa <= elems.capacity());
+        let (elem_idx, capa) = (self.elements.len(), self.elements.capacity());
+        debug_assert!(elem_idx + data.len() <= capa);
 
-        unsafe { elems.set_len(elems.len() + elem_capa) };
-        unsafe { ptr::copy_nonoverlapping(elem_ptr, mem::transmute(to_ptr), elem_len) };
+        for e in data {
+            self.elements.push(MaybeUninit::new(e.clone()));
+        }
 
+        debug_assert_eq!(capa, self.elements.capacity());
         self.tags.push(TMVBlock {
             tag,
             elem_idx,
-            elem_len,
-            elem_capa,
+            elem_len: data.len(),
+            elem_capa: data.len(),
         });
 
-        self.size += elem_capa;
+        self.size += data.len();
     }
 }
 
@@ -455,7 +455,9 @@ fn kitchen_sink() {
         vec.push(new_vec());
     }
 
-    let diff = after_alloc(tmv, before);
+    let tmv2 = tmv.clone();
+
+    let diff = after_alloc((tmv, tmv2), before);
 
     // we should never call out to realloc during this test; this is important
     // because Vec::reserve calls out to realloc, but since our reserve performs
