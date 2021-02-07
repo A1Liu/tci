@@ -31,7 +31,7 @@ impl FileSystem {
         let file = self.names.remove(name).ok_or(EcallError::DoesntExist)?;
         let internal = self.files[file as usize];
         let mut data = self.data.get_mut(internal as usize).unwrap();
-        data.clear_copy();
+        data.clear_pod();
         data.shrink_to_fit();
         *data.tag_mut() = self.freelist_head;
         self.freelist_head = internal as usize;
