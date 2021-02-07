@@ -13,7 +13,7 @@ pub struct TestKernel {
     // per process
     pub output: StringArray<WriteEvent>,
     pub memory: Memory,
-    pub status: RuntimeStatus,
+    pub status: IRtStat,
 }
 
 impl TestKernel {
@@ -23,7 +23,7 @@ impl TestKernel {
 
             output: StringArray::new(),
             memory: Memory::new(&binary),
-            status: RuntimeStatus::Running,
+            status: IRtStat::Running,
         }
     }
 
@@ -32,7 +32,7 @@ impl TestKernel {
     }
 
     pub fn run_debug(&mut self, files: &FileDb) -> Result<i32, IError> {
-        if let RuntimeStatus::Exited(code) = self.status {
+        if let IRtStat::Exited(code) = self.status {
             return Ok(code);
         }
 
@@ -42,12 +42,12 @@ impl TestKernel {
             }
 
             println!("{:?}", self.memory.expr_stack);
-            let res = run_op(&mut self.memory);
+            let res = run_op_count(&mut self.memory, !0);
             println!("{:?}\n", self.memory.expr_stack);
 
             if let Some(e) = res? {
                 if let Some(exit) = self.ecall(e)? {
-                    self.status = RuntimeStatus::Exited(exit);
+                    self.status = IRtStat::Exited(exit);
                     return Ok(exit);
                 }
             }
@@ -55,19 +55,49 @@ impl TestKernel {
     }
 
     pub fn run(&mut self) -> Result<i32, IError> {
-        if let RuntimeStatus::Exited(code) = self.status {
+        if let IRtStat::Exited(code) = self.status {
             return Ok(code);
         }
 
         loop {
-            let res = run_op(&mut self.memory);
+            let res = run_op_count(&mut self.memory, !0);
             if let Some(e) = res? {
                 if let Some(exit) = self.ecall(e)? {
-                    self.status = RuntimeStatus::Exited(exit);
+                    self.status = IRtStat::Exited(exit);
                     return Ok(exit);
                 }
             }
         }
+    }
+
+    pub fn run_op_count(&mut self, count: u32) -> Result<RuntimeStatus, IError> {
+        match self.status {
+            IRtStat::Running => {}
+            IRtStat::Blocked => {
+                return Err(ierror!(
+                    "RanDeadProcess",
+                    "tried to run dead process (this is a bug in TCI)"
+                ))
+            }
+            IRtStat::Exited(_) => {
+                return Err(ierror!(
+                    "RanDeadProcess",
+                    "tried to run dead process (this is a bug in TCI)"
+                ))
+            }
+        }
+
+        let ecall = match run_op_count(&mut self.memory, count)? {
+            Some(ecall) => ecall,
+            None => return Ok(RuntimeStatus::Running),
+        };
+
+        if let Some(exit) = self.ecall(ecall)? {
+            self.status = IRtStat::Exited(exit);
+            return Ok(RuntimeStatus::Exited(exit));
+        }
+
+        return Ok(RuntimeStatus::Running);
     }
 
     pub fn ecall(&mut self, req: EcallExt) -> Result<Option<i32>, IError> {
@@ -99,12 +129,10 @@ impl TestKernel {
                 fd,
             } => {
                 let to_ret = match fd {
-                    0 => {
-                        unimplemented!("stdin")
-                    }
+                    0 => unimplemented!("stdin"),
                     1 => EcallError::ReadStdout.to_u64(),
                     2 => EcallError::ReadStderr.to_u64(),
-                    3 => (EcallError::ReadStdlog as u32 as u64) << 32,
+                    3 => EcallError::ReadStdlog.to_u64(),
                     fd => match self.files.read_file_range(fd - 4, begin, len) {
                         Ok(file_buffer) => {
                             self.memory.write_bytes(buf, file_buffer)?;
@@ -125,16 +153,13 @@ impl TestKernel {
                     1 => WriteEvent::StdoutWrite,
                     2 => WriteEvent::StderrWrite,
                     3 => WriteEvent::StdlogWrite,
-                    fd => match self.files.write_to_file_range(fd - 4, begin, &buf) {
-                        Ok(len) => {
-                            self.memory.push(len as u64);
-                            return Ok(None);
-                        }
-                        Err(err) => {
-                            self.memory.push((err as u32 as u64) << 32);
-                            return Ok(None);
-                        }
-                    },
+                    fd => {
+                        self.files
+                            .write_to_file_range(fd - 4, begin, &buf)
+                            .map(|len| self.memory.push(len as u64))
+                            .unwrap_or_else(|err| self.memory.push(err.to_u64()));
+                        return Ok(None);
+                    }
                 };
 
                 let mut string = StringWriter::new();
@@ -154,16 +179,13 @@ impl TestKernel {
                     1 => WriteEvent::StdoutWrite,
                     2 => WriteEvent::StderrWrite,
                     3 => WriteEvent::StdlogWrite,
-                    fd => match self.files.append_to_file(fd - 4, &buf) {
-                        Ok(len) => {
-                            self.memory.push(len as u64);
-                            return Ok(None);
-                        }
-                        Err(err) => {
-                            self.memory.push(err.to_u64());
-                            return Ok(None);
-                        }
-                    },
+                    fd => {
+                        self.files
+                            .append_to_file(fd - 4, &buf)
+                            .map(|len| self.memory.push(len as u64))
+                            .unwrap_or_else(|err| self.memory.push(err.to_u64()));
+                        return Ok(None);
+                    }
                 };
 
                 let mut string = StringWriter::new();

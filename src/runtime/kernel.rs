@@ -5,14 +5,6 @@ use super::types::*;
 use crate::util::*;
 use core::mem;
 
-#[derive(Debug, Clone, Copy)]
-enum IRtStat {
-    // internal runtime status
-    Running,
-    Blocked,
-    Exited(i32),
-}
-
 // Yeah this technically isn't what a kernel does, but like, idk it's what it is.
 pub struct Kernel {
     // per process

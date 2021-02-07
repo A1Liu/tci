@@ -570,3 +570,11 @@ pub enum OpenMode {
     Create = 1,
     CreateClear = 2,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum IRtStat {
+    // internal runtime status
+    Running,
+    Blocked,
+    Exited(i32),
+}
