@@ -1,14 +1,12 @@
 use super::types::*;
 use crate::util::*;
 
-const FILE_INIT: [u8; 512] = [0; 512];
-
 // this system is complicated because it has to be.
 #[derive(Debug)]
 pub struct FileSystem {
     pub data: TaggedMultiVec<usize, u8>, // maps internal file id -> freelist index [data]
     pub files: Vec<u32>,                 // maps external file id -> internal file id
-    pub names: HashMap<String, u32>,     // public information
+    pub names: HashMap<String, u32>,     // maps external file path -> external file id
     pub freelist_head: usize,
     pub size: usize,
 }
@@ -29,10 +27,29 @@ impl FileSystem {
         return Ok(idx as u32);
     }
 
+    pub fn remove(&mut self, name: &str) -> Result<(), EcallError> {
+        let file = self.names.remove(name).ok_or(EcallError::DoesntExist)?;
+        let internal = self.files[file as usize];
+        let mut data = self.data.get_mut(internal as usize).unwrap();
+        data.clear_copy();
+        data.shrink_to_fit();
+        *data.tag_mut() = self.freelist_head;
+        self.freelist_head = internal as usize;
+        return Ok(());
+    }
+
     pub fn open_create(&mut self, name: &str) -> Result<u32, EcallError> {
         let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
-            let internal_idx = self.data.len();
-            self.data.push(!0, Vec::new());
+            let internal_idx = if self.freelist_head == !0 {
+                let idx = self.data.len();
+                self.data.push(!0, Vec::new());
+                idx
+            } else {
+                let idx = self.freelist_head;
+                self.freelist_head = *self.data.get(self.freelist_head).unwrap().tag;
+                idx
+            };
+
             let idx = self.files.len();
             self.files.push(internal_idx as u32);
             self.names.insert(name.to_string(), idx as u32);
@@ -47,20 +64,29 @@ impl FileSystem {
     }
 
     pub fn open_create_clear(&mut self, name: &str) -> Result<u32, EcallError> {
-        let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
-            let internal_idx = self.data.len();
-            self.data.push(!0, Vec::new());
+        let idx_o = self.names.get(name).map(|a| (*a, self.files[*a as usize]));
+        let (idx, internal_idx) = idx_o.unwrap_or_else(|| {
+            let internal_idx = if self.freelist_head == !0 {
+                let idx = self.data.len();
+                self.data.push(!0, Vec::new());
+                idx
+            } else {
+                let idx = self.freelist_head;
+                self.freelist_head = *self.data.get(self.freelist_head).unwrap().tag;
+                idx
+            };
+
             let idx = self.files.len();
             self.files.push(internal_idx as u32);
             self.names.insert(name.to_string(), idx as u32);
-            idx as u32
+            (idx as u32, internal_idx as u32)
         });
 
         if self.files.len() > 4000 {
             return Err(EcallError::TooManyFiles);
         }
 
-        self.data.get_mut(idx as usize).unwrap().clear();
+        self.data.get_mut(internal_idx as usize).unwrap().clear();
         return Ok(idx);
     }
 

@@ -271,15 +271,21 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         while let Some(e) = self.pop() {}
     }
 
+    pub fn shrink_to_fit(&mut self) {
+        let block = &mut self.tmv.tags[self.idx];
+        self.tmv.size -= block.elem_capa - block.elem_len;
+        block.elem_capa = block.elem_len;
+    }
+
     pub fn pop(&mut self) -> Option<E> {
         let block = &mut self.tmv.tags[self.idx];
         if block.elem_len == 0 {
             return None;
         }
 
+        block.elem_len -= 1;
         let elem =
             unsafe { ptr::read(self.tmv.elements[block.elem_idx + block.elem_len].as_mut_ptr()) };
-        block.elem_len -= 1;
         return Some(elem);
     }
 
@@ -295,6 +301,15 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         let elements = &mut self.tmv.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
         let data = unsafe { mem::transmute::<&mut [MaybeUninit<E>], &mut [E]>(elements) };
         return data;
+    }
+}
+
+impl<'a, T, E> TMVecMut<'a, T, E>
+where
+    E: Copy,
+{
+    pub fn clear_copy(&mut self) {
+        self.tmv.tags[self.idx].elem_len = 0;
     }
 }
 
@@ -405,6 +420,13 @@ fn test_tmv() {
     }
 
     let mut vec = tmv.get_mut(2).unwrap();
+    for _ in 0..64 {
+        vec.push(new_vec());
+    }
+    vec.clear();
+    vec.shrink_to_fit();
+
+    let mut vec = tmv.get_mut(0).unwrap();
     for _ in 0..64 {
         vec.push(new_vec());
     }
