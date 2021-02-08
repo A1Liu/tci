@@ -11,12 +11,21 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
-    pub fn new() -> Self {
-        Self {
-            files: TaggedMultiVec::new(),
-            names: HashMap::new(),
-            size: 0,
+    pub fn new(mut initial: Vec<(String, u32, Vec<u8>)>) -> Self {
+        let (mut files, mut names, mut size) = (TaggedMultiVec::new(), HashMap::new(), 0);
+        initial.sort_by_key(|a| a.1);
+
+        for (name, fd, data) in initial {
+            while fd != names.len() as u32 {
+                files.push(false, Vec::new());
+            }
+
+            names.insert(name, fd);
+            size += data.len();
+            files.push(true, data);
         }
+
+        Self { files, names, size }
     }
 
     pub fn open(&self, name: &str) -> Result<u32, EcallError> {

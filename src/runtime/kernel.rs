@@ -17,9 +17,9 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    pub fn new(binary: &BinaryData) -> Self {
+    pub fn new(binary: &BinaryData, files: Vec<(String, u32, Vec<u8>)>) -> Self {
         Self {
-            files: FileSystem::new(),
+            files: FileSystem::new(files),
 
             output: StringArray::new(),
             memory: Memory::new(&binary),

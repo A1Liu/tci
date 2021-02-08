@@ -1,4 +1,4 @@
-import { get, set, update } from "idb-keyval";
+import { get, getMany, set, update } from "idb-keyval";
 import { run } from "../Cargo.toml";
 
 const resolver = { wasmListener: undefined, ecallListener: undefined };
@@ -180,5 +180,35 @@ const ecallHandler = async () => {
   }
 };
 
+const runEnv = async () => {
+  const fileDescriptors = [];
+  const fileNames = {};
+  const fileDataObj = {};
+
+  const files = await get("files");
+
+  Object.entries(files).forEach(([name, fd]) => {
+    fileNames[fd] = name;
+    fileDescriptors.push(fd);
+  });
+
+  const fileDataArr = await getMany(fileDescriptors);
+  fileDataArr.forEach((data, idx) => (fileDataObj[fileDescriptors[idx]] = data));
+
+  const fileName = (fd) => {
+    const name = fileNames[fd];
+    delete fileNames[fd];
+    return name;
+  };
+
+  const fileData = (fd) => {
+    const data = fileDataObj[fd];
+    delete fileDataObj[fd];
+    return data;
+  };
+
+  return { send, recv, wait, fileName, fileData, fileDescriptors };
+};
+
 ecallHandler();
-run({ send, recv, wait });
+runEnv().then(run);

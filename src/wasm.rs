@@ -42,6 +42,8 @@ extern "C" {
     #[wasm_bindgen(catch)]
     pub fn stringify(val: JsValue) -> Result<JsValue, JsValue>;
 
+    pub type JsFile;
+
     pub type RunEnv;
 
     #[wasm_bindgen(method)]
@@ -50,6 +52,15 @@ extern "C" {
     pub fn send(this: &RunEnv, message: JsValue);
     #[wasm_bindgen(method)]
     pub fn recv(this: &RunEnv) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = fileData)]
+    pub fn file_data(this: &RunEnv, fd: u32) -> Vec<u8>;
+    #[wasm_bindgen(method, js_name = fileName)]
+    pub fn file_name(this: &RunEnv, fd: u32) -> String;
+    #[wasm_bindgen(method, getter, js_name = fileDescriptors)]
+    pub fn file_descriptors(this: &RunEnv) -> Vec<u32>;
+    #[wasm_bindgen(method, setter, js_name = fileDescriptors)]
+    pub fn set_file_descriptors(this: &RunEnv, new: JsValue);
 }
 
 #[wasm_bindgen]
@@ -84,6 +95,12 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
     };
 
     let mut files = FileDb::new();
+    let initial: Vec<_> = {
+        let mapper = |fd: &u32| (env.file_name(*fd), *fd, env.file_data(*fd));
+        let init = env.file_descriptors().iter().map(mapper).collect();
+        env.set_file_descriptors(JsValue::UNDEFINED);
+        init
+    };
     let mut kernel: Option<Kernel> = None;
 
     send(Out::Startup);
@@ -112,7 +129,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                     };
 
                     send(Out::Compiled);
-                    kernel = Some(Kernel::new(&program));
+                    kernel = Some(Kernel::new(&program, initial.clone()));
                 }
                 In::Ecall(res) => {
                     let kernel = match &mut kernel {
