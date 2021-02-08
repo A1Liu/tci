@@ -20,7 +20,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     };
 
     println!("compiled");
-    let mut runtime = TestKernel::new(&program);
+    let mut runtime = Kernel::new(&program);
 
     match runtime.run() {
         Ok(0) => {}

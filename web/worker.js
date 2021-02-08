@@ -121,9 +121,9 @@ const runEcall = async (ecall) => {
 
       let error = 0;
       await update(fd, (f) => {
-        if (f === undefined) return (out.error = 1); // doesn't exist
+        if (f === undefined) return (error = 1); // doesn't exist
 
-        if (begin > f.length) return (out.error = 5); // out of range
+        if (begin > f.length) return (error = 5); // out of range
 
         for (let i = 0; i < buf.length; i++) f[begin + i] = buf[i];
 
@@ -140,9 +140,9 @@ const runEcall = async (ecall) => {
       let error = 0;
       let position = 0;
       await update(fd, (f) => {
-        if (f === undefined) return (out.error = 1); // doesn't exist
+        if (f === undefined) return (error = 1); // doesn't exist
 
-        buf.forEach((b) => f.push(b));
+        buf.forEach(f.push);
         position = f.length;
 
         return f;
