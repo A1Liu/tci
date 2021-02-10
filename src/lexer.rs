@@ -39,12 +39,12 @@ pub enum NumChar {
 pub enum TokenKind {
     Ident(u32),
     IntChar(NumChar),
-    StringLit(&'static str),
+    StringLit(&'static IStr),
     CharLit(i8),
 
     Whitespace,
 
-    Pragma(&'static str),
+    Pragma(&'static IStr),
 
     Void,
     Char,
@@ -1018,7 +1018,7 @@ impl SimpleLexer {
                 }
 
                 let string = unsafe { std::str::from_utf8_unchecked(&chars) };
-                let string = buckets.add_str(string);
+                let string = buckets.add_i_str(string);
                 ret!(TokenKind::StringLit(string));
             }
 
@@ -1295,7 +1295,7 @@ impl SimpleLexer {
                 }
 
                 let pragma = unsafe { str::from_utf8_unchecked(&data[begin..self.current]) };
-                let pragma = buckets.add_str(pragma);
+                let pragma = buckets.add_i_str(pragma);
 
                 return Ok(RawTok::Tok(TokenKind::Pragma(pragma)));
             }

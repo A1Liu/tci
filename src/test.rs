@@ -1,5 +1,4 @@
 use crate::filedb::*;
-use crate::lexer;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};

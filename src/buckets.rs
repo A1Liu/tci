@@ -3,9 +3,40 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::{cmp, mem, ptr, slice, str};
+use std::{cmp, fmt, mem, ptr, slice, str};
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
+
+#[repr(C)]
+pub struct IStr {
+    pub len: usize,
+    chars: (),
+}
+
+impl PartialEq for IStr {
+    fn eq(&self, other: &Self) -> bool {
+        return self.as_str() == other.as_str();
+    }
+}
+
+impl fmt::Debug for IStr {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        return self.as_str().fmt(fmt);
+    }
+}
+
+impl IStr {
+    pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+        let begin = &mut self.chars as *mut () as *mut u8;
+        return slice::from_raw_parts_mut(begin, self.len);
+    }
+
+    pub fn as_str(&self) -> &str {
+        let begin = &self.chars as *const () as *const u8;
+        let slice = unsafe { slice::from_raw_parts(begin, self.len) };
+        return unsafe { str::from_utf8_unchecked(slice) };
+    }
+}
 
 pub struct Frame<'a> {
     pub data: &'a mut [u8],
@@ -84,6 +115,17 @@ pub trait Allocator<'a> {
     fn add_str(&self, string: &str) -> &'a mut str {
         let string = string.as_bytes();
         return unsafe { str::from_utf8_unchecked_mut(self.add_slice(string)) };
+    }
+
+    fn add_i_str(&self, string: &str) -> &'a mut IStr {
+        let (size, align) = (mem::size_of::<usize>(), mem::align_of::<usize>());
+        let (bytes, string) = (self.uninit(size + string.len(), align), string.as_bytes());
+        let (i_str, len) = (bytes.unwrap().as_mut_ptr() as *mut IStr, string.len());
+        let i_str = unsafe { &mut *i_str };
+
+        i_str.len = len;
+        unsafe { i_str.as_bytes_mut() }.copy_from_slice(string);
+        return i_str;
     }
 }
 
@@ -286,8 +328,6 @@ impl<'a> Deref for BucketListRef<'a> {
     }
 }
 
-impl<'a> BucketListRef<'a> {}
-
 impl<'a> BucketList<'a> {
     pub fn new() -> BucketListRef<'a> {
         return Self::with_capacity(INITIAL_BUCKET_SIZE);
@@ -317,13 +357,9 @@ impl<'a> BucketList<'a> {
 
         dealloc(self as *const BucketList as *mut u8, layout);
 
-        if let Some(next) = next {
-            return Some(BucketListRef {
-                buckets: NonNull::new_unchecked(next.as_ptr() as *mut BucketList),
-            });
-        }
-
-        return None;
+        return Some(BucketListRef {
+            buckets: NonNull::new_unchecked(next?.as_ptr() as *mut BucketList),
+        });
     }
 
     pub fn next(&self) -> Option<BucketListRef<'a>> {
@@ -419,6 +455,7 @@ impl Deref for BucketListFactory {
                 return unsafe { &*n.buckets.as_ptr() };
             }
         }
+
         return current;
     }
 }

@@ -49,10 +49,9 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
     let mut lexer = lexer::Lexer::new(env);
 
-    let files_list = env.impls();
-    let files = files_list.iter();
+    let files = env.impls().into_iter();
     let lexed: Vec<_> = files
-        .filter_map(compile_filter(|&idx| lexer.lex(idx), &mut errors))
+        .filter_map(compile_filter(|idx| lexer.lex(idx), &mut errors))
         .collect();
 
     if errors.len() != 0 {
@@ -73,12 +72,10 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
         return Err(errors);
     }
 
+    let map = |env: parser::ParseEnv| type_checker::check_tree(env.file, &symbols, &env.tree);
     let checked: Vec<_> = parsed
         .into_iter()
-        .filter_map(compile_filter(
-            |env: parser::ParseEnv| type_checker::check_tree(env.file, &symbols, &env.tree),
-            &mut errors,
-        ))
+        .filter_map(compile_filter(map, &mut errors))
         .collect();
 
     if errors.len() != 0 {

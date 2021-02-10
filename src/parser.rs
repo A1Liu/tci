@@ -171,7 +171,7 @@ rule scoped<E>(e: rule<E>) -> E = ({ env.enter_scope(); }) e:e()? {? env.leave_s
 
 rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[Pragma(_)] {
     match n[0] {
-        Pragma(n) => (n, env.locs[pos]),
+        Pragma(n) => (n.as_str(), env.locs[pos]),
         _ => unreachable!(),
     }
 }
@@ -379,7 +379,7 @@ rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([StringLit(_)] ++
             _ => unreachable!(),
         };
 
-        string.push_str(s);
+        string.push_str(s.as_str());
     }
 
     (env.buckets.add_str(&string), loc)

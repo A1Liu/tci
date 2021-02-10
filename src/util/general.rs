@@ -85,7 +85,7 @@ macro_rules! out {
     (@CLEAN, $str:expr, $( $e:expr ),+ ) => {{
         let s = std::format!( $str, $( $e ),+ );
 
-        $crate::OUTPUT.with(|out| {
+        $crate::OUTPUT.with(move |out| {
             let borrow = out.borrow();
             if let Some(func) = &*borrow {
                 func(s);
