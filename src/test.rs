@@ -1,4 +1,5 @@
 use crate::filedb::*;
+use crate::lexer;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
@@ -7,6 +8,7 @@ use std::alloc::System;
 use std::fs::{read_dir, read_to_string};
 
 fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
+    let info = before_alloc();
     let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
 
@@ -19,7 +21,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
         }
     };
 
-    println!("compiled");
+    println!("compiled using {:?}", before_alloc().relative_to(&info));
     let mut runtime = Kernel::new(&program, Vec::new());
 
     match runtime.run() {
@@ -54,7 +56,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
 
     let output = writer.into_string();
 
-    println!("{}", output);
+    std::println!("{}", output);
     if let Some(output_file) = output_file {
         match read_to_string(output_file) {
             Ok(expected) => {
@@ -240,7 +242,8 @@ pub fn after_alloc<T>(obj: T, before: interloc::AllocInfo) -> interloc::AllocInf
     let diff = TEST_MONITOR.local_info().relative_to(&before);
     assert!(
         diff.bytes_alloc == diff.bytes_dealloc,
-        "Diff is {:#?} before is {:?}",
+        "LEAKED {}\n\nDiff is {:#?} before is {:?}",
+        diff.bytes_alloc - diff.bytes_dealloc,
         diff,
         before
     );
