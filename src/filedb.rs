@@ -199,14 +199,6 @@ impl FileDb {
         use codespan_reporting::term::*;
 
         let mut out = StringWriter::new();
-        let config = Config {
-            display_style: DisplayStyle::Rich,
-            tab_width: 4,
-            styles: Styles::default(),
-            chars: Chars::default(),
-            start_context_lines: 3,
-            end_context_lines: 1,
-        };
 
         let diagnostic =
             Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);

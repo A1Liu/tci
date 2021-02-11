@@ -2,7 +2,6 @@ use crate::filedb::FileDb;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
-use core::panic::PanicInfo;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -40,9 +39,12 @@ pub enum OutMessage {
 extern "C" {
     #[wasm_bindgen(js_namespace = JSON)]
     #[wasm_bindgen(catch)]
-    pub fn stringify(val: JsValue) -> Result<JsValue, JsValue>;
+    pub fn stringify(val: JsValue) -> Result<String, JsValue>;
 
-    pub type JsFile;
+    #[wasm_bindgen(js_namespace = JSON)]
+    #[wasm_bindgen(js_name = parse)]
+    #[wasm_bindgen(catch)]
+    pub fn from_string(s: String) -> Result<JsValue, JsValue>;
 
     pub type RunEnv;
 
@@ -64,7 +66,7 @@ extern "C" {
 }
 
 // #[panic_handler]
-// fn panic(_info: &PanicInfo) -> ! {
+// fn panic(_info: &core::panic::PanicInfo) -> ! {
 //     core::arch::wasm32::unreachable();
 // }
 
@@ -76,7 +78,8 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
     let for_send = env.clone();
     let send = move |mes: Out| {
         let for_send: RunEnv = for_send.clone().unchecked_into();
-        for_send.send(JsValue::from_serde(&mes).unwrap());
+        let string = serde_json::to_string(&mes).unwrap();
+        for_send.send(from_string(string).unwrap());
     };
 
     let global_send = send.clone();
@@ -88,10 +91,11 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             return Ok(None);
         }
 
-        let out = match js_value.into_serde::<In>() {
+        let js_value_string = stringify(js_value)?;
+        let out = match serde_json::from_str::<In>(&js_value_string) {
             Ok(o) => o,
             Err(e) => {
-                send(Out::InvalidInput(stringify(js_value)?.as_string().unwrap()));
+                send(Out::InvalidInput(js_value_string));
                 return Ok(None);
             }
         };

@@ -8,15 +8,15 @@ edition = "2018"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wasm-bindgen = { version = "0.2.69", features = ["serde-serialize"] }
+wasm-bindgen = { version = "0.2.70", default-features = false }
 js-sys = "0.3.46"
 wasm-bindgen-futures = "0.4.19"
 wee_alloc = { version = "0.4.5" }
-lazy_static = "1.4.0"
+lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 codespan-reporting = { path = "lib/codespan-reporting" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-serde_json = "1.0"
-serde_repr = "0.1"
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde_repr = { path = "lib/serde-repr" }
 strum = { path = "lib/strum/strum", features = ["derive"] }
 peg = { path = "lib/rust-peg" }
 spin = "0.7.1"
