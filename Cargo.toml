@@ -28,4 +28,4 @@ interloc = "0.1.3"
 opt-level = "s"
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"
