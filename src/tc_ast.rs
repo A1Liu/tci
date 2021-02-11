@@ -2,8 +2,8 @@ use crate::buckets::*;
 use crate::filedb::*;
 use crate::runtime::Opcode;
 use crate::util::*;
+use core::fmt::Write;
 use serde::Serialize;
-use std::io::Write;
 
 pub use crate::ast::{BinOp, UnaryOp};
 
@@ -54,11 +54,11 @@ pub enum TCPrimType {
     Pointer { stride: n32 },
 }
 
-pub type TCPrimTypeDiscr = std::mem::Discriminant<TCPrimType>;
+pub type TCPrimTypeDiscr = core::mem::Discriminant<TCPrimType>;
 
 impl TCPrimType {
-    pub fn discriminant(&self) -> std::mem::Discriminant<TCPrimType> {
-        return std::mem::discriminant(self);
+    pub fn discriminant(&self) -> core::mem::Discriminant<TCPrimType> {
+        return core::mem::discriminant(self);
     }
 
     pub fn signed(self) -> bool {

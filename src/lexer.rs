@@ -3,7 +3,6 @@ use crate::filedb::*;
 use crate::util::*;
 use codespan_reporting::files::Files;
 use core::{mem, str};
-use std::collections::HashMap;
 
 pub const CLOSING_CHAR: u8 = !0;
 
@@ -988,8 +987,7 @@ impl SimpleLexer {
                     self.current += 1;
                 }
 
-                let word =
-                    unsafe { std::str::from_utf8_unchecked(&data[self.begin..self.current]) };
+                let word = unsafe { str::from_utf8_unchecked(&data[self.begin..self.current]) };
                 if let Some(kind) = RESERVED_KEYWORDS.get(word) {
                     ret!(*kind);
                 }
@@ -1017,7 +1015,7 @@ impl SimpleLexer {
                     cur = self.lex_character(b'\"', data)?;
                 }
 
-                let string = unsafe { std::str::from_utf8_unchecked(&chars) };
+                let string = unsafe { str::from_utf8_unchecked(&chars) };
                 let string = buckets.add_i_str(string);
                 ret!(TokenKind::StringLit(string));
             }

@@ -2,7 +2,7 @@ use crate::filedb::FileDb;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
-use std::collections::HashMap;
+use core::panic::PanicInfo;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -62,6 +62,11 @@ extern "C" {
     #[wasm_bindgen(method, setter, js_name = fileDescriptors)]
     pub fn set_file_descriptors(this: &RunEnv, new: JsValue);
 }
+
+// #[panic_handler]
+// fn panic(_info: &PanicInfo) -> ! {
+//     core::arch::wasm32::unreachable();
+// }
 
 #[wasm_bindgen]
 pub async fn run(env: RunEnv) -> Result<(), JsValue> {

@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
+#![no_std]
+
+extern crate alloc;
 
 #[macro_use]
 mod util;
@@ -22,9 +25,11 @@ mod type_checker;
 mod wasm;
 
 #[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
 mod test;
 
-use codespan_reporting::term::termcolor::WriteColor;
 use filedb::FileDb;
 use runtime::*;
 use util::*;
@@ -98,9 +103,8 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
     return Ok(program);
 }
 
-fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl WriteColor) {
-    let config = codespan_reporting::term::Config::default();
+fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl core::fmt::Write) {
     for err in errs {
-        codespan_reporting::term::emit(writer, &config, files, &err.diagnostic()).unwrap();
+        codespan_reporting::term::emit(writer, files, &err.diagnostic()).unwrap();
     }
 }

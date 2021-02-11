@@ -1,10 +1,10 @@
-use std::io::{self, Write};
-use std::ops::{Range, RangeTo};
-use termcolor::{ColorSpec, WriteColor};
+use alloc::string::String;
+use core::fmt;
+use core::fmt::Write;
+use core::ops::{Range, RangeTo};
 
 use crate::diagnostic::{LabelStyle, Severity};
 use crate::files::Location;
-use crate::term::{Chars, Config, Styles};
 
 /// The 'location focus' of a source code snippet.
 pub struct Locus {
@@ -105,36 +105,20 @@ type Underline = (LabelStyle, VerticalBound);
 /// ```
 ///
 /// Filler text from http://www.cupcakeipsum.com
-pub struct Renderer<'writer, 'config> {
-    writer: &'writer mut dyn WriteColor,
-    config: &'config Config,
+pub struct Renderer<'writer, W>
+where
+    W: fmt::Write,
+{
+    writer: &'writer mut W,
 }
 
-impl<'writer, 'config> Renderer<'writer, 'config> {
-    /// Construct a renderer from the given writer and config.
-    pub fn new(
-        writer: &'writer mut dyn WriteColor,
-        config: &'config Config,
-    ) -> Renderer<'writer, 'config> {
-        Renderer { writer, config }
-    }
-
-    fn chars(&self) -> &'config Chars {
-        &self.config.chars
-    }
-
-    fn styles(&self) -> &'config Styles {
-        &self.config.styles
-    }
-
-    // FIXME: Architectural smell - we'd prefer not to pass information from the renderer to the view.
-    pub fn start_context_lines(&self) -> usize {
-        self.config.start_context_lines
-    }
-
-    // FIXME: Architectural smell - we'd prefer not to pass information from the renderer to the view.
-    pub fn end_context_lines(&self) -> usize {
-        self.config.end_context_lines
+impl<'writer, W> Renderer<'writer, W>
+where
+    W: fmt::Write,
+{
+    /// Construct a renderer from the given writer
+    pub fn new(writer: &'writer mut W) -> Self {
+        Renderer { writer }
     }
 
     /// Diagnostic header, with severity, code, and message.
@@ -148,7 +132,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         severity: Severity,
         code: Option<&str>,
         message: &str,
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         // Write locus
         //
         // ```text
@@ -164,14 +148,13 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         // ```text
         // error
         // ```
-        self.set_color(self.styles().header(severity))?;
         match severity {
             Severity::Bug => write!(self, "bug")?,
             Severity::Error => write!(self, "error")?,
             Severity::Warning => write!(self, "warning")?,
             Severity::Help => write!(self, "help")?,
             Severity::Note => write!(self, "note")?,
-            Severity::Void => return self.reset(),
+            _ => {}
         }
 
         // Write error code
@@ -188,9 +171,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         // ```text
         // : unexpected type in `+` application
         // ```
-        self.set_color(&self.styles().header_message)?;
         write!(self, ": {}", message)?;
-        self.reset()?;
 
         write!(self, "\n")?;
 
@@ -198,7 +179,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     }
 
     /// Empty line.
-    pub fn render_empty(&mut self) -> io::Result<()> {
+    pub fn render_empty(&mut self) -> fmt::Result {
         write!(self, "\n")?;
 
         Ok(())
@@ -209,13 +190,11 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     /// ```text
     /// ┌─ test:2:9
     /// ```
-    pub fn render_snippet_start(&mut self, outer_padding: usize, locus: &Locus) -> io::Result<()> {
+    pub fn render_snippet_start(&mut self, outer_padding: usize, locus: &Locus) -> fmt::Result {
         self.outer_gutter(outer_padding)?;
 
-        self.set_color(&self.styles().source_border)?;
-        write!(self, "{}", self.chars().source_border_top_left)?;
-        write!(self, "{0}", self.chars().source_border_top)?;
-        self.reset()?;
+        write!(self, "{}", '┌')?;
+        write!(self, "{0}", '-')?;
 
         write!(self, " ")?;
         self.snippet_locus(&locus)?;
@@ -240,7 +219,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         single_labels: &[SingleLabel<'_>],
         num_multi_labels: usize,
         multi_labels: &[(usize, LabelStyle, MultiLabel<'_>)],
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         // Trim trailing newlines, linefeeds, and null chars from source, if they exist.
         // FIXME: Use the number of trimmed placeholders when rendering single line carets
         let source = source.trim_end_matches(['\n', '\r', '\0'].as_ref());
@@ -295,10 +274,8 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
 
                 // Set the source color if we are in a primary label
                 if is_primary && !in_primary {
-                    self.set_color(self.styles().label(severity, LabelStyle::Primary))?;
                     in_primary = true;
                 } else if !is_primary && in_primary {
-                    self.reset()?;
                     in_primary = false;
                 }
 
@@ -306,9 +283,6 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
                     '\t' => (0..metrics.unicode_width).try_for_each(|_| write!(self, " "))?,
                     _ => write!(self, "{}", ch)?,
                 }
-            }
-            if in_primary {
-                self.reset()?;
             }
             write!(self, "\n")?;
         }
@@ -372,8 +346,8 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
                 if !message.is_empty() {
                     num_messages += 1;
                 }
-                max_label_start = std::cmp::max(max_label_start, range.start);
-                max_label_end = std::cmp::max(max_label_end, range.end);
+                max_label_start = core::cmp::max(max_label_start, range.start);
+                max_label_end = core::cmp::max(max_label_end, range.end);
                 // This is a candidate for the trailing label, so let's record it.
                 if range.end == max_label_end {
                     if message.is_empty() {
@@ -422,7 +396,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
                 // 1 │ Hello world!
                 //   │             ^
                 // ```
-                .chain(std::iter::once((placeholder_metrics, '\0')))
+                .chain(core::iter::once((placeholder_metrics, '\0')))
             {
                 // Find the current label style at this column
                 let column_range = metrics.byte_index..(metrics.byte_index + ch.len_utf8());
@@ -432,19 +406,9 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
                     .map(|(label_style, _, _)| *label_style)
                     .max_by_key(label_priority_key);
 
-                // Update writer style if necessary
-                if previous_label_style != current_label_style {
-                    match current_label_style {
-                        None => self.reset()?,
-                        Some(label_style) => {
-                            self.set_color(self.styles().label(severity, label_style))?;
-                        }
-                    }
-                }
-
                 let caret_ch = match current_label_style {
-                    Some(LabelStyle::Primary) => Some(self.chars().single_primary_caret),
-                    Some(LabelStyle::Secondary) => Some(self.chars().single_secondary_caret),
+                    Some(LabelStyle::Primary) => Some('^'),
+                    Some(LabelStyle::Secondary) => Some('-'),
                     // Only print padding if we are before the end of the last single line caret
                     None if metrics.byte_index < max_label_end => Some(' '),
                     None => None,
@@ -456,16 +420,11 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
 
                 previous_label_style = current_label_style;
             }
-            // Reset style if it was previously set
-            if previous_label_style.is_some() {
-                self.reset()?;
-            }
+
             // Write first trailing label message
             if let Some((_, (label_style, _, message))) = trailing_label {
                 write!(self, " ")?;
-                self.set_color(self.styles().label(severity, *label_style))?;
                 write!(self, "{}", message)?;
-                self.reset()?;
             }
             write!(self, "\n")?;
 
@@ -519,9 +478,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
                             .char_indices()
                             .take_while(|(byte_index, _)| *byte_index < range.start),
                     )?;
-                    self.set_color(self.styles().label(severity, *label_style))?;
                     write!(self, "{}", message)?;
-                    self.reset()?;
                     write!(self, "\n")?;
                 }
             }
@@ -605,7 +562,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         severity: Severity,
         num_multi_labels: usize,
         multi_labels: &[(usize, LabelStyle, MultiLabel<'_>)],
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         self.outer_gutter(outer_padding)?;
         self.border_left()?;
         self.inner_gutter(severity, num_multi_labels, multi_labels)?;
@@ -624,7 +581,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         severity: Severity,
         num_multi_labels: usize,
         multi_labels: &[(usize, LabelStyle, MultiLabel<'_>)],
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         self.outer_gutter(outer_padding)?;
         self.border_left_break()?;
         self.inner_gutter(severity, num_multi_labels, multi_labels)?;
@@ -638,14 +595,12 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     /// = expected type `Int`
     ///      found type `String`
     /// ```
-    pub fn render_snippet_note(&mut self, outer_padding: usize, message: &str) -> io::Result<()> {
+    pub fn render_snippet_note(&mut self, outer_padding: usize, message: &str) -> fmt::Result {
         for (note_line_index, line) in message.lines().enumerate() {
             self.outer_gutter(outer_padding)?;
             match note_line_index {
                 0 => {
-                    self.set_color(&self.styles().note_bullet)?;
-                    write!(self, "{}", self.chars().note_bullet)?;
-                    self.reset()?;
+                    write!(self, "=")?;
                 }
                 _ => write!(self, " ")?,
             }
@@ -666,8 +621,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     ) -> impl Iterator<Item = (Metrics, char)> {
         use unicode_width::UnicodeWidthChar;
 
-        let tab_width = self.config.tab_width;
-        let mut unicode_column = 0;
+        let (tab_width, mut unicode_column) = (2, 0);
 
         char_indices.map(move |(byte_index, ch)| {
             let metrics = Metrics {
@@ -685,7 +639,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     }
 
     /// Location focus.
-    fn snippet_locus(&mut self, locus: &Locus) -> io::Result<()> {
+    fn snippet_locus(&mut self, locus: &Locus) -> fmt::Result {
         write!(
             self,
             "{name}:{line_number}:{column_number}",
@@ -696,39 +650,33 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     }
 
     /// The outer gutter of a source line.
-    fn outer_gutter(&mut self, outer_padding: usize) -> io::Result<()> {
+    fn outer_gutter(&mut self, outer_padding: usize) -> fmt::Result {
         write!(self, "{space: >width$}", space = "", width = outer_padding)?;
         write!(self, " ")?;
         Ok(())
     }
 
     /// The outer gutter of a source line, with line number.
-    fn outer_gutter_number(&mut self, line_number: usize, outer_padding: usize) -> io::Result<()> {
-        self.set_color(&self.styles().line_number)?;
+    fn outer_gutter_number(&mut self, line_number: usize, outer_padding: usize) -> fmt::Result {
         write!(
             self,
             "{line_number: >width$}",
             line_number = line_number,
             width = outer_padding,
         )?;
-        self.reset()?;
         write!(self, " ")?;
         Ok(())
     }
 
     /// The left-hand border of a source line.
-    fn border_left(&mut self) -> io::Result<()> {
-        self.set_color(&self.styles().source_border)?;
-        write!(self, "{}", self.chars().source_border_left)?;
-        self.reset()?;
+    fn border_left(&mut self) -> fmt::Result {
+        write!(self, "{}", '|')?;
         Ok(())
     }
 
     /// The broken left-hand border of a source line.
-    fn border_left_break(&mut self) -> io::Result<()> {
-        self.set_color(&self.styles().source_border)?;
-        write!(self, "{}", self.chars().source_border_left_break)?;
-        self.reset()?;
+    fn border_left_break(&mut self) -> fmt::Result {
+        write!(self, "{}", '·')?;
         Ok(())
     }
 
@@ -740,7 +688,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         single_labels: &[SingleLabel<'_>],
         trailing_label: Option<(usize, &SingleLabel<'_>)>,
         char_indices: impl Iterator<Item = (usize, char)>,
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         for (metrics, ch) in self.char_metrics(char_indices) {
             let column_range = metrics.byte_index..(metrics.byte_index + ch.len_utf8());
             let label_style = hanging_labels(single_labels, trailing_label)
@@ -751,9 +699,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
             let mut spaces = match label_style {
                 None => 0..metrics.unicode_width,
                 Some(label_style) => {
-                    self.set_color(self.styles().label(severity, label_style))?;
-                    write!(self, "{}", self.chars().pointer_left)?;
-                    self.reset()?;
+                    write!(self, "{}", '|')?;
                     1..metrics.unicode_width
                 }
             };
@@ -776,19 +722,15 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         severity: Severity,
         label_style: LabelStyle,
         underline: Option<LabelStyle>,
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         match underline {
             None => write!(self, " ")?,
             // Continue an underline horizontally
             Some(label_style) => {
-                self.set_color(self.styles().label(severity, label_style))?;
-                write!(self, "{}", self.chars().multi_top)?;
-                self.reset()?;
+                write!(self, "{}", '-')?;
             }
         }
-        self.set_color(self.styles().label(severity, label_style))?;
-        write!(self, "{}", self.chars().multi_left)?;
-        self.reset()?;
+        write!(self, "{}", '|')?;
         Ok(())
     }
 
@@ -797,15 +739,9 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     /// ```text
     ///  ╭
     /// ```
-    fn label_multi_top_left(
-        &mut self,
-        severity: Severity,
-        label_style: LabelStyle,
-    ) -> io::Result<()> {
+    fn label_multi_top_left(&mut self, severity: Severity, label_style: LabelStyle) -> fmt::Result {
         write!(self, " ")?;
-        self.set_color(self.styles().label(severity, label_style))?;
-        write!(self, "{}", self.chars().multi_top_left)?;
-        self.reset()?;
+        write!(self, "{}", '╭')?;
         Ok(())
     }
 
@@ -818,11 +754,9 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         &mut self,
         severity: Severity,
         label_style: LabelStyle,
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         write!(self, " ")?;
-        self.set_color(self.styles().label(severity, label_style))?;
-        write!(self, "{}", self.chars().multi_bottom_left)?;
-        self.reset()?;
+        write!(self, "{}", '╰')?;
         Ok(())
     }
 
@@ -837,24 +771,20 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         label_style: LabelStyle,
         source: &str,
         range: RangeTo<usize>,
-    ) -> io::Result<()> {
-        self.set_color(self.styles().label(severity, label_style))?;
-
+    ) -> fmt::Result {
         for (metrics, _) in self
             .char_metrics(source.char_indices())
             .take_while(|(metrics, _)| metrics.byte_index < range.end + 1)
         {
             // FIXME: improve rendering of carets between character boundaries
-            (0..metrics.unicode_width)
-                .try_for_each(|_| write!(self, "{}", self.chars().multi_top))?;
+            (0..metrics.unicode_width).try_for_each(|_| write!(self, "{}", '-'))?;
         }
 
         let caret_start = match label_style {
-            LabelStyle::Primary => self.config.chars.multi_primary_caret_start,
-            LabelStyle::Secondary => self.config.chars.multi_secondary_caret_start,
+            LabelStyle::Primary => '^',
+            LabelStyle::Secondary => '\'',
         };
         write!(self, "{}", caret_start)?;
-        self.reset()?;
         write!(self, "\n")?;
         Ok(())
     }
@@ -871,27 +801,19 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         source: &str,
         range: RangeTo<usize>,
         message: &str,
-    ) -> io::Result<()> {
-        self.set_color(self.styles().label(severity, label_style))?;
-
+    ) -> fmt::Result {
         for (metrics, _) in self
             .char_metrics(source.char_indices())
             .take_while(|(metrics, _)| metrics.byte_index < range.end)
         {
             // FIXME: improve rendering of carets between character boundaries
-            (0..metrics.unicode_width)
-                .try_for_each(|_| write!(self, "{}", self.chars().multi_bottom))?;
+            (0..metrics.unicode_width).try_for_each(|_| write!(self, "{}", '-'))?;
         }
 
-        let caret_end = match label_style {
-            LabelStyle::Primary => self.config.chars.multi_primary_caret_start,
-            LabelStyle::Secondary => self.config.chars.multi_secondary_caret_start,
-        };
-        write!(self, "{}", caret_end)?;
+        write!(self, "^")?;
         if !message.is_empty() {
             write!(self, " {}", message)?;
         }
-        self.reset()?;
         write!(self, "\n")?;
         Ok(())
     }
@@ -901,24 +823,22 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         &mut self,
         severity: Severity,
         underline: Option<Underline>,
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         match underline {
             None => self.inner_gutter_space(),
             Some((label_style, vertical_bound)) => {
-                self.set_color(self.styles().label(severity, label_style))?;
                 let ch = match vertical_bound {
-                    VerticalBound::Top => self.config.chars.multi_top,
-                    VerticalBound::Bottom => self.config.chars.multi_bottom,
+                    VerticalBound::Top => '-',
+                    VerticalBound::Bottom => '-',
                 };
                 write!(self, "{0}{0}", ch)?;
-                self.reset()?;
                 Ok(())
             }
         }
     }
 
     /// Writes an empty gutter space.
-    fn inner_gutter_space(&mut self) -> io::Result<()> {
+    fn inner_gutter_space(&mut self) -> fmt::Result {
         write!(self, "  ")
     }
 
@@ -928,7 +848,7 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
         severity: Severity,
         num_multi_labels: usize,
         multi_labels: &[(usize, LabelStyle, MultiLabel<'_>)],
-    ) -> io::Result<()> {
+    ) -> fmt::Result {
         let mut multi_labels_iter = multi_labels.iter().peekable();
         for label_column in 0..num_multi_labels {
             match multi_labels_iter.peek() {
@@ -950,31 +870,12 @@ impl<'writer, 'config> Renderer<'writer, 'config> {
     }
 }
 
-impl<'writer, 'config> Write for Renderer<'writer, 'config> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.writer.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()
-    }
-}
-
-impl<'writer, 'config> WriteColor for Renderer<'writer, 'config> {
-    fn supports_color(&self) -> bool {
-        self.writer.supports_color()
-    }
-
-    fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
-        self.writer.set_color(spec)
-    }
-
-    fn reset(&mut self) -> io::Result<()> {
-        self.writer.reset()
-    }
-
-    fn is_synchronous(&self) -> bool {
-        self.writer.is_synchronous()
+impl<'writer, W> fmt::Write for Renderer<'writer, W>
+where
+    W: fmt::Write,
+{
+    fn write_str(&mut self, buf: &str) -> fmt::Result {
+        self.writer.write_str(buf)
     }
 }
 
@@ -985,8 +886,8 @@ struct Metrics {
 
 /// Check if two ranges overlap
 fn is_overlapping(range0: &Range<usize>, range1: &Range<usize>) -> bool {
-    let start = std::cmp::max(range0.start, range1.start);
-    let end = std::cmp::min(range0.end, range1.end);
+    let start = core::cmp::max(range0.start, range1.start);
+    let end = core::cmp::min(range0.end, range1.end);
     start < end
 }
 

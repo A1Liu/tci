@@ -23,7 +23,7 @@
 //!
 //! [`salsa`]: https://crates.io/crates/salsa
 
-use std::ops::Range;
+use core::ops::Range;
 
 /// A minimal interface for accessing source files when rendering diagnostics.
 ///
@@ -35,7 +35,7 @@ pub trait Files<'a> {
     /// for rendering `diagnostic::Label`s in the corresponding source files.
     type FileId: 'a + Copy + PartialEq;
     /// The user-facing name of a file, to be displayed in diagnostics.
-    type Name: 'a + std::fmt::Display;
+    type Name: 'a + core::fmt::Display;
     /// The source code of a file.
     type Source: 'a + AsRef<str>;
 
@@ -148,7 +148,7 @@ pub struct Location {
 /// assert_eq!(files::column_index(source, 2..13, 2 + 12), 3);
 /// ```
 pub fn column_index(source: &str, line_range: Range<usize>, byte_index: usize) -> usize {
-    let end_index = std::cmp::min(byte_index, std::cmp::min(line_range.end, source.len()));
+    let end_index = core::cmp::min(byte_index, core::cmp::min(line_range.end, source.len()));
 
     (line_range.start..end_index)
         .filter(|byte_index| source.is_char_boundary(byte_index + 1))
@@ -193,5 +193,5 @@ pub fn column_index(source: &str, line_range: Range<usize>, byte_index: usize) -
 /// ```
 // NOTE: this is copied in `codespan::file::line_starts` and should be kept in sync.
 pub fn line_starts<'source>(source: &'source str) -> impl 'source + Iterator<Item = usize> {
-    std::iter::once(0).chain(source.match_indices('\n').map(|(i, _)| i + 1))
+    core::iter::once(0).chain(source.match_indices('\n').map(|(i, _)| i + 1))
 }

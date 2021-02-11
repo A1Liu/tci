@@ -1,23 +1,22 @@
 use crate::buckets::*;
 use core::borrow::Borrow;
 use core::fmt;
+use core::hash::{BuildHasher, Hash, Hasher};
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{BuildHasher, Hash, Hasher};
+use siphasher::sip::SipHasher13;
 
+pub use hashbrown::hash_map::Entry;
+pub use hashbrown::HashMap;
 pub use lazy_static::lazy_static;
-pub use std::collections::hash_map::Entry;
-pub use std::collections::HashMap;
-pub use std::io::Write;
 
 #[derive(Clone, Copy)]
 pub struct DetState;
 
 impl BuildHasher for DetState {
-    type Hasher = DefaultHasher;
+    type Hasher = SipHasher13;
     #[inline]
-    fn build_hasher(&self) -> DefaultHasher {
-        return DefaultHasher::new();
+    fn build_hasher(&self) -> SipHasher13 {
+        return SipHasher13::new();
     }
 }
 

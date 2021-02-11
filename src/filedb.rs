@@ -3,8 +3,6 @@ use crate::util::*;
 use codespan_reporting::files::{line_starts, Files};
 use core::include_bytes;
 use core::str;
-use std::io;
-use std::path::Path;
 
 #[derive(Debug, Clone, Copy)]
 pub enum FileType {
@@ -63,7 +61,7 @@ impl<'a> File<'a> {
     }
 
     fn line_start(&self, line_index: usize) -> Option<usize> {
-        use std::cmp::Ordering;
+        use core::cmp::Ordering;
 
         match line_index.cmp(&self.line_starts.len()) {
             Ordering::Less => self.line_starts.get(line_index).cloned(),
@@ -183,9 +181,9 @@ impl FileDb {
 
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again. Errors if the file already exists in the database.
-    pub fn add(&mut self, file_name: &str, source: &str) -> Result<u32, io::Error> {
+    pub fn add(&mut self, file_name: &str, source: &str) -> Result<u32, &'static str> {
         if let Some(id) = self.names.get(&(false, file_name)) {
-            return Err(io::ErrorKind::AlreadyExists.into());
+            return Err("already exists");
         }
 
         let file_id = self.files.len() as u32;
@@ -212,7 +210,7 @@ impl FileDb {
 
         let diagnostic =
             Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);
-        emit(&mut out, &config, self, &diagnostic).unwrap();
+        emit(&mut out, self, &diagnostic).unwrap();
 
         return out.into_string();
     }
@@ -226,33 +224,36 @@ impl FileDb {
         return out.into_string();
     }
 
-    pub fn resolve_include(&self, include: &str, file: u32) -> Result<u32, io::Error> {
-        if Path::new(include).is_relative() {
-            let or_else = || -> io::Error { io::ErrorKind::NotFound.into() };
-            let base_path = parent_if_file(self.files.get(file as usize).ok_or_else(or_else)?.name);
-            let real_path = Path::new(base_path).join(include);
-            let path_str = real_path.to_str().unwrap();
+    pub fn resolve_include(&self, include: &str, file: u32) -> Result<u32, &'static str> {
+        if !include.starts_with("/") {
+            let or_else = || -> &'static str { "not found" };
+            let mut path =
+                parent_if_file(self.files.get(file as usize).ok_or_else(or_else)?.name).to_string();
+            if !path.ends_with("/") {
+                path.push_str("/");
+            }
+            path.push_str(include);
 
-            if let Some(id) = self.names.get(&(false, &path_str)) {
+            if let Some(id) = self.names.get(&(false, &path)) {
                 return Ok(*id);
             }
 
-            return Err(io::ErrorKind::NotFound.into());
+            return Err("not found");
         }
 
         if let Some(id) = self.names.get(&(false, include)) {
             return Ok(*id);
         }
 
-        return Err(io::ErrorKind::NotFound.into());
+        return Err("not found");
     }
 
-    pub fn resolve_system_include(&self, include: &str) -> Result<u32, io::Error> {
+    pub fn resolve_system_include(&self, include: &str) -> Result<u32, &'static str> {
         if let Some(id) = self.names.get(&(true, include)) {
             return Ok(*id);
         }
 
-        return Err(io::ErrorKind::NotFound.into());
+        return Err("not found");
     }
 }
 

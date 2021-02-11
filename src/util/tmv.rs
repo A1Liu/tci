@@ -1,7 +1,8 @@
 use super::vec::*;
+use alloc::alloc::{dealloc, Layout};
+use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::{fmt, mem, ops, ptr};
-use std::alloc::{dealloc, Layout};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TMVec<'a, T, E> {
@@ -118,8 +119,8 @@ impl<T, E> TaggedMultiVec<T, E> {
             return;
         }
 
-        let new_capa = std::cmp::max(elem_len * 3 / 2 + additional, elem_capa * 3 / 2);
-        let new_capa = std::cmp::max(new_capa, 8);
+        let new_capa = core::cmp::max(elem_len * 3 / 2 + additional, elem_capa * 3 / 2);
+        let new_capa = core::cmp::max(new_capa, 8);
 
         if self.size + new_capa <= self.elements.capacity() {
             if self.elements.len() + new_capa > self.elements.capacity() {

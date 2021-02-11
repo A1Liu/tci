@@ -1,6 +1,5 @@
 use crate::util::*;
-use core::mem;
-use std::fmt;
+use core::{fmt, mem};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Var<T> {

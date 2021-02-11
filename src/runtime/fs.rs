@@ -83,7 +83,7 @@ impl FileSystem {
         }
         let file = file.data;
 
-        let from_buffer_o = file.get(begin..std::cmp::min(begin + len, file.len()));
+        let from_buffer_o = file.get(begin..core::cmp::min(begin + len, file.len()));
         let from_buffer = from_buffer_o.ok_or(EcallError::OutOfRange)?;
         return Ok(from_buffer);
     }
@@ -102,7 +102,7 @@ impl FileSystem {
         }
 
         let to_buffer = file.get_mut(begin..).ok_or(EcallError::OutOfRange)?;
-        let copy_len = std::cmp::min(to_buffer.len(), buffer.len());
+        let copy_len = core::cmp::min(to_buffer.len(), buffer.len());
         let (copy, extend) = buffer.split_at(copy_len);
 
         if self.size + extend.len() > 1024 * 1024 * 64 {

@@ -5,7 +5,7 @@ use crate::runtime::Opcode;
 use crate::tc_ast::*;
 use crate::tc_structs::*;
 use crate::util::*;
-use std::convert::TryInto;
+use core::convert::TryInto;
 
 #[derive(Hash, PartialEq, Eq)]
 pub struct TypeDeclSpec {

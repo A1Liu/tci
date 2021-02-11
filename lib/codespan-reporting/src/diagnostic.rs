@@ -1,8 +1,10 @@
 //! Diagnostic data structures.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::ops::Range;
 #[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
 
 /// A severity level for diagnostic messages.
 ///
@@ -48,7 +50,7 @@ impl Severity {
 }
 
 impl PartialOrd for Severity {
-    fn partial_cmp(&self, other: &Severity) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Severity) -> Option<core::cmp::Ordering> {
         u8::partial_cmp(&self.to_cmp_int(), &other.to_cmp_int())
     }
 }

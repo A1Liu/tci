@@ -65,13 +65,13 @@ pub struct LocalTypeEnv<'a> {
 }
 
 impl<'a> Allocator<'static> for TypeEnv<'a> {
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
         return self.globals().0.tu.buckets.alloc(layout);
     }
 }
 
 impl<'a> Allocator<'static> for GlobalTypeEnv<'a> {
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
         return self.tu.buckets.alloc(layout);
     }
 }
@@ -122,7 +122,7 @@ impl<'a> TypeEnv<'a> {
     pub fn tu(mut self) -> TranslationUnit {
         return match &mut self.kind {
             TypeEnvKind::Global(GlobalTypeEnv { tu, .. }) => {
-                std::mem::replace(tu, TranslationUnit::new(!0))
+                core::mem::replace(tu, TranslationUnit::new(!0))
             }
             _ => unreachable!(),
         };
@@ -1340,7 +1340,7 @@ impl<'a> TypeEnv<'a> {
                 let from = expr.ty.to_prim_type()?;
                 let expr = self.add(expr);
 
-                if std::mem::discriminant(&from) == std::mem::discriminant(&to) {
+                if core::mem::discriminant(&from) == core::mem::discriminant(&to) {
                     TypePun(expr)
                 } else {
                     Conv { from, to, expr }

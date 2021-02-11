@@ -1,6 +1,6 @@
 use super::general::*;
+use alloc::alloc::{alloc, dealloc, Layout};
 use core::{fmt, marker, mem, ops, ptr, slice, str};
-use std::alloc::{alloc, dealloc, Layout};
 
 pub fn vec_reserve_gc<T, F>(vec: &mut Vec<T>, additional: usize, gc: F)
 where
@@ -11,8 +11,8 @@ where
         return;
     }
 
-    let new_capa = std::cmp::max(len * 3 / 2 + additional, vec.capacity() * 3 / 2);
-    let new_capa = std::cmp::max(new_capa, 8);
+    let new_capa = core::cmp::max(len * 3 / 2 + additional, vec.capacity() * 3 / 2);
+    let new_capa = core::cmp::max(new_capa, 8);
     let new_layout = Layout::array::<T>(new_capa).unwrap();
 
     let new_buf = unsafe {

@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::buckets::*;
 use crate::lexer::*;
 use crate::util::*;
-use std::cell::RefCell;
+use core::cell::RefCell;
 
 pub enum LiteralType {
     Int,

@@ -14,11 +14,17 @@ wasm-bindgen-futures = "0.4.19"
 wee_alloc = { version = "0.4.5" }
 lazy_static = "1.4.0"
 codespan-reporting = { path = "lib/codespan-reporting" }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = "1.0"
 serde_repr = "0.1"
-strum = { version = "0.20", features = ["derive"] }
-peg = "0.6.3"
+strum = { path = "lib/strum/strum", features = ["derive"] }
+peg = { path = "lib/rust-peg" }
+spin = "0.7.1"
+hashbrown = { version = "0.9.1", features = ["serde"] }
+siphasher = "0.3.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libc-print = "0.1.16"
 
 [dev-dependencies]
 interloc = "0.1.3"

@@ -1,16 +1,19 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use codespan_reporting::term::termcolor::{ColorSpec, WriteColor};
+use core::sync::atomic::AtomicUsize;
 use core::{fmt, mem, ops, str};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
-use std::cell::RefCell;
-use std::io;
-use std::sync::atomic::AtomicUsize;
+
+pub use alloc::boxed::Box;
+pub use alloc::string::{String, ToString};
+pub use alloc::vec::Vec;
+pub use alloc::{format, vec};
+pub use core::fmt::Write;
 
 #[allow(unused_macros)]
 macro_rules! panic {
     ( $( $arg:tt )* ) => {{
         debug!( $( $arg )* );
-        std::panic!();
+        core::panic!();
     }};
 }
 
@@ -18,7 +21,7 @@ macro_rules! panic {
 macro_rules! unimplemented {
     ( $( $arg:tt )* ) => {{
         debug!( $( $arg )* );
-        std::panic!();
+        core::panic!();
     }};
 }
 
@@ -26,7 +29,7 @@ macro_rules! unimplemented {
 macro_rules! unreachable {
     ( $( $arg:tt )* ) => {{
         debug!( $( $arg )* );
-        std::panic!();
+        core::panic!();
     }};
 }
 
@@ -53,9 +56,7 @@ macro_rules! debug {
     }};
 }
 
-thread_local! {
-    pub static OUTPUT: RefCell<Option<Box<dyn Fn(String)>>>= RefCell::new(None);
-}
+pub static OUTPUT: UnsafeCell<Option<Box<dyn Fn(String)>>> = UnsafeCell::new(None);
 
 pub static COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub const LIMIT: usize = (-1isize) as usize;
@@ -67,44 +68,47 @@ macro_rules! out {
     }};
     (@DEBUG, $str:expr, $( $e:expr ),+ ) => {{
         if cfg!(debug_assertions) {
-            out!(@LIMITED, std::concat!("DEBUG ({}:{}): ", $str, "\n"), file!(), line!(), $( $e ),+ );
+            out!(@LIMITED, core::concat!("DEBUG ({}:{}): ", $str, "\n"), file!(), line!(), $( $e ),+ );
         }
     }};
     (@LOG, $str:expr, $( $e:expr ),+ ) => {{
-        out!(@CLEAN, std::concat!("LOG ({}:{}): ", $str, "\n"), file!(), line!(), $( $e ),+ );
+        out!(@CLEAN, core::concat!("LOG ({}:{}): ", $str, "\n"), file!(), line!(), $( $e ),+ );
     }};
     (@LIMITED, $str:expr, $( $e:expr ),+ ) => {{
-        let count = $crate::COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let count = $crate::COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
         if count > $crate::LIMIT {
             out!(@CLEAN, "{}", "debug statement limit reached");
-            std::panic!();
+            core::panic!();
         }
 
-        out!(@CLEAN, std::concat!("{:<3} ", $str), count, $( $e ),+ );
+        out!(@CLEAN, core::concat!("{:<3} ", $str), count, $( $e ),+ );
     }};
     (@CLEAN, $str:expr, $( $e:expr ),+ ) => {{
-        let s = std::format!( $str, $( $e ),+ );
+        let s = alloc::format!( $str, $( $e ),+ );
 
-        $crate::OUTPUT.with(move |out| {
-            let borrow = out.borrow();
-            if let Some(func) = &*borrow {
-                func(s);
-            } else {
-                std::print!("{}", s);
-            }
-        });
+        #[allow(unused_unsafe)]
+        let borrow = unsafe { $crate::OUTPUT.get_mut() };
+        if let Some(func) = &*borrow {
+            func(s);
+        } else {
+            #[cfg(all(not(target_arch = "wasm32"), not(test)))]
+            libc_print::libc_print!("{}", s);
+            #[cfg(test)]
+            std::print!("{}", s);
+
+        }
     }};
 }
 
 pub fn register_output(f: impl Fn(String) + 'static) {
-    OUTPUT.with(|out| out.borrow_mut().replace(Box::new(f)));
+    unsafe { OUTPUT.get_mut() }.replace(Box::new(f));
 }
 
 macro_rules! error {
     ($arg1:expr) => {{
         let mut s = $arg1.to_string();
         if cfg!(debug_assertions) {
-            s += &format!(" (in compiler at {}:{})", file!(), line!());
+            s.push_str(&format!(" (in compiler at {}:{})", file!(), line!()));
         }
 
         $crate::util::Error::new(s, vec![])
@@ -113,7 +117,7 @@ macro_rules! error {
     ($msg:expr, $loc1:expr, $msg1:expr) => {{
         let mut s = $msg.to_string();
         if cfg!(debug_assertions) {
-            s += &format!(" (in compiler at {}:{})", file!(), line!());
+            s.push_str(&format!(" (in compiler at {}:{})", file!(), line!()));
         }
 
         $crate::util::Error::new(
@@ -276,11 +280,11 @@ pub fn align_u64(size: u64, align: u64) -> u64 {
 
 // https://stackoverflow.com/questions/28127165/how-to-convert-struct-to-u8
 pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
-    std::slice::from_raw_parts_mut(p as *mut T as *mut u8, mem::size_of::<T>())
+    core::slice::from_raw_parts_mut(p as *mut T as *mut u8, mem::size_of::<T>())
 }
 
 pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(p as *const T as *const u8, mem::size_of::<T>()) }
+    unsafe { core::slice::from_raw_parts(p as *const T as *const u8, mem::size_of::<T>()) }
 }
 
 pub fn u8_slice_as_any<T: Sized>(p: &[u8]) -> &T {
@@ -350,28 +354,24 @@ pub fn fold_binary<I, Iter: Iterator<Item = I>>(
     }
 }
 
-pub struct Cursor<IO: io::Write> {
-    pub io: IO,
-    pub len: usize,
-}
-
-impl<IO: io::Write> Cursor<IO> {
-    pub fn new(io: IO) -> Self {
-        Self { io, len: 0 }
-    }
-}
-
-impl<IO: io::Write> io::Write for Cursor<IO> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        let len = self.io.write(buf)?;
-        self.len += len;
-        return Ok(len);
-    }
-
-    fn flush(&mut self) -> Result<(), io::Error> {
-        return self.io.flush();
-    }
-}
+// pub struct Cursor<IO: fmt::Write> {
+//     pub io: IO,
+//     pub len: usize,
+// }
+//
+// impl<IO: fmt::Write> Cursor<IO> {
+//     pub fn new(io: IO) -> Self {
+//         Self { io, len: 0 }
+//     }
+// }
+//
+// impl<IO: fmt::Write> fmt::Write for Cursor<IO> {
+//     fn write_str(&mut self, buf: &str) -> fmt::Result {
+//         let len = self.io.write_str(buf)?;
+//         self.len += len;
+//         return Ok(());
+//     }
+// }
 
 pub struct StringWriter {
     buf: Vec<u8>,
@@ -399,36 +399,16 @@ impl StringWriter {
     }
 }
 
-impl io::Write for StringWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let map_err = |err| io::Error::new(io::ErrorKind::InvalidInput, err);
-        str::from_utf8(buf).map_err(map_err)?;
-        self.buf.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl WriteColor for StringWriter {
-    fn supports_color(&self) -> bool {
-        false
-    }
-
-    fn set_color(&mut self, _color: &ColorSpec) -> io::Result<()> {
-        return Ok(());
-    }
-
-    fn reset(&mut self) -> io::Result<()> {
+impl fmt::Write for StringWriter {
+    fn write_str(&mut self, buf: &str) -> fmt::Result {
+        self.buf.extend_from_slice(buf.as_bytes());
         return Ok(());
     }
 }
 
 pub struct RecordingWriter<W>
 where
-    W: io::Write,
+    W: fmt::Write,
 {
     pub string: StringWriter,
     pub writer: W,
@@ -436,7 +416,7 @@ where
 
 impl<W> RecordingWriter<W>
 where
-    W: io::Write,
+    W: fmt::Write,
 {
     pub fn new(writer: W) -> Self {
         Self {
@@ -446,34 +426,13 @@ where
     }
 }
 
-impl<W> io::Write for RecordingWriter<W>
+impl<W> fmt::Write for RecordingWriter<W>
 where
-    W: io::Write,
+    W: fmt::Write,
 {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.string.write(buf).expect("should not fail");
-        self.writer.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()
-    }
-}
-
-impl<W> WriteColor for RecordingWriter<W>
-where
-    W: WriteColor,
-{
-    fn supports_color(&self) -> bool {
-        false
-    }
-
-    fn set_color(&mut self, _color: &ColorSpec) -> io::Result<()> {
-        return Ok(());
-    }
-
-    fn reset(&mut self) -> io::Result<()> {
-        return Ok(());
+    fn write_str(&mut self, buf: &str) -> fmt::Result {
+        self.string.write_str(buf).expect("should not fail");
+        self.writer.write_str(buf)
     }
 }
 
@@ -487,12 +446,8 @@ impl Void {
     }
 }
 
-impl io::Write for Void {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
+impl fmt::Write for Void {
+    fn write_str(&mut self, buf: &str) -> fmt::Result {
         Ok(())
     }
 }
@@ -668,7 +623,7 @@ pub fn string_append_utf8_lossy(string: &mut String, bytes: &[u8]) {
     }
 }
 
-pub fn write_utf8_lossy(mut write: impl io::Write, bytes: &[u8]) -> io::Result<usize> {
+pub fn write_utf8_lossy(mut write: impl fmt::Write, bytes: &[u8]) -> fmt::Result {
     let mut iter = Utf8Lossy::from_bytes(bytes).chunks();
 
     const REPLACEMENT: &str = "\u{FFFD}";
@@ -676,13 +631,13 @@ pub fn write_utf8_lossy(mut write: impl io::Write, bytes: &[u8]) -> io::Result<u
     let mut total = 0;
     loop {
         let Utf8LossyChunk { valid, broken } = iter.next();
-        write.write(valid.as_bytes())?;
+        write.write_str(valid)?;
         total += valid.len();
         if !broken.is_empty() {
-            write.write(REPLACEMENT.as_bytes())?;
+            write.write_str(REPLACEMENT)?;
             total += REPLACEMENT.len();
         } else {
-            return Ok(total);
+            return Ok(());
         }
     }
 }
@@ -864,3 +819,20 @@ macro_rules! let_expr {
         }
     }};
 }
+
+pub struct UnsafeCell<T> {
+    t: T,
+}
+
+impl<T> UnsafeCell<T> {
+    pub const fn new(t: T) -> Self {
+        UnsafeCell { t }
+    }
+
+    pub unsafe fn get_mut(&self) -> &mut T {
+        return &mut *(&self.t as *const T as *mut T);
+    }
+}
+
+unsafe impl<T> Sync for UnsafeCell<T> {}
+unsafe impl<T: Send> Send for UnsafeCell<T> {}

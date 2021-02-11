@@ -3,12 +3,10 @@ use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
 use interloc::*;
-use std::alloc::System;
 use std::fs::{read_dir, read_to_string};
 
 fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     let info = before_alloc();
-    let config = codespan_reporting::term::Config::default();
     let mut writer = StringWriter::new();
 
     let program = match compile(files) {
@@ -20,7 +18,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
         }
     };
 
-    println!("compiled using {:?}", before_alloc().relative_to(&info));
+    std::println!("compiled using {:?}", before_alloc().relative_to(&info));
     let mut runtime = Kernel::new(&program, Vec::new());
 
     match runtime.run() {
@@ -28,7 +26,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
         Ok(code) => {
             let mut writer = StringWriter::new();
             for TS(_, s) in &runtime.events() {
-                writer.write(s.as_bytes()).unwrap();
+                writer.write_str(s).unwrap();
             }
 
             println!("\n{}", writer.into_string());
@@ -38,7 +36,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
         Err(err) => {
             let mut writer = StringWriter::new();
             for TS(_, s) in &runtime.events() {
-                writer.write(s.as_bytes()).unwrap();
+                writer.write_str(s).unwrap();
             }
 
             println!("\n{}", writer.into_string());
@@ -50,7 +48,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
 
     let mut writer = StringWriter::new();
     for TS(_, s) in &runtime.events() {
-        writer.write(s.as_bytes()).unwrap();
+        writer.write_str(s).unwrap();
     }
 
     let output = writer.into_string();
@@ -226,8 +224,8 @@ impl AllocMonitor for TestMonitor {
 pub static TEST_MONITOR: TestMonitor = TestMonitor::new();
 
 #[global_allocator]
-static GLOBAL: InterAlloc<System, TestMonitor> = InterAlloc {
-    inner: System,
+static GLOBAL: InterAlloc<wee_alloc::WeeAlloc, TestMonitor> = InterAlloc {
+    inner: wee_alloc::WeeAlloc::INIT,
     monitor: &TEST_MONITOR,
 };
 

@@ -1,9 +1,11 @@
-use std::alloc::{alloc, dealloc, Layout, LayoutErr};
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::{cmp, fmt, mem, ptr, slice, str};
+use alloc::alloc::{alloc, dealloc, Layout, LayoutErr};
+use core::marker::PhantomData;
+use core::ops::Deref;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use core::{cmp, fmt, mem, ptr, slice, str};
+
+use alloc::vec::Vec;
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
 
@@ -462,6 +464,8 @@ impl Deref for BucketListFactory {
 
 #[test]
 fn test_bucket_list() {
+    use alloc::vec;
+
     let bucket_list = BucketList::with_capacity(24);
     let vec = bucket_list.add_array(Vec::<usize>::new());
     let num = bucket_list.add(12);

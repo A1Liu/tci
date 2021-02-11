@@ -246,7 +246,7 @@ impl Assembler {
 
         let mut defns = Vec::new();
 
-        for (ident, tc_func) in std::mem::replace(&mut tu.functions, HashMap::new()) {
+        for (ident, tc_func) in core::mem::replace(&mut tu.functions, HashMap::new()) {
             let link_name = if tc_func.is_static {
                 LinkName::new_static(ident, tu.file)
             } else {
