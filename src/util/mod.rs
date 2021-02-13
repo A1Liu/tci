@@ -3,6 +3,7 @@ pub mod general;
 
 pub mod map;
 pub mod stack;
+pub mod term;
 pub mod tmv;
 pub mod vec;
 

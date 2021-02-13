@@ -105,12 +105,6 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
 
 fn emit_err(errs: &[Error], files: &FileDb, writer: &mut impl core::fmt::Write) {
     for err in errs {
-        write!(writer, "{}\n", err.message).unwrap();
-        for section in &err.sections {
-            write!(writer, "{}\n", section.message).unwrap();
-            files.write_loc(writer, section.location).unwrap();
-            write!(writer, "\n").unwrap();
-            files.display_loc(writer, section.location).unwrap();
-        }
+        err.render(files, writer).unwrap();
     }
 }

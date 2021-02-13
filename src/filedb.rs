@@ -3,8 +3,35 @@ use crate::util::*;
 use core::include_bytes;
 use core::{fmt, str};
 
+/// The column index at the given byte index in the source file.
+/// This is the number of characters to the given byte index.
+///
+/// If the byte index is smaller than the start of the line, then `0` is returned.
+/// If the byte index is past the end of the line, the column index of the last
+/// character `+ 1` is returned.
+pub fn column_index(source: &str, line_range: core::ops::Range<usize>, byte_index: usize) -> usize {
+    let end_index = core::cmp::min(byte_index, core::cmp::min(line_range.end, source.len()));
+
+    (line_range.start..end_index)
+        .filter(|byte_index| source.is_char_boundary(byte_index + 1))
+        .count()
+}
+
 pub fn line_starts<'source>(source: &'source str) -> impl 'source + Iterator<Item = usize> {
     core::iter::once(0).chain(source.match_indices('\n').map(|(i, _)| i + 1))
+}
+
+/// A user-facing location in a source file.
+///
+/// Returned by [`Files::location`].
+///
+/// [`Files::location`]: Files::location
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Location {
+    /// The user-facing line number.
+    pub line_number: usize,
+    /// The user-facing column number.
+    pub column_number: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -269,6 +296,51 @@ impl FileDb {
     pub fn line_range(&self, file_id: u32, line_index: usize) -> Option<core::ops::Range<usize>> {
         let file = self.files.get(file_id as usize)?;
         return file.line_range(line_index);
+    }
+
+    /// The user-facing line number at the given line index.
+    /// It is not necessarily checked that the specified line index
+    /// is actually in the file.
+    ///
+    /// # Note for trait implementors
+    ///
+    /// This is usually 1-indexed from the beginning of the file, but
+    /// can be useful for implementing something like the
+    /// [C preprocessor's `#line` macro][line-macro].
+    ///
+    /// [line-macro]: https://en.cppreference.com/w/c/preprocessor/line
+    #[allow(unused_variables)]
+    pub fn line_number(&self, id: u32, line_index: usize) -> Option<usize> {
+        Some(line_index + 1)
+    }
+
+    /// The user-facing column number at the given line index and byte index.
+    ///
+    /// # Note for trait implementors
+    ///
+    /// This is usually 1-indexed from the the start of the line.
+    /// A default implementation is provided, based on the [`column_index`]
+    /// function that is exported from the [`files`] module.
+    ///
+    /// [`files`]: crate::files
+    /// [`column_index`]: crate::files::column_index
+    pub fn column_number(&self, id: u32, line_index: usize, byte_index: usize) -> Option<usize> {
+        let source = self.source(id)?;
+        let line_range = self.line_range(id, line_index)?;
+        let column_index = column_index(source.as_ref(), line_range, byte_index);
+
+        Some(column_index + 1)
+    }
+
+    /// Convenience method for returning line and column number at the given
+    /// byte index in the file.
+    pub fn location(&self, id: u32, byte_index: usize) -> Option<Location> {
+        let line_index = self.line_index(id, byte_index)?;
+
+        Some(Location {
+            line_number: self.line_number(id, line_index)?,
+            column_number: self.column_number(id, line_index, byte_index)?,
+        })
     }
 }
 

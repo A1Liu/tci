@@ -3,7 +3,6 @@ use super::fs::*;
 use super::interpreter::*;
 use super::memory::*;
 use super::types::*;
-use crate::filedb::*;
 use crate::util::*;
 use core::mem;
 
@@ -73,7 +72,7 @@ impl Kernel {
         return Some(&tag.memory);
     }
 
-    pub fn load_program(&mut self, binary: &BinaryData) {
+    pub fn load_program(&mut self, binary: &BinaryData) -> u32 {
         self.term_proc = self.processes.len() as u32;
         if self.current_proc == !0 {
             self.current_proc = self.term_proc;
@@ -87,72 +86,44 @@ impl Kernel {
             memory: Memory::new(binary),
             status: IRtStat::Running,
         };
+
         self.processes.push(proc, fds);
         self.active_count += 1;
+        return self.term_proc;
     }
 
-    pub fn run_debug(&mut self, binary: &BinaryData, files: &FileDb) -> Result<i32, IError> {
-        #[rustfmt::skip]
-        let fds = vec![FdKind::Stdin, FdKind::Stdout, FdKind::Stderr, FdKind::Stdlog];
-        let proc = Process {
-            parent: None,
-            output: StringArray::new(),
-            memory: Memory::new(binary),
-            status: IRtStat::Running,
-        };
-        self.current_proc = self.processes.len() as u32;
-        self.term_proc = self.current_proc;
-        self.current_proc_op_count = 0;
-        self.active_count += 1;
-        self.processes.push(proc, fds);
+    // pub fn run_debug(&mut self, binary: &BinaryData, files: &FileDb) -> Result<i32, IError> {
+    //     loop {
+    //         let mut proc = self.processes.get_mut(proc_id as usize).unwrap();
 
-        loop {
-            let mut proc = self.processes.get_mut(self.current_proc as usize).unwrap();
-            let memory = &mut proc.tag_mut().memory;
-            if memory.loc != NO_FILE {
-                println!("{}", files.loc_to_string(memory.loc));
-            }
+    //         let memory = &mut proc.tag_mut().memory;
+    //         if memory.loc != NO_FILE {
+    //             println!("{}", files.loc_to_string(memory.loc));
+    //         }
 
-            println!("{:?}", memory.expr_stack);
-            let (count, res) = run_op_count(memory, !0);
-            self.current_proc_op_count += count;
-            println!("{:?}\n", memory.expr_stack);
+    //         println!("{:?}", memory.expr_stack);
+    //         let (count, res) = run_op_count(memory, !0);
+    //         self.current_proc_op_count += count;
+    //         println!("{:?}\n", memory.expr_stack);
 
-            if let Some(ecall) = res? {
-                if let RuntimeStatus::Exited(e) = self.ecall(self.current_proc, ecall)? {
-                    self.active_count -= 1;
-                    return Ok(e);
-                }
-            }
-        }
-    }
+    //         if let Some(ecall) = res? {
+    //             if let RuntimeStatus::Exited(e) = self.ecall(self.current_proc, ecall)? {
+    //                 return Ok(e);
+    //             }
+    //         }
+    //     }
+    // }
 
     pub fn run(&mut self, binary: &BinaryData) -> Result<i32, IError> {
-        #[rustfmt::skip]
-        let fds = vec![FdKind::Stdin, FdKind::Stdout, FdKind::Stderr, FdKind::Stdlog];
-        let proc = Process {
-            parent: None,
-            output: StringArray::new(),
-            memory: Memory::new(binary),
-            status: IRtStat::Running,
-        };
-        self.current_proc = self.processes.len() as u32;
-        self.term_proc = self.current_proc;
-        self.active_count += 1;
-        self.processes.push(proc, fds);
+        let proc_id = self.load_program(binary);
 
         loop {
-            let mut proc = self.processes.get_mut(self.current_proc as usize).unwrap();
-            let memory = &mut proc.tag_mut().memory;
-            let (count, res) = run_op_count(memory, !0);
-            self.current_proc_op_count += count;
-
-            if let Some(ecall) = res? {
-                if let RuntimeStatus::Exited(e) = self.ecall(self.current_proc, ecall)? {
-                    self.active_count -= 1;
-                    return Ok(e);
-                }
+            let proc = self.processes.get_mut(proc_id as usize).unwrap();
+            if let IRtStat::Exited(c) = proc.tag().status {
+                return Ok(c);
             }
+
+            self.run_op_count(!0)?;
         }
     }
 
@@ -182,16 +153,23 @@ impl Kernel {
             self.current_proc_op_count += ran_count;
             count -= ran_count;
 
-            match res? {
-                Some(ecall) => {
-                    let res = self.ecall(self.current_proc, ecall)?;
-                    if let RuntimeStatus::Exited(_) = &res {
-                        self.active_count -= 1;
+            match res {
+                Err(e) => {
+                    self.active_count -= 1;
+                    return Err(e);
+                }
+                Ok(Some(ecall)) => {
+                    let val = self.ecall(self.current_proc, ecall);
+
+                    match &val {
+                        Ok(RuntimeStatus::Exited(e)) => self.active_count -= 1,
+                        Err(e) => self.active_count -= 1,
+                        Ok(x) => {}
                     }
 
-                    return Ok(res);
+                    return val;
                 }
-                None => {}
+                Ok(None) => {}
             }
 
             self.current_proc_op_count = 0;
@@ -212,6 +190,7 @@ impl Kernel {
         return Ok(());
     }
 
+    #[inline]
     pub fn ecall(&mut self, proc: u32, req: EcallExt) -> Result<RuntimeStatus, IError> {
         let mut proc = self.processes.get_mut(proc as usize).unwrap();
 

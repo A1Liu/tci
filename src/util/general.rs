@@ -1,3 +1,5 @@
+use super::term::*;
+use crate::filedb::*;
 use core::sync::atomic::AtomicUsize;
 use core::{fmt, mem, ops, str};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -162,6 +164,12 @@ pub struct ErrorSection {
     pub message: String,
 }
 
+impl Into<Label> for &ErrorSection {
+    fn into(self) -> Label {
+        Label::new(self.location.file, self.location).with_message(&self.message)
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct Error {
     pub message: String,
@@ -174,6 +182,13 @@ impl Error {
             message: message,
             sections,
         }
+    }
+
+    pub fn render(&self, files: &FileDb, out: &mut impl Write) -> fmt::Result {
+        Diagnostic::new()
+            .with_message(&self.message)
+            .with_labels(self.sections.iter().map(|x| x.into()).collect())
+            .render(files, out)
     }
 }
 
