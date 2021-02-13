@@ -1,8 +1,11 @@
 use crate::buckets::*;
 use crate::util::*;
-use codespan_reporting::files::{line_starts, Files};
 use core::include_bytes;
-use core::str;
+use core::{fmt, str};
+
+pub fn line_starts<'source>(source: &'source str) -> impl 'source + Iterator<Item = usize> {
+    core::iter::once(0).chain(source.match_indices('\n').map(|(i, _)| i + 1))
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum FileType {
@@ -194,25 +197,27 @@ impl FileDb {
         Ok(file_id)
     }
 
-    pub fn display_loc(&self, loc: CodeLoc) -> String {
-        use codespan_reporting::diagnostic::*;
-        use codespan_reporting::term::*;
+    pub fn display_loc(&self, out: &mut impl fmt::Write, loc: CodeLoc) -> fmt::Result {
+        let file = self.files[loc.file as usize];
+        let start_line = file.line_index(loc.start as usize).unwrap();
+        let end_line = file.line_index(loc.end as usize).unwrap();
 
-        let mut out = StringWriter::new();
+        let start = file.line_start(start_line).unwrap();
+        let end = file.line_start(end_line + 1).unwrap();
+        let bytes = &file.source.as_bytes()[start..end];
 
-        let diagnostic =
-            Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);
-        emit(&mut out, self, &diagnostic).unwrap();
+        return write!(out, "{}", unsafe { str::from_utf8_unchecked(bytes) });
+    }
 
-        return out.into_string();
+    pub fn write_loc(&self, out: &mut impl fmt::Write, loc: CodeLoc) -> fmt::Result {
+        let file = self.files[loc.file as usize];
+        let line = file.line_index(loc.start as usize).unwrap() + 1;
+        return write!(out, "{}:{}", file.name, line);
     }
 
     pub fn loc_to_string(&self, loc: CodeLoc) -> String {
         let mut out = StringWriter::new();
-
-        let file = self.files[loc.file as usize];
-        let line = file.line_index(loc.start as usize).unwrap() + 1;
-        write!(out, "{}:{}", file.name, line).unwrap();
+        self.write_loc(&mut out, loc).unwrap();
         return out.into_string();
     }
 
@@ -221,7 +226,7 @@ impl FileDb {
             let or_else = || -> &'static str { "not found" };
             let mut path =
                 parent_if_file(self.files.get(file as usize).ok_or_else(or_else)?.name).to_string();
-            if !path.ends_with("/") {
+            if !path.ends_with("/") && path != "" {
                 path.push_str("/");
             }
             path.push_str(include);
@@ -247,27 +252,21 @@ impl FileDb {
 
         return Err("not found");
     }
-}
 
-impl<'a> Files<'a> for FileDb {
-    type FileId = u32;
-    type Name = &'a str;
-    type Source = &'a str;
-
-    fn name(&self, file_id: u32) -> Option<&'a str> {
+    pub fn name(&self, file_id: u32) -> Option<&str> {
         Some(self.files.get(file_id as usize)?.name)
     }
 
-    fn source(&self, file_id: u32) -> Option<&'a str> {
+    pub fn source(&self, file_id: u32) -> Option<&str> {
         Some(self.files.get(file_id as usize)?.source)
     }
 
-    fn line_index(&self, file_id: u32, byte_index: usize) -> Option<usize> {
+    pub fn line_index(&self, file_id: u32, byte_index: usize) -> Option<usize> {
         let file = self.files.get(file_id as usize)?;
         return file.line_index(byte_index);
     }
 
-    fn line_range(&self, file_id: u32, line_index: usize) -> Option<core::ops::Range<usize>> {
+    pub fn line_range(&self, file_id: u32, line_index: usize) -> Option<core::ops::Range<usize>> {
         let file = self.files.get(file_id as usize)?;
         return file.line_range(line_index);
     }

@@ -3,14 +3,16 @@ use super::memory::*;
 use super::types::*;
 use crate::util::*;
 
-pub fn run_op_count(memory: &mut Memory, count: u32) -> Result<Option<EcallExt>, IError> {
-    for _ in 0..count {
-        if let Some(ecall) = run_op(memory)? {
-            return Ok(Some(ecall));
+pub fn run_op_count(memory: &mut Memory, count: u32) -> (u32, Result<Option<EcallExt>, IError>) {
+    for idx in 0..count {
+        match run_op(memory) {
+            Ok(None) => {}
+            Ok(Some(ecall)) => return (idx + 1, Ok(Some(ecall))),
+            Err(ierr) => return (idx, Err(ierr)),
         }
     }
 
-    return Ok(None);
+    return (count, Ok(None));
 }
 
 pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {

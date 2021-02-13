@@ -1,4 +1,3 @@
-use codespan_reporting::diagnostic::{Diagnostic, Label};
 use core::sync::atomic::AtomicUsize;
 use core::{fmt, mem, ops, str};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -56,7 +55,8 @@ macro_rules! debug {
     }};
 }
 
-pub static OUTPUT: UnsafeCell<Option<Box<dyn Fn(String)>>> = UnsafeCell::new(None);
+#[cfg(target_arch = "wasm32")]
+pub static OUTPUT: Option<&'static (dyn Fn(String) + Sync)> = None;
 
 pub static COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub const LIMIT: usize = (-1isize) as usize;
@@ -86,22 +86,27 @@ macro_rules! out {
     (@CLEAN, $str:expr, $( $e:expr ),+ ) => {{
         let s = alloc::format!( $str, $( $e ),+ );
 
+        #[cfg(all(not(target_arch = "wasm32"), not(test)))]
+        libc_print::libc_print!("{}", s);
+
+        #[cfg(test)]
+        std::print!("{}", s);
+
         #[allow(unused_unsafe)]
-        let borrow = unsafe { $crate::OUTPUT.get_mut() };
-        if let Some(func) = &*borrow {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(func) = unsafe { core::ptr::read_volatile(&$crate::OUTPUT) } {
             func(s);
-        } else {
-            #[cfg(all(not(target_arch = "wasm32"), not(test)))]
-            libc_print::libc_print!("{}", s);
-            #[cfg(test)]
-            std::print!("{}", s);
 
         }
     }};
 }
 
+#[cfg(target_arch = "wasm32")]
 pub fn register_output(f: impl Fn(String) + 'static) {
-    unsafe { OUTPUT.get_mut() }.replace(Box::new(f));
+    let out = &OUTPUT as *const Option<_> as *mut Option<&'static (dyn Fn(String) + Sync)>;
+    let value: &(dyn Fn(String) + 'static) = Box::leak(Box::new(f));
+
+    unsafe { core::ptr::write_volatile(out, Some(mem::transmute(value))) };
 }
 
 macro_rules! error {
@@ -163,24 +168,12 @@ pub struct Error {
     pub sections: Vec<ErrorSection>,
 }
 
-impl Into<Label<u32>> for &ErrorSection {
-    fn into(self) -> Label<u32> {
-        Label::primary(self.location.file, self.location).with_message(&self.message)
-    }
-}
-
 impl Error {
     pub fn new(message: String, sections: Vec<ErrorSection>) -> Error {
         Self {
             message: message,
             sections,
         }
-    }
-
-    pub fn diagnostic(&self) -> Diagnostic<u32> {
-        Diagnostic::error()
-            .with_message(&self.message)
-            .with_labels(self.sections.iter().map(|x| x.into()).collect())
     }
 }
 

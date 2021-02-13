@@ -19,9 +19,9 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     };
 
     std::println!("compiled using {:?}", before_alloc().relative_to(&info));
-    let mut runtime = Kernel::new(&program, Vec::new());
+    let mut runtime = Kernel::new(Vec::new());
 
-    match runtime.run() {
+    match runtime.run(&program) {
         Ok(0) => {}
         Ok(code) => {
             let mut writer = StringWriter::new();
@@ -40,7 +40,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
             }
 
             println!("\n{}", writer.into_string());
-            let s = print_error(&err, &runtime.memory, files);
+            let s = print_error(&err, runtime.cur_mem().unwrap(), files);
             println!("{}", s);
             panic!("\n{:?}", runtime.files);
         }

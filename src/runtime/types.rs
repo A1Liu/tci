@@ -571,9 +571,13 @@ pub enum OpenMode {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum IRtStat {
-    // internal runtime status
-    Running,
-    Blocked,
-    Exited(i32),
+pub enum FdKind {
+    Stdin,
+    Stdout,
+    Stderr,
+    Stdlog,
+    FileSys(u32),
+    ProcessStdin(u32),
+    ProcessStdout(u32),
+    ProcessStderr(u32),
 }

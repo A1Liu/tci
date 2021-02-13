@@ -15,29 +15,25 @@ pub use memory::*;
 pub use types::*;
 
 use crate::filedb::FileDb;
+use crate::util::*;
 use alloc::string::String;
 
 pub fn print_error(err: &IError, memory: &Memory, files: &FileDb) -> String {
-    use crate::util::*;
-    use codespan_reporting::diagnostic::*;
-    use codespan_reporting::term::*;
-
     let mut out = StringWriter::new();
 
     write!(out, "{}: {}\n", err.short_name, err.message).unwrap();
 
     for frame in memory.callstack.iter().skip(1) {
-        let diagnostic = Diagnostic::new(Severity::Void)
-            .with_labels(vec![Label::primary(frame.loc.file, frame.loc)]);
-        emit(&mut out, files, &diagnostic).unwrap();
+        files.write_loc(&mut out, frame.loc).unwrap();
+        write!(out, "\n").unwrap();
+        files.display_loc(&mut out, frame.loc).unwrap();
     }
 
-    let loc = memory.loc;
-    if loc != NO_FILE {
-        let diagnostic =
-            Diagnostic::new(Severity::Void).with_labels(vec![Label::primary(loc.file, loc)]);
-        emit(&mut out, files, &diagnostic).unwrap();
+    if memory.loc != NO_FILE {
+        files.write_loc(&mut out, memory.loc).unwrap();
+        write!(out, "\n").unwrap();
+        files.display_loc(&mut out, memory.loc).unwrap();
     }
 
-    return out.into_string();
+    return out.to_string();
 }

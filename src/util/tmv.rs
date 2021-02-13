@@ -174,7 +174,7 @@ impl<T, E> TaggedMultiVec<T, E> {
         return Some(block.tag);
     }
 
-    pub fn push(&mut self, tag: T, data: Vec<E>) {
+    pub fn push<'a>(&'a mut self, tag: T, data: Vec<E>) -> TMVecMut<'a, T, E> {
         let (elem_len, elem_capa, elem_ptr) = (data.len(), data.capacity(), data.as_ptr());
         self.reserve_gc(elem_capa);
 
@@ -190,6 +190,7 @@ impl<T, E> TaggedMultiVec<T, E> {
         }
         mem::forget(data);
 
+        let idx = self.tags.len();
         self.tags.push(TMVBlock {
             tag,
             elem_idx,
@@ -198,6 +199,8 @@ impl<T, E> TaggedMultiVec<T, E> {
         });
 
         self.size += elem_capa;
+
+        return TMVecMut { tmv: self, idx };
     }
 
     pub fn get_mut(&mut self, idx: usize) -> Option<TMVecMut<T, E>> {

@@ -1,7 +1,6 @@
 use crate::buckets::*;
 use crate::filedb::*;
 use crate::util::*;
-use codespan_reporting::files::Files;
 use core::{mem, str};
 
 pub const CLOSING_CHAR: u8 = !0;

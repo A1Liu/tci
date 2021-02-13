@@ -103,6 +103,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         return Ok(Some(out));
     };
 
+    debug!("initializing file system...");
     let mut files = FileDb::new();
     let initial: Vec<_> = {
         let mapper = |fd: &u32| (env.file_name(*fd), *fd, env.file_data(*fd));
@@ -110,7 +111,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         env.set_file_descriptors(JsValue::UNDEFINED);
         init
     };
-    let mut kernel: Option<Kernel> = None;
+    let mut kernel = Kernel::new(initial);
 
     send(Out::Startup);
 
@@ -121,7 +122,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             match input {
                 In::Run(sources) => {
                     files = FileDb::new();
-                    kernel = None;
                     for (name, contents) in sources {
                         files.add(&name, &contents).unwrap();
                     }
@@ -138,61 +138,59 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                     };
 
                     send(Out::Compiled);
-                    kernel = Some(Kernel::new(&program, initial.clone()));
+                    kernel.load_program(&program);
                 }
-                In::Ecall(res) => {
-                    let kernel = match &mut kernel {
-                        Some(k) => k,
-                        None => panic!("idk man"),
-                    };
-
-                    match kernel.resolve_result(res) {
-                        Ok(()) => {}
-                        Err(err) => {
-                            let e_str = print_error(&err, &kernel.memory, &files);
-                            send(Out::Stderr(e_str));
-                            env.wait(0).await;
-                            continue;
-                        }
+                In::Ecall(res) => match kernel.resolve_result(res) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        let e_str = print_error(&err, kernel.cur_mem().unwrap(), &files);
+                        send(Out::Stderr(e_str));
+                        env.wait(0).await;
+                        continue;
                     }
-                }
+                },
             }
         }
 
-        if let Some(kern) = &mut kernel {
-            let result = kern.run_op_count(5000);
-
-            for TS(tag, s) in &kern.events() {
-                match tag {
-                    WriteEvent::StdoutWrite => send(Out::Stdout(s.to_string())),
-                    WriteEvent::StderrWrite => send(Out::Stderr(s.to_string())),
-                    WriteEvent::StdlogWrite => send(Out::Stdlog(s.to_string())),
-                }
-            }
-
-            let ecall_req = match result {
-                Ok(RuntimeStatus::Running) => {
-                    env.wait(1).await;
-                    continue;
-                }
-                Ok(RuntimeStatus::Blocked(req)) => req,
-                Ok(RuntimeStatus::Exited(code)) => {
-                    kernel = None;
-                    env.wait(0).await;
-                    continue;
-                }
-                Err(e) => {
-                    let e_str = print_error(&e, &kern.memory, &files);
-                    send(Out::Stderr(e_str));
-                    kernel = None;
-                    env.wait(0).await;
-                    continue;
-                }
-            };
-
-            // debug!("Sending an ecall");
-            send(Out::Ecall(ecall_req));
+        if kernel.active_count == 0 {
+            env.wait(0).await;
+            continue;
         }
+
+        debug!("running 5000 ops...");
+        let result = kernel.run_op_count(5000);
+
+        debug!("printing output...");
+        for TS(tag, s) in &kernel.events() {
+            match tag {
+                WriteEvent::StdoutWrite => send(Out::Stdout(s.to_string())),
+                WriteEvent::StderrWrite => send(Out::Stderr(s.to_string())),
+                WriteEvent::StdlogWrite => send(Out::Stdlog(s.to_string())),
+            }
+        }
+
+        debug!("checking for ecalls...");
+        let ecall_req = match result {
+            Ok(RuntimeStatus::Running) => {
+                env.wait(1).await;
+                continue;
+            }
+            Ok(RuntimeStatus::Blocked(req)) => req,
+            Ok(RuntimeStatus::Exited(code)) => {
+                env.wait(0).await;
+                continue;
+            }
+            Err(e) => {
+                let e_str = print_error(&e, kernel.cur_mem().unwrap(), &files);
+                debug!("{}", e_str);
+                send(Out::Stderr(e_str));
+                env.wait(0).await;
+                continue;
+            }
+        };
+
+        debug!("Sending an ecall");
+        send(Out::Ecall(ecall_req));
 
         env.wait(0).await;
     }
