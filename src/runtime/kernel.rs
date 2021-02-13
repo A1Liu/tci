@@ -155,6 +155,7 @@ impl Kernel {
 
             match res {
                 Err(e) => {
+                    proc.tag_mut().status = IRtStat::Exited(1);
                     self.active_count -= 1;
                     return Err(e);
                 }
@@ -163,7 +164,12 @@ impl Kernel {
 
                     match &val {
                         Ok(RuntimeStatus::Exited(e)) => self.active_count -= 1,
-                        Err(e) => self.active_count -= 1,
+                        Err(e) => {
+                            self.active_count -= 1;
+                            let mut proc =
+                                self.processes.get_mut(self.current_proc as usize).unwrap();
+                            proc.tag_mut().status = IRtStat::Exited(1);
+                        }
                         Ok(x) => {}
                     }
 
