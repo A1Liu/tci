@@ -24,35 +24,19 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     match runtime.run(&program) {
         Ok(0) => {}
         Ok(code) => {
-            let mut writer = StringWriter::new();
-            for TS(_, s) in &runtime.events() {
-                writer.write_str(s).unwrap();
-            }
-
-            println!("\n{}", writer.into_string());
+            println!("\n{}", runtime.term_out());
             println!("\n{:?}", runtime.files);
             panic!("Nonzero return code");
         }
         Err(err) => {
-            let mut writer = StringWriter::new();
-            for TS(_, s) in &runtime.events() {
-                writer.write_str(s).unwrap();
-            }
-
-            println!("\n{}", writer.into_string());
+            println!("\n{}", runtime.term_out());
             let s = print_error(&err, runtime.cur_mem().unwrap(), files);
             println!("{}", s);
             panic!("\n{:?}", runtime.files);
         }
     };
 
-    let mut writer = StringWriter::new();
-    for TS(_, s) in &runtime.events() {
-        writer.write_str(s).unwrap();
-    }
-
-    let output = writer.into_string();
-
+    let output = runtime.term_out();
     std::println!("{}", output);
     if let Some(output_file) = output_file {
         match read_to_string(output_file) {

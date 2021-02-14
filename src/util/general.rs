@@ -5,6 +5,7 @@ use core::{fmt, mem, ops, str};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
 pub use alloc::boxed::Box;
+pub use alloc::collections::VecDeque;
 pub use alloc::string::{String, ToString};
 pub use alloc::vec::Vec;
 pub use alloc::{format, vec};

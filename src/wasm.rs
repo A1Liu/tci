@@ -112,6 +112,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         init
     };
     let mut kernel = Kernel::new(initial);
+    let mut term_out_buf = StringWriter::new();
 
     send(Out::Startup);
 
@@ -161,11 +162,12 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         let result = kernel.run_op_count(5000);
 
         debug!("printing output...");
-        for TS(tag, s) in &kernel.events() {
+        for TE(tag, s) in &kernel.events() {
+            write_utf8_lossy(&mut term_out_buf, s).unwrap();
             match tag {
-                WriteEvent::StdoutWrite => send(Out::Stdout(s.to_string())),
-                WriteEvent::StderrWrite => send(Out::Stderr(s.to_string())),
-                WriteEvent::StdlogWrite => send(Out::Stdlog(s.to_string())),
+                WriteEvent::StdoutWrite => send(Out::Stdout(term_out_buf.flush_string())),
+                WriteEvent::StderrWrite => send(Out::Stderr(term_out_buf.flush_string())),
+                WriteEvent::StdlogWrite => send(Out::Stdlog(term_out_buf.flush_string())),
             }
         }
 

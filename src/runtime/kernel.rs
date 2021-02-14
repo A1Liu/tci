@@ -21,15 +21,25 @@ pub enum KernStat {
 }
 
 pub struct Process {
-    pub parent: Option<u32>,
-    pub output: StringArray<WriteEvent>,
     pub memory: Memory,
     pub status: IRtStat,
 }
 
+impl Process {
+    pub fn new(binary: &BinaryData) -> Self {
+        Self {
+            memory: Memory::new(binary),
+            status: IRtStat::Running,
+        }
+    }
+}
+
 pub struct Kernel {
     pub files: FileSystem,
-
+    pub in_begin: usize,
+    pub input: String,
+    pub output: TaggedMultiArray<WriteEvent, u8>,
+    // pub pipes: TaggedMultiVec<usize, u8>,
     pub processes: TaggedMultiVec<Process, FdKind>,
 
     pub term_proc: u32,
@@ -44,6 +54,9 @@ impl Kernel {
     pub fn new(files: Vec<(String, u32, Vec<u8>)>) -> Self {
         Self {
             files: FileSystem::new(files),
+            in_begin: 0,
+            input: String::new(),
+            output: TaggedMultiArray::new(),
 
             processes: TaggedMultiVec::new(),
 
@@ -73,21 +86,22 @@ impl Kernel {
     }
 
     pub fn load_program(&mut self, binary: &BinaryData) -> u32 {
+        if self.term_proc != !0 {
+            let mut prev = self.processes.get_mut(self.term_proc as usize).unwrap();
+            prev.tag_mut().status = IRtStat::Exited(1);
+        }
+
         self.term_proc = self.processes.len() as u32;
         if self.current_proc == !0 {
             self.current_proc = self.term_proc;
         }
 
-        #[rustfmt::skip]
-        let fds = vec![FdKind::Stdin, FdKind::Stdout, FdKind::Stderr, FdKind::Stdlog];
-        let proc = Process {
-            parent: None,
-            output: StringArray::new(),
-            memory: Memory::new(binary),
-            status: IRtStat::Running,
-        };
+        let (i, o, proc) = (FdKind::TermIn, FdKind::TermOut, Process::new(binary));
 
-        self.processes.push(proc, fds);
+        self.in_begin = 0;
+        self.input.clear();
+        mem::drop(mem::replace(&mut self.output, TaggedMultiArray::new()));
+        self.processes.push(proc, vec![i, o, o, o]);
         self.active_count += 1;
         return self.term_proc;
     }
@@ -235,10 +249,24 @@ impl Kernel {
             } => {
                 let to_ret = match proc.get(fd as usize) {
                     None => EcallError::DoesntExist.to_u64(),
-                    Some(FdKind::Stdin) => unimplemented!("stdin"),
-                    Some(FdKind::Stdout) => EcallError::ReadStdout.to_u64(),
-                    Some(FdKind::Stderr) => EcallError::ReadStderr.to_u64(),
-                    Some(FdKind::Stdlog) => EcallError::ReadStdlog.to_u64(),
+                    Some(FdKind::TermIn) => {
+                        let end = core::cmp::min(self.input.len(), len as usize);
+                        let bytes = &self.input.as_bytes()[(self.in_begin as usize)..end];
+                        proc.tag_mut().memory.write_bytes(buf, bytes)?;
+
+                        let begin = self.in_begin as usize;
+                        self.in_begin = if end == self.input.len() {
+                            self.input.clear();
+                            0
+                        } else {
+                            end
+                        };
+
+                        (end - begin) as u64
+                    }
+                    Some(FdKind::TermOut) => EcallError::ReadTermOut.to_u64(),
+                    Some(FdKind::TermErr) => EcallError::ReadTermErr.to_u64(),
+                    Some(FdKind::TermLog) => EcallError::ReadTermLog.to_u64(),
                     Some(FdKind::FileSys(fd)) => {
                         match self.files.read_file_range(*fd, begin, len) {
                             Ok(file_buffer) => {
@@ -255,19 +283,28 @@ impl Kernel {
                 return Ok(RuntimeStatus::Running);
             }
             EcallExt::WriteFd { buf, begin, fd } => {
-                let event = match proc.get(fd as usize) {
+                match proc.get(fd as usize).map(|a| *a) {
                     None => {
                         proc.tag_mut().memory.push(EcallError::DoesntExist.to_u64());
                         return Ok(RuntimeStatus::Running);
                     }
-                    Some(FdKind::Stdin) => {
-                        proc.tag_mut().memory.push(EcallError::WriteStdin.to_u64());
+                    Some(FdKind::TermIn) => {
+                        proc.tag_mut().memory.push(EcallError::WriteTermIn.to_u64());
                         return Ok(RuntimeStatus::Running);
                     }
-                    Some(FdKind::Stdout) => WriteEvent::StdoutWrite,
-                    Some(FdKind::Stderr) => WriteEvent::StderrWrite,
-                    Some(FdKind::Stdlog) => WriteEvent::StdlogWrite,
-                    Some(&FdKind::FileSys(fd)) => {
+                    Some(FdKind::TermOut) => {
+                        self.output.push_from(WriteEvent::StdoutWrite, &buf);
+                        proc.tag_mut().memory.push(0u64);
+                    }
+                    Some(FdKind::TermErr) => {
+                        self.output.push_from(WriteEvent::StderrWrite, &buf);
+                        proc.tag_mut().memory.push(0u64);
+                    }
+                    Some(FdKind::TermLog) => {
+                        self.output.push_from(WriteEvent::StdlogWrite, &buf);
+                        proc.tag_mut().memory.push(0u64);
+                    }
+                    Some(FdKind::FileSys(fd)) => {
                         self.files
                             .write_to_file_range(fd, begin, &buf)
                             .map(|len| proc.tag_mut().memory.push(len as u64))
@@ -275,30 +312,33 @@ impl Kernel {
                         return Ok(RuntimeStatus::Blocked(EcallExt::WriteFd { buf, begin, fd }));
                     }
                     _ => unimplemented!(),
-                };
-
-                let mut string = StringWriter::new();
-                write_utf8_lossy(&mut string, &buf).unwrap();
-
-                proc.tag_mut().output.push(event, &string.into_string());
-                proc.tag_mut().memory.push(0u64);
+                }
 
                 return Ok(RuntimeStatus::Running);
             }
             EcallExt::AppendFd { buf, fd } => {
-                let event = match proc.get(fd as usize) {
+                match proc.get(fd as usize).map(|a| *a) {
                     None => {
                         proc.tag_mut().memory.push(EcallError::DoesntExist.to_u64());
                         return Ok(RuntimeStatus::Running);
                     }
-                    Some(FdKind::Stdin) => {
-                        proc.tag_mut().memory.push(EcallError::WriteStdin.to_u64());
+                    Some(FdKind::TermIn) => {
+                        proc.tag_mut().memory.push(EcallError::WriteTermIn.to_u64());
                         return Ok(RuntimeStatus::Running);
                     }
-                    Some(FdKind::Stdout) => WriteEvent::StdoutWrite,
-                    Some(FdKind::Stderr) => WriteEvent::StderrWrite,
-                    Some(FdKind::Stdlog) => WriteEvent::StdlogWrite,
-                    Some(&FdKind::FileSys(fd)) => {
+                    Some(FdKind::TermOut) => {
+                        self.output.push_from(WriteEvent::StdoutWrite, &buf);
+                        proc.tag_mut().memory.push(0u64);
+                    }
+                    Some(FdKind::TermErr) => {
+                        self.output.push_from(WriteEvent::StderrWrite, &buf);
+                        proc.tag_mut().memory.push(0u64);
+                    }
+                    Some(FdKind::TermLog) => {
+                        self.output.push_from(WriteEvent::StdlogWrite, &buf);
+                        proc.tag_mut().memory.push(0u64);
+                    }
+                    Some(FdKind::FileSys(fd)) => {
                         self.files
                             .append_to_file(fd, &buf)
                             .map(|len| proc.tag_mut().memory.push(len as u64))
@@ -306,13 +346,7 @@ impl Kernel {
                         return Ok(RuntimeStatus::Blocked(EcallExt::AppendFd { buf, fd }));
                     }
                     _ => unimplemented!(),
-                };
-
-                let mut string = StringWriter::new();
-                write_utf8_lossy(&mut string, &buf).unwrap();
-
-                proc.tag_mut().output.push(event, &string.into_string());
-                proc.tag_mut().memory.push(0u64);
+                }
 
                 return Ok(RuntimeStatus::Running);
             }
@@ -321,12 +355,18 @@ impl Kernel {
         }
     }
 
-    pub fn events(&mut self) -> StringArray<WriteEvent> {
-        let proc = self.processes.get_mut(self.term_proc as usize);
-        if let Some(mut proc) = proc {
-            return mem::replace(&mut proc.tag_mut().output, StringArray::new());
+    pub fn events(&mut self) -> TaggedMultiArray<WriteEvent, u8> {
+        return mem::replace(&mut self.output, TaggedMultiArray::new());
+    }
+
+    pub fn term_out(&mut self) -> String {
+        let mut out = StringWriter::new();
+        for TE(tag, s) in &self.output {
+            write_utf8_lossy(&mut out, s).unwrap();
         }
 
-        return StringArray::new();
+        mem::drop(mem::replace(&mut self.output, TaggedMultiArray::new()));
+
+        return out.into_string();
     }
 }

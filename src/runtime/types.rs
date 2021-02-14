@@ -546,10 +546,10 @@ pub enum EcallError {
     OutOfRange = 5,
 
     // stdin/stdout/stderr misuse
-    ReadStdout = 6,
-    ReadStderr = 7,
-    ReadStdlog = 8,
-    WriteStdin = 9,
+    ReadTermOut = 6,
+    ReadTermErr = 7,
+    ReadTermLog = 8,
+    WriteTermIn = 9,
     StreamLen = 10,
 
     InvalidOpenMode = 11,
@@ -572,10 +572,11 @@ pub enum OpenMode {
 
 #[derive(Debug, Clone, Copy)]
 pub enum FdKind {
-    Stdin,
-    Stdout,
-    Stderr,
-    Stdlog,
+    TermIn,
+    TermOut,
+    TermErr,
+    TermLog,
+
     FileSys(u32),
     ProcessStdin(u32),
     ProcessStdout(u32),

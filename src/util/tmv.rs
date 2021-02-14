@@ -219,6 +219,15 @@ impl<T, E> TaggedMultiVec<T, E> {
 
         return Some(TMVec { tag, data });
     }
+
+    pub fn last_mut(&mut self) -> Option<TMVecMut<T, E>> {
+        if self.tags.len() == 0 {
+            return None;
+        }
+
+        let idx = self.len() - 1;
+        return Some(TMVecMut { tmv: self, idx });
+    }
 }
 
 impl<T, E> TaggedMultiVec<T, E>
@@ -316,15 +325,21 @@ impl<'a, T, E> TMVecMut<'a, T, E> {
         let elem_ptr = self.tmv.elements[block.elem_idx + block.elem_len].as_mut_ptr();
         return Some(unsafe { ptr::read(elem_ptr) });
     }
+}
 
-    pub fn as_slice(&self) -> &[E] {
+impl<'a, T, E> ops::Deref for TMVecMut<'a, T, E> {
+    type Target = [E];
+
+    fn deref(&self) -> &Self::Target {
         let block = &self.tmv.tags[self.idx];
         let elements = &self.tmv.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
         let data = unsafe { mem::transmute::<&[MaybeUninit<E>], &[E]>(elements) };
         return data;
     }
+}
 
-    pub fn as_slice_mut(&mut self) -> &mut [E] {
+impl<'a, T, E> ops::DerefMut for TMVecMut<'a, T, E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         let block = &self.tmv.tags[self.idx];
         let elements = &mut self.tmv.elements[block.elem_idx..(block.elem_idx + block.elem_len)];
         let data = unsafe { mem::transmute::<&mut [MaybeUninit<E>], &mut [E]>(elements) };
@@ -357,20 +372,6 @@ where
             self.tmv.elements[block.elem_idx + block.elem_len] = MaybeUninit::new(elem.clone());
             block.elem_len += 1;
         }
-    }
-}
-
-impl<'a, T, E> ops::Deref for TMVecMut<'a, T, E> {
-    type Target = [E];
-
-    fn deref(&self) -> &Self::Target {
-        return self.as_slice();
-    }
-}
-
-impl<'a, T, E> ops::DerefMut for TMVecMut<'a, T, E> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        return self.as_slice_mut();
     }
 }
 
