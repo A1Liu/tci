@@ -139,7 +139,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                     };
 
                     send(Out::Compiled);
-                    kernel.load_program(&program);
+                    kernel.load_term_program(&program);
                 }
                 In::Ecall(res) => match kernel.resolve_result(res) {
                     Ok(()) => {}

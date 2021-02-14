@@ -85,10 +85,13 @@ impl Kernel {
         return Some(&tag.memory);
     }
 
-    pub fn load_program(&mut self, binary: &BinaryData) -> u32 {
+    pub fn load_term_program(&mut self, binary: &BinaryData) -> u32 {
         if self.term_proc != !0 {
             let mut prev = self.processes.get_mut(self.term_proc as usize).unwrap();
-            prev.tag_mut().status = IRtStat::Exited(1);
+            match &mut prev.tag_mut().status {
+                IRtStat::Exited(_) => {}
+                x => *x = IRtStat::Exited(1),
+            }
         }
 
         self.term_proc = self.processes.len() as u32;
@@ -97,7 +100,6 @@ impl Kernel {
         }
 
         let (i, o, proc) = (FdKind::TermIn, FdKind::TermOut, Process::new(binary));
-
         self.in_begin = 0;
         self.input.clear();
         mem::drop(mem::replace(&mut self.output, TaggedMultiArray::new()));
@@ -106,30 +108,8 @@ impl Kernel {
         return self.term_proc;
     }
 
-    // pub fn run_debug(&mut self, binary: &BinaryData, files: &FileDb) -> Result<i32, IError> {
-    //     loop {
-    //         let mut proc = self.processes.get_mut(proc_id as usize).unwrap();
-
-    //         let memory = &mut proc.tag_mut().memory;
-    //         if memory.loc != NO_FILE {
-    //             println!("{}", files.loc_to_string(memory.loc));
-    //         }
-
-    //         println!("{:?}", memory.expr_stack);
-    //         let (count, res) = run_op_count(memory, !0);
-    //         self.current_proc_op_count += count;
-    //         println!("{:?}\n", memory.expr_stack);
-
-    //         if let Some(ecall) = res? {
-    //             if let RuntimeStatus::Exited(e) = self.ecall(self.current_proc, ecall)? {
-    //                 return Ok(e);
-    //             }
-    //         }
-    //     }
-    // }
-
     pub fn run(&mut self, binary: &BinaryData) -> Result<i32, IError> {
-        let proc_id = self.load_program(binary);
+        let proc_id = self.load_term_program(binary);
 
         loop {
             let proc = self.processes.get_mut(proc_id as usize).unwrap();
@@ -155,6 +135,10 @@ impl Kernel {
 
             if let IRtStat::Exited(_) = proc.tag().status {
                 self.current_proc_op_count = 0;
+                if self.current_proc == self.term_proc {
+                    self.term_proc = !0;
+                }
+
                 self.current_proc += 1;
                 if self.current_proc as usize == self.processes.len() {
                     self.current_proc = 0;
@@ -171,6 +155,10 @@ impl Kernel {
                 Err(e) => {
                     proc.tag_mut().status = IRtStat::Exited(1);
                     self.active_count -= 1;
+                    if self.current_proc == self.term_proc {
+                        self.term_proc = !0;
+                    }
+
                     return Err(e);
                 }
                 Ok(Some(ecall)) => {
@@ -180,6 +168,10 @@ impl Kernel {
                         Ok(RuntimeStatus::Exited(e)) => self.active_count -= 1,
                         Err(e) => {
                             self.active_count -= 1;
+                            if self.current_proc == self.term_proc {
+                                self.term_proc = !0;
+                            }
+
                             let mut proc =
                                 self.processes.get_mut(self.current_proc as usize).unwrap();
                             proc.tag_mut().status = IRtStat::Exited(1);
@@ -193,6 +185,10 @@ impl Kernel {
             }
 
             self.current_proc_op_count = 0;
+            if self.current_proc == self.term_proc {
+                self.term_proc = !0;
+            }
+
             self.current_proc += 1;
             if self.current_proc as usize == self.processes.len() {
                 self.current_proc = 0;
