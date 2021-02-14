@@ -35,3 +35,4 @@ opt-level = "s"
 
 [profile.release]
 opt-level = "z"
+lto = true
