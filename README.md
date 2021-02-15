@@ -27,7 +27,6 @@ Lots of stuff left to do still.
 
 #### Runtime Environment
 - Leak detection: manual memory management is hard sometimes
-- Specialized errors for `str` functions: Strings are harder than in most languages
 - Processes and threads: students often learn multithreading paradigms in C
 - Program arguments && Standard input - good functionality to have
 - `unistd.h`: because sometimes professors be like that
