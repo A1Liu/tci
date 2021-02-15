@@ -35,6 +35,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <tci.h>
 
 // define this globally (e.g. gcc -DPRINTF_INCLUDE_CONFIG_H ...) to include the
@@ -843,7 +844,8 @@ static int _vsnprintf(out_fct_type out, char *buffer, const size_t maxlen,
 
     case 's': {
       const char *p = va_arg(va, char *);
-      unsigned int l = _strnlen_s(p, precision ? precision : (size_t)-1);
+      unsigned int l = precision ? strnlen(p, precision) : strlen(p);
+
       // pre padding
       if (flags & FLAGS_PRECISION) {
         l = (l < precision ? l : precision);

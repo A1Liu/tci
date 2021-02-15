@@ -121,6 +121,26 @@ impl Kernel {
         }
     }
 
+    pub fn run_debug(&mut self, binary: &BinaryData) -> Result<i32, IError> {
+        let proc_id = self.load_term_program(binary);
+        let mut out = StringWriter::new();
+
+        loop {
+            let proc = self.processes.get_mut(proc_id as usize).unwrap();
+            if let IRtStat::Exited(c) = proc.tag().status {
+                return Ok(c);
+            }
+
+            self.run_op_count(!0)?;
+
+            for TE(tag, s) in &self.output {
+                write_utf8_lossy(&mut out, s).unwrap();
+            }
+
+            println!(out.flush_string());
+        }
+    }
+
     pub fn run_op_count(&mut self, mut count: u32) -> Result<RuntimeStatus, IError> {
         while count > 0 && self.active_count != 0 {
             let mut proc = match self.processes.get_mut(self.current_proc as usize) {

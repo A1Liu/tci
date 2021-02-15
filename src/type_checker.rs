@@ -1199,8 +1199,10 @@ pub fn check_decl_rec(
                         let expr = eval_expr(check_expr(locals, expr)?)?;
                         let loc = expr.loc;
                         let expr = match expr.kind {
+                            TCExprKind::U32Lit(i) => i as u64,
                             TCExprKind::I32Lit(i) => i.try_into().map_err(neg_arr_size(loc))?,
-                            TCExprKind::U32Lit(i) => i,
+                            TCExprKind::I64Lit(i) => i.try_into().map_err(neg_arr_size(loc))?,
+                            TCExprKind::U64Lit(i) => i,
                             x => {
                                 return Err(error!(
                                     "cannot use expression as array type",
@@ -2363,7 +2365,7 @@ pub fn check_un_op(
                 TCPrimType::Pointer { stride } => {
                     let or_else = || ptr_to_incomplete_type(env.symbols(), target.ty, loc);
                     let stride = stride.ok_or_else(or_else)? as u64;
-                    (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64))
+                    (TCExprKind::U64Lit(stride), TCType::new(TCTypeBase::U64))
                 }
 
                 x => unimplemented!("predecr for {:?}", x),
@@ -2387,14 +2389,18 @@ pub fn check_un_op(
 
             let (kind, ty) = match op_type {
                 TCPrimType::I8 => (TCExprKind::I8Lit(1), TCType::new(TCTypeBase::I8)),
+                TCPrimType::U8 => (TCExprKind::U8Lit(1), TCType::new(TCTypeBase::U8)),
+                TCPrimType::I16 => (TCExprKind::I16Lit(1), TCType::new(TCTypeBase::I16)),
+                TCPrimType::U16 => (TCExprKind::U16Lit(1), TCType::new(TCTypeBase::U16)),
                 TCPrimType::I32 => (TCExprKind::I32Lit(1), TCType::new(TCTypeBase::I32)),
                 TCPrimType::U32 => (TCExprKind::U32Lit(1), TCType::new(TCTypeBase::U32)),
+                TCPrimType::I64 => (TCExprKind::I64Lit(1), TCType::new(TCTypeBase::I64)),
                 TCPrimType::U64 => (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64)),
 
                 TCPrimType::Pointer { stride } => {
                     let or_else = || ptr_to_incomplete_type(env.symbols(), target.ty, loc);
                     let stride = stride.ok_or_else(or_else)? as u64;
-                    (TCExprKind::U64Lit(1), TCType::new(TCTypeBase::U64))
+                    (TCExprKind::U64Lit(stride), TCType::new(TCTypeBase::U64))
                 }
                 x => unimplemented!("preincr for {:?}", x),
             };

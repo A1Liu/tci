@@ -60,6 +60,10 @@ char *strerror(int errnum);
 // null character.
 size_t strlen(const char *str);
 
+// Computes the length of the string str up to but not including the terminating
+// null character.
+size_t strnlen(const char *str, size_t max_length);
+
 // Finds the first character in the string str1 that matches any character
 // specified in str2.
 char *strpbrk(const char *str1, const char *str2);

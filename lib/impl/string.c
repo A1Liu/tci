@@ -18,12 +18,20 @@ void *memset(void *s, int _c, size_t n) {
   return s;
 }
 
+size_t strnlen(const char *str, size_t max_len) {
+  for (char *begin = str, *len = max_len; len--; str++)
+    if (!*str)
+      return str - begin;
+
+  return max_len;
+}
+
 size_t strlen(char *str) {
   tci_assert_str(str);
 
-  for (char *len = str;; str++)
+  for (char *begin = str;; str++)
     if (!*str)
-      return str - len;
+      return str - begin;
 }
 
 int strcmp(const char *left, const char *right) {
