@@ -1,9 +1,42 @@
 import { h } from "preact";
-import { useSelector } from "react-redux";
+import { useRef } from "preact/hooks";
+import { useSelector, useDispatch } from "react-redux";
 import styled from "styled-components";
 
 export default function Terminal() {
   const content = useSelector((state) => state.terminal);
+  const dispatch = useDispatch();
+  const keyPresses = useRef({ command: false, control: false, alt: false });
+
+  const downListener = (e) => {
+    switch (e.key) {
+      case "Control": // control
+        keyPresses.control = true;
+        break;
+      case "Alt": // option
+        keyPresses.alt = true;
+        break;
+      case "Meta": // command (apple)
+        keyPresses.meta = true;
+        break;
+      default:
+        dispatch({ type: "CharIn", payload: e.key });
+    }
+  };
+
+  const upListener = (e) => {
+    switch (e.key) {
+      case "Control": // control
+        keyPresses.control = false;
+        break;
+      case "Alt": // option
+        keyPresses.alt = false;
+        break;
+      case "Meta": // command (apple)
+        keyPresses.meta = false;
+        break;
+    }
+  };
 
   return (
     <div>
@@ -13,6 +46,9 @@ export default function Terminal() {
       <TerminalText
         value={content}
         readOnly
+        tabIndex={0}
+        onKeyDown={downListener}
+        onKeyUp={upListener}
         style={{
           backgroundColor: "#1E1E1E",
           color: "#00FF00",

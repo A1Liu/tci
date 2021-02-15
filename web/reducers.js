@@ -99,6 +99,8 @@ const appReducer = (state = initialState, action) => {
       return { ...state, files };
     }
 
+    case "Stdin":
+      return { ...state, terminal: state.terminal + payload };
     case "Stdout":
       return { ...state, terminal: state.terminal + payload };
     case "Stderr":
@@ -153,6 +155,9 @@ const tciMiddleware = (store) => {
         writeFile(current, payload);
         return next(action);
 
+      case "CharIn":
+        return worker.postMessage({ type: "CharIn", payload });
+
       case "DelFile":
         update("sources", (files) => {
           delete files[payload];
@@ -170,8 +175,7 @@ const tciMiddleware = (store) => {
         update("source:" + payload.name, (_) => payload.contents);
         return next(action);
       case "Run":
-        worker.postMessage({ type: "Run", payload: files });
-        break;
+        return worker.postMessage({ type: "Run", payload: files });
 
       default:
         return next(action);

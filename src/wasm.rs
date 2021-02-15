@@ -11,6 +11,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum InMessage {
+    CharIn(char),
     Run(HashMap<String, String>),
     Ecall(EcallResult),
 }
@@ -28,6 +29,7 @@ pub enum OutMessage {
     InvalidInput(String),
     JumpTo(CodeLoc),
     Debug(String),
+    Stdin(String),
     Stdout(String),
     Stderr(String),
     Stdlog(String),
@@ -121,6 +123,9 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
         while let Some(input) = recv()? {
             match input {
+                In::CharIn(c) => {
+                    write!(kernel, "{}", c).unwrap();
+                }
                 In::Run(sources) => {
                     files = FileDb::new();
                     for (name, contents) in sources {
@@ -154,6 +159,16 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         }
 
         if kernel.active_count == 0 {
+            for TE(tag, s) in &kernel.events() {
+                write_utf8_lossy(&mut term_out_buf, s).unwrap();
+                match tag {
+                    WriteEvent::StdinWrite => send(Out::Stdin(term_out_buf.flush_string())),
+                    WriteEvent::StdoutWrite => send(Out::Stdout(term_out_buf.flush_string())),
+                    WriteEvent::StderrWrite => send(Out::Stderr(term_out_buf.flush_string())),
+                    WriteEvent::StdlogWrite => send(Out::Stdlog(term_out_buf.flush_string())),
+                }
+            }
+
             env.wait(0).await;
             continue;
         }
@@ -165,6 +180,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         for TE(tag, s) in &kernel.events() {
             write_utf8_lossy(&mut term_out_buf, s).unwrap();
             match tag {
+                WriteEvent::StdinWrite => send(Out::Stdin(term_out_buf.flush_string())),
                 WriteEvent::StdoutWrite => send(Out::Stdout(term_out_buf.flush_string())),
                 WriteEvent::StderrWrite => send(Out::Stderr(term_out_buf.flush_string())),
                 WriteEvent::StdlogWrite => send(Out::Stdlog(term_out_buf.flush_string())),

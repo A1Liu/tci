@@ -464,6 +464,7 @@ pub enum Opcode {
 
 #[derive(Debug)]
 pub enum WriteEvent {
+    StdinWrite,
     StdoutWrite,
     StderrWrite,
     StdlogWrite,

@@ -386,3 +386,15 @@ impl Kernel {
         return out.into_string();
     }
 }
+
+// TODO replace this with version that uses bytes, replaces
+impl Write for Kernel {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        if self.term_proc != !0 {
+            self.input.push_str(s);
+        }
+
+        self.output.push_from(WriteEvent::StdinWrite, s.as_bytes());
+        return Ok(());
+    }
+}
