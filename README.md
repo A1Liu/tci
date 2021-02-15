@@ -12,8 +12,15 @@ for the first time. This interpreter aims to address this problem by giving
 better error messages and more runtime diagnostic tools.
 
 ## Features
-- Better debug information: Stack traces on segmentation fault
-- Hard errors: Segmentation fault on use-after-free and buffer overflow
+- Better debug information
+  - Stack traces on segmentation fault
+- Harder errors: the following all cause a segmentation fault
+  - use-after-free
+  - buffer overflow
+  - double free
+  - out of memory
+  - stack overflow
+  - calling string functions with a string that isn't null-terminated
 
 ## Todo
 Lots of stuff left to do still.
@@ -22,7 +29,7 @@ Lots of stuff left to do still.
 - Const
 - Enums
 - Designated initializers
-- `#if` full support
+- full support for `#if`
 - Better macro debug messages
 - Hardening against invalid input
 
@@ -36,9 +43,8 @@ Lots of stuff left to do still.
 - Full kernel replayability: go backwards in time when using TCI as debugger
 
 ## Restrictions and Incompatibilities
-- Implicit types on functions aren't supported
-- Implicit function declarations aren't supported
-- No support for multithreading
+- Implicit types on functions will never be supported
+- Implicit function declarations will never be supported
 
 # Credit
 - TCI uses [`codespan-reporting`](https://github.com/brendanzab/codespan) to make
