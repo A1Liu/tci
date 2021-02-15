@@ -34,4 +34,9 @@ void tci_throw_error(const char *name, const char *message,
 
 void *tci_ecall(int ecall_num, ...);
 
+void tci_assert_str(const char *str);
+
+#define tci_assert_str(str)                                                    \
+  (__tci_builtin_push(str), __tci_builtin_op("AssertStr", sizeof(void)))
+
 #endif

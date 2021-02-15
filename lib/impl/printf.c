@@ -586,6 +586,8 @@ static size_t _etoa(out_fct_type out, char *buffer, size_t idx, size_t maxlen,
 // internal vsnprintf
 static int _vsnprintf(out_fct_type out, char *buffer, const size_t maxlen,
                       const char *format, va_list va) {
+  tci_assert_str(format);
+
   unsigned int flags, width, precision, n;
   size_t idx = 1U;
 

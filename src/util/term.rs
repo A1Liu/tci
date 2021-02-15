@@ -419,8 +419,10 @@ impl Diagnostic {
         // ```
         for note in &self.notes {
             renderer.render_snippet_note(outer_padding, note)?;
+            renderer.render_empty()?;
         }
-        renderer.render_empty()
+
+        return Ok(());
     }
 }
 

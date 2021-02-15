@@ -142,6 +142,7 @@ lazy_static! {
         new_file!(@HEADER, "stdio.h");
         new_file!(@HEADER, "stdlib.h");
         new_file!(@HEADER, "string.h");
+        new_file!(@HEADER, "strings.h");
         new_file!(@HEADER, "stddef.h");
         new_file!(@HEADER, "stdint.h");
         new_file!(@HEADER, "stdarg.h");
@@ -157,6 +158,7 @@ lazy_static! {
         new_file!(@IMPL, "stdlib.c");
         new_file!(@IMPL, "str_to_x.c");
         new_file!(@IMPL, "string.c");
+        new_file!(@IMPL, "strings.c");
         new_file!(@IMPL, "ctype.c");
         new_file!(@IMPL, "files.c");
         new_file!(@IMPL, "errors.c");

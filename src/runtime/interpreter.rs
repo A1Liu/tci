@@ -1060,6 +1060,11 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
                 )
             }
         },
+
+        Opcode::AssertStr => {
+            let string = memory.pop()?;
+            memory.cstring_bytes(string)?;
+        }
     }
 
     return Ok(None);

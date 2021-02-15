@@ -451,7 +451,10 @@ impl Memory {
         }
 
         if idx == from_bytes.len() {
-            return ierr!("MissingNullTerminator", "string missing null terminator");
+            return ierr!(
+                "MissingNullTerminator",
+                "valid C string end in '\\0' character"
+            );
         }
 
         return Ok(&from_bytes[..idx]);

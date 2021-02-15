@@ -1,19 +1,5 @@
-#include <stdint.h>
 #include <string.h>
-
-void bcopy(const void *src, void *dest, size_t len) {
-  if (dest < src) {
-    const char *firsts = (const char *)src;
-    char *firstd = (char *)dest;
-    while (len--)
-      *firstd++ = *firsts++;
-  } else {
-    const char *lasts = (const char *)src + (len - 1);
-    char *lastd = (char *)dest + (len - 1);
-    while (len--)
-      *lastd-- = *lasts--;
-  }
-}
+#include <tci.h>
 
 void *memcpy(void *_dest, void *_src, size_t n) {
   char *src = (char *)_src;
@@ -25,22 +11,25 @@ void *memcpy(void *_dest, void *_src, size_t n) {
   return dest;
 }
 
-void *memset(void *s, int c, size_t n) {
-  unsigned char *p = s;
-  while (n--)
-    *p++ = (unsigned char)c;
+void *memset(void *s, int _c, size_t n) {
+  for (unsigned char *p = s, c = (unsigned char)_c; n--;)
+    *p++ = c;
+
   return s;
 }
 
 size_t strlen(char *str) {
-  size_t len = 0;
-  for (; *str; len++, str = str + 1)
-    ;
+  tci_assert_str(str);
 
-  return len;
+  for (char *len = str;; str++)
+    if (!*str)
+      return str - len;
 }
 
 int strcmp(const char *left, const char *right) {
+  tci_assert_str(left);
+  tci_assert_str(right);
+
   for (; *left && !(*left - *right); left++, right++)
     ;
 

@@ -458,6 +458,8 @@ pub enum Opcode {
     Throw,
 
     Ecall,
+
+    AssertStr,
 }
 
 #[derive(Debug)]

@@ -16,6 +16,16 @@ better error messages and more runtime diagnostic tools.
 - Hard errors: Segmentation fault on use-after-free and buffer overflow
 
 ## Todo
+Lots of stuff left to do still.
+
+#### Compiler
+- Const
+- Enums
+- Designated initializers
+- `#if` full support
+- Better macro debug messages
+
+#### Runtime Environment
 - Leak detection: manual memory management is hard sometimes
 - Specialized errors for `str` functions: Strings are harder than in most languages
 - Processes and threads: students often learn multithreading paradigms in C

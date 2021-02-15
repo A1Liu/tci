@@ -184,7 +184,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             }
             Err(e) => {
                 let e_str = print_error(&e, kernel.cur_mem().unwrap(), &files);
-                debug!("{}", e_str);
                 send(Out::Stderr(e_str));
                 env.wait(0).await;
                 continue;
