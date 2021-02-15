@@ -12,10 +12,18 @@ for the first time. This interpreter aims to address this problem by giving
 better error messages and more runtime diagnostic tools.
 
 ## Features
-- Fully replayable memory (WIP)
-- Includes
-- Stack traces on segmentation fault
-- Segmentation fault on use-after-free and buffer overflow
+- Better debug information: Stack traces on segmentation fault
+- Hard errors: Segmentation fault on use-after-free and buffer overflow
+
+## Todo
+- Leak detection: manual memory management is hard sometimes
+- Specialized errors for `str` functions: Strings are harder than in most languages
+- Processes and threads: students often learn multithreading paradigms in C
+- Program arguments && Standard input - good functionality to have
+- `unistd.h`: because sometimes professors be like that
+- `time.h`: because sometimes you gotta do that
+- Variable/type information at runtime: allows student to use TCI as a debugger
+- Full kernel replayability: go backwards in time when using TCI as debugger
 
 ## Restrictions and Incompatibilities
 - Implicit types on functions aren't supported
