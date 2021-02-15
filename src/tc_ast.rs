@@ -839,6 +839,18 @@ impl CloneInto<'static> for TCType {
 }
 
 impl TCType {
+    pub fn array_mod(len: u64, loc: CodeLoc) -> Result<TCTypeModifier, Error> {
+        if len >= u32::MAX as u64 {
+            return Err(error!(
+                "array length must be a number less than UINT_MAX",
+                loc,
+                format!("found here to be {}", len)
+            ));
+        }
+
+        return Ok(TCTypeModifier::Array(len as u32));
+    }
+
     pub fn to_func_type_strict(&self, alloc: &impl Allocator<'static>) -> Option<TCFuncType> {
         if self.mods.len() == 0 {
             if let Some(def) = self.get_typedef() {

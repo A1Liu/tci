@@ -24,6 +24,7 @@ Lots of stuff left to do still.
 - Designated initializers
 - `#if` full support
 - Better macro debug messages
+- Hardening against invalid input
 
 #### Runtime Environment
 - Leak detection: manual memory management is hard sometimes

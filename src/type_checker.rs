@@ -1211,7 +1211,7 @@ pub fn check_decl_rec(
                             }
                         };
 
-                        tc_type.mods.push(TCTypeModifier::Array(expr as u32));
+                        tc_type.mods.push(TCType::array_mod(expr, loc)?);
                     }
                 }
             }
