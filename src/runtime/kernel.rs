@@ -397,7 +397,6 @@ impl Kernel {
     }
 }
 
-// TODO replace this with version that uses bytes, replaces
 impl Write for Kernel {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         return self.write(s.as_bytes());
