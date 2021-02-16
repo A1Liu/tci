@@ -1,8 +1,7 @@
 #include <stdarg.h>
 #include <stddef.h>
-#include <tci.h>
-
 #include <stdio.h>
+#include <tci.h>
 
 size_t tci_var_size(void *var) {
   __tci_builtin_push(var);

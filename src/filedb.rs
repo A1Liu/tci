@@ -139,22 +139,30 @@ lazy_static! {
         }
 
         new_file!(@HEADER, "tci.h");
-        new_file!(@HEADER, "stdio.h");
-        new_file!(@HEADER, "stdlib.h");
+
         new_file!(@HEADER, "string.h");
         new_file!(@HEADER, "strings.h");
+
+        new_file!(@HEADER, "stdio.h");
+        new_file!(@HEADER, "stdlib.h");
         new_file!(@HEADER, "stddef.h");
         new_file!(@HEADER, "stdint.h");
         new_file!(@HEADER, "stdarg.h");
         new_file!(@HEADER, "stdbool.h");
+
         new_file!(@HEADER, "float.h");
         new_file!(@HEADER, "ctype.h");
         new_file!(@HEADER, "errno.h");
         new_file!(@HEADER, "limits.h");
 
+        new_file!(@HEADER, "inttypes.h");
+
+        new_file!(@HEADER, "sys/types.h");
+
         new_file!(@IMPL, "tci.c");
         new_file!(@IMPL, "printf.c");
         new_file!(@IMPL, "sscanf.c");
+        new_file!(@IMPL, "scanf.c");
         new_file!(@IMPL, "stdlib.c");
         new_file!(@IMPL, "str_to_x.c");
         new_file!(@IMPL, "string.c");

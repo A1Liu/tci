@@ -21,7 +21,7 @@ fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     std::println!("compiled using {:?}", before_alloc().relative_to(&info));
     let mut runtime = Kernel::new(Vec::new());
 
-    match runtime.run_debug(&program) {
+    match runtime.run(&program) {
         Ok(0) => {}
         Ok(code) => {
             println!("\n{}", runtime.term_out());

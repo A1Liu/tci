@@ -37,7 +37,7 @@ impl Process {
 pub struct Kernel {
     pub files: FileSystem,
     pub in_begin: usize,
-    pub input: String,
+    pub input: Vec<u8>,
     pub output: TaggedMultiArray<WriteEvent, u8>,
     // pub pipes: TaggedMultiVec<usize, u8>,
     pub processes: TaggedMultiVec<Process, FdKind>,
@@ -55,7 +55,7 @@ impl Kernel {
         Self {
             files: FileSystem::new(files),
             in_begin: 0,
-            input: String::new(),
+            input: Vec::new(),
             output: TaggedMultiArray::new(),
 
             processes: TaggedMultiVec::new(),
@@ -267,7 +267,7 @@ impl Kernel {
                     None => EcallError::DoesntExist.to_u64(),
                     Some(FdKind::TermIn) => {
                         let end = core::cmp::min(self.input.len(), len as usize);
-                        let bytes = &self.input.as_bytes()[(self.in_begin as usize)..end];
+                        let bytes = &self.input[(self.in_begin as usize)..end];
                         proc.tag_mut().memory.write_bytes(buf, bytes)?;
 
                         let begin = self.in_begin as usize;
@@ -299,6 +299,7 @@ impl Kernel {
                 return Ok(RuntimeStatus::Running);
             }
             EcallExt::WriteFd { buf, begin, fd } => {
+                println!("{:?} {} {}", buf, begin, fd);
                 match proc.get(fd as usize).map(|a| *a) {
                     None => {
                         proc.tag_mut().memory.push(EcallError::DoesntExist.to_u64());
@@ -385,16 +386,20 @@ impl Kernel {
 
         return out.into_string();
     }
+
+    fn write(&mut self, s: &[u8]) -> core::fmt::Result {
+        if self.term_proc != !0 {
+            self.input.extend(s);
+        }
+
+        self.output.push_from(WriteEvent::StdinWrite, s);
+        return Ok(());
+    }
 }
 
 // TODO replace this with version that uses bytes, replaces
 impl Write for Kernel {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        if self.term_proc != !0 {
-            self.input.push_str(s);
-        }
-
-        self.output.push_from(WriteEvent::StdinWrite, s.as_bytes());
-        return Ok(());
+        return self.write(s.as_bytes());
     }
 }

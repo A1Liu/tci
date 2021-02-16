@@ -23,23 +23,28 @@
 
 #define FLAG_CREATE ((uint16_t)0x400)
 #define FLAG_CLEAR ((uint16_t)0x800)
-#define FLAG_CAN_READ ((uint16_t)0x1000)
 
-#define FLAG_READ_ONE ((uint16_t)0x2000)
-
+#define FLAG_STDIN_INIT ((uint16_t)0x14)  // FLAG_IO_INPUT + FLAG_LINE_BUF
 #define FLAG_STDOUT_INIT ((uint16_t)0x44) // FLAG_IO_APPEND + FLAG_LINE_BUF
 
-char __tci_stdout_buffer[BUFSIZ];
-FILE __tci_stdout_struct = {0, __tci_stdout_buffer, 0, BUFSIZ, 0, 1,
-                            0, FLAG_STDOUT_INIT};
+#define tci_buffer(fp)                                                         \
+  ((char *)((fp)->buffer_capacity <= 8U ? (void *)&(fp)->buffer : (fp)->buffer))
 
-char __tci_stderr_buffer[BUFSIZ];
-FILE __tci_stderr_struct = {0, __tci_stderr_buffer, 0, BUFSIZ, 0, 2,
-                            0, FLAG_STDOUT_INIT};
+static char __tci_stdin_buffer[BUFSIZ];
+static FILE __tci_stdin_struct = {0, __tci_stdin_buffer, 0, 0, BUFSIZ, 0, 1,
+                                  0, FLAG_STDIN_INIT};
+
+static char __tci_stdout_buffer[BUFSIZ];
+static FILE __tci_stdout_struct = {0, __tci_stdout_buffer, 0, 0, BUFSIZ, 0, 1,
+                                   0, FLAG_STDOUT_INIT};
+
+static char __tci_stderr_buffer[BUFSIZ];
+static FILE __tci_stderr_struct = {0, __tci_stderr_buffer, 0, 0, BUFSIZ, 0, 2,
+                                   0, FLAG_STDOUT_INIT};
 
 FILE *__tci_stdout = &__tci_stdout_struct;
 FILE *__tci_stderr = &__tci_stderr_struct;
-FILE *__tci_stdin;
+FILE *__tci_stdin = &__tci_stdin_struct;
 
 static inline uint16_t fopen_mode(const char *mode) {
   if (!strcmp(mode, "r"))
@@ -78,6 +83,7 @@ FILE *fopen(const char *name, const char *mode) {
   bool should_create = (flags & FLAG_CREATE) != 0,
        should_clear = (flags & FLAG_CLEAR) != 0;
   flags &= ~(FLAG_CLEAR | FLAG_CREATE); // clear the flags
+  flags |= FLAG_FULL_BUF;
   uint32_t open_mode = should_create + should_clear;
 
   uint64_t fd = tci_ecall(TCI_ECALL_OPEN_FD, name, open_mode);
@@ -105,9 +111,11 @@ FILE *fopen(const char *name, const char *mode) {
 
   FILE *fp = (uint8_t *)malloc(8U + sizeof(FILE) + BUFSIZ) + 8U;
   fp->buffer = (uint8_t *)(fp + 1);
-  fp->buffer_position = 0;
+  fp->buffer_pos = 0;
+  fp->buffer_readable_pos = 0;
   fp->buffer_capacity = BUFSIZ;
   fp->position = 0;
+
   fp->lock = 0;
   fp->fd = fd;
   fp->error = 0;
@@ -221,8 +229,10 @@ int fputc(int _c, FILE *fp) {
                     "tried to flush a file that isn't an output file", 1);
 
   char c = _c;
-  if (fp->buffer_capacity == 0) {
-    uint64_t ret = tci_write_out(fp->fd, fp->position, &c, 1, fp->flags);
+  if (!(fp->flags & FLAGS_BUF)) {
+    tci_throw_error("Why", "lmao", 0);
+
+    uint64_t ret = tci_write_out(fp->fd, fp->position++, &c, 1, fp->flags);
     if (ret >> 32) {
       fp->error = ret >> 32;
       return EOF;
@@ -231,21 +241,22 @@ int fputc(int _c, FILE *fp) {
     return c;
   }
 
-  if (fp->buffer_position == fp->buffer_capacity) {
+  if (fp->buffer_pos == fp->buffer_capacity ||
+      (c == '\n' && (fp->flags & FLAG_LINE_BUF))) {
     int ret = fflush(fp);
     if (ret)
       return ret;
   }
 
-  return fp->buffer[fp->buffer_position++] = c;
+  return tci_buffer(fp)[fp->buffer_pos++] = c;
 }
 
 int fputs(const char *s, FILE *fp) {
-  int ret;
-  for (; *s && (ret = fputc(*s, fp)) != EOF; s++)
-    ;
+  for (; *s; s++)
+    if (fputc(*s, fp) == EOF)
+      return EOF;
 
-  return (ret == EOF) ? EOF : 1;
+  return 1;
 }
 
 int fflush(FILE *fp) {
@@ -259,19 +270,19 @@ int fflush(FILE *fp) {
     tci_throw_error("FileIsNotOutput",
                     "tried to flush a file that isn't an output file", 1);
 
-  if (fp->buffer_position == 0) // nothing to flush
+  if (fp->buffer_pos == 0) // nothing to flush
     return 0;
 
-  uint64_t ret = tci_write_out(fp->fd, fp->position, fp->buffer,
-                               fp->buffer_position, fp->flags);
+  uint64_t ret = tci_write_out(fp->fd, fp->position, tci_buffer(fp),
+                               fp->buffer_pos, fp->flags);
   if (ret >> 32) {
     fp->error = ret >> 32;
     return EOF;
   }
 
   fp->position = ret;
-  fp->buffer_position = 0;
-  fp->flags &= ~FLAG_CAN_READ;
+  fp->buffer_pos = 0;
+  fp->buffer_readable_pos = 0;
   return 0;
 }
 
@@ -283,23 +294,17 @@ int fgetc(FILE *fp) {
     tci_throw_error("FileIsNotInput",
                     "tried to fgetc a file that isn't an input file", 1);
 
-  if (fp->flags & FLAG_READ_ONE) {
-    fp->flags &= ~FLAG_READ_ONE;
-    if (fp->flags & FLAGS_BUF)
-      return fp->buffer[fp->buffer_position++];
-
-    return *(char *)&fp->buffer;
-  }
-
   if (fp->flags & FLAG_EOF)
     return EOF;
 
-  if (fp->buffer_position < fp->buffer_capacity && (fp->flags & FLAG_CAN_READ))
-    return fp->buffer[fp->buffer_position++];
+  char *buffer = tci_buffer(fp);
 
-  if (fp->buffer_capacity == 0) {
-    char c;
-    uint64_t ret = tci_read_in(fp->fd, fp->position++, &c, 1, fp->flags);
+  if (fp->buffer_pos < fp->buffer_readable_pos)
+    return buffer[fp->buffer_pos++];
+
+  if (!(fp->flags & FLAGS_BUF)) {
+    uint64_t ret = tci_read_in(fp->fd, fp->position++, buffer, 1, fp->flags);
+
     if (ret >> 32) {
       fp->error = ret >> 32;
       return EOF;
@@ -310,17 +315,12 @@ int fgetc(FILE *fp) {
       return EOF;
     }
 
-    return c;
+    return *buffer;
   }
 
-  uint64_t ret;
-  if (fp->flags & FLAG_CAN_READ) {
-    ret = tci_read_in(fp->fd, fp->position += fp->buffer_capacity, fp->buffer,
-                      fp->buffer_capacity, fp->flags);
-  } else {
-    ret = tci_read_in(fp->fd, fp->position, fp->buffer, fp->buffer_capacity,
-                      fp->flags);
-  }
+  const uint64_t ret =
+      tci_read_in(fp->fd, fp->position += fp->buffer_readable_pos, buffer,
+                  fp->buffer_capacity, fp->flags);
 
   if (ret >> 32) {
     fp->error = ret >> 32;
@@ -332,13 +332,10 @@ int fgetc(FILE *fp) {
     return EOF;
   }
 
-  fp->flags |= FLAG_CAN_READ;
-  fp->buffer_position = 1;
+  fp->buffer_pos = 1;
+  fp->buffer_readable_pos = ret;
 
-  // TODO this future fseeks and stuff like that. Fix with a new member that
-  // tracks how much can be read
-  fp->buffer_capacity = ret;
-  return fp->buffer[0];
+  return *buffer;
 }
 
 int ungetc(int c, FILE *fp) {
@@ -353,19 +350,12 @@ int ungetc(int c, FILE *fp) {
     return c;
 
   fp->flags &= ~FLAG_EOF;
-  fp->flags |= FLAG_READ_ONE;
+  char *buffer = tci_buffer(fp);
 
-  if (!(fp->flags & FLAGS_BUF))
-    return *(char *)&fp->buffer = c;
+  if (fp->buffer_pos)
+    return buffer[--fp->buffer_pos] = c;
 
-  if (fp->flags & FLAG_CAN_READ) {
-    if (!fp->buffer_position)
-      return EOF;
-
-    return fp->buffer[--fp->buffer_position] = c;
-  }
-
-  return fp->buffer[fp->buffer_position] = c;
+  return EOF;
 }
 
 char *fgets(char *restrict str, int count, FILE *restrict fp) {

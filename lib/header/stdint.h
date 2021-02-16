@@ -38,4 +38,14 @@ typedef unsigned long uint_least64_t;
 typedef unsigned long long uintmax_t;
 typedef unsigned long uintptr_t;
 
+/* Minimum for largest signed integral type.  */
+#define INTMAX_MIN (-9223372036854775807L - 1)
+/* Maximum for largest signed integral type.  */
+#define INTMAX_MAX 9223372036854775807L
+/* Maximum for largest unsigned integral type.  */
+#define UINTMAX_MAX 18446744073709551615UL
+
+#define PTRDIFF_MIN (-9223372036854775807L - 1)
+#define PTRDIFF_MAX 9223372036854775807L
+
 #endif

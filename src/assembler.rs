@@ -851,6 +851,16 @@ impl Assembler {
                 self.func.opcodes.push(bytes);
 
                 match incr_ty {
+                    I8 | U8 => {
+                        self.func.opcodes.push(Opcode::Make8);
+                        self.func.opcodes.push(1u8);
+                        self.func.opcodes.push(Opcode::Add8);
+                    }
+                    I16 | U16 => {
+                        self.func.opcodes.push(Opcode::Make16);
+                        self.func.opcodes.push(1u16);
+                        self.func.opcodes.push(Opcode::Add16);
+                    }
                     I32 | U32 => {
                         self.func.opcodes.push(Opcode::Make32);
                         self.func.opcodes.push(1u32);

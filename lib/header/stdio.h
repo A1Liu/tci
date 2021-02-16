@@ -17,7 +17,8 @@ typedef struct __tci_file {
 
   // the buffer
   char *buffer;
-  unsigned int buffer_position;
+  unsigned int buffer_pos;
+  unsigned int buffer_readable_pos;
   unsigned int buffer_capacity;
 
   // the current stream position and multibyte conversion state (an object of
