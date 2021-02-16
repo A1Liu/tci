@@ -125,8 +125,6 @@ FILE *fopen(const char *name, const char *mode) {
 }
 
 int fclose(FILE *fp) {
-  fp->buffer; // cause seg-fault early
-
   const uint16_t output_mask = FLAG_IO_OUTPUT | FLAG_IO_APPEND;
   if (fp->flags & output_mask) {
     int err = fflush(fp);

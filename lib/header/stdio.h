@@ -81,4 +81,8 @@ int sscanf(const char *restrict buffer, const char *restrict format, ...);
 int vsscanf(const char *restrict buffer, const char *restrict format,
             va_list vlist);
 
+int scanf(const char *fmt, ...);
+int fscanf(FILE *fp, const char *fmt, ...);
+int vfscanf(FILE *fp, const char *fmt, va_list ap);
+
 #endif

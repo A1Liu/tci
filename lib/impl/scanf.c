@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <tci.h>
 
 #define BUF 513 /* Maximum length of numeric string. */
 
@@ -79,6 +80,26 @@
 
 static u_char *__sccl(char *tab, u_char *fmt);
 
+int scanf(const char *fmt, ...) {
+  va_list list;
+  va_start(list, fmt);
+
+  int ret = vfscanf(stdin, fmt, list);
+  va_end(list);
+
+  return ret;
+}
+
+int fscanf(FILE *fp, const char *fmt, ...) {
+  va_list list;
+  va_start(list, fmt);
+
+  int ret = vfscanf(fp, fmt, list);
+  va_end(list);
+
+  return ret;
+}
+
 int vfscanf(FILE *fp, const char *fmt, va_list ap) {
   int nassigned = 0, nread = 0;
   char ccltab[256], num_buf[BUF];
@@ -97,9 +118,6 @@ int vfscanf(FILE *fp, const char *fmt, va_list ap) {
       char in;
       while (isspace(in = fgetc(fp)))
         nread++;
-
-      if (in == EOF)
-        return nassigned;
 
       ungetc(in, fp);
       continue;
@@ -475,6 +493,96 @@ int vfscanf(FILE *fp, const char *fmt, va_list ap) {
           *va_arg(ap, char *) = res;
         else
           *va_arg(ap, int *) = res;
+        nassigned++;
+      }
+
+      nread += p - num_buf;
+    } break;
+
+    case CT_FLOAT: {
+      tci_throw_error("NoFloatingPointSupport",
+                      "TCI doesn't support floating point right now", 0);
+
+      width = (width == 0 || width > BUF - 1) ? BUF - 1 : width;
+      char in, *p = num_buf;
+
+      flags |= SIGNOK | NDIGITS | DPTOK | EXPOK;
+      for (; width && (in = fgetc(fp)) != EOF; width--) {
+        switch (in) {
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+          flags &= ~(SIGNOK | NDIGITS);
+          goto fok;
+        case '+':
+        case '-':
+          if (flags & SIGNOK) {
+            flags &= ~SIGNOK;
+            goto fok;
+          }
+          break;
+        case '.':
+          if (flags & DPTOK) {
+            flags &= ~(SIGNOK | DPTOK);
+            goto fok;
+          }
+          break;
+        case 'e':
+        case 'E':
+          /* no exponent without some digits */
+          if ((flags & (NDIGITS | EXPOK)) == EXPOK) {
+            flags = (flags & ~(EXPOK | DPTOK)) | SIGNOK | NDIGITS;
+            goto fok;
+          }
+          break;
+        }
+
+        ungetc(in, fp);
+        break;
+
+      fok:
+        *p++ = c;
+      }
+
+      /*
+       * If no digits, might be missing exponent digits
+       * (just give back the exponent) or might be missing
+       * regular digits, but had sign and/or decimal point.
+       */
+      if (flags & NDIGITS) {
+        if (flags & EXPOK) {
+          /* no digits at all */
+          while (p > num_buf)
+            ungetc(*--p, fp);
+          return nassigned;
+        }
+        /* just a bad exponent (e and maybe sign) */
+        in = *(u_char *)--p;
+        if (c != 'e' && c != 'E') {
+          ungetc(in, fp); /* sign */
+          in = *--p;
+        }
+        ungetc(in, fp);
+      }
+
+      if (!(flags & SUPPRESS)) {
+        *p = '\0';
+        double res; // = strtod(num_buf, NULL);
+
+        if (flags & LONGDBL)
+          tci_throw_error("NoLongDoubleSupport",
+                          "TCI doesn't support the `long double` type", 1);
+        else if (flags & LONG)
+          *va_arg(ap, double *) = res;
+        else
+          *va_arg(ap, float *) = res;
         nassigned++;
       }
 

@@ -126,7 +126,8 @@ static inline void _out_file(char character, void *buffer, size_t idx,
   (void)idx;
   (void)maxlen;
 
-  fputc(character, (FILE *)buffer);
+  if (character)
+    fputc(character, (FILE *)buffer);
 }
 
 // output to command line
