@@ -137,10 +137,8 @@ static inline void _out_char(char character, void *buffer, size_t idx,
   (void)idx;
   (void)maxlen;
 
-  if (!character) {
-    fflush(stdout);
+  if (!character)
     return;
-  }
 
   fputc(character, stdout);
 }

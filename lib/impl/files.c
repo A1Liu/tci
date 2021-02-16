@@ -228,8 +228,6 @@ int fputc(int _c, FILE *fp) {
 
   char c = _c;
   if (!(fp->flags & FLAGS_BUF)) {
-    tci_throw_error("Why", "lmao", 0);
-
     uint64_t ret = tci_write_out(fp->fd, fp->position++, &c, 1, fp->flags);
     if (ret >> 32) {
       fp->error = ret >> 32;
@@ -239,14 +237,21 @@ int fputc(int _c, FILE *fp) {
     return c;
   }
 
-  if (fp->buffer_pos == fp->buffer_capacity ||
-      (c == '\n' && (fp->flags & FLAG_LINE_BUF))) {
+  if (fp->buffer_pos == fp->buffer_capacity) {
     int ret = fflush(fp);
     if (ret)
       return ret;
   }
 
-  return tci_buffer(fp)[fp->buffer_pos++] = c;
+  tci_buffer(fp)[fp->buffer_pos++] = c;
+
+  if (c == '\n' && (fp->flags & FLAG_LINE_BUF)) {
+    int ret = fflush(fp);
+    if (ret)
+      return ret;
+  }
+
+  return c;
 }
 
 int fputs(const char *s, FILE *fp) {
