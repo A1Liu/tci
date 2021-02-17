@@ -28,12 +28,14 @@ impl FileSystem {
         Self { files, names, size }
     }
 
-    pub fn open(&self, name: &str) -> Result<u32, EcallError> {
+    pub fn open(&self, name: &[u8]) -> Result<u32, EcallError> {
+        let name = core::str::from_utf8(name).map_err(|_| EcallError::NameNotUTF8)?;
         let idx = *self.names.get(name).ok_or(EcallError::DoesntExist)?;
         return Ok(idx as u32);
     }
 
-    pub fn remove(&mut self, name: &str) -> Result<(), EcallError> {
+    pub fn remove(&mut self, name: &[u8]) -> Result<(), EcallError> {
+        let name = core::str::from_utf8(name).map_err(|_| EcallError::NameNotUTF8)?;
         let fd = self.names.remove(name).ok_or(EcallError::DoesntExist)?;
         let mut file = self.files.get_mut(fd as usize).unwrap();
         file.clear_pod();
@@ -42,7 +44,8 @@ impl FileSystem {
         return Ok(());
     }
 
-    pub fn open_create(&mut self, name: &str) -> Result<u32, EcallError> {
+    pub fn open_create(&mut self, name: &[u8]) -> Result<u32, EcallError> {
+        let name = core::str::from_utf8(name).map_err(|_| EcallError::NameNotUTF8)?;
         let idx = self.names.get(name).map(|a| *a).unwrap_or_else(|| {
             let idx = self.files.len();
             self.files.push(true, Vec::new());
@@ -57,7 +60,8 @@ impl FileSystem {
         return Ok(idx);
     }
 
-    pub fn open_create_clear(&mut self, name: &str) -> Result<u32, EcallError> {
+    pub fn open_create_clear(&mut self, name: &[u8]) -> Result<u32, EcallError> {
+        let name = core::str::from_utf8(name).map_err(|_| EcallError::NameNotUTF8)?;
         let idx_o = self.names.get(name).map(|a| *a);
         let idx = idx_o.unwrap_or_else(|| {
             let idx = self.files.len();

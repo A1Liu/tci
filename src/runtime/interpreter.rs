@@ -1019,11 +1019,7 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             Ecall::OpenFd => {
                 let open_mode: OpenMode = memory.pop()?;
                 let name: VarPointer = memory.pop()?;
-                let name = memory.cstring_bytes(name)?.to_vec();
-                match String::from_utf8(name) {
-                    Ok(name) => return Ok(Some(EcallExt::OpenFd { name, open_mode })),
-                    Err(e) => return Ok(Some(EcallExt::Error(EcallError::NameNotUTF8))),
-                }
+                return Ok(Some(EcallExt::OpenFd { name, open_mode }));
             }
             Ecall::ReadFd => {
                 let len: u32 = memory.pop()?;
@@ -1039,17 +1035,17 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
                 let buf: VarPointer = memory.pop()?;
                 let begin: u32 = memory.pop()?;
                 let fd: u32 = memory.pop()?;
-                let buf = memory.read_bytes(buf, len)?.to_vec();
 
-                return Ok(Some(EcallExt::WriteFd { buf, begin, fd }));
+                #[rustfmt::skip]
+                return Ok(Some(EcallExt::WriteFd { buf, len, begin, fd }));
             }
             Ecall::AppendFd => {
                 let len: u32 = memory.pop()?;
                 let buf: VarPointer = memory.pop()?;
                 let fd: u32 = memory.pop()?;
-                let buf = memory.read_bytes(buf, len)?.to_vec();
 
-                return Ok(Some(EcallExt::AppendFd { buf, fd }));
+                #[rustfmt::skip]
+                return Ok(Some(EcallExt::AppendFd { buf, len, fd }));
             }
 
             call => {

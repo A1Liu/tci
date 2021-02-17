@@ -13,7 +13,6 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 pub enum InMessage {
     CharIn(char),
     Run(HashMap<String, String>),
-    Ecall(EcallResult),
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -21,7 +20,6 @@ pub enum InMessage {
 pub enum OutMessage {
     Startup,
     Compiled,
-    FileIds(HashMap<u32, String>),
     CompileError {
         rendered: String,
         errors: Vec<Error>,
@@ -33,7 +31,20 @@ pub enum OutMessage {
     Stdout(String),
     Stderr(String),
     Stdlog(String),
-    Ecall(EcallExt),
+    WriteFd {
+        begin: u32,
+        fd: u32,
+        buf: Vec<u8>,
+    },
+    AppendFd {
+        fd: u32,
+        buf: Vec<u8>,
+    },
+    CreateFile {
+        fd: u32,
+        name: String,
+    },
+    ClearFd(u32),
 }
 
 #[rustfmt::skip] // rustfmt deletes the keyword async
@@ -118,6 +129,53 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
     send(Out::Startup);
 
+    macro_rules! send_events {
+        () => {{
+            for TE(tag, s) in &kernel.events() {
+                match tag {
+                    WriteEvt::StdinWrite => {
+                        write_utf8_lossy(&mut term_out_buf, s).unwrap();
+                        send(Out::Stdin(term_out_buf.flush_string()));
+                    }
+                    WriteEvt::StdoutWrite => {
+                        write_utf8_lossy(&mut term_out_buf, s).unwrap();
+                        send(Out::Stdout(term_out_buf.flush_string()));
+                    }
+                    WriteEvt::StderrWrite => {
+                        write_utf8_lossy(&mut term_out_buf, s).unwrap();
+                        send(Out::Stderr(term_out_buf.flush_string()));
+                    }
+                    WriteEvt::StdlogWrite => {
+                        write_utf8_lossy(&mut term_out_buf, s).unwrap();
+                        send(Out::Stdlog(term_out_buf.flush_string()));
+                    }
+                    &WriteEvt::WriteFd { begin, fd } => {
+                        send(Out::WriteFd {
+                            begin,
+                            fd,
+                            buf: s.to_vec(),
+                        });
+                    }
+                    &WriteEvt::AppendFd { fd } => {
+                        send(Out::AppendFd {
+                            fd,
+                            buf: s.to_vec(),
+                        });
+                    }
+                    &WriteEvt::ClearFd { fd } => {
+                        send(Out::ClearFd(fd));
+                    }
+                    &WriteEvt::CreateFile { fd } => {
+                        send(Out::CreateFile {
+                            fd,
+                            name: String::from_utf8(s.to_vec()).unwrap(),
+                        });
+                    }
+                }
+            }
+        }};
+    }
+
     loop {
         debug!("running another iteration of loop...");
 
@@ -146,28 +204,11 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                     send(Out::Compiled);
                     kernel.load_term_program(&program);
                 }
-                In::Ecall(res) => match kernel.resolve_result(res) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        let e_str = print_error(&err, kernel.cur_mem().unwrap(), &files);
-                        send(Out::Stderr(e_str));
-                        env.wait(0).await;
-                        continue;
-                    }
-                },
             }
         }
 
         if kernel.active_count == 0 {
-            for TE(tag, s) in &kernel.events() {
-                write_utf8_lossy(&mut term_out_buf, s).unwrap();
-                match tag {
-                    WriteEvent::StdinWrite => send(Out::Stdin(term_out_buf.flush_string())),
-                    WriteEvent::StdoutWrite => send(Out::Stdout(term_out_buf.flush_string())),
-                    WriteEvent::StderrWrite => send(Out::Stderr(term_out_buf.flush_string())),
-                    WriteEvent::StdlogWrite => send(Out::Stdlog(term_out_buf.flush_string())),
-                }
-            }
+            send_events!();
 
             env.wait(0).await;
             continue;
@@ -176,26 +217,13 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         debug!("running 5000 ops...");
         let result = kernel.run_op_count(5000);
 
-        debug!("printing output...");
-        for TE(tag, s) in &kernel.events() {
-            write_utf8_lossy(&mut term_out_buf, s).unwrap();
-            match tag {
-                WriteEvent::StdinWrite => send(Out::Stdin(term_out_buf.flush_string())),
-                WriteEvent::StdoutWrite => send(Out::Stdout(term_out_buf.flush_string())),
-                WriteEvent::StderrWrite => send(Out::Stderr(term_out_buf.flush_string())),
-                WriteEvent::StdlogWrite => send(Out::Stdlog(term_out_buf.flush_string())),
-            }
-        }
+        debug!("sending events...");
+        send_events!();
 
         debug!("checking for ecalls...");
-        let ecall_req = match result {
-            Ok(RuntimeStatus::Running) => {
+        match result {
+            Ok(()) => {
                 env.wait(1).await;
-                continue;
-            }
-            Ok(RuntimeStatus::Blocked(req)) => req,
-            Ok(RuntimeStatus::Exited(code)) => {
-                env.wait(0).await;
                 continue;
             }
             Err(e) => {
@@ -204,11 +232,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                 env.wait(0).await;
                 continue;
             }
-        };
-
-        debug!("Sending an ecall");
-        send(Out::Ecall(ecall_req));
-
-        env.wait(0).await;
+        }
     }
 }

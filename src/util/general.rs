@@ -401,6 +401,10 @@ impl StringWriter {
         return unsafe { String::from_utf8_unchecked(self.buf.clone()) };
     }
 
+    pub fn as_str(&self) -> &str {
+        return unsafe { str::from_utf8_unchecked(&self.buf) };
+    }
+
     pub fn flush_string(&mut self) -> String {
         let ret_val = unsafe { String::from_utf8_unchecked(self.buf.clone()) };
         self.buf.clear();

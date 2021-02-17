@@ -462,21 +462,6 @@ pub enum Opcode {
     AssertStr,
 }
 
-#[derive(Debug)]
-pub enum WriteEvent {
-    StdinWrite,
-    StdoutWrite,
-    StderrWrite,
-    StdlogWrite,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum RuntimeStatus {
-    Running,
-    Blocked(EcallExt),
-    Exited(i32),
-}
-
 // ABI matters here. This enum is linked to /lib/header/tci.h
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
@@ -499,15 +484,12 @@ pub enum Ecall {
     AppendFd,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "type", content = "payload")]
+#[derive(Debug, Clone)]
 pub enum EcallExt {
     Exit(i32),
-    Error(EcallError),
 
     OpenFd {
-        name: String,
-        #[serde(rename(serialize = "openMode"))]
+        name: VarPointer,
         open_mode: OpenMode,
     },
     ReadFd {
@@ -517,24 +499,28 @@ pub enum EcallExt {
         fd: u32,
     },
     WriteFd {
-        buf: Vec<u8>,
+        buf: VarPointer,
+        len: u32,
         begin: u32,
         fd: u32,
     },
     AppendFd {
-        buf: Vec<u8>,
+        buf: VarPointer,
+        len: u32,
         fd: u32,
     },
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(tag = "type", content = "payload")]
-pub enum EcallResult {
-    Zeroed,
-    Error(EcallError),
-    Fd(u32),
-    ReadFd { buf: VarPointer, content: Vec<u8> },
-    AppendFd { position: u32 },
+#[derive(Debug, Clone, Copy)]
+pub enum WriteEvt {
+    StdinWrite,
+    StdoutWrite,
+    StderrWrite,
+    StdlogWrite,
+    CreateFile { fd: u32 },
+    ClearFd { fd: u32 },
+    WriteFd { begin: u32, fd: u32 },
+    AppendFd { fd: u32 },
 }
 
 // ABI matters here. This enum is linked to /lib/header/tci.h

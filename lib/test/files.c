@@ -4,14 +4,10 @@
 
 int main() {
   char buf[100], *hello_world = "Hello, world!\n";
-  FILE *fptr = fopen("/output.txt", "w");
   size_t len = 0, expected_len = strlen(hello_world);
+  FILE *fptr;
 
-  if (fptr == NULL) {
-    perror("idk man");
-    return 1;
-  }
-
+  fptr = fopen("/output.txt", "w");
   fprintf(fptr, "%s", hello_world);
   fclose(fptr);
 
