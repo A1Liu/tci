@@ -44,8 +44,8 @@ Lots of stuff left to do still.
 
 #### Frontend
 - Working file system explorer
-- Working file system explorer for program files
-- Terminal that takes in keypresses and translates them to ascii characters
+- Runtime file explorer
+- Terminal emulator (without shell)
 - Service worker for caching stuff locally
 - Github Issue/Bug-fix-request button
 - User interface for runtime/compiler options
