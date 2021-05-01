@@ -631,10 +631,7 @@ pub fn parse_union_decl(
 
     let size = align_u32(size, align);
 
-    let sa = SizeAlign {
-        size: size.into(),
-        align: align.into(),
-    };
+    let sa = sa_new(size, align);
     return locals.close_union_defn(label, sa, fields);
 }
 
@@ -659,10 +656,7 @@ pub fn parse_struct_decl(
     let mut fields: Vec<TCStructField> = Vec::new();
 
     if decls.len() == 0 {
-        let sa = SizeAlign {
-            size: size.into(),
-            align: align.into(),
-        };
+        let sa = sa_new(size, align);
         return locals.close_struct_defn(label, sa, fields);
     }
 
@@ -738,28 +732,37 @@ pub fn parse_struct_decl(
     let decl = *decls.last().unwrap();
     let base = parse_spec_quals(&mut *locals, decl.specifiers)?;
     if decl.declarators.len() == 0 {
-        if let TCTypeBase::UnnamedStruct { loc, sa } = base {
-            let sa_align = sa.align.into();
-            align = core::cmp::max(align, sa_align);
-            let offset = align_u32(size, sa_align);
-            let sa_size: u32 = sa.size.into();
-            size = offset + sa_size;
+        let (loc, sa) = match base {
+            TCTypeBase::UnnamedStruct { loc, sa } => (loc, sa),
+            TCTypeBase::UnnamedUnion { loc, sa } => (loc, sa),
+            _ => {
+                let size = align_u32(size, align);
 
-            let anon_fields = locals.get_struct_fields(LabelOrLoc::Loc(loc));
-            let anon_fields = anon_fields.or_else(|| locals.get_union_fields(LabelOrLoc::Loc(loc)));
-            for &field in anon_fields.unwrap() {
-                let mut field = field;
-                field.offset += offset;
-
-                if let Some(prev) = fields.iter().find(|f| f.name == field.name) {
-                    return Err(error!(
-                        "redeclaration of struct field",
-                        prev.loc, "previous here", field.loc, "redeclaration here"
-                    ));
-                }
-
-                fields.push(field);
+                let sa = sa_new(size, align);
+                return locals.close_struct_defn(label, sa, fields);
             }
+        };
+
+        let sa_align = sa.align.into();
+        align = core::cmp::max(align, sa_align);
+        let offset = align_u32(size, sa_align);
+        let sa_size: u32 = sa.size.into();
+        size = offset + sa_size;
+
+        let anon_fields = locals.get_struct_fields(LabelOrLoc::Loc(loc));
+        let anon_fields = anon_fields.or_else(|| locals.get_union_fields(LabelOrLoc::Loc(loc)));
+        for &field in anon_fields.unwrap() {
+            let mut field = field;
+            field.offset += offset;
+
+            if let Some(prev) = fields.iter().find(|f| f.name == field.name) {
+                return Err(error!(
+                    "redeclaration of struct field",
+                    prev.loc, "previous here", field.loc, "redeclaration here"
+                ));
+            }
+
+            fields.push(field);
         }
     } else {
         for &declarator in &decl.declarators[..(decl.declarators.len() - 1)] {
@@ -835,10 +838,7 @@ pub fn parse_struct_decl(
 
     let size = align_u32(size, align);
 
-    let sa = SizeAlign {
-        size: size.into(),
-        align: align.into(),
-    };
+    let sa = sa_new(size, align);
     return locals.close_struct_defn(label, sa, fields);
 }
 

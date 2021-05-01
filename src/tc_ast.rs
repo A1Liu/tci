@@ -29,7 +29,8 @@ pub struct SizeAlign {
     pub align: n32,
 }
 
-pub fn sa(size: u32, align: u32) -> SizeAlign {
+#[inline]
+pub fn sa_new(size: u32, align: u32) -> SizeAlign {
     let (size, align) = (size.into(), align.into());
     SizeAlign { size, align }
 }
