@@ -18,7 +18,7 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_repr = { path = "lib/serde-repr" }
 strum = { path = "lib/strum/strum", features = ["derive"] }
 peg = { path = "lib/rust-peg" }
-spin = "0.7.1"
+# spin = "0.7.1"
 hashbrown = { version = "0.9.1", features = ["serde"] }
 siphasher = "0.3.3"
 unicode-width = "0.1.7"
