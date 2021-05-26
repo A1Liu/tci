@@ -39,4 +39,8 @@ void tci_assert_str(const char *str);
 #define tci_assert_str(str)                                                    \
   (__tci_builtin_push(str), __tci_builtin_op("AssertStr", sizeof(void)))
 
+void tci_perror(char *prefix, int error);
+
+char *tci_strerror(int error);
+
 #endif

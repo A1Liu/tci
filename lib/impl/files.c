@@ -31,7 +31,7 @@
   ((char *)((fp)->buffer_capacity <= 8U ? (void *)&(fp)->buffer : (fp)->buffer))
 
 static char __tci_stdin_buffer[BUFSIZ];
-static FILE __tci_stdin_struct = {0, __tci_stdin_buffer, 0, 0, BUFSIZ, 0, 1,
+static FILE __tci_stdin_struct = {0, __tci_stdin_buffer, 0, 0, BUFSIZ, 0, 0,
                                   0, FLAG_STDIN_INIT};
 
 static char __tci_stdout_buffer[BUFSIZ];
@@ -209,9 +209,12 @@ static inline uint64_t tci_read_in(unsigned int fd, fpos_t position,
         "FileIndexInvalid",
         "tried to read outside of file's length (this is a bug in TCI)", 0);
 
-  default:
+  default: {
+    tci_perror("internal TCI error", result >> 32);
+
     tci_throw_error("InvalidFileError",
                     "got the wrong file error (this is a bug in TCI)", 0);
+  }
   }
 
   return result;

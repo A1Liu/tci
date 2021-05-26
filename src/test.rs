@@ -166,7 +166,8 @@ gen_test_should_succeed!(
     arrays,
     statics,
     memory,
-    files
+    files,
+    tree_hashing
 );
 
 // gen_test_runtime_should_fail!((stack_locals, "InvalidPointer"));

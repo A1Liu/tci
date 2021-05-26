@@ -278,7 +278,9 @@ impl Kernel {
                 begin,
                 fd,
             } => {
-                let to_ret = match proc.get(fd as usize) {
+                let fd_info = proc.get(fd as usize);
+                println!("Hello {:?} {:?}", fd, fd_info);
+                let to_ret = match fd_info {
                     None => EcallError::DoesntExist.to_u64(),
                     Some(FdKind::TermIn) => {
                         let end = core::cmp::min(self.input.len(), len as usize);

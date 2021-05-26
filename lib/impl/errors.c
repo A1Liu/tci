@@ -15,16 +15,17 @@ static char *errno_strs[] = {
 };
 
 void perror(char *prefix) {
-  if (errno < sizeof(errno_strs) / sizeof(char *)) {
-    printf("%s: %s\n", prefix, errno_strs[errno]);
+  if (__tci_errno < sizeof(errno_strs) / sizeof(char *)) {
+    fprintf(stderr, "%s: %s\n", prefix, errno_strs[__tci_errno]);
   } else {
-    printf("%s: invalid error code (errno = %d)\n", prefix, errno);
+    fprintf(stderr, "%s: invalid error code (errno = %d)\n", prefix,
+            __tci_errno);
   }
 }
 
 char *strerror(int error) {
-  if (errno < sizeof(errno_strs) / sizeof(char *)) {
-    return errno_strs[errno];
+  if (error < sizeof(errno_strs) / sizeof(char *)) {
+    return errno_strs[error];
   }
 
   return NULL;
