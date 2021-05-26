@@ -279,7 +279,6 @@ impl Kernel {
                 fd,
             } => {
                 let fd_info = proc.get(fd as usize);
-                println!("Hello {:?} {:?}", fd, fd_info);
                 let to_ret = match fd_info {
                     None => EcallError::DoesntExist.to_u64(),
                     Some(FdKind::TermIn) => {
