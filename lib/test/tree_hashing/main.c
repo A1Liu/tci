@@ -43,12 +43,13 @@ void insert_hash_cell(char *string) {
 
 void print_hash_table() {
   for (int i = 0; i < SIZE; i++) {
-    if (hashtable[i]->word != NULL) {
-      printf("i: %s\n", hashtable[i]->word);
+    if (hashtable[i] != NULL) {
+      printf("%d: %s\n", i, hashtable[i]->word);
     }
   }
 }
 
+// TODO make this test case actually test scanf
 int main() {
   char str[100];
   while (scanf(" %s", str) != EOF) {
