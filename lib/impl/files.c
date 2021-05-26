@@ -42,9 +42,9 @@ static char __tci_stderr_buffer[BUFSIZ];
 static FILE __tci_stderr_struct = {0, __tci_stderr_buffer, 0, 0, BUFSIZ, 0, 2,
                                    0, FLAG_STDOUT_INIT};
 
+FILE *__tci_stdin = &__tci_stdin_struct;
 FILE *__tci_stdout = &__tci_stdout_struct;
 FILE *__tci_stderr = &__tci_stderr_struct;
-FILE *__tci_stdin = &__tci_stdin_struct;
 
 static inline uint16_t fopen_mode(const char *mode) {
   if (!strcmp(mode, "r"))
