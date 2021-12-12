@@ -14,20 +14,20 @@ jobs:
           toolchain: stable
           profile: minimal
       - run: cargo test
-        shell: bash
       - uses: jetli/wasm-pack-action@v0.3.0
       - uses: actions/setup-node@v2
       - run: yarn install --frozen-lockfile
-        shell: bash
-      - run : yarn build
-        shell: bash
-      - run : git config user.name github-actions
-        shell: bash
-      - run : git config user.email github-actions@github.com
-        shell: bash
-      - run : git --work-tree .dist add --all
-        shell: bash
-      - run : git commit -m "Automatic Deploy action run by github-actions"
-        shell: bash
-      - run : git push origin HEAD:gh-pages --force
-        shell: bash
+
+      - name: Build
+        run: |
+          yarn build
+          touch .dist/.nojekyll
+          echo tci.a1liu.com >> .dist/CNAME
+        
+      - name: Deploy
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git --work-tree .dist add --all
+          git commit -m "Automatic Deploy action run by github-actions"
+          git push origin HEAD:gh-pages --force
