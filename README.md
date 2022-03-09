@@ -30,6 +30,7 @@ Lots of stuff left to do still.
 - Designated initializers
 - full support for `#if`
 - Better macro debug messages
+- Better parsing error messages
 - Hardening against invalid input
 - Unified error system
 
