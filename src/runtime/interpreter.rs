@@ -615,13 +615,13 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(word1.wrapping_mul(word2));
         }
         Opcode::MulF32 => {
-            let word2: i32 = memory.pop()?;
-            let word1: i32 = memory.pop()?;
+            let word2: f32 = memory.pop()?;
+            let word1: f32 = memory.pop()?;
             memory.push(word1 * word2);
         }
         Opcode::MulF64 => {
-            let word2: u64 = memory.pop()?;
-            let word1: u64 = memory.pop()?;
+            let word2: f64 = memory.pop()?;
+            let word1: f64 = memory.pop()?;
             memory.push(word1 * word2);
         }
 
@@ -666,13 +666,13 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(word1.wrapping_div(word2));
         }
         Opcode::DivF32 => {
-            let word2: i32 = memory.pop()?;
-            let word1: i32 = memory.pop()?;
+            let word2: f32 = memory.pop()?;
+            let word1: f32 = memory.pop()?;
             memory.push(word1 / word2);
         }
         Opcode::DivF64 => {
-            let word2: u64 = memory.pop()?;
-            let word1: u64 = memory.pop()?;
+            let word2: f64 = memory.pop()?;
+            let word1: f64 = memory.pop()?;
             memory.push(word1 / word2);
         }
 
@@ -717,13 +717,13 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(word1 % word2);
         }
         Opcode::ModF32 => {
-            let word2: i32 = memory.pop()?;
-            let word1: i32 = memory.pop()?;
+            let word2: f32 = memory.pop()?;
+            let word1: f32 = memory.pop()?;
             memory.push(word1 % word2);
         }
         Opcode::ModF64 => {
-            let word2: u64 = memory.pop()?;
-            let word1: u64 = memory.pop()?;
+            let word2: f64 = memory.pop()?;
+            let word1: f64 = memory.pop()?;
             memory.push(word1 % word2);
         }
 
