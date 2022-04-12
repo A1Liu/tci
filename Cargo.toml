@@ -15,7 +15,7 @@ wee_alloc = { version = "0.4.5" }
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
-serde_repr = { path = "lib/serde-repr" }
+serde_repr = { version = "0.1.7" }
 strum = { path = "lib/strum/strum", features = ["derive"] }
 peg = { path = "lib/rust-peg" }
 # spin = "0.7.1"
