@@ -1,7 +1,8 @@
 use crate::buckets::*;
 use crate::util::*;
+use aliu::{AllocExt, Allocator};
 use core::include_bytes;
-use core::{fmt, str};
+use core::{fmt, mem, str};
 
 /// The column index at the given byte index in the source file.
 /// This is the number of characters to the given byte index.
@@ -52,7 +53,7 @@ pub struct File<'a> {
 }
 
 impl<'a> File<'a> {
-    pub fn new(buckets: impl AllocO<'a>, name: &str, source: &str) -> Self {
+    pub fn new(buckets: &impl Allocator, name: &str, source: &str) -> Self {
         let ty = if name.ends_with(".h") {
             FileType::Header
         } else {
@@ -64,13 +65,13 @@ impl<'a> File<'a> {
             ty,
             name: buckets.add_str(name),
             source: buckets.add_str(source),
-            line_starts: buckets.add_array(line_starts),
+            line_starts: buckets.add_slice(&line_starts),
         }
     }
 
     pub fn new_static(
         ty: FileType,
-        buckets: impl AllocO<'static>,
+        buckets: &impl Allocator,
         name: &'static str,
         source: &'static str,
     ) -> Self {
@@ -79,7 +80,7 @@ impl<'a> File<'a> {
             ty,
             name,
             source,
-            line_starts: buckets.add_array(line_starts),
+            line_starts: buckets.add_slice(&line_starts),
         }
     }
 
@@ -115,7 +116,8 @@ pub struct InitSyms {
 
 lazy_static! {
     pub static ref SYS_LIBS: Vec<File<'static>> = {
-        let buckets = BucketListFactory::new();
+        let buckets = aliu::BucketList::new();
+
         let mut m = Vec::new();
 
         macro_rules! new_file {
@@ -123,18 +125,18 @@ lazy_static! {
                 let file = concat!("libs/", $file);
                 let lib: &[u8] = include_bytes!(concat!("../lib/impl/", $file));
                 let lib = unsafe { str::from_utf8_unchecked(lib) };
-                m.push(File::new_static(FileType::System, &*buckets, file, lib));
+                m.push(File::new_static(FileType::System, &buckets, file, lib));
             }};
             (@IMPL_HEADER, $file:literal) => {{
                 let file = concat!("libs/", $file);
                 let lib: &[u8] = include_bytes!(concat!("../lib/impl/", $file));
                 let lib = unsafe { str::from_utf8_unchecked(lib) };
-                m.push(File::new_static(FileType::Header, &*buckets, file, lib));
+                m.push(File::new_static(FileType::Header, &buckets, file, lib));
             }};
             (@HEADER, $file:literal) => {{
                 let header: &[u8] = include_bytes!(concat!("../lib/header/", $file));
                 let header = unsafe { str::from_utf8_unchecked(header) };
-                m.push(File::new_static(FileType::Header, &*buckets, $file, header));
+                m.push(File::new_static(FileType::Header, &buckets, $file, header));
             }};
         }
 
@@ -171,6 +173,8 @@ lazy_static! {
         new_file!(@IMPL, "files.c");
         new_file!(@IMPL, "errors.c");
 
+        mem::forget(buckets);
+
         m
     };
 }
@@ -178,22 +182,16 @@ lazy_static! {
 pub const NO_SYMBOL: u32 = !0;
 
 pub struct FileDb {
-    pub buckets: BucketListFactory,
+    pub buckets: aliu::BucketList,
     pub names: HashMap<(bool, &'static str), u32>,
     pub files: Vec<File<'static>>,
-}
-
-impl Drop for FileDb {
-    fn drop(&mut self) {
-        unsafe { self.buckets.dealloc() };
-    }
 }
 
 impl FileDb {
     #[inline]
     pub fn new() -> Self {
         let mut new_self = Self {
-            buckets: BucketListFactory::new(),
+            buckets: aliu::BucketList::new(),
             files: Vec::new(),
             names: HashMap::new(),
         };
@@ -227,7 +225,7 @@ impl FileDb {
         }
 
         let file_id = self.files.len() as u32;
-        let file = File::new(&*self.buckets, file_name, &source);
+        let file = File::new(&self.buckets, file_name, &source);
         self.files.push(file);
         self.names.insert((false, file.name), file_id);
 
@@ -268,7 +266,7 @@ impl FileDb {
             }
             path.push_str(include);
 
-            if let Some(id) = self.names.get(&(false, &path)) {
+            if let Some(id) = self.names.get(&(false, &*path)) {
                 return Ok(*id);
             }
 
