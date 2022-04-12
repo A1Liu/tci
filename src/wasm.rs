@@ -47,6 +47,26 @@ pub enum OutMessage {
     ClearFd(u32),
 }
 
+use a::Error as JsError;
+mod a {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = console)]
+        pub fn error(msg: String);
+
+        #[wasm_bindgen]
+        pub type Error;
+
+        #[wasm_bindgen(constructor)]
+        pub fn new() -> Error;
+
+        #[wasm_bindgen(structural, method, getter)]
+        pub fn stack(error: &Error) -> String;
+    }
+}
+
 #[rustfmt::skip] // rustfmt deletes the keyword async
 #[wasm_bindgen]
 extern "C" {
@@ -97,6 +117,34 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
     let global_send = send.clone();
     register_output(move |s| global_send(Out::Debug(s)));
+
+    std::panic::set_hook(Box::new(|info: &std::panic::PanicInfo| {
+        let mut msg = info.to_string();
+
+        // Add the error stack to our message.
+        //
+        // This ensures that even if the `console` implementation doesn't
+        // include stacks for `console.error`, the stack is still available
+        // for the user. Additionally, Firefox's console tries to clean up
+        // stack traces, and ruins Rust symbols in the process
+        // (https://bugzilla.mozilla.org/show_bug.cgi?id=1519569) but since
+        // it only touches the logged message's associated stack, and not
+        // the message's contents, by including the stack in the message
+        // contents we make sure it is available to the user.
+        msg.push_str("\n\nStack:\n\n");
+        let e = JsError::new();
+        let stack = e.stack();
+        msg.push_str(&stack);
+
+        // Safari's devtools, on the other hand, _do_ mess with logged
+        // messages' contents, so we attempt to break their heuristics for
+        // doing that by appending some whitespace.
+        // https://github.com/rustwasm/console_error_panic_hook/issues/7
+        msg.push_str("\n\n");
+
+        // Finally, log the panic with `console.error`!
+        out!(@CLEAN, "{}", msg);
+    }));
 
     let recv = || -> Result<Option<In>, JsValue> {
         let js_value = env.recv();
@@ -214,8 +262,8 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             continue;
         }
 
-        debug!("running 5000 ops...");
-        let result = kernel.run_op_count(5000);
+        debug!("running 500 ops...");
+        let result = kernel.run_op_count(500);
 
         debug!("sending events...");
         send_events!();

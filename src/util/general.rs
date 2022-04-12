@@ -60,7 +60,7 @@ macro_rules! debug {
 pub static OUTPUT: Option<&'static (dyn Fn(String) + Sync)> = None;
 
 pub static COUNTER: AtomicUsize = AtomicUsize::new(0);
-pub const LIMIT: usize = (-1isize) as usize;
+pub const LIMIT: usize = usize::MAX;
 
 #[allow(unused_macros)]
 macro_rules! out {
