@@ -112,7 +112,7 @@ lazy_static! {
 }
 
 pub struct Assembler {
-    pub buckets: BucketListFactory,
+    pub buckets: aliu::BucketList,
 
     pub func_linkage: HashMap<LinkName, u32>,
     pub functions: Vec<ASMFunc>,
@@ -125,12 +125,6 @@ pub struct Assembler {
     pub func: FuncEnv,
     pub file: FileEnv,
     pub data: BinaryData,
-}
-
-impl Drop for Assembler {
-    fn drop(&mut self) {
-        unsafe { self.buckets.dealloc() };
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -151,7 +145,7 @@ impl LabelData {
 impl Assembler {
     pub fn new() -> Self {
         Self {
-            buckets: BucketListFactory::new(),
+            buckets: aliu::BucketList::new(),
             data: BINARY_INIT.init.clone(),
 
             func_linkage: HashMap::new(),
@@ -260,7 +254,7 @@ impl Assembler {
                 Entry::Vacant(v) => {
                     v.insert(self.functions.len() as u32);
                     self.functions.push(ASMFunc {
-                        func_type: tc_func.func_type.clone_into_alloc(&*self.buckets),
+                        func_type: tc_func.func_type.clone_into_alloc(&self.buckets),
                         decl_loc: tc_func.decl_loc,
                         func_header: None,
                     });

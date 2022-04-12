@@ -138,7 +138,7 @@ pub trait AllocO<'a> {
 pub trait CloneInto<'a> {
     type CloneOutput;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'a>) -> Self::CloneOutput;
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self::CloneOutput;
 }
 
 impl<'a, T> CloneInto<'a> for Option<T>
@@ -147,7 +147,7 @@ where
 {
     type CloneOutput = Option<T::CloneOutput>;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'a>) -> Self::CloneOutput {
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self::CloneOutput {
         if let Some(a) = self.as_ref() {
             return Some(a.clone_into_alloc(alloc));
         }

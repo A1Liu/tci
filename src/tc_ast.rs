@@ -113,7 +113,7 @@ pub enum TCOpcodeKind {
         scope_idx: u32,
     },
 
-    ScopeBegin(HashRef<'static, u32, TCType>, u32), // points to parent scope
+    ScopeBegin(aliu::HashRef<'static, u32, TCType>, u32), // points to parent scope
     ScopeEnd {
         count: u32,
         begin: u32, // points to scope beginning
@@ -138,7 +138,7 @@ pub struct TCOpcode {
 
 impl TCOpcode {
     pub fn init_local(
-        alloc: impl AllocO<'static>,
+        alloc: impl Allocator,
         label: u32,
         kind: TCExprKind,
         ty: TCType,
@@ -155,7 +155,7 @@ impl TCOpcode {
                     loc,
                     offset: 0,
                 },
-                value: alloc.add(init_expr),
+                value: alloc.new(init_expr),
             },
             ty,
             loc,
@@ -795,13 +795,13 @@ pub struct TCType {
 impl CloneInto<'static> for TCTypeBase {
     type CloneOutput = Self;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'static>) -> Self {
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self {
         match self {
             Self::InternalTypedef(ty) => {
-                Self::InternalTypedef(alloc.add(ty.clone_into_alloc(alloc)))
+                Self::InternalTypedef(alloc.new(ty.clone_into_alloc(alloc)))
             }
             &Self::Typedef { refers_to, typedef } => {
-                let refers_to = alloc.add(refers_to.clone_into_alloc(alloc));
+                let refers_to = alloc.new(refers_to.clone_into_alloc(alloc));
 
                 Self::Typedef { refers_to, typedef }
             }
@@ -813,7 +813,7 @@ impl CloneInto<'static> for TCTypeBase {
 impl CloneInto<'static> for TCTypeModifier {
     type CloneOutput = Self;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'static>) -> Self {
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self {
         match self {
             Self::BeginParam(ty) => Self::BeginParam(ty.clone_into_alloc(alloc)),
             Self::Param(ty) => Self::Param(ty.clone_into_alloc(alloc)),
@@ -825,12 +825,12 @@ impl CloneInto<'static> for TCTypeModifier {
 impl CloneInto<'static> for TCType {
     type CloneOutput = Self;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'static>) -> Self {
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self {
         let mut mods = Vec::new();
         for modifier in self.mods {
             mods.push(modifier.clone_into_alloc(alloc));
         }
-        let mods = alloc.add_array(mods);
+        let mods = alloc.add_slice(&*mods);
 
         return TCType {
             base: self.base.clone_into_alloc(alloc),
@@ -852,7 +852,7 @@ impl TCType {
         return Ok(TCTypeModifier::Array(len as u32));
     }
 
-    pub fn to_func_type_strict(&self, alloc: &impl AllocO<'static>) -> Option<TCFuncType> {
+    pub fn to_func_type_strict(&self, alloc: &impl Allocator) -> Option<TCFuncType> {
         if self.mods.len() == 0 {
             if let Some(def) = self.get_typedef() {
                 return def.to_func_type_strict(alloc);
@@ -900,7 +900,7 @@ impl TCType {
                 };
 
                 let params = Some(TCParamType {
-                    types: alloc.add_array(params),
+                    types: alloc.add_slice(&*params),
                     varargs,
                 });
 
@@ -915,7 +915,7 @@ impl TCType {
         return Some(tc_func_type);
     }
 
-    pub fn to_func_type(&self, alloc: &impl AllocO<'static>) -> Option<TCFuncType> {
+    pub fn to_func_type(&self, alloc: &impl Allocator) -> Option<TCFuncType> {
         if self.mods.len() == 0 {
             return self.get_typedef()?.to_func_type(alloc);
         }
@@ -1052,10 +1052,10 @@ impl TCTypeOwned {
         }
     }
 
-    pub fn to_ref(self, alloc: impl AllocO<'static>) -> TCType {
+    pub fn to_ref(self, alloc: impl Allocator) -> TCType {
         TCType {
             base: self.base,
-            mods: alloc.add_array(self.mods),
+            mods: alloc.add_slice(&*self.mods),
         }
     }
 
@@ -1282,12 +1282,12 @@ pub struct TCParamType {
 impl CloneInto<'static> for TCParamType {
     type CloneOutput = Self;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'static>) -> Self::CloneOutput {
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self::CloneOutput {
         let mut types = Vec::new();
         for ty in self.types {
             types.push(ty.clone_into_alloc(alloc));
         }
-        let (types, varargs) = (alloc.add_array(types), self.varargs);
+        let (types, varargs) = (alloc.add_slice(&*types), self.varargs);
 
         return Self { types, varargs };
     }
@@ -1322,7 +1322,7 @@ pub struct TCFuncType {
 impl CloneInto<'static> for TCFuncType {
     type CloneOutput = Self;
 
-    fn clone_into_alloc(&self, alloc: &impl AllocO<'static>) -> Self::CloneOutput {
+    fn clone_into_alloc(&self, alloc: &impl Allocator) -> Self::CloneOutput {
         let return_type = self.return_type.clone_into_alloc(alloc);
         let params = self.params.clone_into_alloc(alloc);
 
@@ -1439,7 +1439,7 @@ pub struct TCFunctionDeclarator {
 }
 
 pub struct TranslationUnit {
-    pub buckets: BucketListFactory,
+    pub buckets: aliu::BucketList,
     pub file: u32,
 
     pub typedefs: HashMap<(u32, CodeLoc), TCType>,
@@ -1488,16 +1488,10 @@ pub enum DeclarationResult {
     VarDecl(Vec<TCDecl>),
 }
 
-impl Drop for TranslationUnit {
-    fn drop(&mut self) {
-        unsafe { self.buckets.dealloc() };
-    }
-}
-
 impl TranslationUnit {
     pub fn new(file: u32) -> Self {
         Self {
-            buckets: BucketListFactory::new(),
+            buckets: aliu::BucketList::new(),
             file,
 
             typedefs: HashMap::new(),

@@ -1,4 +1,3 @@
-use crate::buckets::*;
 use crate::filedb::*;
 use crate::tc_ast::*;
 use crate::util::*;
@@ -64,15 +63,25 @@ pub struct LocalTypeEnv<'a> {
     pub typedefs: &'a HashMap<u32, (&'static TCType, CodeLoc)>,
 }
 
-impl<'a> AllocO<'static> for TypeEnv<'a> {
-    unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
-        return self.globals().0.tu.buckets.alloc(layout);
+unsafe impl<'a> Allocator for TypeEnv<'a> {
+    fn allocate(&self, layout: alloc::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>, aliu::AllocError> {
+        return self.globals().0.tu.buckets.allocate(layout);
+    }
+
+    // deallocation doesn't do anything
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: alloc::alloc::Layout) {
+        return self.globals().0.tu.buckets.deallocate(ptr, layout);
     }
 }
 
-impl<'a> AllocO<'static> for GlobalTypeEnv<'a> {
-    unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
-        return self.tu.buckets.alloc(layout);
+unsafe impl<'a> Allocator for GlobalTypeEnv<'a> {
+    fn allocate(&self, layout: alloc::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>, aliu::AllocError> {
+        return self.tu.buckets.allocate(layout);
+    }
+
+    // deallocation doesn't do anything
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: alloc::alloc::Layout) {
+        return self.tu.buckets.deallocate(ptr, layout);
     }
 }
 
@@ -205,7 +214,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
+            kind: TCOpcodeKind::ScopeBegin(aliu::HashRef::empty(), parent_scope),
             loc,
         });
 
@@ -258,7 +267,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
+            kind: TCOpcodeKind::ScopeBegin(aliu::HashRef::empty(), parent_scope),
             loc,
         });
 
@@ -320,7 +329,7 @@ impl<'a> TypeEnv<'a> {
         };
 
         env.ops.push(TCOpcode {
-            kind: TCOpcodeKind::ScopeBegin(HashRef::empty(), parent_scope),
+            kind: TCOpcodeKind::ScopeBegin(aliu::HashRef::empty(), parent_scope),
             loc,
         });
         env.ops.push(TCOpcode {
@@ -658,7 +667,7 @@ impl<'a> TypeEnv<'a> {
             LabelOrLoc::Ident(id) => Some((id, v.ty)),
             LabelOrLoc::Loc(_) => None, // static variable
         });
-        let symbols = HashRef::new_iter(&self, capa, symbols);
+        let symbols = aliu::HashRef::new_iter(&self, capa, symbols);
 
         if let TCOpcodeKind::ScopeBegin(syms, _) = &mut env.ops[scope_idx as usize].kind {
             *syms = symbols;
@@ -770,7 +779,7 @@ impl<'a> TypeEnv<'a> {
         debug_assert!(sa.size != n32::NULL);
         debug_assert!(sa.align != n32::NULL);
 
-        let fields = self.add_array(fields);
+        let fields = self.add_slice(&*fields);
 
         let ident = match id {
             LabelOrLoc::Ident(ident) => ident,
@@ -847,7 +856,7 @@ impl<'a> TypeEnv<'a> {
         debug_assert!(sa.size != n32::NULL);
         debug_assert!(sa.align != n32::NULL);
 
-        let fields = self.add_array(fields);
+        let fields = self.add_slice(&*fields);
 
         let ident = match id {
             LabelOrLoc::Ident(ident) => ident,
@@ -995,7 +1004,7 @@ impl<'a> TypeEnv<'a> {
                 v.insert(tc_var);
 
                 if let Some((label, init_expr)) = init_expr {
-                    let op = TCOpcode::init_local(self, label, init_expr, ty, loc);
+                    let op = TCOpcode::init_local(&*self, label, init_expr, ty, loc);
                     env.ops.push(op);
                 }
 
@@ -1032,7 +1041,7 @@ impl<'a> TypeEnv<'a> {
         }
 
         if let Some((label, init_expr)) = init_expr {
-            let op = TCOpcode::init_local(self, label, init_expr, ty, loc);
+            let op = TCOpcode::init_local(&*self, label, init_expr, ty, loc);
             env.ops.push(op);
         }
 
@@ -1053,7 +1062,7 @@ impl<'a> TypeEnv<'a> {
             Entry::Vacant(v) => {
                 v.insert(global_var);
 
-                if let Some(func_type) = decl.ty.to_func_type_strict(&*global_env.tu.buckets) {
+                if let Some(func_type) = decl.ty.to_func_type_strict(&global_env.tu.buckets) {
                     let tc_function = TCFunction {
                         is_static: decl.init.is_static(),
                         func_type,
@@ -1120,7 +1129,7 @@ impl<'a> TypeEnv<'a> {
                 }
             }
 
-            let types = global_env.tu.buckets.add_array(param_types);
+            let types = global_env.tu.buckets.add_slice(&*param_types);
             let params = TCParamType { types, varargs };
 
             prev_func.func_type.params = Some(params);
@@ -1178,7 +1187,7 @@ impl<'a> TypeEnv<'a> {
         }
 
         func.defn = Some(TCFuncDefn {
-            ops: global_env.tu.buckets.add_array(env.ops),
+            ops: global_env.tu.buckets.add_slice(&*env.ops),
             sym_count: env.next_symbol_label,
             label_count: env.next_label,
             param_count,
@@ -1296,7 +1305,7 @@ impl<'a> TypeEnv<'a> {
     }
 
     pub fn add_typedef(&mut self, ty: TCType, id: u32, loc: CodeLoc) {
-        self.typedefs.insert(id, (self.add(ty), loc));
+        self.typedefs.insert(id, (self.new(ty), loc));
     }
 
     pub fn assign_convert(&self, ty: TCType, expr: TCExpr, loc: CodeLoc) -> Option<TCExpr> {
@@ -1313,7 +1322,7 @@ impl<'a> TypeEnv<'a> {
             });
 
             return Some(TCExpr {
-                kind: TCExprKind::ParenList(self.add_array(exprs)),
+                kind: TCExprKind::ParenList(self.add_slice(&*exprs)),
                 ty: TCType::new(TCTypeBase::Void),
                 loc,
             });
@@ -1338,7 +1347,7 @@ impl<'a> TypeEnv<'a> {
 
             (kind, to) => {
                 let from = expr.ty.to_prim_type()?;
-                let expr = self.add(expr);
+                let expr = self.new(expr);
 
                 if core::mem::discriminant(&from) == core::mem::discriminant(&to) {
                     TypePun(expr)
