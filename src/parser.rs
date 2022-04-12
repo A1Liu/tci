@@ -1,5 +1,4 @@
 use crate::ast::*;
-use crate::buckets::*;
 use crate::lexer::*;
 use crate::util::*;
 use core::cell::RefCell;
@@ -17,14 +16,8 @@ pub struct ParseEnv {
     pub file: u32,
     pub symbol_is_type: RefCell<Vec<HashMap<u32, bool>>>, // true is type
     pub locs: Vec<CodeLoc>,
-    pub buckets: BucketListFactory,
+    pub buckets: aliu::BucketList,
     pub tree: Vec<GlobalStatement>,
-}
-
-impl Drop for ParseEnv {
-    fn drop(&mut self) {
-        unsafe { self.buckets.dealloc() };
-    }
 }
 
 impl ParseEnv {
@@ -35,7 +28,7 @@ impl ParseEnv {
             symbol_is_type: RefCell::new(vec![HashMap::new()]),
             locs,
             tree: Vec::new(),
-            buckets: BucketListFactory::new(),
+            buckets: aliu::BucketList::new(),
         }
     }
 
@@ -432,7 +425,7 @@ rule atom() -> Expr =
 
 rule assignment_expr() -> Expr = precedence! {
     x:@ w() [Eq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::Assign, to: x, val: y }
@@ -440,70 +433,70 @@ rule assignment_expr() -> Expr = precedence! {
     }
 
     x:@ w() [PlusEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Add), to: x, val: y }
         }
     }
     x:@ w() [DashEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Sub), to: x, val: y }
         }
     }
     x:@ w() [StarEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mul), to: x, val: y }
         }
     }
     x:@ w() [SlashEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Div), to: x, val: y }
         }
     }
     x:@ w() [PercentEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::Mod), to: x, val: y }
         }
     }
     x:@ w() [LtLtEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::LShift), to: x, val: y }
         }
     }
     x:@ w() [GtGtEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::RShift), to: x, val: y }
         }
     }
     x:@ w() [AmpEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitAnd), to: x, val: y }
         }
     }
     x:@ w() [CaretEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitXor), to: x, val: y }
         }
     }
     x:@ w() [LineEq] w() y:(@) {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Assign {op: AssignOp::MutAssign(BinOp::BitOr), to: x, val: y }
@@ -512,7 +505,7 @@ rule assignment_expr() -> Expr = precedence! {
 
     --
     x:@ w() [Question] w() e:expr() w() [Colon] w() y:(@) {
-        let (x, e, y) = env.buckets.add((x, e, y));
+        let (x, e, y) = env.buckets.new((x, e, y));
         Expr {
             loc: l_from(x.loc, y.loc),
             kind: ExprKind::Ternary { condition: x, if_true: e, if_false: y }
@@ -521,93 +514,93 @@ rule assignment_expr() -> Expr = precedence! {
 
     --
     x:(@) w() [LineLine] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolOr, x, y) }
     }
 
     --
     x:(@) w() [AmpAmp] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BoolAnd, x, y) }
     }
 
     --
     x:(@) w() [Line] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitOr, x, y) }
     }
 
     --
     x:(@) w() [Caret] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitXor, x, y) }
     }
 
     --
     x:(@) w() [Amp] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::BitAnd, x, y) }
     }
 
     --
     x:(@) w() [EqEq] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Eq, x, y) }
     }
     x:(@) w() [Neq] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Neq, x, y) }
     }
 
     --
     x:(@) w() [Gt] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Gt, x, y) }
     }
     x:(@) w() [Geq] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Geq, x, y) }
     }
     x:(@) w() [Lt] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Lt, x, y) }
     }
     x:(@) w() [Leq] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Leq, x, y) }
     }
 
     --
     x:(@) w() [LtLt] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::LShift, x, y) }
     }
     x:(@) w() [GtGt] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::RShift, x, y) }
     }
 
     --
     x:(@) w() [Plus] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Add, x, y) }
     }
     x:(@) w() [Dash] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Sub, x, y) }
     }
 
     --
     x:(@) w() [Slash] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Div, x, y) }
     }
     x:(@) w() [Star] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Mul, x, y) }
     }
     x:(@) w() [Percent] w() y:@ {
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc: l_from(x.loc, y.loc), kind: ExprKind::BinOp(BinOp::Mod, x, y) }
     }
 
@@ -618,42 +611,42 @@ rule assignment_expr() -> Expr = precedence! {
 
 rule cast_expr() -> Expr =
     pos:position!() [LParen] w() t:type_name() w() [RParen] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::Cast { to: t, from: x } }
     } /
     prefix_expr()
 
 rule prefix_expr() -> Expr =
     pos:position!() [Amp] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Ref, x)  }
     } /
     pos:position!() [Star] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Deref, x)  }
     } /
     pos:position!() [Sizeof] w() x:prefix_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::SizeofExpr(x)  }
     } /
     pos:position!() [Bang] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::BoolNot, x)  }
     } /
     pos:position!() [Tilde] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::BitNot, x)  }
     } /
     pos:position!() [Dash] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::Neg, x)  }
     } /
     pos:position!() [DashDash] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::PreDecr, x)  }
     } /
     pos:position!() [PlusPlus] w() x:cast_expr() {
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc: l_from(env.locs[pos], x.loc), kind: ExprKind::UnaryOp(UnaryOp::PreIncr, x)  }
     } /
     postfix_expr()
@@ -663,33 +656,33 @@ rule postfix_expr() -> Expr = precedence! {
     x:(@) w() [LParen] w() c:cs0(<assignment_expr()>) w() pos:position!() [RParen] {
         let (c, _) = c;
         let loc = l_from(x.loc, env.locs[pos]);
-        let function = env.buckets.add(x);
-        let params = env.buckets.add_array(c);
+        let function = env.buckets.new(x);
+        let params = env.buckets.add_slice(&*c);
         Expr { loc, kind: ExprKind::Call { function, params } }
     }
     x:(@) w() pos:position!() [DashDash] {
         let loc = l_from(x.loc, env.locs[pos]);
-        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostDecr, env.buckets.add(x)) }
+        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostDecr, env.buckets.new(x)) }
     }
     x:(@) w() pos:position!() [PlusPlus] {
         let loc = l_from(x.loc, env.locs[pos]);
-        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostIncr, env.buckets.add(x)) }
+        Expr { loc, kind: ExprKind::UnaryOp(UnaryOp::PostIncr, env.buckets.new(x)) }
     }
     x:(@) w() [LBracket] w() y:expr() w() pos:position!() [RBracket] {
         let loc = l_from(x.loc, env.locs[pos]);
-        let (x, y) = env.buckets.add((x, y));
+        let (x, y) = env.buckets.new((x, y));
         Expr { loc, kind: ExprKind::BinOp(BinOp::Index, x, y) }
     }
     x:(@) w() [Arrow] w() id:raw_ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc, kind: ExprKind::PtrMember { member: id, base: x } }
     }
     x:(@) w() [Dot] w() id:raw_ident() {
         let (id, loc) = id;
         let loc = l_from(x.loc, loc);
-        let x = env.buckets.add(x);
+        let x = env.buckets.new(x);
         Expr { loc, kind: ExprKind::Member { member: id, base: x } }
     }
 
@@ -703,7 +696,7 @@ rule expr() -> Expr = list:cs1(<assignment_expr()>) { // TODO alllocations!
         list[0]
     }else {
         Expr {
-            kind: ExprKind::ParenList(env.buckets.add_array(list)),
+            kind: ExprKind::ParenList(env.buckets.add_slice(&*list)),
             loc,
         }
     }
@@ -712,8 +705,8 @@ rule expr() -> Expr = list:cs1(<assignment_expr()>) { // TODO alllocations!
 pub rule declaration() -> Declaration = d:declaration1() w() [Semicolon] {
     Declaration {
         loc: d.2,
-        specifiers: env.buckets.add_array(d.0),
-        declarators: env.buckets.add_array(d.1),
+        specifiers: env.buckets.add_slice(&*d.0),
+        declarators: env.buckets.add_slice(&*d.1),
     }
 }
 
@@ -941,7 +934,7 @@ rule struct_body() -> (&'static [StructField], CodeLoc) =
     pos:position!() [LBrace] w() d:list0(<struct_field()>) w()
     pos2:position!() [RBrace] {
         let (d, _) = d;
-        let d = &*env.buckets.add_array(d);
+        let d = &*env.buckets.add_slice(&*d);
 
         (d, l_from(env.locs[pos], env.locs[pos2]))
     }
@@ -952,8 +945,8 @@ rule struct_field() -> StructField =
         let (s, loc) = s;
         let (d, _) = d;
         StructField {
-            specifiers: env.buckets.add_array(s),
-            declarators: env.buckets.add_array(d),
+            specifiers: env.buckets.add_slice(&*s),
+            declarators: env.buckets.add_slice(&*d),
             loc: l_from(loc, env.locs[pos2]),
         }
     }
@@ -1040,7 +1033,7 @@ rule declarator() -> Declarator
     let mut decl = decl;
     let loc = l_from(begin_loc, end_loc);
 
-    decl.derived = env.buckets.add_array(concat(derived, pointer));
+    decl.derived = env.buckets.add_slice(&*concat(derived, pointer));
     decl.loc = loc;
     decl
 }
@@ -1055,7 +1048,7 @@ rule direct_declarator() -> Declarator =
     } /
     pos:position!() [LParen] w() d:declarator() w() pos2:position!() [RParen] {
         Declarator {
-           kind: DeclaratorKind::Declarator(env.buckets.add(d)),
+           kind: DeclaratorKind::Declarator(env.buckets.new(d)),
            derived: &[],
            loc: l_from(env.locs[pos], env.locs[pos2]),
         }
@@ -1089,10 +1082,10 @@ rule array_declarator() -> ArrayDeclarator =
         }
 
         ArrayDeclarator {
-            qualifiers: env.buckets.add_array(q),
+            qualifiers: env.buckets.add_slice(&*q),
             size: ArraySize{
                loc: e.loc,
-               kind: ArraySizeKind::VariableExpression(env.buckets.add(e)),
+               kind: ArraySizeKind::VariableExpression(env.buckets.new(e)),
             },
             loc: l_from(begin_loc, e.loc),
         }
@@ -1100,7 +1093,7 @@ rule array_declarator() -> ArrayDeclarator =
     q:list0(<type_qualifier()>) {
         let (q, loc) = q;
         ArrayDeclarator {
-            qualifiers: env.buckets.add_array(q),
+            qualifiers: env.buckets.add_slice(&*q),
             size: ArraySize {
                 kind: ArraySizeKind::Unknown,
                 loc,
@@ -1118,7 +1111,7 @@ rule function_declarator() -> FunctionDeclarator =
         loc = l_from(env.locs[pos], env.locs[pos2]);
 
         FunctionDeclarator {
-            parameters: env.buckets.add_array(params),
+            parameters: env.buckets.add_slice(&*params),
             varargs,
             loc,
         }
@@ -1133,7 +1126,7 @@ rule pointer() -> DerivedDeclarator = pos:position!() [Star] w() q:list0(<type_q
 
     let loc = l_from(loc, end_loc);
     DerivedDeclarator {
-        kind: DerivedDeclaratorKind::Pointer(env.buckets.add_array(q)),
+        kind: DerivedDeclaratorKind::Pointer(env.buckets.add_slice(&*q)),
         loc,
     }
 }
@@ -1147,7 +1140,7 @@ rule pointer_quals() -> PointerQuals = pos:position!() [Star] w() q:list0(<type_
 
     let loc = l_from(loc, end_loc);
     PointerQuals {
-        quals: env.buckets.add_array(q),
+        quals: env.buckets.add_slice(&*q),
         loc,
     }
 }
@@ -1161,7 +1154,7 @@ rule parameter_declaration() -> ParameterDeclaration = s:decl_specs() w() d:para
     }
 
     ParameterDeclaration {
-        specifiers: env.buckets.add_array(specs),
+        specifiers: env.buckets.add_slice(&*specs),
         declarator: d,
         loc,
     }
@@ -1185,7 +1178,7 @@ rule type_name() -> TypeName = s:specifier_qualifiers() w() d:abstract_declarato
     }
 
     TypeName {
-        specifiers: env.buckets.add_array(sqs),
+        specifiers: env.buckets.add_slice(&*sqs),
         declarator: d,
         loc,
     }
@@ -1207,7 +1200,7 @@ rule abstract_declarator() -> Declarator =
 
         let mut declarator = k;
         declarator.loc = loc;
-        declarator.derived = env.buckets.add_array(concat(d, p));
+        declarator.derived = env.buckets.add_slice(&*concat(d, p));
         declarator
     } /
     p:list0(<pointer()>) w() d:list1(<derived_abstract_declarator()>) {
@@ -1217,7 +1210,7 @@ rule abstract_declarator() -> Declarator =
 
         Declarator {
             kind: DeclaratorKind::Abstract,
-            derived: env.buckets.add_array(concat(d, p)),
+            derived: env.buckets.add_slice(&*concat(d, p)),
             loc,
         }
     } /
@@ -1226,7 +1219,7 @@ rule abstract_declarator() -> Declarator =
 
         Declarator {
             kind: DeclaratorKind::Abstract,
-            derived: env.buckets.add_array(p),
+            derived: env.buckets.add_slice(&*p),
             loc,
         }
     }
@@ -1236,7 +1229,7 @@ rule direct_abstract_declarator() -> Declarator =
     pos2:position!() [RParen]
 {
     Declarator {
-        kind: DeclaratorKind::Declarator(env.buckets.add(d)),
+        kind: DeclaratorKind::Declarator(env.buckets.new(d)),
         derived: &[],
         loc: l_from(env.locs[pos], env.locs[pos2]),
     }
@@ -1260,7 +1253,7 @@ rule abstract_array_declarator() -> ArrayDeclarator =
     q:list0(<type_qualifier()>) {
         let (q, loc) = q;
         ArrayDeclarator {
-            qualifiers: env.buckets.add_array(q),
+            qualifiers: env.buckets.add_slice(&*q),
             size: ArraySize {
                 kind: ArraySizeKind::Unknown,
                 loc,
@@ -1272,9 +1265,9 @@ rule abstract_array_declarator() -> ArrayDeclarator =
         let (q, loc) = q;
 
         ArrayDeclarator {
-            qualifiers: env.buckets.add_array(q),
+            qualifiers: env.buckets.add_slice(&*q),
             size: ArraySize {
-                kind: ArraySizeKind::VariableExpression(env.buckets.add(e)),
+                kind: ArraySizeKind::VariableExpression(env.buckets.new(e)),
                 loc: e.loc,
             },
             loc: l_from(loc, e.loc),
@@ -1290,7 +1283,7 @@ rule abstract_function_declarator() -> FunctionDeclarator =
         }
 
         FunctionDeclarator {
-            parameters: env.buckets.add_array(p),
+            parameters: env.buckets.add_slice(&*p),
             varargs,
             loc,
         }
@@ -1316,7 +1309,7 @@ rule typedef_name0() -> (u32, CodeLoc) = i:raw_ident() {?
 rule initializer() -> Initializer =
     e:assignment_expr() {
         Initializer {
-            kind: InitializerKind::Expr(env.buckets.add(e)),
+            kind: InitializerKind::Expr(env.buckets.new(e)),
             loc: e.loc,
         }
     } /
@@ -1324,7 +1317,7 @@ rule initializer() -> Initializer =
     [Comma]? w() pos2:position!() [RBrace]
     {
         Initializer {
-            kind: InitializerKind::List(env.buckets.add_array(i.0)),
+            kind: InitializerKind::List(env.buckets.add_slice(&*i.0)),
             loc: l_from(env.locs[pos], env.locs[pos2]),
         }
     }
@@ -1363,7 +1356,7 @@ rule labeled_statement() -> Statement =
             kind: StatementKind::Labeled {
                 label: i,
                 label_loc: loc,
-                labeled: env.buckets.add(s),
+                labeled: env.buckets.new(s),
             }
         }
     } /
@@ -1372,14 +1365,14 @@ rule labeled_statement() -> Statement =
             loc: l_from(env.locs[pos], s.loc),
             kind: StatementKind::CaseLabeled {
                 case_value: i,
-                labeled: env.buckets.add(s),
+                labeled: env.buckets.new(s),
             }
         }
     } /
     pos:position!() w() [Default] w() [Colon] w() s:statement() {
         Statement {
             loc: l_from(env.locs[pos], s.loc),
-            kind: StatementKind::DefaultCaseLabeled(env.buckets.add(s))
+            kind: StatementKind::DefaultCaseLabeled(env.buckets.new(s))
         }
     }
 
@@ -1393,7 +1386,7 @@ rule compound_statement() -> Block =
     let (block, loc) = b;
 
     Block{
-        stmts: env.buckets.add_array(block),
+        stmts: env.buckets.add_slice(&*block),
         loc: l_from(env.locs[pos], env.locs[pos2]),
     }
 }
@@ -1439,8 +1432,8 @@ rule selection_statement() -> Statement =
         Statement {
             kind: StatementKind::Branch {
                 if_cond: e,
-                if_body: env.buckets.add(a),
-                else_body: env.buckets.add(b).as_ref(),
+                if_body: env.buckets.new(a),
+                else_body: env.buckets.new(b).as_ref(),
             },
             loc,
         }
@@ -1452,7 +1445,7 @@ rule selection_statement() -> Statement =
         Statement {
             kind: StatementKind::Switch {
                 expr: e,
-                body: env.buckets.add(a),
+                body: env.buckets.new(a),
             },
             loc,
         }
@@ -1477,7 +1470,7 @@ rule while_statement() -> Statement =
         Statement {
             kind: StatementKind::While {
                 condition: e,
-                body: env.buckets.add(s),
+                body: env.buckets.new(s),
             },
             loc,
         }
@@ -1492,7 +1485,7 @@ rule do_while_statement() -> Statement =
         Statement {
             kind: StatementKind::DoWhile {
                 condition: e,
-                body: env.buckets.add(s),
+                body: env.buckets.new(s),
             },
             loc,
         }
@@ -1509,7 +1502,7 @@ rule for_statement() -> Statement =
                 at_start: a,
                 condition: b,
                 post_expr: e,
-                body: env.buckets.add(s),
+                body: env.buckets.new(s),
             },
             loc,
         }
@@ -1524,7 +1517,7 @@ rule for_statement() -> Statement =
                 decl: a,
                 condition: b,
                 post_expr: c,
-                body: env.buckets.add(s),
+                body: env.buckets.new(s),
             },
             loc,
         }
@@ -1619,8 +1612,8 @@ rule function_definition() -> FunctionDefinition =
 
         let loc = l_from(begin_loc, d.loc);
         FunctionDefinition {
-            specifiers: env.buckets.add_array(a),
-            pointer: env.buckets.add_array(pointer),
+            specifiers: env.buckets.add_slice(&*a),
+            pointer: env.buckets.add_slice(&*pointer),
             ident,
             params: Some(f),
             statements: d,
@@ -1635,8 +1628,8 @@ rule function_definition() -> FunctionDefinition =
 
         let loc = l_from(begin_loc, d.loc);
         FunctionDefinition {
-            specifiers: env.buckets.add_array(a),
-            pointer: env.buckets.add_array(pointer),
+            specifiers: env.buckets.add_slice(&*a),
+            pointer: env.buckets.add_slice(&*pointer),
             ident,
             params: None,
             statements: d,

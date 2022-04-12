@@ -1,5 +1,4 @@
 use crate::ast::*;
-use crate::buckets::*;
 use crate::filedb::*;
 use crate::runtime::Opcode;
 use crate::tc_ast::*;
@@ -138,7 +137,7 @@ lazy_static! {
 
             let value = check_expr(&mut *env, &args[0])?;
             return Ok(TCExpr {
-                kind: TCExprKind::Builtin(TCBuiltin::Push(env.add(value))),
+                kind: TCExprKind::Builtin(TCBuiltin::Push(env.new(value))),
                 ty: void,
                 loc: call_loc,
             });
@@ -214,7 +213,7 @@ pub fn check_tree(
             GlobalStatementKind::FunctionDefinition(func) => {
                 let func_decl = check_func_defn_decl(&mut globals, &func)?;
 
-                let base = TCTypeBase::InternalTypedef(globals.add(func_decl.return_type));
+                let base = TCTypeBase::InternalTypedef(globals.new(func_decl.return_type));
                 let mut ty = TCTypeOwned::new(base);
 
                 if let Some(params) = func_decl.params {
@@ -1013,7 +1012,7 @@ pub fn check_func_defn_decl(
     } else {
         return Ok(TCFunctionDeclarator {
             is_static: let_expr!(StorageClass::Static = sc),
-            return_type: rtype.to_ref(locals),
+            return_type: rtype.to_ref(&*locals),
             ident: decl.ident,
             params: None,
             loc: decl.loc,
@@ -1042,7 +1041,7 @@ pub fn check_func_defn_decl(
         return_type: rtype.to_ref(&*locals),
         ident: decl.ident,
         params: Some(TCParamsDeclarator {
-            params: locals.add_array(out),
+            params: locals.add_slice(&*out),
             varargs: params_decl.varargs,
         }),
         loc: decl.loc,
@@ -1267,13 +1266,13 @@ pub fn check_initializer_list(
         let array_init = match array_mod {
             TCTypeModifier::Array(arr) => {
                 tc_exprs.resize(*arr as usize, (TCExprKind::Uninit, decl_loc));
-                let elems = locals.add_array(tc_exprs);
+                let elems = locals.add_slice(&*tc_exprs);
 
                 TCExprKind::ArrayInit { elems, elem_ty }
             }
             x @ TCTypeModifier::VariableArray => {
                 *x = TCTypeModifier::Array(tc_exprs.len() as u32); // TODO overflow
-                let elems = locals.add_array(tc_exprs);
+                let elems = locals.add_slice(&*tc_exprs);
 
                 TCExprKind::ArrayInit { elems, elem_ty }
             }
@@ -1321,7 +1320,7 @@ pub fn check_initializer_list(
         written_fields.push(tc_expr);
     }
 
-    let (fields, size) = (locals.add_array(written_fields), target.repr_size());
+    let (fields, size) = (locals.add_slice(&*written_fields), target.repr_size());
     return Ok((TCExprKind::StructLit { fields, size }, target));
 }
 
@@ -1497,7 +1496,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
 
             return Ok(TCExpr {
                 ty: tc_exprs[tc_exprs.len() - 1].ty,
-                kind: TCExprKind::ParenList(env.add_array(tc_exprs)),
+                kind: TCExprKind::ParenList(env.add_slice(&*tc_exprs)),
                 loc: expr.loc,
             });
         }
@@ -1554,7 +1553,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                         .assign_convert(TCType::new(TCTypeBase::I8), val, expr.loc)
                         .ok_or_else(or_else)?;
 
-                    let (value, ty) = (env.add(val), target.ty);
+                    let (value, ty) = (env.new(val), target.ty);
 
                     #[rustfmt::skip]
                     return Ok(TCExpr {
@@ -1568,7 +1567,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 let val = env
                     .assign_convert(target.ty, val, expr.loc)
                     .ok_or_else(or_else)?;
-                let value = env.add(val);
+                let value = env.new(val);
                 return Ok(TCExpr {
                     kind: TCExprKind::MutAssign {
                         target,
@@ -1584,7 +1583,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 let val = env
                     .assign_convert(target.ty, val, expr.loc)
                     .ok_or_else(or_else)?;
-                let value = env.add(val);
+                let value = env.new(val);
 
                 return Ok(TCExpr {
                     kind: TCExprKind::Assign { target, value },
@@ -1628,7 +1627,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 (ift, iff)
             };
 
-            let (condition, if_true, if_false) = env.add((cond, if_true, if_false));
+            let (condition, if_true, if_false) = env.new((cond, if_true, if_false));
 
             return Ok(TCExpr {
                 kind: TCExprKind::Ternary {
@@ -1650,7 +1649,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 ty: field.ty,
                 loc: expr.loc,
                 kind: TCExprKind::Member {
-                    base: env.add(base),
+                    base: env.new(base),
                     offset: field.offset,
                 },
             });
@@ -1665,7 +1664,7 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 ty: field.ty,
                 loc: expr.loc,
                 kind: TCExprKind::PtrMember {
-                    base: env.add(base),
+                    base: env.new(base),
                     offset: field.offset,
                 },
             });
@@ -1736,8 +1735,8 @@ pub fn check_expr(env: &mut TypeEnv, expr: &Expr) -> Result<TCExpr, Error> {
                 tparams.push(expr);
             }
 
-            let func = env.add(func);
-            let params = env.add_array(tparams);
+            let func = env.new(func);
+            let params = env.add_slice(&*tparams);
             return Ok(TCExpr {
                 kind: TCExprKind::Call { func, params },
                 ty: func_type.return_type,
@@ -1769,7 +1768,7 @@ pub fn check_bin_op(
                 loc: l.loc,
             };
 
-            let (op, operand) = (TCUnaryOp::BoolNorm, env.add(r));
+            let (op, operand) = (TCUnaryOp::BoolNorm, env.new(r));
             #[rustfmt::skip]
             let if_false = TCExpr {
                 kind: TCExprKind::UnaryOp { op, op_type, operand, },
@@ -1777,7 +1776,7 @@ pub fn check_bin_op(
                 loc: r.loc,
             };
 
-            let (condition, if_true, if_false) = (env.add(l), env.add(if_true), env.add(if_false));
+            let (condition, if_true, if_false) = (env.new(l), env.new(if_true), env.new(if_false));
 
             #[rustfmt::skip]
             return Ok(TCExpr {
@@ -1800,7 +1799,7 @@ pub fn check_bin_op(
                 loc: l.loc,
             };
 
-            let (op, operand) = (TCUnaryOp::BoolNorm, env.add(r));
+            let (op, operand) = (TCUnaryOp::BoolNorm, env.new(r));
             #[rustfmt::skip]
             let if_true = TCExpr {
                 kind: TCExprKind::UnaryOp { op, op_type, operand, },
@@ -1808,7 +1807,7 @@ pub fn check_bin_op(
                 loc: r.loc,
             };
 
-            let (condition, if_true, if_false) = (env.add(l), env.add(if_true), env.add(if_false));
+            let (condition, if_true, if_false) = (env.new(l), env.new(if_true), env.new(if_false));
 
             #[rustfmt::skip]
             return Ok(TCExpr {
@@ -1823,7 +1822,7 @@ pub fn check_bin_op(
             let ty = sum.ty.deref().ok_or_else(or_else)?;
 
             return Ok(TCExpr {
-                kind: TCExprKind::Deref(env.add(sum)),
+                kind: TCExprKind::Deref(env.new(sum)),
                 ty,
                 loc,
             });
@@ -1867,7 +1866,7 @@ pub fn check_bin_op(
                         kind: TCExprKind::Conv {
                             from: int_prim,
                             to: TCPrimType::I64,
-                            expr: env.add(int),
+                            expr: env.new(int),
                         },
                         ty: TCType::new(TCTypeBase::I64),
                         loc: int.loc,
@@ -1884,8 +1883,8 @@ pub fn check_bin_op(
                         kind: TCExprKind::BinOp {
                             op: BinOp::Mul,
                             op_type: TCPrimType::I64,
-                            left: env.add(int),
-                            right: env.add(elem_size),
+                            left: env.new(int),
+                            right: env.new(elem_size),
                         },
                         ty: TCType::new(TCTypeBase::I64),
                     }
@@ -1894,7 +1893,7 @@ pub fn check_bin_op(
                         kind: TCExprKind::Conv {
                             from: int_prim,
                             to: TCPrimType::U64,
-                            expr: env.add(int),
+                            expr: env.new(int),
                         },
                         ty: TCType::new(TCTypeBase::U64),
                         loc: int.loc,
@@ -1911,8 +1910,8 @@ pub fn check_bin_op(
                         kind: TCExprKind::BinOp {
                             op: BinOp::Mul,
                             op_type: TCPrimType::U64,
-                            left: env.add(int),
-                            right: env.add(elem_size),
+                            left: env.new(int),
+                            right: env.new(elem_size),
                         },
                         ty: TCType::new(TCTypeBase::U64),
                     }
@@ -1922,8 +1921,8 @@ pub fn check_bin_op(
                     kind: TCExprKind::BinOp {
                         op: BinOp::Add,
                         op_type: TCPrimType::U64,
-                        left: env.add(ptr),
-                        right: env.add(int),
+                        left: env.new(ptr),
+                        right: env.new(int),
                     },
                     loc,
                     ty: ptr.ty,
@@ -1954,7 +1953,7 @@ pub fn check_bin_op(
                         ));
                     }
 
-                    let (left, right) = (env.add(l), env.add(r));
+                    let (left, right) = (env.new(l), env.new(r));
                     let (op, op_type) = (BinOp::Sub, TCPrimType::U64);
                     let ty = TCType::new(TCTypeBase::U64);
 
@@ -1971,7 +1970,7 @@ pub fn check_bin_op(
                         loc,
                     };
 
-                    let (left, right) = (env.add(sub), env.add(divisor));
+                    let (left, right) = (env.new(sub), env.new(divisor));
 
                     #[rustfmt::skip]
                     let result = TCExpr {
@@ -1996,7 +1995,7 @@ pub fn check_bin_op(
                         kind: TCExprKind::Conv {
                             from: int_prim,
                             to: TCPrimType::I64,
-                            expr: env.add(int),
+                            expr: env.new(int),
                         },
                         ty: TCType::new(TCTypeBase::I64),
                         loc: int.loc,
@@ -2013,8 +2012,8 @@ pub fn check_bin_op(
                         kind: TCExprKind::BinOp {
                             op: BinOp::Mul,
                             op_type: TCPrimType::I64,
-                            left: env.add(int),
-                            right: env.add(elem_size),
+                            left: env.new(int),
+                            right: env.new(elem_size),
                         },
                         ty: TCType::new(TCTypeBase::I64),
                     };
@@ -2025,7 +2024,7 @@ pub fn check_bin_op(
                         kind: TCExprKind::Conv {
                             from: int_prim,
                             to: TCPrimType::U64,
-                            expr: env.add(int),
+                            expr: env.new(int),
                         },
                         ty: TCType::new(TCTypeBase::U64),
                         loc: int.loc,
@@ -2042,8 +2041,8 @@ pub fn check_bin_op(
                         kind: TCExprKind::BinOp {
                             op: BinOp::Mul,
                             op_type: TCPrimType::U64,
-                            left: env.add(int),
-                            right: env.add(elem_size),
+                            left: env.new(int),
+                            right: env.new(elem_size),
                         },
                         ty: TCType::new(TCTypeBase::U64),
                     };
@@ -2055,8 +2054,8 @@ pub fn check_bin_op(
                     kind: TCExprKind::BinOp {
                         op: BinOp::Sub,
                         op_type,
-                        left: env.add(ptr),
-                        right: env.add(int),
+                        left: env.new(ptr),
+                        right: env.new(int),
                     },
                     loc,
                     ty: ptr.ty,
@@ -2079,7 +2078,7 @@ pub fn check_bin_op(
             .assign_convert(TCType::new(TCTypeBase::I8), r, loc)
             .ok_or_else(or_else)?;
 
-        let (left, right, ty) = (env.add(l), env.add(r), l.ty);
+        let (left, right, ty) = (env.new(l), env.new(r), l.ty);
 
         #[rustfmt::skip]
         return Ok(TCExpr {
@@ -2098,7 +2097,7 @@ pub fn check_bin_op(
         _ => left.ty,
     };
 
-    let (left, right) = (env.add(left), env.add(right));
+    let (left, right) = (env.new(left), env.new(right));
 
     #[rustfmt::skip]
     return Ok(TCExpr {
@@ -2131,7 +2130,7 @@ pub fn prim_unify(
                 to: TCPrimType::Pointer {
                     stride: 1u32.into(),
                 },
-                expr: env.add(l),
+                expr: env.new(l),
             },
             ty: TCType::new_ptr(TCTypeBase::Void),
             loc: l.loc,
@@ -2143,7 +2142,7 @@ pub fn prim_unify(
                 to: TCPrimType::Pointer {
                     stride: 1u32.into(),
                 },
-                expr: env.add(r),
+                expr: env.new(r),
             },
             ty: TCType::new_ptr(TCTypeBase::Void),
             loc: r.loc,
@@ -2167,7 +2166,7 @@ pub fn prim_unify(
             kind: TCExprKind::Conv {
                 from: r_prim,
                 to: l_prim,
-                expr: env.add(r),
+                expr: env.new(r),
             },
             ty: l.ty,
             loc: r.loc,
@@ -2179,7 +2178,7 @@ pub fn prim_unify(
             kind: TCExprKind::Conv {
                 from: l_prim,
                 to: r_prim,
-                expr: env.add(l),
+                expr: env.new(l),
             },
             ty: r.ty,
             loc: r.loc,
@@ -2241,7 +2240,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
             let field = check_field_access(&mut *env, base_ty, *member, expr.loc)?;
 
             return Ok(TCAssignTarget {
-                kind: TCAssignTargetKind::Ptr(env.add(base)),
+                kind: TCAssignTargetKind::Ptr(env.new(base)),
                 offset: field.offset,
                 ty: field.ty,
                 defn_loc: base.loc,
@@ -2261,7 +2260,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
             let ty = ptr.ty.deref().ok_or_else(or_else)?;
 
             return Ok(TCAssignTarget {
-                kind: TCAssignTargetKind::Ptr(env.add(ptr)),
+                kind: TCAssignTargetKind::Ptr(env.new(ptr)),
                 loc: expr.loc,
                 defn_loc: ptr.loc,
                 ty,
@@ -2274,7 +2273,7 @@ pub fn check_assign_target(env: &mut TypeEnv, expr: &Expr) -> Result<TCAssignTar
             let ty = sum.ty.deref().ok_or_else(or_else)?;
 
             return Ok(TCAssignTarget {
-                kind: TCAssignTargetKind::Ptr(env.add(sum)),
+                kind: TCAssignTargetKind::Ptr(env.new(sum)),
                 loc: expr.loc,
                 defn_loc: ptr.loc,
                 ty,
@@ -2303,7 +2302,7 @@ pub fn check_un_op(
     match op {
         UnaryOp::Ref => {
             let target = check_assign_target(env, obj)?;
-            let ty = TCType::new_ptr(TCTypeBase::InternalTypedef(env.add(target.ty)));
+            let ty = TCType::new_ptr(TCTypeBase::InternalTypedef(env.new(target.ty)));
 
             return Ok(TCExpr {
                 kind: TCExprKind::Ref(target),
@@ -2316,7 +2315,7 @@ pub fn check_un_op(
             let or_else = || error!("cannot dereference type", ptr.loc, "value found here");
             let ty = ptr.ty.deref().ok_or_else(or_else)?;
             return Ok(TCExpr {
-                kind: TCExprKind::Deref(env.add(ptr)),
+                kind: TCExprKind::Deref(env.new(ptr)),
                 ty,
                 loc,
             });
@@ -2373,7 +2372,7 @@ pub fn check_un_op(
 
             let loc = obj.loc;
             let val = TCExpr { kind, ty, loc };
-            let (op, value, ty) = (BinOp::Sub, env.add(val), target.ty);
+            let (op, value, ty) = (BinOp::Sub, env.new(val), target.ty);
 
             #[rustfmt::skip]
             return Ok(TCExpr {
@@ -2407,7 +2406,7 @@ pub fn check_un_op(
 
             let loc = obj.loc;
             let val = TCExpr { kind, ty, loc };
-            let (op, value, ty) = (BinOp::Add, env.add(val), target.ty);
+            let (op, value, ty) = (BinOp::Add, env.new(val), target.ty);
 
             #[rustfmt::skip]
             return Ok(TCExpr {
@@ -2421,7 +2420,7 @@ pub fn check_un_op(
             let operand = check_expr(&mut *env, obj)?;
             let op_type_o = operand.ty.to_prim_type();
             let op_type = op_type_o.ok_or_else(ptype_err(operand.loc))?;
-            let operand = env.add(operand);
+            let operand = env.new(operand);
 
             return Ok(TCExpr {
                 kind: TCExprKind::UnaryOp {
@@ -2438,7 +2437,7 @@ pub fn check_un_op(
             let operand = check_expr(&mut *env, obj)?;
             let op_type_o = operand.ty.to_prim_type();
             let op_type = op_type_o.ok_or_else(ptype_err(operand.loc))?;
-            let operand = env.add(operand);
+            let operand = env.new(operand);
 
             return Ok(TCExpr {
                 kind: TCExprKind::UnaryOp {
@@ -2455,7 +2454,7 @@ pub fn check_un_op(
             let operand = check_expr(env, obj)?;
             let op_type_o = operand.ty.to_prim_type();
             let op_type = op_type_o.ok_or_else(ptype_err(operand.loc))?;
-            let operand = env.add(operand);
+            let operand = env.new(operand);
 
             return Ok(TCExpr {
                 kind: TCExprKind::UnaryOp {
