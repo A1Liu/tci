@@ -4,9 +4,7 @@ use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use core::{cmp, fmt, mem, ptr, slice, str};
-
 use aliu::{Allocator, Global};
-use alloc::vec::Vec;
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
 
