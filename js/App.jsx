@@ -1,6 +1,6 @@
 import "./styles.css";
 
-import { render, h } from "preact";
+import { h } from "preact";
 import store from "./reducers";
 import SplitPane from "react-split-pane";
 import styled from "styled-components";
