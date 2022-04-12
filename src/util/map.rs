@@ -3,8 +3,10 @@ use core::borrow::Borrow;
 use core::fmt;
 use core::hash::{BuildHasher, Hash, Hasher};
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use siphasher::sip::SipHasher13;
+use std::collections::hash_map::DefaultHasher as SipHasher13;
 
+// I *would* replace this with std::collections::hash_map::HashMap, but was
+// getting some kind of trait error, so whatever.
 pub use hashbrown::hash_map::Entry;
 pub use hashbrown::HashMap;
 pub use lazy_static::lazy_static;

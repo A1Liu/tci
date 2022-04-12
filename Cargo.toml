@@ -19,7 +19,6 @@ serde_repr = { version = "0.1.7" }
 strum = { version = "0.24.0", features = ["derive"] }
 peg = { version = "0.8.0" }
 hashbrown = { version = "0.9.1", features = ["serde"] }
-siphasher = "0.3.3"
 unicode-width = "0.1.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
