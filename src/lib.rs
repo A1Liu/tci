@@ -12,7 +12,7 @@ mod runtime;
 
 mod assembler;
 mod ast;
-mod buckets;
+// mod buckets;
 mod filedb;
 mod lexer;
 mod parser;
