@@ -243,7 +243,7 @@ const WHITESPACE: [u8; 2] = [b' ', b'\t'];
 const CRLF: [u8; 2] = [b'\r', b'\n'];
 
 pub struct Lexer<'a> {
-    pub buckets: BucketListFactory,
+    pub buckets: aliu::BucketList,
     pub symbols: Symbols,
     pub files: &'a FileDb,
 
@@ -252,16 +252,10 @@ pub struct Lexer<'a> {
     pub locs: Vec<CodeLoc>,
 }
 
-impl<'a> Drop for Lexer<'a> {
-    fn drop(&mut self) {
-        unsafe { self.buckets.dealloc() };
-    }
-}
-
 impl<'a> Lexer<'a> {
     pub fn new(files: &'a FileDb) -> Self {
         Self {
-            buckets: BucketListFactory::new(),
+            buckets: aliu::BucketList::new(),
             symbols: Symbols::new(),
             files,
 
@@ -318,7 +312,7 @@ impl<'a> Lexer<'a> {
         data: &[u8],
     ) -> Result<Option<u32>, Error> {
         loop {
-            let tok = match lexer.lex(&*self.buckets, &mut self.symbols, self.files, data)? {
+            let tok = match lexer.lex(&self.buckets, &mut self.symbols, self.files, data)? {
                 Some(tok) => tok,
                 None => return Ok(None),
             };
@@ -844,7 +838,7 @@ impl<'a> Lexer<'a> {
         lexer: &mut SimpleLexer,
         data: &[u8],
     ) -> Result<Option<RawTok>, Error> {
-        return lexer.lex(&*self.buckets, &mut self.symbols, self.files, data);
+        return lexer.lex(&self.buckets, &mut self.symbols, self.files, data);
     }
 }
 
@@ -875,7 +869,7 @@ impl SimpleLexer {
 
     pub fn lex(
         &mut self,
-        buckets: &impl AllocO<'static>,
+        buckets: &impl aliu::Allocator,
         symbols: &mut Symbols,
         files: &FileDb,
         data: &[u8],
@@ -899,7 +893,7 @@ impl SimpleLexer {
 
     pub fn _lex(
         &mut self,
-        buckets: &impl AllocO<'static>,
+        buckets: &impl Allocator,
         symbols: &mut Symbols,
         files: &FileDb,
         data: &[u8],
@@ -1015,7 +1009,7 @@ impl SimpleLexer {
                 }
 
                 let string = unsafe { str::from_utf8_unchecked(&chars) };
-                let string = buckets.add_i_str(string);
+                let string = IStr::with_allocator(string, buckets);
                 ret!(TokenKind::StringLit(string));
             }
 
@@ -1184,7 +1178,7 @@ impl SimpleLexer {
 
     pub fn lex_directive(
         &mut self,
-        buckets: &impl AllocO<'static>,
+        buckets: &impl Allocator,
         symbols: &mut Symbols,
         files: &FileDb,
         data: &[u8],
@@ -1292,7 +1286,7 @@ impl SimpleLexer {
                 }
 
                 let pragma = unsafe { str::from_utf8_unchecked(&data[begin..self.current]) };
-                let pragma = buckets.add_i_str(pragma);
+                let pragma = IStr::with_allocator(pragma, buckets);
 
                 return Ok(RawTok::Tok(TokenKind::Pragma(pragma)));
             }

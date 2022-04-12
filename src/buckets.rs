@@ -2,7 +2,7 @@ use alloc::alloc::{alloc, dealloc, Layout, LayoutError};
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
 use core::{cmp, fmt, mem, ptr, slice, str};
 
 use aliu::{Allocator, Global};
@@ -57,11 +57,6 @@ impl IStr {
     }
 }
 
-pub struct Frame<'a> {
-    pub data: &'a mut [u8],
-    pub bump: AtomicUsize,
-}
-
 pub trait AllocO<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8;
 
@@ -95,12 +90,6 @@ pub trait AllocO<'a> {
             }
             return Ok(slice::from_raw_parts_mut(block, len));
         }
-    }
-
-    fn frame(&self, len: usize) -> Result<Frame<'a>, LayoutError> {
-        let data = self.uninit(len, 16)?;
-        let bump = AtomicUsize::new(0);
-        return Ok(Frame { data, bump });
     }
 
     fn add_array<T>(&self, vec: Vec<T>) -> &'a mut [T]
@@ -184,42 +173,6 @@ where
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         return (&**self).alloc(layout);
-    }
-}
-
-impl<'a> AllocO<'a> for Frame<'a> {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        use Ordering::*;
-
-        let mut bump = self.bump.load(Ordering::SeqCst);
-        loop {
-            let bump_ptr = self.data.as_ptr().add(bump);
-
-            let required_offset = bump_ptr.align_offset(layout.align());
-            if required_offset == usize::MAX {
-                panic!("Frame: couldn't get aligned pointer");
-            }
-
-            let aligned = bump + required_offset;
-            let next = aligned + layout.size();
-            if next > self.data.len() {
-                panic!(
-                    "allocated past end of frame: at byte {} of frame with size {}",
-                    next,
-                    self.data.len()
-                );
-            }
-
-            match self.bump.compare_exchange_weak(bump, next, SeqCst, SeqCst) {
-                Ok(val) => {}
-                Err(val) => {
-                    bump = val;
-                    continue;
-                }
-            }
-
-            return &self.data[aligned] as *const u8 as *mut u8;
-        }
     }
 }
 
