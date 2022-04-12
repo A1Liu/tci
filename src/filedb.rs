@@ -1,4 +1,3 @@
-use crate::buckets::*;
 use crate::util::*;
 use aliu::{AllocExt, Allocator};
 use core::include_bytes;
@@ -353,15 +352,9 @@ impl FileDb {
 }
 
 pub struct Symbols {
-    pub buckets: BucketListFactory,
+    pub buckets: aliu::BucketList,
     pub to_symbol: HashMap<&'static str, u32>,
     pub to_name: Vec<&'static str>,
-}
-
-impl Drop for Symbols {
-    fn drop(&mut self) {
-        unsafe { self.buckets.dealloc() };
-    }
 }
 
 #[repr(u32)]
@@ -377,7 +370,7 @@ pub enum BuiltinSymbol {
 impl Symbols {
     pub fn new() -> Self {
         let mut new_self = Self {
-            buckets: BucketListFactory::new(),
+            buckets: aliu::BucketList::new(),
             to_symbol: HashMap::new(),
             to_name: Vec::new(),
         };

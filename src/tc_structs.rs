@@ -64,7 +64,10 @@ pub struct LocalTypeEnv<'a> {
 }
 
 unsafe impl<'a> Allocator for TypeEnv<'a> {
-    fn allocate(&self, layout: alloc::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>, aliu::AllocError> {
+    fn allocate(
+        &self,
+        layout: alloc::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, aliu::AllocError> {
         return self.globals().0.tu.buckets.allocate(layout);
     }
 
@@ -75,7 +78,10 @@ unsafe impl<'a> Allocator for TypeEnv<'a> {
 }
 
 unsafe impl<'a> Allocator for GlobalTypeEnv<'a> {
-    fn allocate(&self, layout: alloc::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>, aliu::AllocError> {
+    fn allocate(
+        &self,
+        layout: alloc::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, aliu::AllocError> {
         return self.tu.buckets.allocate(layout);
     }
 
