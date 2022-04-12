@@ -1,5 +1,6 @@
 import { get, getMany, set, setMany, update, del } from "idb-keyval";
 import { applyMiddleware, createStore } from "redux";
+import create from 'zustand';
 
 const initialFile = `#include <stdio.h>
 
@@ -182,6 +183,31 @@ const tciMiddleware = (store) => {
     }
   };
 };
+
+const useStore = create((set) => {
+  const dispatch = () => {};
+
+  return {
+    files: {},
+    current: undefined,
+    initialized: false,
+
+    terminal: "",
+
+    dispatch
+  };
+});
+
+const dispatchSelector = (state) => {
+  return state.dispatch;
+};
+
+const useDispatch = () => {
+  const dispatch = useStore(dispatchSelector);
+
+  return dispatch;
+};
+
 
 const store = createStore(appReducer, applyMiddleware(tciMiddleware));
 

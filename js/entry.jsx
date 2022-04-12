@@ -1,4 +1,4 @@
-import { render } from "preact";
+import { render, h } from "preact";
 import React from 'react';
 import store from "./reducers";
 import { Provider } from "react-redux";
