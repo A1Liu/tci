@@ -1,5 +1,4 @@
 use crate::util::*;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 pub enum BinOp {

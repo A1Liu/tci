@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use core::{cmp, fmt, mem, ptr, slice, str};
 
+use aliu::{Allocator, Global};
 use alloc::vec::Vec;
 
 const INITIAL_BUCKET_SIZE: usize = 2048 - mem::size_of::<BucketListInner>();
@@ -28,6 +29,22 @@ impl fmt::Debug for IStr {
 }
 
 impl IStr {
+    pub fn new<'a>(string: &str) -> &'a mut Self {
+        return Self::with_allocator(string, Global);
+    }
+
+    pub fn with_allocator<'a>(string: &str, alloc: impl Allocator) -> &'a mut Self {
+        let (size, align) = (mem::size_of::<usize>(), mem::align_of::<usize>());
+        let layout = unsafe { Layout::from_size_align_unchecked(size + string.len(), align) };
+        let (bytes, string) = (alloc.allocate(layout).unwrap(), string.as_bytes());
+        let (i_str, len) = (bytes.as_ptr(), string.len());
+        let i_str = unsafe { &mut *((&mut (&mut *i_str)[0]) as *mut u8 as *mut IStr) };
+
+        i_str.len = len;
+        unsafe { i_str.as_bytes_mut() }.copy_from_slice(string);
+        return i_str;
+    }
+
     pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
         let begin = &mut self.chars as *mut () as *mut u8;
         return slice::from_raw_parts_mut(begin, self.len);
