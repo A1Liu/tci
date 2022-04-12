@@ -1,2 +1,8 @@
+[alias]
+wc = "check --target wasm32-unknown-unknown"
+
 [build]
-target-dir = ".build"
+target-dir = ".cargo/target"
+
+[net]
+git-fetch-with-cli = true

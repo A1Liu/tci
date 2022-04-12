@@ -1,4 +1,5 @@
-.build
+/.cargo/target
+/.build
 /.dist
 /.cache
 /.pkg

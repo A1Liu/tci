@@ -167,7 +167,10 @@ rule list_eq1_n<E>(a: rule<E>, b: rule<E>) -> (Vec<E>,  CodeLoc) = v:list_010(<b
 // A list containing *at least* one element of a, and any of b.
 rule list_ge1_n<E>(a: rule<E>, b: rule<E>) -> (Vec<E>, CodeLoc) = v:list_010(<b()>, <a()>, <a() / b()>)
 
-rule scoped<E>(e: rule<E>) -> E = ({ env.enter_scope(); }) e:e()? {? env.leave_scope(); e.ok_or("") }
+rule scoped<E>(e: rule<E>) -> E = ({ env.enter_scope(); }) e:e() {?
+    env.leave_scope();
+    Ok(e)
+}
 
 rule pragma() -> (&'static str, CodeLoc) = pos:position!() n:$[Pragma(_)] {
     match n[0] {
@@ -382,7 +385,7 @@ rule string() -> (&'static str, CodeLoc) = pos:position!() n:$([StringLit(_)] ++
         string.push_str(s.as_str());
     }
 
-    (env.buckets.add_str(&string), loc)
+    (&*env.buckets.add_str(&string), loc)
 }
 
 rule constant_expr() -> Expr =
@@ -938,7 +941,7 @@ rule struct_body() -> (&'static [StructField], CodeLoc) =
     pos:position!() [LBrace] w() d:list0(<struct_field()>) w()
     pos2:position!() [RBrace] {
         let (d, _) = d;
-        let d = env.buckets.add_array(d);
+        let d = &*env.buckets.add_array(d);
 
         (d, l_from(env.locs[pos], env.locs[pos2]))
     }
