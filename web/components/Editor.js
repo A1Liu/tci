@@ -1,6 +1,6 @@
 import Editor from "@monaco-editor/react";
 import { h } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useRef, useState, useCallback } from "preact/hooks";
 import { useDispatch, useSelector } from "react-redux";
 import styled from "styled-components";
 
@@ -36,14 +36,14 @@ const BasicEditor = () => {
   changedTab.current = prevCurrent.current !== current;
   prevCurrent.current = current;
 
-  const onValueChange = (content, ev) => {
+  const onValueChange = useCallback((content, ev) => {
     if (changedTab.current) {
       changedTab.current = false;
       return;
     }
 
     dispatch({ type: "WriteCurrent", payload: content });
-  };
+  }, [dispatch, changedTab]);
 
   const readOnly = files[current] === undefined;
   const value = (changedTab.current ? files[current] : editorRef.current?.getValue?.()) ?? "";
