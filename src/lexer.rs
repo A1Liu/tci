@@ -875,7 +875,7 @@ impl SimpleLexer {
 
     pub fn lex(
         &mut self,
-        buckets: &impl Allocator<'static>,
+        buckets: &impl AllocO<'static>,
         symbols: &mut Symbols,
         files: &FileDb,
         data: &[u8],
@@ -899,7 +899,7 @@ impl SimpleLexer {
 
     pub fn _lex(
         &mut self,
-        buckets: &impl Allocator<'static>,
+        buckets: &impl AllocO<'static>,
         symbols: &mut Symbols,
         files: &FileDb,
         data: &[u8],
@@ -1184,7 +1184,7 @@ impl SimpleLexer {
 
     pub fn lex_directive(
         &mut self,
-        buckets: &impl Allocator<'static>,
+        buckets: &impl AllocO<'static>,
         symbols: &mut Symbols,
         files: &FileDb,
         data: &[u8],

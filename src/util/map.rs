@@ -49,11 +49,11 @@ where
     K: Eq + Hash + Copy,
     V: Copy,
 {
-    pub fn new(frame: impl Allocator<'a>, data: &HashMap<K, V>) -> Self {
+    pub fn new(frame: impl AllocO<'a>, data: &HashMap<K, V>) -> Self {
         return Self::with_state(frame, data, DetState);
     }
 
-    pub fn new_iter<I>(frame: impl Allocator<'a>, capa: usize, data: I) -> Self
+    pub fn new_iter<I>(frame: impl AllocO<'a>, capa: usize, data: I) -> Self
     where
         I: Iterator<Item = (K, V)>,
     {
@@ -75,12 +75,12 @@ where
     V: Copy,
     State: BuildHasher,
 {
-    pub fn with_state(frame: impl Allocator<'a>, data: &HashMap<K, V>, state: State) -> Self {
+    pub fn with_state(frame: impl AllocO<'a>, data: &HashMap<K, V>, state: State) -> Self {
         let capa = data.len() * 3 / 2;
         return Self::with_state_iter(frame, capa, data.iter().map(|(&k, &v)| (k, v)), state);
     }
 
-    pub fn with_state_iter<I>(frame: impl Allocator<'a>, capa: usize, data: I, state: State) -> Self
+    pub fn with_state_iter<I>(frame: impl AllocO<'a>, capa: usize, data: I, state: State) -> Self
     where
         I: Iterator<Item = (K, V)>,
     {

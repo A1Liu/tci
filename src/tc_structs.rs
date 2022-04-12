@@ -64,13 +64,13 @@ pub struct LocalTypeEnv<'a> {
     pub typedefs: &'a HashMap<u32, (&'static TCType, CodeLoc)>,
 }
 
-impl<'a> Allocator<'static> for TypeEnv<'a> {
+impl<'a> AllocO<'static> for TypeEnv<'a> {
     unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
         return self.globals().0.tu.buckets.alloc(layout);
     }
 }
 
-impl<'a> Allocator<'static> for GlobalTypeEnv<'a> {
+impl<'a> AllocO<'static> for GlobalTypeEnv<'a> {
     unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
         return self.tu.buckets.alloc(layout);
     }

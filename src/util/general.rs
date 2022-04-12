@@ -4,6 +4,7 @@ use core::sync::atomic::AtomicUsize;
 use core::{fmt, mem, ops, str};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
+pub use aliu::{expect, map_region, Allocator, CopyRange, Pod};
 pub use core::fmt::Write;
 pub use std::collections::VecDeque;
 

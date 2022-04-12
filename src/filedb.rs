@@ -52,7 +52,7 @@ pub struct File<'a> {
 }
 
 impl<'a> File<'a> {
-    pub fn new(buckets: impl Allocator<'a>, name: &str, source: &str) -> Self {
+    pub fn new(buckets: impl AllocO<'a>, name: &str, source: &str) -> Self {
         let ty = if name.ends_with(".h") {
             FileType::Header
         } else {
@@ -70,7 +70,7 @@ impl<'a> File<'a> {
 
     pub fn new_static(
         ty: FileType,
-        buckets: impl Allocator<'static>,
+        buckets: impl AllocO<'static>,
         name: &'static str,
         source: &'static str,
     ) -> Self {

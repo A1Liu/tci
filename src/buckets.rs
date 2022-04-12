@@ -45,7 +45,7 @@ pub struct Frame<'a> {
     pub bump: AtomicUsize,
 }
 
-pub trait Allocator<'a> {
+pub trait AllocO<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8;
 
     fn add<T>(&self, t: T) -> &'a mut T {
@@ -134,7 +134,7 @@ pub trait Allocator<'a> {
 pub trait CloneInto<'a> {
     type CloneOutput;
 
-    fn clone_into_alloc(&self, alloc: &impl Allocator<'a>) -> Self::CloneOutput;
+    fn clone_into_alloc(&self, alloc: &impl AllocO<'a>) -> Self::CloneOutput;
 }
 
 impl<'a, T> CloneInto<'a> for Option<T>
@@ -143,7 +143,7 @@ where
 {
     type CloneOutput = Option<T::CloneOutput>;
 
-    fn clone_into_alloc(&self, alloc: &impl Allocator<'a>) -> Self::CloneOutput {
+    fn clone_into_alloc(&self, alloc: &impl AllocO<'a>) -> Self::CloneOutput {
         if let Some(a) = self.as_ref() {
             return Some(a.clone_into_alloc(alloc));
         }
@@ -152,25 +152,25 @@ where
     }
 }
 
-impl<'a, T> Allocator<'a> for &T
+impl<'a, T> AllocO<'a> for &T
 where
-    T: Allocator<'a>,
+    T: AllocO<'a>,
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         return (*self).alloc(layout);
     }
 }
 
-impl<'a, T> Allocator<'a> for &mut T
+impl<'a, T> AllocO<'a> for &mut T
 where
-    T: Allocator<'a>,
+    T: AllocO<'a>,
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         return (&**self).alloc(layout);
     }
 }
 
-impl<'a> Allocator<'a> for Frame<'a> {
+impl<'a> AllocO<'a> for Frame<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         use Ordering::*;
 
@@ -239,7 +239,7 @@ pub struct BucketListRef<'a> {
     buckets: NonNull<BucketList<'a>>,
 }
 
-impl<'a> Allocator<'a> for BucketListRef<'a> {
+impl<'a> AllocO<'a> for BucketListRef<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         return self.deref().alloc(layout);
     }
@@ -403,7 +403,7 @@ impl<'a> BucketList<'a> {
     }
 }
 
-impl<'a> Allocator<'a> for BucketList<'a> {
+impl<'a> AllocO<'a> for BucketList<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         return self.data.alloc(layout);
     }
