@@ -1,14 +1,16 @@
 {
   "name": "web",
   "version": "1.0.0",
-  "main": "web/entry.js",
+  "main": "web/index.js",
   "repository": "https://github.com/A1Liu/tci",
   "author": "Albert Liu",
   "license": "MIT",
   "private": false,
   "scripts": {
-    "start": "parcel web/index.html --out-dir .dist",
-    "build": "parcel build web/index.html --no-source-maps --out-dir .dist --public-url ./"
+    "start": "rimraf dist pkg && webpack-dev-server --open -d --port 1234",
+    "build": "rimraf dist pkg && webpack",
+    "start-old": "parcel web/index.html --out-dir .dist",
+    "build-old": "parcel build web/index.html --no-source-maps --out-dir .dist --public-url ./"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.0.7",
@@ -24,8 +26,17 @@
     "web-vitals": "^1.0.1"
   },
   "devDependencies": {
-    "parcel-bundler": "1.x",
-    "parcel-plugin-wasm-pack": "file:./lib/parcel-plugin-wasm-pack"
+    "@babel/core": "7.17.9",
+    "@babel/plugin-transform-runtime": "7.17.0",
+    "@babel/preset-env": "7.16.11",
+    "@babel/preset-react": "7.16.7",
+    "@wasm-tool/wasm-pack-plugin": "1.1.0",
+    "babel-loader": "8.2.4",
+    "copy-webpack-plugin": "5.0.3",
+    "rimraf": "3.0.0",
+    "webpack": "4.42.0",
+    "webpack-cli": "3.3.3",
+    "webpack-dev-server": "3.7.1"
   },
   "browserslist": [
     "last 5 chrome version",
