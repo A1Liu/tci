@@ -262,8 +262,8 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             continue;
         }
 
-        debug!("running 500 ops...");
-        let result = kernel.run_op_count(500);
+        debug!("running 5000 ops...");
+        let result = kernel.run_op_count(5000);
 
         debug!("sending events...");
         send_events!();
