@@ -1,12 +1,11 @@
-import { h } from "preact";
-import { useRef } from "preact/hooks";
+import React from "react";
 import { useSelector, useDispatch } from "react-redux";
 import styled from "styled-components";
 
 export default function Terminal() {
   const content = useSelector((state) => state.terminal);
   const dispatch = useDispatch();
-  const keyPresses = useRef({ command: false, control: false, alt: false });
+  const keyPresses = React.useRef({ command: false, control: false, alt: false });
 
   const downListener = (e) => {
     switch (e.key) {

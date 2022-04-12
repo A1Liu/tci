@@ -1,6 +1,5 @@
 import Editor from "@monaco-editor/react";
-import { h } from "preact";
-import { useRef, useState, useCallback } from "preact/hooks";
+import React from "react";
 import { useDispatch, useSelector } from "react-redux";
 import styled from "styled-components";
 
@@ -29,14 +28,14 @@ const BasicEditor = () => {
   const files = useSelector((state) => state.files);
   const current = useSelector((state) => state.current);
 
-  const editorRef = useRef(undefined);
+  const editorRef = React.useRef(undefined);
 
-  const prevCurrent = useRef(undefined);
-  const changedTab = useRef(undefined);
+  const prevCurrent = React.useRef(undefined);
+  const changedTab = React.useRef(undefined);
   changedTab.current = prevCurrent.current !== current;
   prevCurrent.current = current;
 
-  const onValueChange = useCallback((content, ev) => {
+  const onValueChange = React.useCallback((content, ev) => {
     if (changedTab.current) {
       changedTab.current = false;
       return;

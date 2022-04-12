@@ -1,10 +1,9 @@
-import { h } from "preact";
-import { useRef } from "preact/hooks";
+import React from "react";
 import { useDispatch } from "react-redux";
 import styled from "styled-components";
 
 export default function NavBar() {
-  const hiddenFileInput = useRef(undefined);
+  const hiddenFileInput = React.useRef(undefined);
   const dispatch = useDispatch();
 
   // const next = () => dispatch({ type: "DebugNext" });
