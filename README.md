@@ -43,7 +43,7 @@ Lots of stuff left to do still.
 - Variable/type information at runtime: allows student to use TCI as a debugger
 - Full kernel replayability: go backwards in time when using TCI as debugger
 
-#### Frontend
+#### User Interface
 - Working file system explorer
 - Runtime file explorer
 - Terminal emulator (without shell)
