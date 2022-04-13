@@ -255,7 +255,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             }
         }
 
-        if kernel.active_count == 0 {
+        if kernel.current_proc == !0 {
             send_events!();
 
             env.wait(0).await;

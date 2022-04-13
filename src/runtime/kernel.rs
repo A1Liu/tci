@@ -39,13 +39,10 @@ pub struct Kernel {
     pub in_begin: usize,
     pub input: Vec<u8>,
     pub output: TaggedMultiArray<WriteEvt, u8>,
+
     // pub pipes: TaggedMultiVec<usize, u8>,
     pub processes: TaggedMultiVec<Process, FdKind>,
-
-    pub term_proc: u32,
     pub current_proc: u32,
-    pub current_proc_op_count: u32,
-    pub active_count: u32,
 }
 
 const PROC_MAX_OP_COUNT: u32 = 5000;
@@ -59,11 +56,7 @@ impl Kernel {
             output: TaggedMultiArray::new(),
 
             processes: TaggedMultiVec::new(),
-
-            term_proc: !0,
             current_proc: !0,
-            current_proc_op_count: 0,
-            active_count: 0,
         }
     }
 
@@ -86,26 +79,23 @@ impl Kernel {
     }
 
     pub fn load_term_program(&mut self, binary: &BinaryData) -> u32 {
-        if self.term_proc != !0 {
-            let mut prev = self.processes.get_mut(self.term_proc as usize).unwrap();
+        if self.current_proc != !0 {
+            let mut prev = self.processes.get_mut(self.current_proc as usize).unwrap();
             match &mut prev.tag_mut().status {
                 IRtStat::Exited(_) => {}
                 x => *x = IRtStat::Exited(1),
             }
         }
 
-        self.term_proc = self.processes.len() as u32;
-        if self.current_proc == !0 {
-            self.current_proc = self.term_proc;
-        }
+        self.processes = TaggedMultiVec::new();
+        self.current_proc = self.processes.len() as u32;
 
         let (i, o, proc) = (FdKind::TermIn, FdKind::TermOut, Process::new(binary));
         self.in_begin = 0;
         self.input.clear();
         mem::drop(mem::replace(&mut self.output, TaggedMultiArray::new()));
         self.processes.push(proc, vec![i, o, o, o]);
-        self.active_count += 1;
-        return self.term_proc;
+        return self.current_proc;
     }
 
     pub fn run(&mut self, binary: &BinaryData) -> Result<i32, IError> {
@@ -141,90 +131,65 @@ impl Kernel {
         }
     }
 
-    pub fn run_op_count(&mut self, mut count: u32) -> Result<(), IError> {
-        while count > 0 && self.active_count != 0 {
-            let mut proc = match self.processes.get_mut(self.current_proc as usize) {
-                Some(p) => p,
-                None => {
-                    return Err(ierror!(
-                        "NoProcesses",
-                        "tried to run kernel with no processes (this is a bug in TCI)"
-                    ))
-                }
-            };
+    pub fn run_op_count(&mut self, count: u32) -> Result<(), IError> {
+        let mut proc = match self.processes.get_mut(self.current_proc as usize) {
+            Some(p) => p,
+            None => {
+                return Err(ierror!(
+                    "NoProcesses",
+                    "tried to run kernel with no processes (this is a bug in TCI)"
+                ))
+            }
+        };
 
-            match proc.tag().status {
-                IRtStat::Running => {}
-                _ => {
-                    self.current_proc_op_count = 0;
-                    if self.current_proc == self.term_proc {
-                        self.term_proc = !0;
-                    }
+        match proc.tag().status {
+            IRtStat::Running => {}
+            _ => {
+                self.current_proc = !0;
 
-                    self.current_proc += 1;
-                    if self.current_proc as usize == self.processes.len() {
-                        self.current_proc = 0;
-                    }
-                    continue;
-                }
+                return Ok(());
+            }
+        }
+
+        let ops_allowed = count;
+        let (ran_count, res) = run_op_count(&mut proc.tag_mut().memory, ops_allowed);
+
+        match res {
+            Err(e) => {
+                proc.tag_mut().status = IRtStat::Exited(1);
+                self.current_proc = !0;
+
+                return Err(e);
             }
 
-            let ops_allowed = core::cmp::min(count, PROC_MAX_OP_COUNT - self.current_proc_op_count);
-            let (ran_count, res) = run_op_count(&mut proc.tag_mut().memory, ops_allowed);
-            self.current_proc_op_count += ran_count;
-            count -= ran_count;
+            Ok(Some(ecall)) => {
+                let res = self.ecall(self.current_proc, ecall);
+                let mut proc = self.processes.get_mut(self.current_proc as usize).unwrap();
 
-            match res {
-                Err(e) => {
-                    proc.tag_mut().status = IRtStat::Exited(1);
-                    self.active_count -= 1;
-                    if self.current_proc == self.term_proc {
-                        self.term_proc = !0;
+                match res {
+                    Ok(IRtStat::Blocked) => {
+                        proc.tag_mut().status = IRtStat::Blocked;
                     }
+                    Ok(IRtStat::Exited(exit)) => {
+                        self.current_proc = !0;
 
-                    return Err(e);
-                }
-                Ok(Some(ecall)) => {
-                    let res = self.ecall(self.current_proc, ecall);
-                    let mut proc = self.processes.get_mut(self.current_proc as usize).unwrap();
-
-                    match res {
-                        Ok(IRtStat::Blocked) => {
-                            self.active_count -= 1;
-                            proc.tag_mut().status = IRtStat::Blocked;
-                        }
-                        Ok(IRtStat::Exited(exit)) => {
-                            self.active_count -= 1;
-                            proc.tag_mut().status = IRtStat::Exited(exit);
-                        }
-                        Ok(IRtStat::Running) => {}
-                        Err(e) => {
-                            self.active_count -= 1;
-                            if self.current_proc == self.term_proc {
-                                self.term_proc = !0;
-                            }
-
-                            let mut proc =
-                                self.processes.get_mut(self.current_proc as usize).unwrap();
-                            proc.tag_mut().status = IRtStat::Exited(1);
-                            return Err(e);
-                        }
+                        proc.tag_mut().status = IRtStat::Exited(exit);
                     }
+                    Ok(IRtStat::Running) => {}
 
-                    return Ok(());
+                    Err(e) => {
+                        self.current_proc = !0;
+
+                        let mut proc = self.processes.get_mut(self.current_proc as usize).unwrap();
+                        proc.tag_mut().status = IRtStat::Exited(1);
+                        return Err(e);
+                    }
                 }
-                Ok(None) => {}
+
+                return Ok(());
             }
 
-            self.current_proc_op_count = 0;
-            if self.current_proc == self.term_proc {
-                self.term_proc = !0;
-            }
-
-            self.current_proc += 1;
-            if self.current_proc as usize == self.processes.len() {
-                self.current_proc = 0;
-            }
+            Ok(None) => {}
         }
 
         return Ok(());
@@ -423,7 +388,7 @@ impl Kernel {
     }
 
     fn write(&mut self, s: &[u8]) -> core::fmt::Result {
-        if self.term_proc != !0 {
+        if self.current_proc != !0 {
             self.input.extend(s);
         }
 
