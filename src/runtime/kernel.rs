@@ -157,7 +157,6 @@ impl Kernel {
         match res {
             Err(e) => {
                 proc.tag_mut().status = IRtStat::Exited(1);
-                self.current_proc = !0;
 
                 return Err(e);
             }
@@ -169,17 +168,15 @@ impl Kernel {
                 match res {
                     Ok(IRtStat::Blocked) => {
                         proc.tag_mut().status = IRtStat::Blocked;
+                        self.current_proc = !0;
                     }
                     Ok(IRtStat::Exited(exit)) => {
-                        self.current_proc = !0;
-
                         proc.tag_mut().status = IRtStat::Exited(exit);
+                        self.current_proc = !0;
                     }
                     Ok(IRtStat::Running) => {}
 
                     Err(e) => {
-                        self.current_proc = !0;
-
                         let mut proc = self.processes.get_mut(self.current_proc as usize).unwrap();
                         proc.tag_mut().status = IRtStat::Exited(1);
                         return Err(e);

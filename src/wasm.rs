@@ -2,11 +2,62 @@ use crate::filedb::FileDb;
 use crate::runtime::*;
 use crate::util::*;
 use crate::{compile, emit_err};
+use alloc::alloc::{GlobalAlloc, Layout};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 #[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+static ALLOC: Stats = Stats {
+    backing: wee_alloc::WeeAlloc::INIT,
+    alloced_bytes: AtomicUsize::new(0),
+    freed_bytes: AtomicUsize::new(0),
+    alloc_count: AtomicUsize::new(0),
+    free_count: AtomicUsize::new(0),
+};
+
+struct Stats {
+    pub backing: wee_alloc::WeeAlloc<'static>,
+    pub alloced_bytes: AtomicUsize,
+    pub freed_bytes: AtomicUsize,
+    pub alloc_count: AtomicUsize,
+    pub free_count: AtomicUsize,
+}
+
+unsafe impl GlobalAlloc for Stats {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let a = self.backing.alloc(layout);
+
+        if !a.is_null() {
+            self.alloced_bytes
+                .fetch_add(layout.size(), Ordering::SeqCst);
+            self.alloc_count.fetch_add(1, Ordering::SeqCst);
+        }
+
+        return a;
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        self.backing.dealloc(ptr, layout);
+
+        self.freed_bytes.fetch_add(layout.size(), Ordering::SeqCst);
+        self.free_count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+// turn 1024 into 1Kb, and also the more extreme cases
+pub fn display_byte_size(size: usize) -> (f32, &'static str) {
+    let mut size = size as f32;
+    let mut size_class = 0;
+    while size >= 1024.0 {
+        size /= 1024.0;
+        size_class += 1;
+    }
+
+    let size_classes = ["", "Kb", "Mb", "Gb"];
+
+    return (size, size_classes[size_class]);
+}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", content = "payload")]
@@ -226,6 +277,21 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
     loop {
         debug!("running another iteration of loop...");
+
+        let alloced = ALLOC.alloced_bytes.load(Ordering::SeqCst);
+        let freed = ALLOC.freed_bytes.load(Ordering::SeqCst);
+        if alloced < freed {
+            let (alloced, alloced_suffix) = display_byte_size(alloced);
+            let (freed, freed_suffix) = display_byte_size(freed);
+
+            debug!(
+                "stats: alloced {}{}, freed {}{}",
+                alloced, alloced_suffix, freed, freed_suffix
+            );
+        }
+
+        let (used, used_suffix) = display_byte_size(alloced - freed);
+        debug!("stats: using {}{}", used, used_suffix);
 
         while let Some(input) = recv()? {
             match input {
