@@ -637,5 +637,6 @@ fn id_test() {
         assert_eq!(value, out_value);
     }
 
+    // the null address needs to not be a sequential ID that we'll use often
     assert_eq!(to_id(0), u32::MAX);
 }
