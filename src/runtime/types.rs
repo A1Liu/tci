@@ -12,18 +12,41 @@ pub enum AllocTracker {
 }
 
 impl AllocTracker {
+    pub fn is_live(&self) -> bool {
+        match *self {
+            Self::StackLive { loc, start, len } => true,
+            Self::StackDead { loc } => false,
+
+            Self::HeapLive { loc, start, len } => true,
+            Self::HeapDead { loc, free_loc } => false,
+
+            Self::Static { start, len } => true,
+            Self::Exe { start, len } => false,
+        }
+    }
+
     pub fn range(&self) -> (u32, u32) {
         match *self {
+            Self::StackLive { loc, start, len } => {
+                return (start, start + len);
+            }
+            Self::StackDead { loc } => {
+                return (0, 0);
+            }
+
+            Self::HeapLive { loc, start, len } => {
+                return (start, start + len);
+            }
+            Self::HeapDead { loc, free_loc } => {
+                return (0, 0);
+            }
+
             Self::Static { start, len } => {
                 return (start, start + len);
             }
 
             Self::Exe { start, len } => {
                 return (start, start + len);
-            }
-
-            _ => {
-                unimplemented!()
             }
         }
     }
