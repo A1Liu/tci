@@ -614,7 +614,7 @@ fn id_test() {
 
         // println!("{} -> {}", id, value);
 
-        println!("{}", value);
+        // println!("{:>10}", value);
 
         assert_eq!(id, out_id);
     }
@@ -638,4 +638,5 @@ fn id_test() {
     }
 
     assert_eq!(to_id(0), u32::MAX);
+
 }

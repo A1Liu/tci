@@ -10,9 +10,9 @@ checksum = "739f4a8db6605981345c5654f3a85b056ce52f37a39d34da03f25bf2151ea16e"
 
 [[package]]
 name = "aliu"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea4de3e5185c1a1875f4e436f88e1800ed6ecadd8d00251d198380036b6a58b0"
+checksum = "fe14c4116186271bee8948aeb5c633b6dd142fae72982fd3b6c7bf1833d106ed"
 dependencies = [
  "libc",
  "winapi",
