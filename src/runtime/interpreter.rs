@@ -997,6 +997,21 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             }
         }
 
+        Opcode::CopySrcToDest => {
+            let destination: VarPointer = memory.pop()?;
+            let source: VarPointer = memory.pop()?;
+            let length: u64 = memory.pop()?;
+
+            memory.push(destination);
+        }
+        Opcode::Memset => {
+            let destination: VarPointer = memory.pop()?;
+            let value: u8 = memory.pop()?;
+            let length: u64 = memory.pop()?;
+
+            memory.push(destination);
+        }
+
         Opcode::HeapAlloc => {
             let skip: u32 = memory.pop()?;
             let size: u64 = memory.pop()?;
