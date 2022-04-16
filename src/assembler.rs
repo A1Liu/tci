@@ -104,7 +104,7 @@ lazy_static! {
         data.push(Opcode::Ecall);
 
         let mut init = BinaryData::new();
-        let main_call = init.add_data(&mut data.data).with_offset(main_call);
+        let main_call = init.add_exe_slice(&mut *data.data).with_offset(main_call);
 
         BinaryInit { init, main_call }
     };
@@ -167,7 +167,7 @@ impl Assembler {
 
         for (loc, static_internal) in &tu.static_internal_vars {
             self.file.binary_offsets[static_internal.var_idx as usize] = self.vars.len() as u32;
-            let vptr = self.data.reserve(static_internal.ty.size().into());
+            let vptr = self.data.reserve_static(static_internal.ty.size().into());
             let (kind, ty, loc) = (static_internal.init, static_internal.ty, *loc);
             let expr = TCExpr { kind, ty, loc };
             to_init.push((vptr, expr));
@@ -225,7 +225,7 @@ impl Assembler {
                 ));
             }
 
-            let vptr = self.data.reserve(global.ty.size().into());
+            let vptr = self.data.reserve_static(global.ty.size().into());
             let (kind, ty, loc) = (init, global.ty, global.loc);
             let expr = TCExpr { kind, ty, loc };
             to_init.push((vptr, expr));
@@ -294,7 +294,7 @@ impl Assembler {
 
             self.add_function(&defn);
 
-            let fptr = self.data.add_data(&mut self.func.opcodes.data);
+            let fptr = self.data.add_exe_slice(&mut *self.func.opcodes.data);
 
             for (ptr, _) in &mut self.function_temps[func_temps_begin..] {
                 let offset = ptr.offset();
@@ -338,8 +338,13 @@ impl Assembler {
             TCExprKind::F32Lit(i) => self.data.write(ptr, i),
             TCExprKind::F64Lit(i) => self.data.write(ptr, i),
             TCExprKind::StringLit(s) => {
-                let string = self.data.add_slice(s.as_bytes());
-                self.data.data.push(0u8);
+                let bytes = s.as_bytes();
+                let len = bytes.len();
+                let (string, block) = self.data.reserve_static_slice((len + 1) as u32);
+
+                block[0..len].copy_from_slice(bytes);
+                block[len] = 0;
+
                 self.data.write(ptr, string);
             }
 
@@ -741,8 +746,13 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
 
-                let ptr = self.data.add_slice(val.as_bytes());
-                self.data.data.push(0u8);
+                let bytes = val.as_bytes();
+                let len = bytes.len();
+                let (ptr, block) = self.data.reserve_static_slice((len + 1) as u32);
+
+                block[0..len].copy_from_slice(bytes);
+                block[len] = 0;
+
                 self.func.opcodes.push(Opcode::Make64);
                 self.func.opcodes.push(ptr);
             }

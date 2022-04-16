@@ -22,8 +22,8 @@ impl AllocInfo {
 
 #[derive(Debug)]
 pub struct Memory {
-    shared_data: Vec<u8>,
-    binary: Vec<Var<()>>,
+    shared_data: Pod<u8>,
+    binary: Pod<AllocTracker>,
     heap: Vec<Var<AllocInfo>>,
     freed: usize,
 
@@ -116,12 +116,9 @@ impl Memory {
         let or_else = || invalid_ptr(self.pc);
 
         let from_bytes = if self.pc.is_binary() {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
 
-            &self.shared_data[lower..upper]
+            &self.shared_data[r(lower,upper)]
         } else {
             return Err(ierror!(
                 "PermissionDenied",
@@ -198,7 +195,7 @@ impl Memory {
         }
 
         let loc = self.frame_loc(skip_frames)?;
-        self.shared_data.resize(data_len + len, !0);
+        self.shared_data.push_repeat(  !0,len);
         self.heap.push(Var::new(data_len, AllocInfo::new(loc)));
         return Ok(VarPointer::new_heap(self.heap.len() as u32, 0));
     }
@@ -266,7 +263,10 @@ impl Memory {
             write_to += len;
         }
 
-        self.shared_data.resize(write_to, 0); // should never increase the size of the buffer
+
+        unsafe {
+            self.shared_data.set_len(write_to); // should never increase the size of the buffer
+        }
     }
 
     pub fn pop_stack_var(&mut self) -> Result<(), IError> {
@@ -301,12 +301,9 @@ impl Memory {
 
             upper - lower
         } else {
-            let lower = self.binary.get(var_idx)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx)?.range();
 
-            upper - lower
+            (upper - lower) as usize
         };
 
         return Some(ptr.with_offset(offset as u32));
@@ -338,12 +335,9 @@ impl Memory {
 
             &self.shared_data[lower..upper]
         } else {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
 
-            &self.shared_data[lower..upper]
+            &self.shared_data[r(lower,upper)]
         };
 
         let from_len = from_bytes.len() as u32;
@@ -388,12 +382,9 @@ impl Memory {
 
             &mut self.shared_data[lower..upper]
         } else {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
 
-            &mut self.shared_data[lower..upper]
+            &mut self.shared_data[r(lower,upper)]
         };
 
         let to_len = to_bytes.len() as u32;
@@ -430,12 +421,9 @@ impl Memory {
 
             &self.shared_data[lower..upper]
         } else {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
 
-            &self.shared_data[lower..upper]
+            &self.shared_data[r(lower,upper)]
         };
 
         let (from_len, range) = (from_bytes.len() as u32, (ptr.offset() as usize)..);
@@ -486,12 +474,9 @@ impl Memory {
 
             &self.shared_data[lower..upper]
         } else {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
 
-            &self.shared_data[lower..upper]
+            &self.shared_data[r(lower,upper)]
         };
 
         let from_len = from_bytes.len() as u32;
@@ -528,12 +513,9 @@ impl Memory {
 
             &mut self.shared_data[lower..upper]
         } else {
-            let lower = self.binary.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.binary.get(var_idx + 1).map(|a| a.idx);
-            let heap_lower = self.heap.get(0).map(|a| a.idx);
-            let upper = upper.or(heap_lower).unwrap_or(self.shared_data.len());
+            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
 
-            &mut self.shared_data[lower..upper]
+            &mut self.shared_data[r(lower,upper)]
         };
 
         let to_len = to_bytes.len();

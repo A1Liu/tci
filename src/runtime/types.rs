@@ -2,13 +2,31 @@ use crate::util::*;
 use core::{fmt, mem};
 
 #[derive(Clone, Copy, Debug)]
-pub enum AllocInfo {
+pub enum AllocTracker {
     StackLive { loc: CodeLoc, start: u32, len: u32 },
     StackDead { loc: CodeLoc },
     HeapLive { loc: CodeLoc, start: u32, len: u32 },
     HeapDead { loc: CodeLoc, free_loc: CodeLoc },
-    Static { loc: CodeLoc, start: u32, len: u32 },
+    Static { start: u32, len: u32 },
     Exe { start: u32, len: u32 },
+}
+
+impl AllocTracker {
+    pub fn range(&self) -> (u32, u32) {
+        match *self {
+            Self::Static { start, len } => {
+                return (start, start + len);
+            }
+
+            Self::Exe { start, len } => {
+                return (start, start + len);
+            }
+
+            _ => {
+                unimplemented!()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,42 +41,78 @@ impl<T> Var<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct BinaryData {
-    pub data: Vec<u8>,
-    pub vars: Vec<Var<()>>,
+    pub data: Pod<u8>,
+    pub vars: Pod<AllocTracker>,
 }
 
 impl BinaryData {
     pub fn new() -> Self {
         Self {
-            data: Vec::new(),
-            vars: Vec::new(),
+            data: Pod::new(),
+            vars: Pod::new(),
         }
     }
 
-    pub fn reserve(&mut self, len: u32) -> VarPointer {
+    pub fn reserve_static(&mut self, len: u32) -> VarPointer {
         let data_len = self.data.len();
 
+        self.data.reserve(len as usize);
         for _ in 0..len {
             self.data.push(0);
         }
 
-        self.vars.push(Var::new(data_len, ()));
+        self.vars.push(AllocTracker::Static {
+            start: data_len as u32,
+            len,
+        });
+
         return VarPointer::new_binary(self.vars.len() as u32, 0);
     }
 
-    pub fn add_data(&mut self, data: &mut Vec<u8>) -> VarPointer {
-        let data_len = self.data.len();
-        self.data.append(data);
-        self.vars.push(Var::new(data_len, ()));
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
+    pub fn reserve_static_slice(&mut self, len: u32) -> (VarPointer, &mut [u8]) {
+        let data_len = self.data.len() as u32;
+
+        self.data.reserve(len as usize);
+        for _ in 0..len {
+            self.data.push(0);
+        }
+
+        self.vars.push(AllocTracker::Static {
+            start: data_len,
+            len,
+        });
+
+        return (
+            VarPointer::new_binary(self.vars.len() as u32, 0),
+            &mut self.data[r(data_len, data_len + len)],
+        );
     }
 
-    pub fn add_slice(&mut self, data: &[u8]) -> VarPointer {
+    pub fn add_static_slice(&mut self, data: &[u8]) -> VarPointer {
         let data_len = self.data.len();
+
         self.data.extend_from_slice(data);
-        self.vars.push(Var::new(data_len, ()));
+
+        self.vars.push(AllocTracker::Static {
+            start: data_len as u32,
+            len: data.len() as u32,
+        });
+
+        return VarPointer::new_binary(self.vars.len() as u32, 0);
+    }
+
+    pub fn add_exe_slice(&mut self, data: &[u8]) -> VarPointer {
+        let data_len = self.data.len();
+
+        self.data.extend_from_slice(data);
+
+        self.vars.push(AllocTracker::Exe {
+            start: data_len as u32,
+            len: data.len() as u32,
+        });
+
         return VarPointer::new_binary(self.vars.len() as u32, 0);
     }
 
@@ -68,11 +122,9 @@ impl BinaryData {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let lower = self.vars.get(var_idx)?.idx;
-        let upper = self.vars.get(var_idx + 1).map(|a| a.idx);
-        let upper = upper.unwrap_or(self.data.len());
+        let (lower, upper) = self.vars.get(var_idx)?.range();
 
-        let data = &mut self.data[lower..upper];
+        let data = &mut self.data[r(lower, upper)];
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
         let from_bytes = data.get(idx..(idx + len))?;
 
@@ -87,9 +139,7 @@ impl BinaryData {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let lower = self.vars.get(var_idx).unwrap().idx;
-        let upper = self.vars.get(var_idx + 1).map(|a| a.idx);
-        let upper = upper.unwrap_or(self.data.len());
+        let (lower, upper) = self.vars.get(var_idx).unwrap().range();
 
         let data = &mut self.data[lower..upper];
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
