@@ -104,7 +104,7 @@ impl Kernel {
 
     pub fn run_debug(&mut self, binary: &BinaryData) -> Result<i32, IError> {
         self.load_term_program(binary);
-        let mut out = StringWriter::new();
+        let mut out = String::new();
 
         loop {
             let proc = self.process.as_mut().unwrap();
@@ -118,7 +118,8 @@ impl Kernel {
                 write_utf8_lossy(&mut out, s).unwrap();
             }
 
-            println!(out.flush_string());
+            println!(out);
+            out.clear();
         }
     }
 
@@ -351,7 +352,7 @@ impl Kernel {
     }
 
     pub fn term_out(&mut self) -> String {
-        let mut out = StringWriter::new();
+        let mut out = String::new();
 
         for TE(tag, s) in &self.output {
             match tag {
@@ -367,7 +368,7 @@ impl Kernel {
 
         mem::drop(mem::replace(&mut self.output, TaggedMultiArray::new()));
 
-        return out.into_string();
+        return out;
     }
 
     fn write(&mut self, s: &[u8]) -> core::fmt::Result {

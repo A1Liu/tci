@@ -4,7 +4,7 @@ use crate::util::*;
 use core::fmt;
 
 pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, files: &FileDb) -> String {
-    let mut out = StringWriter::new();
+    let mut out = String::new();
 
     write!(out, "{}: {}\n", error.short_name, error.message).unwrap();
 
@@ -14,7 +14,7 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, files: &FileDb) 
         files.display_loc(&mut out, frame.loc).unwrap();
     }
 
-    return out.to_string();
+    return out;
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
