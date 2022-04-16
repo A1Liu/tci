@@ -1,19 +1,19 @@
 use crate::filedb::*;
 use crate::runtime::*;
-use crate::util::*;
+// use crate::util::*;
 use crate::{compile, emit_err};
 use interloc::*;
 use std::fs::{read_dir, read_to_string};
 
 fn test_file_should_succeed(files: &FileDb, output_file: Option<&str>) {
     let info = before_alloc();
-    let mut writer = StringWriter::new();
+    let mut writer = String::new();
 
     let program = match compile(files) {
         Ok(program) => program,
         Err(errs) => {
             emit_err(&errs, &files, &mut writer);
-            println!("{}", writer.into_string());
+            println!("{}", writer);
             panic!();
         }
     };

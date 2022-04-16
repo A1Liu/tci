@@ -250,9 +250,9 @@ impl FileDb {
     }
 
     pub fn loc_to_string(&self, loc: CodeLoc) -> String {
-        let mut out = StringWriter::new();
+        let mut out = String::new();
         self.write_loc(&mut out, loc).unwrap();
-        return out.into_string();
+        return out;
     }
 
     pub fn resolve_include(&self, include: &str, file: u32) -> Result<u32, &'static str> {

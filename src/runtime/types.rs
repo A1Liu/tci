@@ -455,6 +455,9 @@ pub enum Opcode {
     HeapAlloc,
     HeapDealloc,
 
+    CopySrcToDest,
+    Memset,
+
     Throw,
 
     Ecall,

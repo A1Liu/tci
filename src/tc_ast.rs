@@ -312,7 +312,7 @@ pub trait TCTy {
 
     // TODO make this nicer
     fn display(&self, symbols: &Symbols) -> String {
-        let mut writer = StringWriter::new();
+        let mut writer = String::new();
 
         match self.base() {
             TCTypeBase::I8 => write!(writer, "char"),
@@ -384,7 +384,7 @@ pub trait TCTy {
 
         is_func.take().map(|_| write!(writer, ")"));
 
-        return writer.to_string();
+        return writer;
     }
 
     fn expand_typedef(&self) -> TCTypeOwned {

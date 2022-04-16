@@ -21,7 +21,7 @@ pub fn print_error(err: &IError, memory: &Memory, files: &FileDb) -> String {
     use crate::util::term::*;
     use crate::util::*;
 
-    let mut out = StringWriter::new();
+    let mut out = String::new();
 
     write!(out, "{}: {}\n", err.short_name, err.message).unwrap();
 
@@ -39,5 +39,5 @@ pub fn print_error(err: &IError, memory: &Memory, files: &FileDb) -> String {
             .unwrap();
     }
 
-    return out.to_string();
+    return out;
 }

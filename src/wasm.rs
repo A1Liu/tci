@@ -149,10 +149,22 @@ extern "C" {
     pub fn set_file_descriptors(this: &RunEnv, new: JsValue);
 }
 
-// #[panic_handler]
-// fn panic(_info: &core::panic::PanicInfo) -> ! {
-//     core::arch::wasm32::unreachable();
-// }
+fn print_stats() {
+    let alloced = ALLOC.alloced_bytes.load(Ordering::SeqCst);
+    let freed = ALLOC.freed_bytes.load(Ordering::SeqCst);
+    if alloced < freed {
+        let (alloced, alloced_suffix) = display_byte_size(alloced);
+        let (freed, freed_suffix) = display_byte_size(freed);
+
+        debug!(
+            "stats: alloced {}{}, freed {}{}",
+            alloced, alloced_suffix, freed, freed_suffix
+        );
+    }
+
+    let (used, used_suffix) = display_byte_size(alloced - freed);
+    debug!("stats: using {}{}", used, used_suffix);
+}
 
 #[wasm_bindgen]
 pub async fn run(env: RunEnv) -> Result<(), JsValue> {
@@ -224,7 +236,6 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         init
     };
     let mut kernel = Kernel::new(initial);
-    let mut term_out_buf = StringWriter::new();
 
     send(Out::Startup);
 
@@ -233,20 +244,24 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             for TE(tag, s) in &kernel.events() {
                 match tag {
                     WriteEvt::StdinWrite => {
+                        let mut term_out_buf = String::new();
                         write_utf8_lossy(&mut term_out_buf, s).unwrap();
-                        send(Out::Stdin(term_out_buf.flush_string()));
+                        send(Out::Stdin(term_out_buf));
                     }
                     WriteEvt::StdoutWrite => {
+                        let mut term_out_buf = String::new();
                         write_utf8_lossy(&mut term_out_buf, s).unwrap();
-                        send(Out::Stdout(term_out_buf.flush_string()));
+                        send(Out::Stdout(term_out_buf));
                     }
                     WriteEvt::StderrWrite => {
+                        let mut term_out_buf = String::new();
                         write_utf8_lossy(&mut term_out_buf, s).unwrap();
-                        send(Out::Stderr(term_out_buf.flush_string()));
+                        send(Out::Stderr(term_out_buf));
                     }
                     WriteEvt::StdlogWrite => {
+                        let mut term_out_buf = String::new();
                         write_utf8_lossy(&mut term_out_buf, s).unwrap();
-                        send(Out::Stdlog(term_out_buf.flush_string()));
+                        send(Out::Stdlog(term_out_buf));
                     }
                     &WriteEvt::WriteFd { begin, fd } => {
                         send(Out::WriteFd {
@@ -275,23 +290,10 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         }};
     }
 
+    // let mut prev = std::time::Instant::now();
+
     loop {
-        debug!("running another iteration of loop...");
-
-        let alloced = ALLOC.alloced_bytes.load(Ordering::SeqCst);
-        let freed = ALLOC.freed_bytes.load(Ordering::SeqCst);
-        if alloced < freed {
-            let (alloced, alloced_suffix) = display_byte_size(alloced);
-            let (freed, freed_suffix) = display_byte_size(freed);
-
-            debug!(
-                "stats: alloced {}{}, freed {}{}",
-                alloced, alloced_suffix, freed, freed_suffix
-            );
-        }
-
-        let (used, used_suffix) = display_byte_size(alloced - freed);
-        debug!("stats: using {}{}", used, used_suffix);
+        // debug!("running another iteration of loop...");
 
         while let Some(input) = recv()? {
             match input {
@@ -307,9 +309,9 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
                     let program = match compile(&mut files) {
                         Ok(p) => p,
                         Err(errors) => {
-                            let mut writer = StringWriter::new();
+                            let mut writer = String::new();
                             emit_err(&errors, &files, &mut writer);
-                            let rendered = writer.to_string();
+                            let rendered = writer;
                             send(Out::CompileError { rendered, errors });
                             continue;
                         }
@@ -317,26 +319,47 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
                     send(Out::Compiled);
                     kernel.load_term_program(&program);
+                    // prev = std::time::Instant::now();
                 }
             }
         }
 
-        if kernel.current_proc == !0 {
+        let running = match &kernel.process {
+            Some(Process {
+                status: IRtStat::Running,
+                ..
+            }) => true,
+            _ => false,
+        };
+
+        if !running {
             send_events!();
 
             env.wait(0).await;
             continue;
         }
 
-        debug!("running 5000 ops...");
+        // debug!("running...");
         let result = kernel.run_op_count(5000);
 
-        debug!("sending events...");
+        // debug!("sending events...");
         send_events!();
 
-        debug!("checking for ecalls...");
+        // debug!("checking for ecalls...");
         match result {
             Ok(()) => {
+                if let Some(Process {
+                    status: IRtStat::Exited(_),
+                    op_count,
+                    ..
+                }) = kernel.process.as_ref()
+                {
+                    // let elapsed = prev.elapsed();
+
+                    debug!("program ran in {} ops", op_count);
+                    // debug!("program ran in {:.2?}", elapsed);
+                }
+
                 env.wait(1).await;
                 continue;
             }
