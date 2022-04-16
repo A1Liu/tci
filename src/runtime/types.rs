@@ -55,23 +55,7 @@ impl BinaryData {
         }
     }
 
-    pub fn reserve_static(&mut self, len: u32) -> VarPointer {
-        let data_len = self.data.len();
-
-        self.data.reserve(len as usize);
-        for _ in 0..len {
-            self.data.push(0);
-        }
-
-        self.vars.push(AllocTracker::Static {
-            start: data_len as u32,
-            len,
-        });
-
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
-    }
-
-    pub fn reserve_static_slice(&mut self, len: u32) -> (VarPointer, &mut [u8]) {
+    pub fn reserve_static(&mut self, len: u32) -> (VarPointer, &mut [u8]) {
         let data_len = self.data.len() as u32;
 
         self.data.reserve(len as usize);
