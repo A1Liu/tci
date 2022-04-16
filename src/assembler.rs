@@ -111,7 +111,7 @@ lazy_static! {
 }
 
 pub struct Assembler {
-    pub buckets: aliu::BucketList,
+    pub buckets: BucketList,
 
     pub func_linkage: HashMap<LinkName, u32>,
     pub functions: Vec<ASMFunc>,

@@ -574,3 +574,68 @@ pub enum FdKind {
     ProcessStdout(u32),
     ProcessStderr(u32),
 }
+
+const ID_MASK: u32 = 0b10100110_01101010_01001010_10101010;
+const ID_ADD: u32 = 2740160927;
+
+// These two numbers are multiplicative inverses mod 2^32
+const ID_MUL_TO: u32 = 0x01000193;
+const ID_MUL_FROM: u32 = 0x359c449b;
+
+// const ID_ROTATE_BITS: u32 = 16;
+// let s2 = s1.swap_bytes();
+// let s5 = s4.rotate_left(ID_ROTATE_BITS);
+
+pub fn to_id(raw: u32) -> u32 {
+    let s1 = raw ^ ID_MASK;
+    let s2 = s1.wrapping_mul(ID_MUL_TO);
+    let s3 = s2.wrapping_sub(ID_ADD);
+
+    return s3;
+}
+
+pub fn from_id(id: u32) -> u32 {
+    let s3 = id.wrapping_add(ID_ADD);
+    let s2 = s3.wrapping_mul(ID_MUL_FROM);
+    let s1 = s2 ^ ID_MASK;
+
+    return s1;
+}
+
+#[test]
+fn id_test() {
+    assert_eq!(ID_MUL_TO.wrapping_mul(ID_MUL_FROM), 1);
+
+    let tests = &[ID_MASK, ID_ADD, ID_MUL_TO, ID_MUL_FROM];
+
+    for id in 0..100 {
+        let value = from_id(id);
+        let out_id = to_id(value);
+
+        // println!("{} -> {}", id, value);
+
+        println!("{}", value);
+
+        assert_eq!(id, out_id);
+    }
+
+    for &id in tests {
+        let value = from_id(id);
+        let out_id = to_id(value);
+
+        // println!("{} -> {}", id, value);
+
+        assert_eq!(id, out_id);
+    }
+
+    for value in 0..100 {
+        let id = to_id(value);
+        let out_value = from_id(id);
+
+        // println!("{} -> {}", id, value);
+
+        assert_eq!(value, out_value);
+    }
+
+    assert_eq!(to_id(0), u32::MAX);
+}
