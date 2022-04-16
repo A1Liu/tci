@@ -321,7 +321,15 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             }
         }
 
-        if kernel.current_proc == !0 {
+        let running = match &kernel.process {
+            Some(Process {
+                status: IRtStat::Running,
+                ..
+            }) => true,
+            _ => false,
+        };
+
+        if !running {
             send_events!();
 
             env.wait(0).await;
