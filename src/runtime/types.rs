@@ -638,5 +638,4 @@ fn id_test() {
     }
 
     assert_eq!(to_id(0), u32::MAX);
-
 }
