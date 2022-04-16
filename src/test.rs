@@ -1,6 +1,6 @@
 use crate::filedb::*;
 use crate::runtime::*;
-use crate::util::*;
+// use crate::util::*;
 use crate::{compile, emit_err};
 use interloc::*;
 use std::fs::{read_dir, read_to_string};
