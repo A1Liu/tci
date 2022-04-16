@@ -23,6 +23,7 @@ pub enum KernStat {
 pub struct Process {
     pub memory: Memory,
     pub status: IRtStat,
+    pub op_count: u32,
 }
 
 impl Process {
@@ -30,6 +31,7 @@ impl Process {
         Self {
             memory: Memory::new(binary),
             status: IRtStat::Running,
+            op_count: 0,
         }
     }
 }
@@ -143,6 +145,7 @@ impl Kernel {
 
         let ops_allowed = count;
         let (ran_count, res) = run_op_count(&mut proc.memory, ops_allowed);
+        proc.op_count += ran_count;
 
         match res {
             Err(e) => {

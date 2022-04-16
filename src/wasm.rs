@@ -149,10 +149,22 @@ extern "C" {
     pub fn set_file_descriptors(this: &RunEnv, new: JsValue);
 }
 
-// #[panic_handler]
-// fn panic(_info: &core::panic::PanicInfo) -> ! {
-//     core::arch::wasm32::unreachable();
-// }
+fn print_stats() {
+    let alloced = ALLOC.alloced_bytes.load(Ordering::SeqCst);
+    let freed = ALLOC.freed_bytes.load(Ordering::SeqCst);
+    if alloced < freed {
+        let (alloced, alloced_suffix) = display_byte_size(alloced);
+        let (freed, freed_suffix) = display_byte_size(freed);
+
+        debug!(
+            "stats: alloced {}{}, freed {}{}",
+            alloced, alloced_suffix, freed, freed_suffix
+        );
+    }
+
+    let (used, used_suffix) = display_byte_size(alloced - freed);
+    debug!("stats: using {}{}", used, used_suffix);
+}
 
 #[wasm_bindgen]
 pub async fn run(env: RunEnv) -> Result<(), JsValue> {
@@ -278,23 +290,10 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
         }};
     }
 
+    // let mut prev = std::time::Instant::now();
+
     loop {
-        debug!("running another iteration of loop...");
-
-        let alloced = ALLOC.alloced_bytes.load(Ordering::SeqCst);
-        let freed = ALLOC.freed_bytes.load(Ordering::SeqCst);
-        if alloced < freed {
-            let (alloced, alloced_suffix) = display_byte_size(alloced);
-            let (freed, freed_suffix) = display_byte_size(freed);
-
-            debug!(
-                "stats: alloced {}{}, freed {}{}",
-                alloced, alloced_suffix, freed, freed_suffix
-            );
-        }
-
-        let (used, used_suffix) = display_byte_size(alloced - freed);
-        debug!("stats: using {}{}", used, used_suffix);
+        // debug!("running another iteration of loop...");
 
         while let Some(input) = recv()? {
             match input {
@@ -320,6 +319,7 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
 
                     send(Out::Compiled);
                     kernel.load_term_program(&program);
+                    // prev = std::time::Instant::now();
                 }
             }
         }
@@ -339,15 +339,27 @@ pub async fn run(env: RunEnv) -> Result<(), JsValue> {
             continue;
         }
 
-        debug!("running 5000 ops...");
+        // debug!("running...");
         let result = kernel.run_op_count(5000);
 
-        debug!("sending events...");
+        // debug!("sending events...");
         send_events!();
 
-        debug!("checking for ecalls...");
+        // debug!("checking for ecalls...");
         match result {
             Ok(()) => {
+                if let Some(Process {
+                    status: IRtStat::Exited(_),
+                    op_count,
+                    ..
+                }) = kernel.process.as_ref()
+                {
+                    // let elapsed = prev.elapsed();
+
+                    debug!("program ran in {} ops", op_count);
+                    // debug!("program ran in {:.2?}", elapsed);
+                }
+
                 env.wait(1).await;
                 continue;
             }
