@@ -1,6 +1,16 @@
 use crate::util::*;
 use core::{fmt, mem};
 
+#[derive(Clone, Copy, Debug)]
+pub enum AllocInfo {
+    StackLive { loc: CodeLoc, start: u32, len: u32 },
+    StackDead { loc: CodeLoc },
+    HeapLive { loc: CodeLoc, start: u32, len: u32 },
+    HeapDead { loc: CodeLoc, free_loc: CodeLoc },
+    Static { loc: CodeLoc, start: u32, len: u32 },
+    Exe { start: u32, len: u32 },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Var<T> {
     pub idx: usize,

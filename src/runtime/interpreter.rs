@@ -27,7 +27,7 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             ));
         }
         Opcode::Loc => {
-            let loc = memory.read_pc()?;
+            let loc: CodeLoc = memory.read_pc()?;
             memory.set_loc(loc);
         }
         Opcode::StackAlloc => {
