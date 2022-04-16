@@ -22,14 +22,14 @@ impl AllocInfo {
 
 #[derive(Debug)]
 pub struct Memory {
-    pub shared_data: Vec<u8>,
-    pub binary: Vec<Var<()>>,
-    pub heap: Vec<Var<AllocInfo>>,
-    pub freed: usize,
+    shared_data: Vec<u8>,
+    binary: Vec<Var<()>>,
+    heap: Vec<Var<AllocInfo>>,
+    freed: usize,
 
     // Per thread
     pub expr_stack: Vec<u8>,
-    pub stack_data: Vec<u8>,
+    stack_data: Vec<u8>,
     pub stack: Vec<Var<()>>,
     pub callstack: Vec<CallFrame>,
     pub current_func: LinkName,
