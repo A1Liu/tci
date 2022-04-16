@@ -74,19 +74,6 @@ impl BinaryData {
         );
     }
 
-    pub fn add_static_slice(&mut self, data: &[u8]) -> VarPointer {
-        let data_len = self.data.len();
-
-        self.data.extend_from_slice(data);
-
-        self.vars.push(AllocTracker::Static {
-            start: data_len as u32,
-            len: data.len() as u32,
-        });
-
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
-    }
-
     pub fn add_exe_slice(&mut self, data: &[u8]) -> VarPointer {
         let data_len = self.data.len();
 
