@@ -29,8 +29,7 @@ pub struct Memory {
     data: Pod<u8>,
     ranges: Pod<AllocTracker>,
     expr_stack: Pod<u8>,
-    stack_data: Pod<u8>,
-    pub stack: Pod<Var<()>>,
+    pub stack: Pod<u32>,
     pub callstack: Pod<CallFrame>,
     pub frame: CallFrame,
 }
@@ -48,14 +47,13 @@ impl Memory {
             binary_data_len,
 
             expr_stack: Pod::new(),
-            stack_data: Pod::new(),
             stack: Pod::new(),
 
             callstack: Pod::new(),
             frame: CallFrame {
                 name: LinkName::new(!0),
                 loc: NO_FILE,
-                fp: 1,
+                fp: 0,
                 pc: VarPointer::new(1, 0),
             },
         }
@@ -87,7 +85,7 @@ impl Memory {
 
         self.frame.name = self.read_pc()?;
         self.frame.loc = self.read_pc()?;
-        self.frame.fp = self.stack.len() as u16 + 1;
+        self.frame.fp = self.stack.len() as u16;
 
         return Ok(());
     }
@@ -148,25 +146,36 @@ impl Memory {
     }
 
     pub fn add_stack_var(&mut self, len: u32) -> Result<VarPointer, IError> {
-        let stack_len = self.stack_data.len();
-        let new_len = stack_len + len as usize;
-        if new_len > 1024 * 8 {
-            return Err(ierror!(
-                "StackOverflow",
-                "stack size would be over 8KB after this declaration"
-            ));
-        }
+        // let new_len = stack_len + len as usize;
+        // if new_len > 1024 * 8 {
+        //     return Err(ierror!(
+        //         "StackOverflow",
+        //         "stack size would be over 8KB after this declaration"
+        //     ));
+        // }
 
-        if self.stack.len() > 4000 {
-            return Err(ierror!(
-                "StackOverflow",
-                "stack would have over 4000 variables after this declaration"
-            ));
-        }
+        // if self.stack.len() > 4000 {
+        //     return Err(ierror!(
+        //         "StackOverflow",
+        //         "stack would have over 4000 variables after this declaration"
+        //     ));
+        // }
 
-        self.stack_data.resize(new_len, 0);
-        self.stack.push(Var::new(stack_len, ()));
-        return Ok(VarPointer::new_stack(self.stack.len() as u16, 0));
+        let start = self.data.len() as u32;
+
+        self.data.push_repeat(0, len as usize);
+
+        self.ranges.push(AllocTracker::StackLive {
+            loc: self.frame.loc,
+            start,
+            len,
+        });
+
+        let range_id = self.ranges.len() as u32;
+
+        self.stack.push(range_id);
+
+        return Ok(VarPointer::new(range_id, 0));
     }
 
     pub fn frame_loc(&self, skip_frames: u32) -> Result<CodeLoc, IError> {
@@ -254,6 +263,7 @@ impl Memory {
 
         if self.freed * 2 >= self.data.capacity() {
             self.coallesce_heap();
+            self.freed = 0;
         }
 
         return Ok(());
@@ -289,16 +299,19 @@ impl Memory {
             write_to += len;
         }
 
-        unsafe {
-            // should never increase the size of the buffer
-            self.data.set_len(write_to as usize);
-        }
+        self.data.truncate(write_to as usize);
     }
 
     pub fn pop_stack_var(&mut self) -> Result<(), IError> {
         let or_else = || empty_stack();
         let var = self.stack.pop().ok_or_else(or_else)?;
-        self.stack_data.resize(var.idx, 0);
+        let (loc, len) = match self.ranges[var - 1] {
+            AllocTracker::StackLive { loc, len, .. } => (loc, len),
+            _ => unreachable!("what the hell"),
+        };
+
+        self.ranges[var - 1] = AllocTracker::StackDead { loc };
+        self.freed += len as usize;
 
         return Ok(());
     }
@@ -309,18 +322,10 @@ impl Memory {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let offset = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
+        let alloc = self.ranges.get(var_idx)?;
+        let (lower, upper) = alloc.range()?;
 
-            upper - lower
-        } else {
-            let alloc = self.ranges.get(var_idx)?;
-            let (lower, upper) = alloc.range()?;
-
-            (upper - lower) as usize
-        };
+        let offset = (upper - lower) as usize;
 
         return Some(ptr.with_offset(offset as u32));
     }
@@ -333,18 +338,10 @@ impl Memory {
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
 
-        let from_bytes = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
+        let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+        let (lower, upper) = alloc.dereference(ptr, Const)?;
 
-            &self.stack_data[lower..upper]
-        } else {
-            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
-            let (lower, upper) = alloc.dereference(ptr, Const)?;
-
-            &self.data[r(lower, upper)]
-        };
+        let from_bytes = &self.data[r(lower, upper)];
 
         let from_len = from_bytes.len() as u32;
         let range = (ptr.offset() as usize)..(ptr.offset() as usize + len as usize);
@@ -370,18 +367,10 @@ impl Memory {
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
 
-        let to_bytes = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
+        let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+        let (lower, upper) = alloc.dereference(ptr, Mut)?;
 
-            &mut self.stack_data[lower..upper]
-        } else {
-            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
-            let (lower, upper) = alloc.dereference(ptr, Mut)?;
-
-            &mut self.data[r(lower, upper)]
-        };
+        let to_bytes = &mut self.data[r(lower, upper)];
 
         let to_len = to_bytes.len() as u32;
         let range = (ptr.offset() as usize)..(ptr.offset() as usize + buffer.len());
@@ -399,18 +388,10 @@ impl Memory {
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
 
-        let from_bytes = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
+        let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+        let (lower, upper) = alloc.dereference(ptr, Const)?;
 
-            &self.stack_data[lower..upper]
-        } else {
-            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
-            let (lower, upper) = alloc.dereference(ptr, Const)?;
-
-            &self.data[r(lower, upper)]
-        };
+        let from_bytes = &self.data[r(lower, upper)];
 
         let (from_len, range) = (from_bytes.len() as u32, (ptr.offset() as usize)..);
         let or_else = move || invalid_ptr(ptr);
@@ -442,18 +423,10 @@ impl Memory {
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
 
-        let from_bytes = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
+        let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+        let (lower, upper) = alloc.dereference(ptr, Const)?;
 
-            &self.stack_data[lower..upper]
-        } else {
-            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
-            let (lower, upper) = alloc.dereference(ptr, Const)?;
-
-            &self.data[r(lower, upper)]
-        };
+        let from_bytes = &self.data[r(lower, upper)];
 
         let from_len = from_bytes.len() as u32;
         let range = (ptr.offset() as usize)..(ptr.offset() as usize + len as usize);
@@ -471,18 +444,10 @@ impl Memory {
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
 
-        let to_bytes = if ptr.is_stack() {
-            let lower = self.stack.get(var_idx).ok_or_else(or_else)?.idx;
-            let upper = self.stack.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.stack_data.len());
+        let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+        let (lower, upper) = alloc.dereference(ptr, Mut)?;
 
-            &mut self.stack_data[lower..upper]
-        } else {
-            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
-            let (lower, upper) = alloc.dereference(ptr, Mut)?;
-
-            &mut self.data[r(lower, upper)]
-        };
+        let to_bytes = &mut self.data[r(lower, upper)];
 
         let to_len = to_bytes.len();
         let range = (ptr.offset() as usize)..(ptr.offset() as usize + len as usize);

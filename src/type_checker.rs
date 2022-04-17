@@ -78,7 +78,7 @@ macro_rules! gen_type_decl_spec {
 }
 
 type BuiltinTransform =
-    for<'a, 'b, 'c> fn(&'a mut TypeEnv<'b>, CodeLoc, &'c [Expr]) -> Result<TCExpr, Error>;
+    for<'a, 'b, 'd> fn(&'a mut TypeEnv<'b>, CodeLoc, &'d [Expr]) -> Result<TCExpr, Error>;
 
 lazy_static! {
     pub static ref CORRECT_TYPES: HashMap<TypeDeclSpec, TCTypeBase> = {
@@ -196,6 +196,83 @@ lazy_static! {
             });
         });
 
+        m.insert(
+            BuiltinSymbol::BuiltinVaStart as u32,
+            |env, call_loc, args| {
+                if args.len() != 2 {
+                    return Err(error!(
+                        "wrong number of arguments to builtin function",
+                        call_loc, "called here"
+                    ));
+                }
+
+                let list_arg = check_expr(&mut *env, &args[0])?;
+                let param_arg = check_expr(&mut *env, &args[1])?;
+
+                let list_label = match list_arg.kind {
+                    TCExprKind::LocalIdent { label } => {
+                        // TODO check that it's va_list
+                        label
+                    }
+                    _ => return Err(error!(
+                        "first argument to va_start must be an instance of va_list",
+                        list_arg.loc, "argument is here"
+                    )),
+                };
+
+                let ident = match env.kind {
+                    TypeEnvKind::Local { func_ident, .. } => func_ident,
+                    _ => return Err(error!(
+                            "va_start is not fully implemented yet",
+                            call_loc,
+                            "called here"
+                    )),
+                };
+
+                match param_arg.kind {
+                    TCExprKind::LocalIdent { label } => {
+                        // TODO check for if passed in parameter is in fact the last parameter
+                    }
+                    _ => return Err(error!(
+                        "second argument to va_start must be the last parameter of the function",
+                        param_arg.loc, "argument is here"
+                    )),
+                }
+
+                let (global_env, global) = env.globals();
+                let func = if let Some(func) = global_env.tu.functions.get(&ident) {
+                    func
+                } else {
+                    return Err(error!(
+                        "first argument must be an instance of va_list",
+                        list_arg.loc, "argument is here"
+                    ));
+                };
+
+                let void = TCType::new(TCTypeBase::Void);
+
+
+                // TODO check for if function is vararg
+                let param_count = if let Some(params) = func.func_type.params {
+                    params.types.len() as u32
+                } else {
+                    return Err(error!(
+                        "function must have at least 1 parameter to use variable arguments",
+                        call_loc, "va_start used here"
+                    ));
+                };
+
+                return Ok(TCExpr {
+                    kind: TCExprKind::Builtin(TCBuiltin::VaStart {
+                        list_label,
+                        param_count,
+                    }),
+                    ty: void,
+                    loc: call_loc,
+                });
+            },
+        );
+
         m
     };
 }
@@ -249,7 +326,7 @@ pub fn check_tree(
                 };
                 globals.add_var(None, &decl)?;
 
-                let mut func_out = FuncEnv::new(func_decl.return_type, func_decl.loc);
+                let mut func_out = FuncEnv::new(ident, func_decl.return_type, func_decl.loc);
                 let mut func_locals = globals.child(&mut func_out, decl.loc);
 
                 if let Some(params) = func_decl.params {

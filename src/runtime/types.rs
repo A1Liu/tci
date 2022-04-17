@@ -523,6 +523,11 @@ pub enum Opcode {
     HeapAlloc,
     HeapDealloc,
 
+    // For use with varargs, so we can get the next variable argument from a
+    // decrementing stack id
+    MakeStackId,
+    TranslateStackId,
+
     CopySrcToDest,
     Memset,
 

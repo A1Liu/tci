@@ -55,15 +55,16 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(val);
         }
         Opcode::MakeSp => {
-            let stack_len = memory.stack.len() as u16;
+            let last = *memory.stack.last().unwrap();
 
-            memory.push(VarPointer::new_stack(stack_len, 0));
+            memory.push(VarPointer::new(last, 0));
         }
         Opcode::MakeFp => {
             let var_offset: i16 = memory.read_pc()?;
             let var = (memory.frame.fp as i16 + var_offset) as u16;
+            let value = memory.stack[var];
 
-            memory.push(VarPointer::new_stack(var, 0));
+            memory.push(VarPointer::new(value, 0));
         }
 
         Opcode::PushUndef => {
@@ -992,6 +993,20 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             } else {
                 memory.push(0 as u64);
             }
+        }
+
+        Opcode::MakeStackId => {
+            let var_offset: i16 = memory.read_pc()?;
+            let var = (memory.frame.fp as i16 + var_offset) as u32;
+
+            memory.push(var);
+        }
+
+        Opcode::TranslateStackId => {
+            let stack_id: u32 = memory.pop()?;
+            let value = memory.stack[stack_id];
+
+            memory.push(VarPointer::new(value, 0));
         }
 
         Opcode::CopySrcToDest => {

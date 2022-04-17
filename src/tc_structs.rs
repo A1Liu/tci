@@ -13,6 +13,7 @@ pub struct FuncEnv {
     pub translate_gotos: Vec<u32>,
     pub next_label: u32,
     pub next_symbol_label: u32,
+    pub func_ident: u32,
 
     // const fields
     pub return_type: TCType,
@@ -24,6 +25,7 @@ pub enum TypeEnvKind<'a> {
     Local {
         symbols: HashMap<u32, TCVar>,
         scope_idx: u32,
+        func_ident: u32,
         cont_label: n32,
         break_label: n32,
         parent: *mut TypeEnv<'a>,
@@ -53,8 +55,8 @@ pub struct TypeEnv<'a> {
 }
 
 pub struct GlobalTypeEnv<'a> {
-    tu: TranslationUnit,
-    symbols: &'a Symbols,
+    pub tu: TranslationUnit,
+    pub symbols: &'a Symbols,
 }
 
 pub struct LocalTypeEnv<'a> {
@@ -92,11 +94,12 @@ unsafe impl<'a> Allocator for GlobalTypeEnv<'a> {
 }
 
 impl FuncEnv {
-    pub fn new(return_type: TCType, decl_loc: CodeLoc) -> Self {
+    pub fn new(func_ident: u32, return_type: TCType, decl_loc: CodeLoc) -> Self {
         return FuncEnv {
             ops: Vec::new(),
             symbol_to_label: HashMap::new(),
             translate_gotos: Vec::new(),
+            func_ident,
             next_label: 0,
             next_symbol_label: 0,
             return_type,
@@ -208,6 +211,7 @@ impl<'a> TypeEnv<'a> {
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
             scope_idx,
+            func_ident: env.func_ident,
             cont_label: cont_label.into(),
             break_label: break_label.into(),
             parent: self,
@@ -266,6 +270,7 @@ impl<'a> TypeEnv<'a> {
         let kind = TypeEnvKind::Local {
             symbols: HashMap::new(),
             scope_idx: env.ops.len() as u32,
+            func_ident: env.func_ident,
             cont_label,
             break_label,
             parent: self,

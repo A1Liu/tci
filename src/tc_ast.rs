@@ -1141,6 +1141,7 @@ impl<'a> TCTy for TCTypeMut<'a> {
 pub enum TCBuiltin {
     Push(&'static TCExpr), // Any type
     Opcode(Opcode),
+    VaStart { list_label: u32, param_count: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]

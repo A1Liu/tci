@@ -1257,6 +1257,38 @@ impl Assembler {
 
                 self.func.opcodes.push(*op);
             }
+            TCExprKind::Builtin(TCBuiltin::VaStart {
+                list_label,
+                param_count,
+            }) => {
+                self.func.opcodes.push(Opcode::Loc);
+                self.func.opcodes.push(expr.loc);
+
+                let param_count = *param_count;
+                let list_label = *list_label;
+
+                // A stack frame beginning at stack id 10, with param count 1, means
+                // id 9 == return slot
+                // id 8 == param 1
+                // id 7 == first vararg
+                //
+                // A stack frame beginning at stack id 10, with param count 2, means
+                // id 9 == return slot
+                // id 8 == param 1
+                // id 7 == param 2
+                // id 6 == first vararg
+                //
+                // This means we do frame id - param_count - 2 to get the first
+                // vararg slot id
+                self.func.opcodes.push(Opcode::MakeStackId);
+                self.func.opcodes.push(-(param_count as i16) - 2);
+
+                let var = self.func.var_offsets[list_label as usize];
+                self.func.opcodes.push(Opcode::MakeFp);
+                self.func.opcodes.push(var);
+                self.func.opcodes.push(Opcode::Set);
+                self.func.opcodes.push(4u32);
+            }
         }
     }
 
