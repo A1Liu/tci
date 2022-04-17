@@ -958,127 +958,11 @@ impl Assembler {
 
             TCExprKind::Conv { from, to, expr } => {
                 self.translate_expr(expr);
+
                 self.func.opcodes.push(Opcode::Loc);
                 self.func.opcodes.push(expr.loc);
-                match (from, to.size(), to.is_floating_pt()) {
-                    (TCPrimType::I8, 1, false) => {}
-                    (TCPrimType::U8, 1, false) => {}
-                    (TCPrimType::I8, 2, false) => self.func.opcodes.push(Opcode::SExtend8To16),
-                    (TCPrimType::U8, 2, false) => self.func.opcodes.push(Opcode::ZExtend8To16),
-                    (TCPrimType::I8, 4, false) => self.func.opcodes.push(Opcode::SExtend8To32),
-                    (TCPrimType::U8, 4, false) => self.func.opcodes.push(Opcode::ZExtend8To32),
-                    (TCPrimType::I8, 8, false) => self.func.opcodes.push(Opcode::SExtend8To64),
-                    (TCPrimType::U8, 8, false) => self.func.opcodes.push(Opcode::ZExtend8To64),
 
-                    (TCPrimType::I16, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(1u32)
-                    }
-                    (TCPrimType::U16, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(1u32)
-                    }
-                    (TCPrimType::I16, 2, false) => {}
-                    (TCPrimType::U16, 2, false) => {}
-                    (TCPrimType::I16, 4, false) => self.func.opcodes.push(Opcode::SExtend16To32),
-                    (TCPrimType::U16, 4, false) => self.func.opcodes.push(Opcode::ZExtend16To32),
-                    (TCPrimType::I16, 8, false) => self.func.opcodes.push(Opcode::SExtend16To64),
-                    (TCPrimType::U16, 8, false) => self.func.opcodes.push(Opcode::ZExtend16To64),
-
-                    (TCPrimType::I32, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(3u32)
-                    }
-                    (TCPrimType::U32, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(3u32)
-                    }
-                    (TCPrimType::I32, 2, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(2u32)
-                    }
-                    (TCPrimType::U32, 2, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(2u32)
-                    }
-                    (TCPrimType::I32, 4, false) => {}
-                    (TCPrimType::U32, 4, false) => {}
-                    (TCPrimType::I32, 8, false) => self.func.opcodes.push(Opcode::SExtend32To64),
-                    (TCPrimType::U32, 8, false) => self.func.opcodes.push(Opcode::ZExtend32To64),
-
-                    (TCPrimType::I64, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(7u32)
-                    }
-                    (TCPrimType::U64, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(7u32)
-                    }
-                    (TCPrimType::I64, 2, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(6u32)
-                    }
-                    (TCPrimType::U64, 2, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(6u32)
-                    }
-                    (TCPrimType::I64, 4, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(4u32)
-                    }
-                    (TCPrimType::U64, 4, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(4u32)
-                    }
-                    (TCPrimType::I64, 8, false) => {}
-                    (TCPrimType::U64, 8, false) => {}
-
-                    (TCPrimType::I8, 4, true) => self.func.opcodes.push(Opcode::I8ToF32),
-                    (TCPrimType::U8, 4, true) => self.func.opcodes.push(Opcode::U8ToF32),
-                    (TCPrimType::I8, 8, true) => self.func.opcodes.push(Opcode::I8ToF64),
-                    (TCPrimType::U8, 8, true) => self.func.opcodes.push(Opcode::U8ToF64),
-                    (TCPrimType::I16, 4, true) => self.func.opcodes.push(Opcode::I16ToF32),
-                    (TCPrimType::U16, 4, true) => self.func.opcodes.push(Opcode::U16ToF32),
-                    (TCPrimType::I16, 8, true) => self.func.opcodes.push(Opcode::I16ToF64),
-                    (TCPrimType::U16, 8, true) => self.func.opcodes.push(Opcode::U16ToF64),
-                    (TCPrimType::I32, 4, true) => self.func.opcodes.push(Opcode::I32ToF32),
-                    (TCPrimType::U32, 4, true) => self.func.opcodes.push(Opcode::U32ToF32),
-                    (TCPrimType::I32, 8, true) => self.func.opcodes.push(Opcode::I32ToF64),
-                    (TCPrimType::U32, 8, true) => self.func.opcodes.push(Opcode::U32ToF64),
-                    (TCPrimType::I64, 4, true) => self.func.opcodes.push(Opcode::I64ToF32),
-                    (TCPrimType::U64, 4, true) => self.func.opcodes.push(Opcode::U64ToF32),
-                    (TCPrimType::I64, 8, true) => self.func.opcodes.push(Opcode::I64ToF64),
-                    (TCPrimType::U64, 8, true) => self.func.opcodes.push(Opcode::U64ToF64),
-
-                    (TCPrimType::F32, 1, false) => self.func.opcodes.push(Opcode::F32ToI8),
-                    (TCPrimType::F64, 1, false) => self.func.opcodes.push(Opcode::F64ToI8),
-                    (TCPrimType::F32, 2, false) => self.func.opcodes.push(Opcode::F32ToI16),
-                    (TCPrimType::F64, 2, false) => self.func.opcodes.push(Opcode::F64ToI16),
-                    (TCPrimType::F32, 4, false) => self.func.opcodes.push(Opcode::F32ToI32),
-                    (TCPrimType::F64, 4, false) => self.func.opcodes.push(Opcode::F64ToI32),
-                    (TCPrimType::F32, 8, false) => self.func.opcodes.push(Opcode::F32ToI64),
-                    (TCPrimType::F64, 8, false) => self.func.opcodes.push(Opcode::F64ToI64),
-
-                    (TCPrimType::F32, 4, true) => {}
-                    (TCPrimType::F64, 4, true) => self.func.opcodes.push(Opcode::F64ToF32),
-                    (TCPrimType::F32, 8, true) => self.func.opcodes.push(Opcode::F32ToF64),
-                    (TCPrimType::F64, 8, true) => {}
-
-                    (TCPrimType::Pointer { .. }, 1, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(7u32)
-                    }
-                    (TCPrimType::Pointer { .. }, 2, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(6u32)
-                    }
-                    (TCPrimType::Pointer { .. }, 4, false) => {
-                        self.func.opcodes.push(Opcode::Pop);
-                        self.func.opcodes.push(4u32)
-                    }
-                    (TCPrimType::Pointer { .. }, 8, false) => {}
-                    x => unimplemented!("conversion {:?}", x),
-                }
+                self.conv(*from, *to);
             }
 
             // TODO fix this with array members
@@ -1285,6 +1169,152 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Set);
                 self.func.opcodes.push(4u32);
             }
+        }
+    }
+
+    fn conv(&mut self, from: TCPrimType, to: TCPrimType) {
+        if from == to {
+            return;
+        }
+
+        'to_float: loop {
+            match (from, to) {
+                (TCPrimType::F32, TCPrimType::F64) => {
+                    self.func.opcodes.push(Opcode::F32ToF64);
+                    return;
+                }
+                (TCPrimType::F64, TCPrimType::F32) => {
+                    self.func.opcodes.push(Opcode::F64ToF32);
+                    return;
+                }
+
+                (TCPrimType::I8, TCPrimType::F32) => self.func.opcodes.push(Opcode::I8ToF32),
+                (TCPrimType::U8, TCPrimType::F32) => self.func.opcodes.push(Opcode::U8ToF32),
+                (TCPrimType::I8, TCPrimType::F64) => self.func.opcodes.push(Opcode::I8ToF64),
+                (TCPrimType::U8, TCPrimType::F64) => self.func.opcodes.push(Opcode::U8ToF64),
+                (TCPrimType::I16, TCPrimType::F32) => self.func.opcodes.push(Opcode::I16ToF32),
+                (TCPrimType::U16, TCPrimType::F32) => self.func.opcodes.push(Opcode::U16ToF32),
+                (TCPrimType::I16, TCPrimType::F64) => self.func.opcodes.push(Opcode::I16ToF64),
+                (TCPrimType::U16, TCPrimType::F64) => self.func.opcodes.push(Opcode::U16ToF64),
+                (TCPrimType::I32, TCPrimType::F32) => self.func.opcodes.push(Opcode::I32ToF32),
+                (TCPrimType::U32, TCPrimType::F32) => self.func.opcodes.push(Opcode::U32ToF32),
+                (TCPrimType::I32, TCPrimType::F64) => self.func.opcodes.push(Opcode::I32ToF64),
+                (TCPrimType::U32, TCPrimType::F64) => self.func.opcodes.push(Opcode::U32ToF64),
+                (TCPrimType::I64, TCPrimType::F32) => self.func.opcodes.push(Opcode::I64ToF32),
+                (TCPrimType::U64, TCPrimType::F32) => self.func.opcodes.push(Opcode::U64ToF32),
+                (TCPrimType::I64, TCPrimType::F64) => self.func.opcodes.push(Opcode::I64ToF64),
+                (TCPrimType::U64, TCPrimType::F64) => self.func.opcodes.push(Opcode::U64ToF64),
+
+                _ => break 'to_float,
+            }
+
+            return;
+        }
+
+        let to_size = to.size();
+
+        'from_float: loop {
+            match (from, to_size) {
+                (TCPrimType::F32, 1) => self.func.opcodes.push(Opcode::F32ToI8),
+                (TCPrimType::F64, 1) => self.func.opcodes.push(Opcode::F64ToI8),
+                (TCPrimType::F32, 2) => self.func.opcodes.push(Opcode::F32ToI16),
+                (TCPrimType::F64, 2) => self.func.opcodes.push(Opcode::F64ToI16),
+                (TCPrimType::F32, 4) => self.func.opcodes.push(Opcode::F32ToI32),
+                (TCPrimType::F64, 4) => self.func.opcodes.push(Opcode::F64ToI32),
+                (TCPrimType::F32, 8) => self.func.opcodes.push(Opcode::F32ToI64),
+                (TCPrimType::F64, 8) => self.func.opcodes.push(Opcode::F64ToI64),
+
+                _ => break 'from_float,
+            }
+
+            return;
+        }
+
+        let from_size = from.size();
+
+        if from_size == to_size {
+            return;
+        }
+
+        match (from, to_size) {
+            (TCPrimType::I8, 2) => self.func.opcodes.push(Opcode::SExtend8To16),
+            (TCPrimType::U8, 2) => self.func.opcodes.push(Opcode::ZExtend8To16),
+            (TCPrimType::I8, 4) => self.func.opcodes.push(Opcode::SExtend8To32),
+            (TCPrimType::U8, 4) => self.func.opcodes.push(Opcode::ZExtend8To32),
+            (TCPrimType::I8, 8) => self.func.opcodes.push(Opcode::SExtend8To64),
+            (TCPrimType::U8, 8) => self.func.opcodes.push(Opcode::ZExtend8To64),
+
+            (TCPrimType::I16, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(1u32)
+            }
+            (TCPrimType::U16, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(1u32)
+            }
+            (TCPrimType::I16, 4) => self.func.opcodes.push(Opcode::SExtend16To32),
+            (TCPrimType::U16, 4) => self.func.opcodes.push(Opcode::ZExtend16To32),
+            (TCPrimType::I16, 8) => self.func.opcodes.push(Opcode::SExtend16To64),
+            (TCPrimType::U16, 8) => self.func.opcodes.push(Opcode::ZExtend16To64),
+
+            (TCPrimType::I32, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(3u32)
+            }
+            (TCPrimType::U32, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(3u32)
+            }
+            (TCPrimType::I32, 2) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(2u32)
+            }
+            (TCPrimType::U32, 2) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(2u32)
+            }
+            (TCPrimType::I32, 8) => self.func.opcodes.push(Opcode::SExtend32To64),
+            (TCPrimType::U32, 8) => self.func.opcodes.push(Opcode::ZExtend32To64),
+
+            (TCPrimType::I64, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(7u32)
+            }
+            (TCPrimType::U64, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(7u32)
+            }
+            (TCPrimType::I64, 2) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(6u32)
+            }
+            (TCPrimType::U64, 2) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(6u32)
+            }
+            (TCPrimType::I64, 4) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(4u32)
+            }
+            (TCPrimType::U64, 4) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(4u32)
+            }
+
+            (TCPrimType::Pointer { .. }, 1) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(7u32)
+            }
+            (TCPrimType::Pointer { .. }, 2) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(6u32)
+            }
+            (TCPrimType::Pointer { .. }, 4) => {
+                self.func.opcodes.push(Opcode::Pop);
+                self.func.opcodes.push(4u32)
+            }
+
+            x => unimplemented!("conversion {:?}", x),
         }
     }
 

@@ -9,4 +9,5 @@
 /letsencrypt
 /node_modules
 
-a.out
+/test.c
+/a.out
