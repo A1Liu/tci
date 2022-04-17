@@ -538,11 +538,9 @@ impl Memory {
         if bytes > self.expr_stack.len() {
             return Err(expr_stack_too_short(stack_len, bytes));
         }
-        self.expr_stack.push_repeat(0, bytes);
 
-        let slice = &mut self.expr_stack[(stack_len - bytes)..];
-        let (from, to) = slice.split_at_mut(bytes);
-        to.copy_from_slice(from);
+        let (from, to) = self.expr_stack.extend_uninit(bytes);
+        to.copy_from_slice(&from[(stack_len - bytes)..]);
 
         return Ok(());
     }
