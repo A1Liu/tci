@@ -1,5 +1,13 @@
 use crate::util::*;
+use crate::IError;
 use core::{fmt, mem};
+
+pub enum Mutability {
+    Mut,
+    Const,
+}
+
+pub use Mutability::*;
 
 #[derive(Clone, Copy, Debug)]
 pub enum AllocTracker {
@@ -12,8 +20,47 @@ pub enum AllocTracker {
 }
 
 impl AllocTracker {
-    pub fn is_live(&self) -> bool {
+    pub fn dereference(&self, ptr: VarPointer, mutable: Mutability) -> Result<(u32, u32), IError> {
         match *self {
+            Self::StackLive { loc, start, len } => {
+                return Ok((start, start + len));
+            }
+
+            Self::StackDead { loc } => {
+                return ierr!(
+                "InvalidPointer",
+                "the pointer {} points to memory from a local variable, but that variable no longer exists because the function has already returned",
+                ptr
+            );
+            }
+
+            Self::HeapLive { loc, start, len } => {
+                return Ok((start, start + len));
+            }
+            Self::HeapDead { loc, free_loc } => {
+                return ierr!(
+                    "InvalidPointer",
+                    "the pointer {} points to freed memory",
+                    ptr
+                );
+            }
+
+            Self::Static { start, len } => {
+                return Ok((start, start + len));
+            }
+
+            Self::Exe { start, len } => {
+                if let Mut = mutable {
+                    return ierr!("ModifiedExe", "tried to modify memory where code is stored");
+                }
+
+                return Ok((start, start + len));
+            }
+        }
+    }
+
+    pub fn is_live(&self) -> bool {
+        return match *self {
             Self::StackLive { loc, start, len } => true,
             Self::StackDead { loc } => false,
 
@@ -22,33 +69,27 @@ impl AllocTracker {
 
             Self::Static { start, len } => true,
             Self::Exe { start, len } => false,
-        }
+        };
     }
 
-    pub fn range(&self) -> (u32, u32) {
-        match *self {
-            Self::StackLive { loc, start, len } => {
-                return (start, start + len);
-            }
+    pub fn range(&self) -> Option<(u32, u32)> {
+        let range = match *self {
+            Self::StackLive { loc, start, len } => (start, start + len),
             Self::StackDead { loc } => {
-                return (0, 0);
+                return None;
             }
 
-            Self::HeapLive { loc, start, len } => {
-                return (start, start + len);
-            }
+            Self::HeapLive { loc, start, len } => (start, start + len),
             Self::HeapDead { loc, free_loc } => {
-                return (0, 0);
+                return None;
             }
 
-            Self::Static { start, len } => {
-                return (start, start + len);
-            }
+            Self::Static { start, len } => (start, start + len),
 
-            Self::Exe { start, len } => {
-                return (start, start + len);
-            }
-        }
+            Self::Exe { start, len } => (start, start + len),
+        };
+
+        return Some(range);
     }
 }
 
@@ -92,7 +133,7 @@ impl BinaryData {
         });
 
         return (
-            VarPointer::new_binary(self.vars.len() as u32, 0),
+            VarPointer::new(self.vars.len() as u32, 0),
             &mut self.data[r(data_len, data_len + len)],
         );
     }
@@ -107,7 +148,7 @@ impl BinaryData {
             len: data.len() as u32,
         });
 
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
+        return VarPointer::new(self.vars.len() as u32, 0);
     }
 
     pub fn read<T: Copy>(&mut self, ptr: VarPointer) -> Option<T> {
@@ -116,7 +157,7 @@ impl BinaryData {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let (lower, upper) = self.vars.get(var_idx)?.range();
+        let (lower, upper) = self.vars.get(var_idx)?.range()?;
 
         let data = &mut self.data[r(lower, upper)];
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
@@ -133,7 +174,7 @@ impl BinaryData {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let (lower, upper) = self.vars.get(var_idx).unwrap().range();
+        let (lower, upper) = self.vars[var_idx].range().unwrap();
 
         let data = &mut self.data[lower..upper];
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
@@ -159,20 +200,19 @@ impl fmt::Debug for VarPointer {
     }
 }
 impl VarPointer {
-    pub const BINARY_BIT: u64 = 1u64 << 63;
-    pub const STACK_BIT: u64 = 1u64 << 62;
+    pub const BINARY_BIT: u64 = 1u64 << 62;
+    pub const STACK_BIT: u64 = 1u64 << 63;
     pub const RESERVED_BITS: u64 = Self::BINARY_BIT | Self::STACK_BIT;
 
     pub const TOP_BITS: u64 = (u32::MAX as u64) << 32;
     pub const BOTTOM_BITS: u64 = u32::MAX as u64;
-    pub const THREAD_BITS: u64 = ((u16::MAX as u64) << 48) ^ Self::RESERVED_BITS;
 
     pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
         let (idx, offset) = (idx as u64, offset as u64);
         return Self(Self::STACK_BIT | (idx << 32) | offset);
     }
 
-    pub fn new_heap(idx: u32, offset: u32) -> VarPointer {
+    pub fn new(idx: u32, offset: u32) -> VarPointer {
         let (idx, offset) = ((idx as u64) << 32, offset as u64);
         if idx & Self::RESERVED_BITS != 0 {
             panic!("idx is too large");
@@ -181,39 +221,13 @@ impl VarPointer {
         return Self(idx | offset);
     }
 
-    pub fn new_binary(idx: u32, offset: u32) -> VarPointer {
-        let (idx, offset) = ((idx as u64) << 32, offset as u64);
-        if idx & Self::RESERVED_BITS != 0 {
-            panic!("idx is too large");
-        }
-
-        return Self(Self::BINARY_BIT | idx | offset);
-    }
-
     pub fn is_stack(self) -> bool {
         return (self.0 & Self::RESERVED_BITS) == Self::STACK_BIT;
     }
 
-    pub fn is_binary(self) -> bool {
-        return (self.0 & Self::RESERVED_BITS) == Self::BINARY_BIT;
-    }
-
-    pub fn is_heap(self) -> bool {
-        return (self.0 & Self::RESERVED_BITS) == 0;
-    }
-
-    // returns u16::MAX if not attached to a thread
-    pub fn tid(self) -> u16 {
-        if self.is_stack() {
-            return ((self.0 & Self::THREAD_BITS) >> 48) as u16;
-        }
-
-        return u16::MAX;
-    }
-
     pub fn var_idx(self) -> usize {
         let top = if self.is_stack() {
-            self.0 & !(Self::THREAD_BITS | Self::RESERVED_BITS)
+            self.0 & !Self::RESERVED_BITS
         } else {
             self.0 & !Self::RESERVED_BITS
         };

@@ -357,7 +357,7 @@ impl Assembler {
                     let id = self.file.binary_offsets[binary_offset as usize];
 
                     self.var_temps.push((ptr, expr.loc));
-                    self.data.write(ptr, VarPointer::new_binary(id, 0));
+                    self.data.write(ptr, VarPointer::new(id, 0));
                     return Ok(ptr.add(expr.ty.repr_size() as u64));
                 }
 
@@ -375,7 +375,7 @@ impl Assembler {
             }) => {
                 let id = self.file.binary_offsets[binary_offset as usize];
                 self.var_temps.push((ptr, expr.loc));
-                self.data.write(ptr, VarPointer::new_binary(id, offset));
+                self.data.write(ptr, VarPointer::new(id, offset));
             }
 
             TCExprKind::ArrayInit { elems, elem_ty: ty } => {
@@ -511,7 +511,7 @@ impl Assembler {
                     self.solve_scope_difference(defn.ops, scope_idx, label.scope_idx, t_op.loc);
                     self.func.opcodes.push(Opcode::Jump);
                     self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                    self.func.opcodes.push(VarPointer::new_binary(0, goto));
+                    self.func.opcodes.push(VarPointer::new(0, goto));
                 }
                 TCOpcodeKind::GotoIfZero {
                     cond,
@@ -531,7 +531,7 @@ impl Assembler {
 
                     self.func.opcodes.push(op);
                     self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                    self.func.opcodes.push(VarPointer::new_binary(0, goto));
+                    self.func.opcodes.push(VarPointer::new(0, goto));
                 }
                 TCOpcodeKind::GotoIfNotZero {
                     cond,
@@ -551,7 +551,7 @@ impl Assembler {
 
                     self.func.opcodes.push(op);
                     self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                    self.func.opcodes.push(VarPointer::new_binary(0, goto));
+                    self.func.opcodes.push(VarPointer::new(0, goto));
                 }
 
                 TCOpcodeKind::Switch {
@@ -580,7 +580,7 @@ impl Assembler {
                         self.func.opcodes.push(op);
                         self.func.opcodes.push(Opcode::JumpIfZero8);
                         self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                        let ptr = VarPointer::new_binary(0, skip_case);
+                        let ptr = VarPointer::new(0, skip_case);
                         self.func.opcodes.push(ptr);
 
                         self.func.opcodes.push(Opcode::Pop);
@@ -588,7 +588,7 @@ impl Assembler {
 
                         self.func.opcodes.push(Opcode::Jump);
                         self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                        let ptr = VarPointer::new_binary(0, *take_case);
+                        let ptr = VarPointer::new(0, *take_case);
                         self.func.opcodes.push(ptr);
 
                         self.func.labels[skip_case as usize].offset =
@@ -600,7 +600,7 @@ impl Assembler {
 
                     self.func.opcodes.push(Opcode::Jump);
                     self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                    let ptr = VarPointer::new_binary(0, default);
+                    let ptr = VarPointer::new(0, default);
                     self.func.opcodes.push(ptr);
                 }
             }
@@ -777,9 +777,9 @@ impl Assembler {
                 let id = self.func_linkage[&link_name];
                 self.func.opcodes.push(Opcode::Make64);
 
-                let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
+                let ptr = VarPointer::new(0, self.func.opcodes.data.len() as u32);
                 self.function_temps.push((ptr, expr.loc));
-                self.func.opcodes.push(VarPointer::new_binary(0, id));
+                self.func.opcodes.push(VarPointer::new(0, id));
             }
             TCExprKind::GlobalIdent { binary_offset } => {
                 self.func.opcodes.push(Opcode::Loc);
@@ -787,9 +787,9 @@ impl Assembler {
 
                 let id = self.file.binary_offsets[*binary_offset as usize];
                 self.func.opcodes.push(Opcode::Make64);
-                let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
+                let ptr = VarPointer::new(0, self.func.opcodes.data.len() as u32);
                 self.var_temps.push((ptr, expr.loc));
-                self.func.opcodes.push(VarPointer::new_binary(id, 0));
+                self.func.opcodes.push(VarPointer::new(id, 0));
 
                 if !expr.ty.is_array() {
                     self.func.opcodes.push(Opcode::Get);
@@ -1239,13 +1239,13 @@ impl Assembler {
 
                 self.func.opcodes.push(op);
                 self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                let ptr = VarPointer::new_binary(0, else_label);
+                let ptr = VarPointer::new(0, else_label);
                 self.func.opcodes.push(ptr);
 
                 self.translate_expr(if_true);
                 self.func.opcodes.push(Opcode::Jump);
                 self.func.gotos.push(self.func.opcodes.data.len() as u32);
-                self.func.opcodes.push(VarPointer::new_binary(0, end_label));
+                self.func.opcodes.push(VarPointer::new(0, end_label));
                 self.func.labels[else_label as usize].offset = self.func.opcodes.data.len() as u32;
                 self.translate_expr(if_false);
                 self.func.labels[end_label as usize].offset = self.func.opcodes.data.len() as u32;
@@ -1294,9 +1294,9 @@ impl Assembler {
 
                 let id = self.file.binary_offsets[binary_offset as usize];
                 self.func.opcodes.push(Opcode::Make64);
-                let ptr = VarPointer::new_binary(0, self.func.opcodes.data.len() as u32);
+                let ptr = VarPointer::new(0, self.func.opcodes.data.len() as u32);
                 self.var_temps.push((ptr, assign.loc));
-                self.func.opcodes.push(VarPointer::new_binary(id, 0));
+                self.func.opcodes.push(VarPointer::new(id, 0));
 
                 if assign.offset != 0 {
                     self.func.opcodes.push(Opcode::Make64);

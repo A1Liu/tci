@@ -23,7 +23,7 @@ impl AllocInfo {
 #[derive(Debug)]
 pub struct Memory {
     shared_data: Pod<u8>,
-    binary: Pod<AllocTracker>,
+    ranges: Pod<AllocTracker>,
     heap: Vec<Var<AllocInfo>>,
     freed: usize,
 
@@ -42,7 +42,7 @@ impl Memory {
     pub fn new(binary: &BinaryData) -> Self {
         Self {
             shared_data: binary.data.clone(),
-            binary: binary.vars.clone(),
+            ranges: binary.vars.clone(),
             heap: Vec::new(),
             freed: 0,
 
@@ -54,7 +54,7 @@ impl Memory {
             current_func: LinkName::new(!0),
             loc: NO_FILE,
             fp: 1,
-            pc: VarPointer::new_binary(1, 0),
+            pc: VarPointer::new(1, 0),
         }
     }
 
@@ -115,15 +115,22 @@ impl Memory {
         let var_idx = self.pc.var_idx() - 1;
         let or_else = || invalid_ptr(self.pc);
 
-        let from_bytes = if self.pc.is_binary() {
-            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
-
-            &self.shared_data[r(lower,upper)]
-        } else {
+        if self.pc.is_stack() {
             return Err(ierror!(
                 "PermissionDenied",
                 "tried to execute memory outside of functions"
             ));
+        }
+        let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+        let from_bytes = match *alloc {
+            AllocTracker::Exe { start, len } => &self.shared_data[r(start, start + len)],
+
+            _ => {
+                return Err(ierror!(
+                    "PermissionDenied",
+                    "tried to execute memory outside of functions"
+                ));
+            }
         };
 
         let (len, from_len, ptr) = (mem::size_of::<T>(), from_bytes.len() as u32, self.pc);
@@ -176,28 +183,32 @@ impl Memory {
     }
 
     pub fn add_heap_var(&mut self, len: u32, skip_frames: u32) -> Result<VarPointer, IError> {
-        let (len, data_len) = (len as usize, self.shared_data.len());
-        let heap_begin_o = self.heap.get(0).map(|a| a.idx);
-        let heap_begin = heap_begin_o.unwrap_or(self.shared_data.len());
+        let data_len = self.shared_data.len() as u32;
 
-        if data_len - heap_begin + len > 1024 * 1024 * 16 {
+        if data_len + len > 1024 * 1024 * 16 {
             return Err(ierror!(
                 "HeapTooLarge",
-                "heap size would be over 16MB after this allocation"
+                "memory size would be over 16MB after this allocation"
             ));
         }
 
-        if self.heap.len() >= 10_000 {
-            return Err(ierror!(
-                "TooManyAllocations",
-                "allocated over 10,000 items on the heap"
-            ));
-        }
+        // if self.heap.len() >= 10_000 {
+        //     return Err(ierror!(
+        //         "TooManyAllocations",
+        //         "allocated over 10,000 items on the heap"
+        //     ));
+        // }
 
         let loc = self.frame_loc(skip_frames)?;
-        self.shared_data.push_repeat(  !0,len);
-        self.heap.push(Var::new(data_len, AllocInfo::new(loc)));
-        return Ok(VarPointer::new_heap(self.heap.len() as u32, 0));
+        self.shared_data.push_repeat(!0, len as usize);
+
+        self.ranges.push(AllocTracker::HeapLive {
+            loc,
+            start: data_len,
+            len,
+        });
+
+        return Ok(VarPointer::new(self.ranges.len() as u32, 0));
     }
 
     pub fn free(&mut self, ptr: VarPointer, skip_frames: u32) -> Result<(), IError> {
@@ -208,65 +219,70 @@ impl Memory {
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
 
-        if !ptr.is_heap() {
+        if ptr.is_stack() {
             return Err(ierror!(
                 "InvalidFreeTarget",
-                "tried to free something that isn't from the heap"
+                "tried to free a pointer from the stack"
             ));
         }
 
-        let var = self.heap.get(var_idx).ok_or_else(or_else)?;
-        if var.meta.len != n32::NULL {
-            return Err(ierror!(
-                "DoubleFree",
-                "tried to free something that has already been freed"
-            ));
-        }
+        let free_loc = self.frame_loc(skip_frames)?;
 
-        let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-        let upper = upper.unwrap_or(self.shared_data.len());
+        let alloc = self.ranges.get_mut(var_idx).ok_or_else(or_else)?;
 
-        let loc = self.frame_loc(skip_frames)?;
-        let var = self.heap.get_mut(var_idx).unwrap();
-        var.meta.free_loc = loc;
-        var.meta.len = (upper - var.idx).into();
-        self.freed += upper - var.idx;
+        let (loc, len) = match *alloc {
+            AllocTracker::HeapLive { loc, start, len } => (loc, len),
+            AllocTracker::HeapDead { loc, free_loc } => {
+                return Err(ierror!(
+                    "DoubleFree",
+                    "tried to free something that has already been freed"
+                ));
+            }
+            _ => {
+                return Err(ierror!(
+                    "InvalidFreeTarget",
+                    "tried to free a pointer that isn't from the heap"
+                ));
+            }
+        };
 
-        if self.freed * 2 >= self.shared_data.len() - self.heap[0].idx {
-            self.coallesce_heap();
-        }
+        *alloc = AllocTracker::HeapDead { loc, free_loc };
+        self.freed += len as usize;
+
+        // if self.freed * 2 >= self.heap_size {
+        // self.coallesce_heap();
+        // }
 
         return Ok(());
     }
 
     pub fn coallesce_heap(&mut self) {
-        if self.heap.len() == 0 {
-            return;
-        }
+        // if self.heap.len() == 0 {
+        //     return;
+        // }
 
-        let mut write_to = self.heap[0].idx;
-        for idx in 0..self.heap.len() {
-            let end = self.heap.get(idx + 1).map(|a| a.idx);
-            let end = end.unwrap_or(self.shared_data.len());
-            let var = &mut self.heap[idx];
+        // let mut write_to = self.heap[0].idx;
+        // for idx in 0..self.heap.len() {
+        //     let end = self.heap.get(idx + 1).map(|a| a.idx);
+        //     let end = end.unwrap_or(self.shared_data.len());
+        //     let var = &mut self.heap[idx];
 
-            if var.meta.len != n32::NULL {
-                var.idx = write_to;
-                continue; // this has been freed
-            }
+        //     if var.meta.len != n32::NULL {
+        //         var.idx = write_to;
+        //         continue; // this has been freed
+        //     }
 
-            let len = end - var.idx;
-            for i in 0..len {
-                self.shared_data[write_to + i] = self.shared_data[var.idx + i];
-            }
-            var.idx = write_to;
-            write_to += len;
-        }
+        //     let len = end - var.idx;
+        //     for i in 0..len {
+        //         self.shared_data[write_to + i] = self.shared_data[var.idx + i];
+        //     }
+        //     var.idx = write_to;
+        //     write_to += len;
+        // }
 
-
-        unsafe {
-            self.shared_data.set_len(write_to); // should never increase the size of the buffer
-        }
+        // unsafe {
+        //     self.shared_data.set_len(write_to); // should never increase the size of the buffer
+        // }
     }
 
     pub fn pop_stack_var(&mut self) -> Result<(), IError> {
@@ -289,19 +305,9 @@ impl Memory {
             let upper = upper.unwrap_or(self.stack_data.len());
 
             upper - lower
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx)?;
-            if lower_var.meta.len != n32::NULL {
-                return None;
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            upper - lower
         } else {
-            let (lower, upper) = self.binary.get(var_idx)?.range();
+            let alloc = self.ranges.get(var_idx)?;
+            let (lower, upper) = alloc.range()?;
 
             (upper - lower) as usize
         };
@@ -323,21 +329,11 @@ impl Memory {
             let upper = upper.unwrap_or(self.stack_data.len());
 
             &self.stack_data[lower..upper]
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
-            if lower_var.meta.len != n32::NULL {
-                return Err(freed_ptr(ptr));
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            &self.shared_data[lower..upper]
         } else {
-            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
+            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+            let (lower, upper) = alloc.dereference(ptr, Const)?;
 
-            &self.shared_data[r(lower,upper)]
+            &self.shared_data[r(lower, upper)]
         };
 
         let from_len = from_bytes.len() as u32;
@@ -370,21 +366,11 @@ impl Memory {
             let upper = upper.unwrap_or(self.stack_data.len());
 
             &mut self.stack_data[lower..upper]
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
-            if lower_var.meta.len != n32::NULL {
-                return Err(freed_ptr(ptr));
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            &mut self.shared_data[lower..upper]
         } else {
-            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
+            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+            let (lower, upper) = alloc.dereference(ptr, Mut)?;
 
-            &mut self.shared_data[r(lower,upper)]
+            &mut self.shared_data[r(lower, upper)]
         };
 
         let to_len = to_bytes.len() as u32;
@@ -409,21 +395,11 @@ impl Memory {
             let upper = upper.unwrap_or(self.stack_data.len());
 
             &self.stack_data[lower..upper]
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
-            if lower_var.meta.len != n32::NULL {
-                return Err(freed_ptr(ptr));
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            &self.shared_data[lower..upper]
         } else {
-            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
+            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+            let (lower, upper) = alloc.dereference(ptr, Const)?;
 
-            &self.shared_data[r(lower,upper)]
+            &self.shared_data[r(lower, upper)]
         };
 
         let (from_len, range) = (from_bytes.len() as u32, (ptr.offset() as usize)..);
@@ -462,21 +438,11 @@ impl Memory {
             let upper = upper.unwrap_or(self.stack_data.len());
 
             &self.stack_data[lower..upper]
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
-            if lower_var.meta.len != n32::NULL {
-                return Err(freed_ptr(ptr));
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            &self.shared_data[lower..upper]
         } else {
-            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
+            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+            let (lower, upper) = alloc.dereference(ptr, Const)?;
 
-            &self.shared_data[r(lower,upper)]
+            &self.shared_data[r(lower, upper)]
         };
 
         let from_len = from_bytes.len() as u32;
@@ -501,21 +467,11 @@ impl Memory {
             let upper = upper.unwrap_or(self.stack_data.len());
 
             &mut self.stack_data[lower..upper]
-        } else if ptr.is_heap() {
-            let lower_var = self.heap.get(var_idx).ok_or_else(or_else)?;
-            if lower_var.meta.len != n32::NULL {
-                return Err(freed_ptr(ptr));
-            }
-
-            let lower = lower_var.idx;
-            let upper = self.heap.get(var_idx + 1).map(|a| a.idx);
-            let upper = upper.unwrap_or(self.shared_data.len());
-
-            &mut self.shared_data[lower..upper]
         } else {
-            let (lower, upper) = self.binary.get(var_idx).ok_or_else(or_else)?.range();
+            let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
+            let (lower, upper) = alloc.dereference(ptr, Mut)?;
 
-            &mut self.shared_data[r(lower,upper)]
+            &mut self.shared_data[r(lower, upper)]
         };
 
         let to_len = to_bytes.len();
