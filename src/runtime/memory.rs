@@ -7,6 +7,7 @@ use core::mem;
 pub struct Memory {
     freed: usize,
     stack_len: u32,
+    alloc_count: u32,
     binary_var_len: u32,
     binary_data_len: u32,
 
@@ -28,6 +29,7 @@ impl Memory {
             ranges: binary.vars.clone(),
             freed: 0,
             stack_len: 0,
+            alloc_count: 0,
             binary_var_len,
             binary_data_len,
 
@@ -150,6 +152,7 @@ impl Memory {
         });
 
         self.stack.push(range_id);
+
         self.stack_len += len;
 
         return Ok(VarPointer::new(range_id, 0));
@@ -164,8 +167,8 @@ impl Memory {
         };
 
         self.ranges[var] = AllocTracker::StackDead { loc };
-        self.stack_len -= len;
         self.freed += len as usize;
+        self.stack_len -= len;
 
         return Ok(());
     }
@@ -196,12 +199,12 @@ impl Memory {
             ));
         }
 
-        // if self.heap.len() >= 10_000 {
-        //     return Err(ierror!(
-        //         "TooManyAllocations",
-        //         "allocated over 10,000 items on the heap"
-        //     ));
-        // }
+        if self.alloc_count >= 10_000 {
+            return Err(ierror!(
+                "TooManyAllocations",
+                "allocated over 10,000 items on the heap (TCI isn't built to track that many)"
+            ));
+        }
 
         let loc = self.frame_loc(skip_frames)?;
         self.data.push_repeat(!0, len as usize);
@@ -213,6 +216,10 @@ impl Memory {
             start: data_len,
             len,
         });
+
+        // No matching decrement in free, because this is more about tracking of address
+        // spaces
+        self.alloc_count += 1;
 
         return Ok(VarPointer::new(range_id, 0));
     }
