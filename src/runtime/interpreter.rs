@@ -55,11 +55,9 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(val);
         }
         Opcode::MakeSp => {
-            let var_offset: i16 = memory.read_pc()?;
             let stack_len = memory.stack.len() as u16;
-            let var = (stack_len as i16 + var_offset) as u16;
 
-            memory.push(VarPointer::new_stack(var, 0));
+            memory.push(VarPointer::new_stack(stack_len, 0));
         }
         Opcode::MakeFp => {
             let var_offset: i16 = memory.read_pc()?;
@@ -74,16 +72,16 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.expr_stack.resize(stack_len + bytes as usize, 0);
         }
         Opcode::Pop => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             memory.pop_bytes(bytes)?;
         }
         Opcode::Swap => {
-            let top_bytes = memory.read_pc()?;
-            let bottom_bytes = memory.read_pc()?;
+            let top_bytes: u32 = memory.read_pc()?;
+            let bottom_bytes: u32 = memory.read_pc()?;
             memory.swap_bytes(top_bytes, bottom_bytes)?;
         }
         Opcode::Dup => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             memory.dup_bytes(bytes)?;
         }
         Opcode::PushDyn => {
@@ -282,13 +280,13 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
 
         Opcode::Get => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             let ptr: VarPointer = memory.pop()?;
 
             memory.read_bytes_to_stack(ptr, bytes)?;
         }
         Opcode::Set => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             let ptr: VarPointer = memory.pop()?;
             memory.write_bytes_from_stack(ptr, bytes)?;
         }
@@ -890,33 +888,33 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
 
         Opcode::Jump => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             memory.jump(target);
         }
 
         Opcode::JumpIfZero8 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u8 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfZero16 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u16 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfZero32 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u32 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfZero64 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u64 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
@@ -924,28 +922,28 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
 
         Opcode::JumpIfNotZero8 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u8 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfNotZero16 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u16 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfNotZero32 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u32 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfNotZero64 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u64 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
@@ -1073,7 +1071,7 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         },
 
         Opcode::AssertStr => {
-            let string = memory.pop()?;
+            let string: VarPointer = memory.pop()?;
             memory.cstring_bytes(string)?;
         }
     }

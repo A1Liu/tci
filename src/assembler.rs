@@ -91,7 +91,6 @@ lazy_static! {
 
         data.push(Opcode::Call);
         data.push(Opcode::MakeSp);
-        data.push(0i16);
         data.push(Opcode::Get);
         data.push(4u32);
         data.push(Opcode::StackDealloc); // for the return value
@@ -498,7 +497,7 @@ impl Assembler {
                 TCOpcodeKind::Expr(expr) => {
                     self.translate_expr(&expr);
 
-                    let bytes = expr.ty.repr_size();
+                    let bytes: u32 = expr.ty.repr_size();
                     self.func.opcodes.push(Opcode::Pop);
                     self.func.opcodes.push(bytes);
                 }
@@ -1190,7 +1189,6 @@ impl Assembler {
                     self.func.opcodes.push(Opcode::StackAlloc);
                     self.func.opcodes.push(bytes);
                     self.func.opcodes.push(Opcode::MakeSp);
-                    self.func.opcodes.push(0i16);
                     self.func.opcodes.push(Opcode::Set);
                     self.func.opcodes.push(bytes);
                 }
@@ -1206,7 +1204,6 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::Call);
 
                 self.func.opcodes.push(Opcode::MakeSp);
-                self.func.opcodes.push(0i16);
                 self.func.opcodes.push(Opcode::Get);
                 self.func.opcodes.push(rtype_size);
                 self.func.opcodes.push(Opcode::StackDealloc); // for the return value
