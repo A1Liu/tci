@@ -944,6 +944,7 @@ impl Assembler {
             } => {
                 self.translate_expr(left);
                 self.translate_expr(right);
+
                 self.translate_bin_op(*op, *op_type, expr.loc);
             }
 
@@ -953,6 +954,7 @@ impl Assembler {
                 operand,
             } => {
                 self.translate_expr(operand);
+
                 self.translate_un_op(*op, *op_type, expr.loc);
             }
 
@@ -1178,6 +1180,12 @@ impl Assembler {
         }
 
         'to_float: loop {
+            let to_is_32 = match to {
+                TCPrimType::F64 => false,
+                TCPrimType::F32 => true,
+                _ => break 'to_float,
+            };
+
             match (from, to) {
                 (TCPrimType::F32, TCPrimType::F64) => {
                     self.func.opcodes.push(Opcode::F32ToF64);
