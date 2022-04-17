@@ -2,7 +2,6 @@ use crate::filedb::*;
 use crate::runtime::Opcode;
 use crate::util::*;
 use core::fmt::Write;
-use serde::Serialize;
 
 pub use crate::ast::{BinOp, UnaryOp};
 
@@ -22,7 +21,7 @@ pub enum TCUnaryOp {
     BitNot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Hash)]
 pub struct SizeAlign {
     pub size: n32,
     pub align: n32,
@@ -39,7 +38,7 @@ pub const TC_UNKNOWN_SA: SizeAlign = SizeAlign {
     align: n32::NULL,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub enum TCPrimType {
     I8,  // char
     U8,  // unsigned char
@@ -165,8 +164,7 @@ impl TCOpcode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
-#[serde(tag = "kind", content = "data")]
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
 pub enum TCTypeBase {
     I8,  // char
     U8,  // unsigned char
@@ -243,8 +241,7 @@ impl TCTypeBase {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize)]
-#[serde(tag = "modifier", content = "data")]
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
 pub enum TCTypeModifier {
     Pointer, // TODO add qualifiers
     Array(u32),
@@ -785,7 +782,7 @@ pub trait TCTy {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, Hash)]
 pub struct TCType {
     pub base: TCTypeBase,
     pub mods: &'static [TCTypeModifier],
