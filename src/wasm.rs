@@ -98,8 +98,8 @@ pub enum OutMessage {
     ClearFd(u32),
 }
 
-use a::Error as JsError;
-mod a {
+use js_error::Error as JsError;
+mod js_error {
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
