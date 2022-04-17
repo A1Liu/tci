@@ -24,8 +24,9 @@ impl AllocInfo {
 pub struct Memory {
     shared_data: Pod<u8>,
     ranges: Pod<AllocTracker>,
-    heap: Vec<Var<AllocInfo>>,
     freed: usize,
+    binary_var_len: u32,
+    binary_data_len: u32,
 
     // Per thread
     pub expr_stack: Vec<u8>,
@@ -40,11 +41,15 @@ pub struct Memory {
 
 impl Memory {
     pub fn new(binary: &BinaryData) -> Self {
+        let binary_var_len = binary.vars.len() as u32;
+        let binary_data_len = binary.data.len() as u32;
+
         Self {
             shared_data: binary.data.clone(),
             ranges: binary.vars.clone(),
-            heap: Vec::new(),
             freed: 0,
+            binary_var_len,
+            binary_data_len,
 
             expr_stack: Vec::new(),
             stack_data: Vec::new(),
@@ -168,6 +173,10 @@ impl Memory {
 
     pub fn frame_loc(&self, skip_frames: u32) -> Result<CodeLoc, IError> {
         let skip_frames = skip_frames as usize;
+        if skip_frames == 0 {
+            return Ok(self.loc);
+        }
+
         if skip_frames > self.callstack.len() {
             return Err(ierror!(
                 "SkippedTooManyFrames",
@@ -175,11 +184,7 @@ impl Memory {
             ));
         }
 
-        if skip_frames == 0 {
-            return Ok(self.loc);
-        } else {
-            return Ok(self.callstack[self.callstack.len() - skip_frames].loc);
-        }
+        return Ok(self.callstack[self.callstack.len() - skip_frames].loc);
     }
 
     pub fn add_heap_var(&mut self, len: u32, skip_frames: u32) -> Result<VarPointer, IError> {
@@ -249,40 +254,54 @@ impl Memory {
         *alloc = AllocTracker::HeapDead { loc, free_loc };
         self.freed += len as usize;
 
-        // if self.freed * 2 >= self.heap_size {
-        // self.coallesce_heap();
-        // }
+        if self.freed * 2 >= self.shared_data.capacity() {
+            self.coallesce_heap();
+        }
 
         return Ok(());
     }
 
     pub fn coallesce_heap(&mut self) {
-        // if self.heap.len() == 0 {
-        //     return;
-        // }
+        let mut write_to = self.binary_data_len;
 
-        // let mut write_to = self.heap[0].idx;
-        // for idx in 0..self.heap.len() {
-        //     let end = self.heap.get(idx + 1).map(|a| a.idx);
-        //     let end = end.unwrap_or(self.shared_data.len());
-        //     let var = &mut self.heap[idx];
+        let range_len = self.ranges.len() as u32;
 
-        //     if var.meta.len != n32::NULL {
-        //         var.idx = write_to;
-        //         continue; // this has been freed
-        //     }
+        for tracker in &mut self.ranges[r(self.binary_var_len, range_len)] {
+            let (start, len) = match tracker {
+                AllocTracker::StackLive { loc, start, len } => (start, *len),
+                AllocTracker::HeapLive { loc, start, len } => (start, *len),
 
-        //     let len = end - var.idx;
-        //     for i in 0..len {
-        //         self.shared_data[write_to + i] = self.shared_data[var.idx + i];
-        //     }
-        //     var.idx = write_to;
-        //     write_to += len;
-        // }
+                _ => continue,
+            };
 
-        // unsafe {
-        //     self.shared_data.set_len(write_to); // should never increase the size of the buffer
-        // }
+            let write_from = *start;
+
+            debug_assert!(write_to <= write_from);
+
+            if write_to == write_from {
+                continue;
+            }
+
+            if write_to + len > write_from {
+                let src = &self.shared_data[write_from] as *const u8;
+                let dest = &mut self.shared_data[write_to] as *mut u8;
+
+                unsafe { core::ptr::copy(src, dest, len as usize) };
+            } else {
+                let src = &self.shared_data[write_from] as *const u8;
+                let dest = &mut self.shared_data[write_to] as *mut u8;
+
+                unsafe { core::ptr::copy_nonoverlapping(src, dest, len as usize) };
+            }
+
+            *start = write_to;
+            write_to += len;
+        }
+
+        unsafe {
+            // should never increase the size of the buffer
+            self.shared_data.set_len(write_to as usize);
+        }
     }
 
     pub fn pop_stack_var(&mut self) -> Result<(), IError> {
