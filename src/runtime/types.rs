@@ -127,13 +127,14 @@ impl BinaryData {
             self.data.push(0);
         }
 
+        let id = self.vars.len() as u32;
         self.vars.push(AllocTracker::Static {
             start: data_len,
             len,
         });
 
         return (
-            VarPointer::new(self.vars.len() as u32, 0),
+            VarPointer::new(id, 0),
             &mut self.data[r(data_len, data_len + len)],
         );
     }
@@ -143,20 +144,17 @@ impl BinaryData {
 
         self.data.extend_from_slice(data);
 
+        let id = self.vars.len() as u32;
         self.vars.push(AllocTracker::Exe {
             start: data_len as u32,
             len: data.len() as u32,
         });
 
-        return VarPointer::new(self.vars.len() as u32, 0);
+        return VarPointer::new(id, 0);
     }
 
     pub fn read<T: Copy>(&mut self, ptr: VarPointer) -> Option<T> {
-        if ptr.var_idx() == 0 {
-            return None;
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let (lower, upper) = self.vars.get(var_idx)?.range()?;
 
         let data = &mut self.data[r(lower, upper)];
@@ -169,11 +167,7 @@ impl BinaryData {
     }
 
     pub fn write<T: Copy>(&mut self, ptr: VarPointer, t: T) {
-        if ptr.var_idx() == 0 {
-            panic!("passed in nullish pointer");
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let (lower, upper) = self.vars[var_idx].range().unwrap();
 
         let data = &mut self.data[lower..upper];
@@ -204,15 +198,17 @@ impl VarPointer {
     pub const BOTTOM_BITS: u64 = u32::MAX as u64;
 
     pub fn new(idx: u32, offset: u32) -> VarPointer {
+        let idx = from_id(idx);
         let (idx, offset) = ((idx as u64) << 32, offset as u64);
 
         return Self(idx | offset);
     }
 
     pub fn var_idx(self) -> usize {
-        let top = self.0;
+        let top = (self.0 >> 32) as u32;
+        let top = to_id(top) as usize;
 
-        return (top >> 32) as usize;
+        return top;
     }
 
     pub fn with_offset(self, offset: u32) -> Self {

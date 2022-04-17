@@ -54,7 +54,7 @@ impl Memory {
                 name: LinkName::new(!0),
                 loc: NO_FILE,
                 fp: 0,
-                pc: VarPointer::new(1, 0),
+                pc: VarPointer::new(0, 0),
             },
         }
     }
@@ -110,11 +110,8 @@ impl Memory {
 
     pub fn read_pc_bytes(&mut self, len: usize) -> Result<&[u8], IError> {
         let pc = self.frame.pc;
-        if pc.var_idx() == 0 {
-            return Err(invalid_ptr(pc));
-        }
 
-        let var_idx = pc.var_idx() - 1;
+        let var_idx = pc.var_idx();
         let or_else = || invalid_ptr(pc);
 
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
@@ -159,13 +156,13 @@ impl Memory {
 
         self.data.push_repeat(0, len as usize);
 
+        let range_id = self.ranges.len() as u32;
+
         self.ranges.push(AllocTracker::StackLive {
             loc: self.frame.loc,
             start,
             len,
         });
-
-        let range_id = self.ranges.len() as u32;
 
         self.stack.push(range_id);
 
@@ -208,21 +205,19 @@ impl Memory {
         let loc = self.frame_loc(skip_frames)?;
         self.data.push_repeat(!0, len as usize);
 
+        let range_id = self.ranges.len() as u32;
+
         self.ranges.push(AllocTracker::HeapLive {
             loc,
             start: data_len,
             len,
         });
 
-        return Ok(VarPointer::new(self.ranges.len() as u32, 0));
+        return Ok(VarPointer::new(range_id, 0));
     }
 
     pub fn free(&mut self, ptr: VarPointer, skip_frames: u32) -> Result<(), IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let or_else = || invalid_ptr(ptr);
 
         let free_loc = self.frame_loc(skip_frames)?;
@@ -292,23 +287,19 @@ impl Memory {
     pub fn pop_stack_var(&mut self) -> Result<(), IError> {
         let or_else = || empty_stack();
         let var = self.stack.pop().ok_or_else(or_else)?;
-        let (loc, len) = match self.ranges[var - 1] {
+        let (loc, len) = match self.ranges[var] {
             AllocTracker::StackLive { loc, len, .. } => (loc, len),
             _ => unreachable!("what the hell"),
         };
 
-        self.ranges[var - 1] = AllocTracker::StackDead { loc };
+        self.ranges[var] = AllocTracker::StackDead { loc };
         self.freed += len as usize;
 
         return Ok(());
     }
 
     pub fn upper_bound(&self, ptr: VarPointer) -> Option<VarPointer> {
-        if ptr.var_idx() == 0 {
-            return None;
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let alloc = self.ranges.get(var_idx)?;
         let (lower, upper) = alloc.range()?;
 
@@ -318,11 +309,7 @@ impl Memory {
     }
 
     pub fn read_bytes(&self, ptr: VarPointer, len: u32) -> Result<&[u8], IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let or_else = || invalid_ptr(ptr);
 
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
@@ -347,11 +334,7 @@ impl Memory {
     }
 
     pub fn write_bytes(&mut self, ptr: VarPointer, buffer: &[u8]) -> Result<(), IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let or_else = || invalid_ptr(ptr);
 
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
@@ -368,11 +351,7 @@ impl Memory {
     }
 
     pub fn cstring_bytes(&self, ptr: VarPointer) -> Result<&[u8], IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let or_else = || invalid_ptr(ptr);
 
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
@@ -403,11 +382,7 @@ impl Memory {
     }
 
     pub fn read_bytes_to_stack(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let or_else = || invalid_ptr(ptr);
 
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
@@ -424,11 +399,7 @@ impl Memory {
     }
 
     pub fn write_bytes_from_stack(&mut self, ptr: VarPointer, len: u32) -> Result<(), IError> {
-        if ptr.var_idx() == 0 {
-            return Err(invalid_ptr(ptr));
-        }
-
-        let var_idx = ptr.var_idx() - 1;
+        let var_idx = ptr.var_idx();
         let or_else = || invalid_ptr(ptr);
 
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
