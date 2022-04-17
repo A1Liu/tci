@@ -1,14 +1,14 @@
 {
   "name": "web",
   "version": "1.0.0",
-  "main": "web/entry.js",
+  "main": "js/entry.js",
   "repository": "https://github.com/A1Liu/tci",
   "author": "Albert Liu",
   "license": "MIT",
   "private": false,
   "scripts": {
-    "start": "parcel web/index.html --out-dir .dist",
-    "build": "parcel build web/index.html --no-source-maps --out-dir .dist --public-url ./",
+    "start": "parcel js/index.html --out-dir .dist",
+    "build": "parcel build js/index.html --no-source-maps --out-dir .dist --public-url ./",
     "deploy": "git push origin main:production"
   },
   "dependencies": {
