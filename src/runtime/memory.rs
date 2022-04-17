@@ -111,14 +111,15 @@ impl Memory {
     }
 
     pub fn read_pc_bytes(&mut self, len: usize) -> Result<&[u8], IError> {
-        if self.frame.pc.var_idx() == 0 {
-            return Err(invalid_ptr(self.frame.pc));
+        let pc = self.frame.pc;
+        if pc.var_idx() == 0 {
+            return Err(invalid_ptr(pc));
         }
 
-        let var_idx = self.frame.pc.var_idx() - 1;
-        let or_else = || invalid_ptr(self.frame.pc);
+        let var_idx = pc.var_idx() - 1;
+        let or_else = || invalid_ptr(pc);
 
-        if self.frame.pc.is_stack() {
+        if pc.is_stack() {
             return Err(ierror!(
                 "PermissionDenied",
                 "tried to execute memory outside of functions"
@@ -136,12 +137,12 @@ impl Memory {
             }
         };
 
-        let (from_len, ptr) = (from_bytes.len() as u32, self.frame.pc);
-        let range = (self.frame.pc.offset() as usize)..(ptr.offset() as usize + len);
+        let (from_len, ptr) = (from_bytes.len() as u32, pc);
+        let range = (pc.offset() as usize)..(ptr.offset() as usize + len);
         let or_else = move || invalid_offset(from_len, ptr, len as u32);
         let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
 
-        self.frame.pc = self.frame.pc.add(len as u64);
+        self.frame.pc = pc.add(len as u64);
 
         return Ok(from_bytes);
     }
