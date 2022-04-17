@@ -6,6 +6,7 @@ use core::mem;
 #[derive(Debug)]
 pub struct Memory {
     freed: usize,
+    stack_len: u32,
     binary_var_len: u32,
     binary_data_len: u32,
 
@@ -26,6 +27,7 @@ impl Memory {
             data: binary.data.clone(),
             ranges: binary.vars.clone(),
             freed: 0,
+            stack_len: 0,
             binary_var_len,
             binary_data_len,
 
@@ -120,20 +122,20 @@ impl Memory {
     }
 
     pub fn add_stack_var(&mut self, len: u32) -> Result<VarPointer, IError> {
-        // let new_len = stack_len + len as usize;
-        // if new_len > 1024 * 8 {
-        //     return Err(ierror!(
-        //         "StackOverflow",
-        //         "stack size would be over 8KB after this declaration"
-        //     ));
-        // }
+        let new_len = self.stack_len + len;
+        if new_len > 1024 * 8 {
+            return Err(ierror!(
+                "StackOverflow",
+                "stack size would be over 8KB after this declaration"
+            ));
+        }
 
-        // if self.stack.len() > 4000 {
-        //     return Err(ierror!(
-        //         "StackOverflow",
-        //         "stack would have over 4000 variables after this declaration"
-        //     ));
-        // }
+        if self.stack.len() > 4000 {
+            return Err(ierror!(
+                "StackOverflow",
+                "stack would have over 4000 variables after this declaration (TCI isn't built to track that many)"
+            ));
+        }
 
         let start = self.data.len() as u32;
 
@@ -148,8 +150,24 @@ impl Memory {
         });
 
         self.stack.push(range_id);
+        self.stack_len += len;
 
         return Ok(VarPointer::new(range_id, 0));
+    }
+
+    pub fn pop_stack_var(&mut self) -> Result<(), IError> {
+        let or_else = || empty_stack();
+        let var = self.stack.pop().ok_or_else(or_else)?;
+        let (loc, len) = match self.ranges[var] {
+            AllocTracker::StackLive { loc, len, .. } => (loc, len),
+            _ => unreachable!("what the hell"),
+        };
+
+        self.ranges[var] = AllocTracker::StackDead { loc };
+        self.stack_len -= len;
+        self.freed += len as usize;
+
+        return Ok(());
     }
 
     pub fn frame_loc(&self, skip_frames: u32) -> Result<CodeLoc, IError> {
@@ -265,20 +283,6 @@ impl Memory {
         }
 
         self.data.truncate(write_to as usize);
-    }
-
-    pub fn pop_stack_var(&mut self) -> Result<(), IError> {
-        let or_else = || empty_stack();
-        let var = self.stack.pop().ok_or_else(or_else)?;
-        let (loc, len) = match self.ranges[var] {
-            AllocTracker::StackLive { loc, len, .. } => (loc, len),
-            _ => unreachable!("what the hell"),
-        };
-
-        self.ranges[var] = AllocTracker::StackDead { loc };
-        self.freed += len as usize;
-
-        return Ok(());
     }
 
     pub fn upper_bound(&self, ptr: VarPointer) -> Option<VarPointer> {
