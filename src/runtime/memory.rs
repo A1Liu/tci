@@ -117,12 +117,6 @@ impl Memory {
         let var_idx = pc.var_idx() - 1;
         let or_else = || invalid_ptr(pc);
 
-        if pc.is_stack() {
-            return Err(ierror!(
-                "PermissionDenied",
-                "tried to execute memory outside of functions"
-            ));
-        }
         let alloc = self.ranges.get(var_idx).ok_or_else(or_else)?;
         let from_bytes = match *alloc {
             AllocTracker::Exe { start, len } => &self.data[r(start, start + len)],
@@ -230,13 +224,6 @@ impl Memory {
 
         let var_idx = ptr.var_idx() - 1;
         let or_else = || invalid_ptr(ptr);
-
-        if ptr.is_stack() {
-            return Err(ierror!(
-                "InvalidFreeTarget",
-                "tried to free a pointer from the stack"
-            ));
-        }
 
         let free_loc = self.frame_loc(skip_frames)?;
 

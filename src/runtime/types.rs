@@ -200,37 +200,17 @@ impl fmt::Debug for VarPointer {
     }
 }
 impl VarPointer {
-    pub const BINARY_BIT: u64 = 1u64 << 62;
-    pub const STACK_BIT: u64 = 1u64 << 63;
-    pub const RESERVED_BITS: u64 = Self::BINARY_BIT | Self::STACK_BIT;
-
     pub const TOP_BITS: u64 = (u32::MAX as u64) << 32;
     pub const BOTTOM_BITS: u64 = u32::MAX as u64;
 
-    pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
-        let (idx, offset) = (idx as u64, offset as u64);
-        return Self(Self::STACK_BIT | (idx << 32) | offset);
-    }
-
     pub fn new(idx: u32, offset: u32) -> VarPointer {
         let (idx, offset) = ((idx as u64) << 32, offset as u64);
-        if idx & Self::RESERVED_BITS != 0 {
-            panic!("idx is too large");
-        }
 
         return Self(idx | offset);
     }
 
-    pub fn is_stack(self) -> bool {
-        return (self.0 & Self::RESERVED_BITS) == Self::STACK_BIT;
-    }
-
     pub fn var_idx(self) -> usize {
-        let top = if self.is_stack() {
-            self.0 & !Self::RESERVED_BITS
-        } else {
-            self.0 & !Self::RESERVED_BITS
-        };
+        let top = self.0;
 
         return (top >> 32) as usize;
     }
