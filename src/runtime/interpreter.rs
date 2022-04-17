@@ -92,54 +92,6 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.read_bytes_to_stack(ptr, size)?;
         }
 
-        Opcode::I8ToF32 => {
-            let n: i8 = memory.pop()?;
-            memory.push(n as f32);
-        }
-        Opcode::U8ToF32 => {
-            let n: u8 = memory.pop()?;
-            memory.push(n as f32);
-        }
-        Opcode::I8ToF64 => {
-            let n: i8 = memory.pop()?;
-            memory.push(n as f64);
-        }
-        Opcode::U8ToF64 => {
-            let n: i8 = memory.pop()?;
-            memory.push(n as f64);
-        }
-        Opcode::I16ToF32 => {
-            let n: i16 = memory.pop()?;
-            memory.push(n as f32);
-        }
-        Opcode::U16ToF32 => {
-            let n: u16 = memory.pop()?;
-            memory.push(n as f32);
-        }
-        Opcode::I16ToF64 => {
-            let n: i16 = memory.pop()?;
-            memory.push(n as f64);
-        }
-        Opcode::U16ToF64 => {
-            let n: i16 = memory.pop()?;
-            memory.push(n as f64);
-        }
-        Opcode::I32ToF32 => {
-            let n: i32 = memory.pop()?;
-            memory.push(n as f32);
-        }
-        Opcode::U32ToF32 => {
-            let n: u32 = memory.pop()?;
-            memory.push(n as f32);
-        }
-        Opcode::I32ToF64 => {
-            let n: i32 = memory.pop()?;
-            memory.push(n as f64);
-        }
-        Opcode::U32ToF64 => {
-            let n: i32 = memory.pop()?;
-            memory.push(n as f64);
-        }
         Opcode::I64ToF32 => {
             let n: i64 = memory.pop()?;
             memory.push(n as f32);
@@ -157,54 +109,6 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(n as f64);
         }
 
-        Opcode::F32ToI8 => {
-            let f: f32 = memory.pop()?;
-            memory.push(f as i8);
-        }
-        Opcode::F32ToU8 => {
-            let f: f32 = memory.pop()?;
-            memory.push(f as u8);
-        }
-        Opcode::F64ToI8 => {
-            let f: f64 = memory.pop()?;
-            memory.push(f as i8);
-        }
-        Opcode::F64ToU8 => {
-            let f: f64 = memory.pop()?;
-            memory.push(f as u8);
-        }
-        Opcode::F32ToI16 => {
-            let f: f32 = memory.pop()?;
-            memory.push(f as i16);
-        }
-        Opcode::F32ToU16 => {
-            let f: f32 = memory.pop()?;
-            memory.push(f as u16);
-        }
-        Opcode::F64ToI16 => {
-            let f: f64 = memory.pop()?;
-            memory.push(f as i16);
-        }
-        Opcode::F64ToU16 => {
-            let f: f64 = memory.pop()?;
-            memory.push(f as u16);
-        }
-        Opcode::F32ToI32 => {
-            let f: f32 = memory.pop()?;
-            memory.push(f as i32);
-        }
-        Opcode::F32ToU32 => {
-            let f: f32 = memory.pop()?;
-            memory.push(f as u32);
-        }
-        Opcode::F64ToI32 => {
-            let f: f64 = memory.pop()?;
-            memory.push(f as i32);
-        }
-        Opcode::F64ToU32 => {
-            let f: f64 = memory.pop()?;
-            memory.push(f as u32);
-        }
         Opcode::F32ToI64 => {
             let f: f32 = memory.pop()?;
             memory.push(f as i64);
