@@ -185,7 +185,7 @@ impl BinaryData {
     }
 }
 
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy)]
 pub struct VarPointer(u64);
 
 impl fmt::Display for VarPointer {
@@ -256,7 +256,7 @@ impl VarPointer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LinkName {
     pub name: u32,
     pub file: n32,
