@@ -1181,64 +1181,67 @@ impl Assembler {
 
         'to_float: loop {
             let to_is_32 = match to {
-                TCPrimType::F64 => false,
                 TCPrimType::F32 => true,
+                TCPrimType::F64 => false,
                 _ => break 'to_float,
             };
 
-            match (from, to) {
-                (TCPrimType::F32, TCPrimType::F64) => {
+            match from {
+                TCPrimType::F32 => {
                     self.func.opcodes.push(Opcode::F32ToF64);
                     return;
                 }
-                (TCPrimType::F64, TCPrimType::F32) => {
+                TCPrimType::F64 => {
                     self.func.opcodes.push(Opcode::F64ToF32);
                     return;
                 }
 
-                (TCPrimType::I8, TCPrimType::F32) => self.func.opcodes.push(Opcode::I8ToF32),
-                (TCPrimType::U8, TCPrimType::F32) => self.func.opcodes.push(Opcode::U8ToF32),
-                (TCPrimType::I8, TCPrimType::F64) => self.func.opcodes.push(Opcode::I8ToF64),
-                (TCPrimType::U8, TCPrimType::F64) => self.func.opcodes.push(Opcode::U8ToF64),
-                (TCPrimType::I16, TCPrimType::F32) => self.func.opcodes.push(Opcode::I16ToF32),
-                (TCPrimType::U16, TCPrimType::F32) => self.func.opcodes.push(Opcode::U16ToF32),
-                (TCPrimType::I16, TCPrimType::F64) => self.func.opcodes.push(Opcode::I16ToF64),
-                (TCPrimType::U16, TCPrimType::F64) => self.func.opcodes.push(Opcode::U16ToF64),
-                (TCPrimType::I32, TCPrimType::F32) => self.func.opcodes.push(Opcode::I32ToF32),
-                (TCPrimType::U32, TCPrimType::F32) => self.func.opcodes.push(Opcode::U32ToF32),
-                (TCPrimType::I32, TCPrimType::F64) => self.func.opcodes.push(Opcode::I32ToF64),
-                (TCPrimType::U32, TCPrimType::F64) => self.func.opcodes.push(Opcode::U32ToF64),
-                (TCPrimType::I64, TCPrimType::F32) => self.func.opcodes.push(Opcode::I64ToF32),
-                (TCPrimType::U64, TCPrimType::F32) => self.func.opcodes.push(Opcode::U64ToF32),
-                (TCPrimType::I64, TCPrimType::F64) => self.func.opcodes.push(Opcode::I64ToF64),
-                (TCPrimType::U64, TCPrimType::F64) => self.func.opcodes.push(Opcode::U64ToF64),
+                TCPrimType::I8 => self.func.opcodes.push(Opcode::SExtend8To64),
+                TCPrimType::U8 => self.func.opcodes.push(Opcode::ZExtend8To64),
+                TCPrimType::I16 => self.func.opcodes.push(Opcode::SExtend16To64),
+                TCPrimType::U16 => self.func.opcodes.push(Opcode::ZExtend16To64),
+                TCPrimType::I32 => self.func.opcodes.push(Opcode::SExtend32To64),
+                TCPrimType::U32 => self.func.opcodes.push(Opcode::ZExtend32To64),
+
+                TCPrimType::I64 => {}
+                TCPrimType::U64 => {
+                    match to_is_32 {
+                        false => self.func.opcodes.push(Opcode::U64ToF64),
+                        true => self.func.opcodes.push(Opcode::U64ToF32),
+                    }
+
+                    return;
+                }
 
                 _ => break 'to_float,
             }
 
-            return;
-        }
-
-        let to_size = to.size();
-
-        'from_float: loop {
-            match (from, to_size) {
-                (TCPrimType::F32, 1) => self.func.opcodes.push(Opcode::F32ToI8),
-                (TCPrimType::F64, 1) => self.func.opcodes.push(Opcode::F64ToI8),
-                (TCPrimType::F32, 2) => self.func.opcodes.push(Opcode::F32ToI16),
-                (TCPrimType::F64, 2) => self.func.opcodes.push(Opcode::F64ToI16),
-                (TCPrimType::F32, 4) => self.func.opcodes.push(Opcode::F32ToI32),
-                (TCPrimType::F64, 4) => self.func.opcodes.push(Opcode::F64ToI32),
-                (TCPrimType::F32, 8) => self.func.opcodes.push(Opcode::F32ToI64),
-                (TCPrimType::F64, 8) => self.func.opcodes.push(Opcode::F64ToI64),
-
-                _ => break 'from_float,
+            match to_is_32 {
+                false => self.func.opcodes.push(Opcode::I64ToF64),
+                true => self.func.opcodes.push(Opcode::I64ToF32),
             }
 
             return;
         }
 
+        // Do a float-to-int64 conversion, then do a proper int64-intN conversion
+        let from = match from {
+            TCPrimType::F32 => {
+                self.func.opcodes.push(Opcode::F32ToI64);
+
+                TCPrimType::I64
+            }
+            TCPrimType::F64 => {
+                self.func.opcodes.push(Opcode::F64ToI64);
+
+                TCPrimType::I64
+            }
+
+            _ => from,
+        };
+
         let from_size = from.size();
+        let to_size = to.size();
 
         if from_size == to_size {
             return;
