@@ -158,17 +158,19 @@ impl Memory {
         return Ok(VarPointer::new(range_id, 0));
     }
 
-    pub fn pop_stack_var(&mut self) -> Result<(), IError> {
-        let or_else = || empty_stack();
-        let var = self.stack.pop().ok_or_else(or_else)?;
-        let (loc, len) = match self.ranges[var] {
-            AllocTracker::StackLive { loc, len, .. } => (loc, len),
-            _ => unreachable!("what the hell"),
-        };
+    pub fn pop_stack_var(&mut self, count: u8) -> Result<(), IError> {
+        for _ in 0..count {
+            let or_else = || empty_stack();
+            let var = self.stack.pop().ok_or_else(or_else)?;
+            let (loc, len) = match self.ranges[var] {
+                AllocTracker::StackLive { loc, len, .. } => (loc, len),
+                _ => unreachable!("what the hell"),
+            };
 
-        self.ranges[var] = AllocTracker::StackDead { loc };
-        self.freed += len as usize;
-        self.stack_len -= len;
+            self.ranges[var] = AllocTracker::StackDead { loc };
+            self.freed += len as usize;
+            self.stack_len -= len;
+        }
 
         return Ok(());
     }

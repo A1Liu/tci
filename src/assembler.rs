@@ -93,10 +93,10 @@ lazy_static! {
         data.push(Opcode::MakeSp);
         data.push(Opcode::Get);
         data.push(4u32);
-        data.push(Opcode::StackDealloc); // for the return value
 
+        // for the return value
         data.push(Opcode::StackDealloc);
-        data.push(Opcode::StackDealloc);
+        data.push(3u8);
 
         data.push(Opcode::Make32);
         data.push(Ecall::Exit);
@@ -450,6 +450,8 @@ impl Assembler {
         }
 
         for t_op in &defn.ops[1..(defn.ops.len() - 1)] {
+            debug_assert!(next_offset >= 0);
+
             match t_op.kind {
                 TCOpcodeKind::ScopeBegin(vars, _) => {
                     for (&var, &ty) in vars {
@@ -461,9 +463,7 @@ impl Assembler {
                     }
                 }
                 TCOpcodeKind::ScopeEnd { count, begin } => {
-                    for _ in 0..count {
-                        self.func.opcodes.push(Opcode::StackDealloc);
-                    }
+                    push_dealloc(&mut self.func.opcodes, count);
 
                     next_offset -= count as i16;
                 }
@@ -471,9 +471,7 @@ impl Assembler {
                     self.func.opcodes.push(Opcode::Loc);
                     self.func.opcodes.push(t_op.loc);
 
-                    for _ in 0..next_offset {
-                        self.func.opcodes.push(Opcode::StackDealloc);
-                    }
+                    push_dealloc(&mut self.func.opcodes, next_offset as u32);
 
                     self.func.opcodes.push(Opcode::Ret);
                 }
@@ -488,9 +486,7 @@ impl Assembler {
                     self.func.opcodes.push(Opcode::Set);
                     self.func.opcodes.push(val.ty.repr_size());
 
-                    for _ in 0..next_offset {
-                        self.func.opcodes.push(Opcode::StackDealloc);
-                    }
+                    push_dealloc(&mut self.func.opcodes, next_offset as u32);
 
                     self.func.opcodes.push(Opcode::Ret);
                 }
@@ -610,9 +606,8 @@ impl Assembler {
             self.func.opcodes.push(Opcode::Loc);
             self.func.opcodes.push(last.loc);
 
-            for _ in 0..(count - defn.param_count) {
-                self.func.opcodes.push(Opcode::StackDealloc);
-            }
+            let dealloc_count = count - defn.param_count;
+            push_dealloc(&mut self.func.opcodes, dealloc_count);
         } else {
             panic!("invariant broken");
         }
@@ -660,11 +655,12 @@ impl Assembler {
             label_scopes.pop();
         }
 
+        let mut dealloc_count: u32 = 0;
         for (_, scope) in goto_scopes {
-            for _ in 0..scope.len() {
-                self.func.opcodes.push(Opcode::StackDealloc);
-            }
+            dealloc_count += scope.len() as u32;
         }
+
+        push_dealloc(&mut self.func.opcodes, dealloc_count);
 
         for (_, scope) in label_scopes.into_iter().rev() {
             for (&var, &ty) in scope {
@@ -1206,12 +1202,12 @@ impl Assembler {
                 self.func.opcodes.push(Opcode::MakeSp);
                 self.func.opcodes.push(Opcode::Get);
                 self.func.opcodes.push(rtype_size);
-                self.func.opcodes.push(Opcode::StackDealloc); // for the return value
 
-                for _ in 0..params.len() {
-                    self.func.opcodes.push(Opcode::StackDealloc);
-                }
-                self.func.opcodes.push(Opcode::StackDealloc); // for the safety allocation
+                // 1 for the return value
+                // 1 for the safety allocation
+                // rest for params
+                let dealloc_count = params.len() + 2;
+                push_dealloc(&mut self.func.opcodes, dealloc_count as u32);
             }
 
             TCExprKind::Ternary {
@@ -1806,4 +1802,16 @@ pub fn func_redef(original: CodeLoc, redef: CodeLoc) -> Error {
         "redefinition of function",
         original, "original definition here", redef, "second definition here"
     );
+}
+
+fn push_dealloc(ops: &mut VecU8, mut count: u32) {
+    while count > 255 {
+        ops.push(Opcode::StackDealloc);
+        ops.push(255u8);
+
+        count -= 255;
+    }
+
+    ops.push(Opcode::StackDealloc);
+    ops.push(count as u8);
 }

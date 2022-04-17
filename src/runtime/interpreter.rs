@@ -35,7 +35,9 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.add_stack_var(bytes)?;
         }
         Opcode::StackDealloc => {
-            memory.pop_stack_var()?;
+            let count: u8 = memory.read_pc()?;
+
+            memory.pop_stack_var(count)?;
         }
 
         Opcode::Make8 => {
