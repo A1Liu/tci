@@ -27,7 +27,7 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             ));
         }
         Opcode::Loc => {
-            let loc = memory.read_pc()?;
+            let loc: CodeLoc = memory.read_pc()?;
             memory.set_loc(loc);
         }
         Opcode::StackAlloc => {
@@ -55,35 +55,33 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             memory.push(val);
         }
         Opcode::MakeSp => {
-            let var_offset: i16 = memory.read_pc()?;
-            let stack_len = memory.stack.len() as u16;
-            let var = (stack_len as i16 + var_offset) as u16;
+            let last = *memory.stack.last().unwrap();
 
-            memory.push(VarPointer::new_stack(var, 0));
+            memory.push(VarPointer::new(last, 0));
         }
         Opcode::MakeFp => {
             let var_offset: i16 = memory.read_pc()?;
-            let var = (memory.fp as i16 + var_offset) as u16;
+            let var = (memory.frame.fp as i16 + var_offset) as u16;
+            let value = memory.stack[var];
 
-            memory.push(VarPointer::new_stack(var, 0));
+            memory.push(VarPointer::new(value, 0));
         }
 
         Opcode::PushUndef => {
             let bytes: u32 = memory.read_pc()?;
-            let stack_len = memory.expr_stack.len();
-            memory.expr_stack.resize(stack_len + bytes as usize, 0);
+            memory.push_undef(bytes);
         }
         Opcode::Pop => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             memory.pop_bytes(bytes)?;
         }
         Opcode::Swap => {
-            let top_bytes = memory.read_pc()?;
-            let bottom_bytes = memory.read_pc()?;
+            let top_bytes: u32 = memory.read_pc()?;
+            let bottom_bytes: u32 = memory.read_pc()?;
             memory.swap_bytes(top_bytes, bottom_bytes)?;
         }
         Opcode::Dup => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             memory.dup_bytes(bytes)?;
         }
         Opcode::PushDyn => {
@@ -282,13 +280,13 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
 
         Opcode::Get => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             let ptr: VarPointer = memory.pop()?;
 
             memory.read_bytes_to_stack(ptr, bytes)?;
         }
         Opcode::Set => {
-            let bytes = memory.read_pc()?;
+            let bytes: u32 = memory.read_pc()?;
             let ptr: VarPointer = memory.pop()?;
             memory.write_bytes_from_stack(ptr, bytes)?;
         }
@@ -890,33 +888,33 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
 
         Opcode::Jump => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             memory.jump(target);
         }
 
         Opcode::JumpIfZero8 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u8 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfZero16 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u16 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfZero32 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u32 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfZero64 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u64 = memory.pop()?;
             if value == 0 {
                 memory.jump(target);
@@ -924,28 +922,28 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
 
         Opcode::JumpIfNotZero8 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u8 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfNotZero16 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u16 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfNotZero32 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u32 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
             }
         }
         Opcode::JumpIfNotZero64 => {
-            let target = memory.read_pc()?;
+            let target: VarPointer = memory.read_pc()?;
             let value: u64 = memory.pop()?;
             if value != 0 {
                 memory.jump(target);
@@ -995,6 +993,20 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
             } else {
                 memory.push(0 as u64);
             }
+        }
+
+        Opcode::MakeStackId => {
+            let var_offset: i16 = memory.read_pc()?;
+            let var = (memory.frame.fp as i16 + var_offset) as u32;
+
+            memory.push(var);
+        }
+
+        Opcode::TranslateStackId => {
+            let stack_id: u32 = memory.pop()?;
+            let value = memory.stack[stack_id];
+
+            memory.push(VarPointer::new(value, 0));
         }
 
         Opcode::CopySrcToDest => {
@@ -1073,7 +1085,7 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         },
 
         Opcode::AssertStr => {
-            let string = memory.pop()?;
+            let string: VarPointer = memory.pop()?;
             memory.cstring_bytes(string)?;
         }
     }

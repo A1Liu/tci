@@ -365,6 +365,9 @@ pub enum BuiltinSymbol {
 
     BuiltinPush,
     BuiltinOp,
+
+    VaCurrent,
+    BuiltinVaStart,
 }
 
 impl Symbols {
@@ -381,6 +384,9 @@ impl Symbols {
 
         new_self.add_str("__tci_builtin_push");
         new_self.add_str("__tci_builtin_op");
+
+        new_self.add_str("__tci_va_current");
+        new_self.add_str("__builtin_va_start");
 
         new_self
     }

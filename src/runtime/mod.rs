@@ -32,9 +32,10 @@ pub fn print_error(err: &IError, memory: &Memory, files: &FileDb) -> String {
             .unwrap();
     }
 
-    if memory.loc != NO_FILE {
+    let loc = memory.frame.loc;
+    if loc != NO_FILE {
         Diagnostic::new()
-            .with_labels(vec![Label::new(memory.loc.file, memory.loc)])
+            .with_labels(vec![Label::new(loc.file, loc)])
             .render(files, &mut out)
             .unwrap();
     }

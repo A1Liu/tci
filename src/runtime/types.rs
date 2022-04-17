@@ -1,5 +1,97 @@
 use crate::util::*;
+use crate::IError;
 use core::{fmt, mem};
+
+pub enum Mutability {
+    Mut,
+    Const,
+}
+
+pub use Mutability::*;
+
+#[derive(Clone, Copy, Debug)]
+pub enum AllocTracker {
+    StackLive { loc: CodeLoc, start: u32, len: u32 },
+    StackDead { loc: CodeLoc },
+    HeapLive { loc: CodeLoc, start: u32, len: u32 },
+    HeapDead { loc: CodeLoc, free_loc: CodeLoc },
+    Static { start: u32, len: u32 },
+    Exe { start: u32, len: u32 },
+}
+
+impl AllocTracker {
+    pub fn dereference(&self, ptr: VarPointer, mutable: Mutability) -> Result<(u32, u32), IError> {
+        match *self {
+            Self::StackLive { loc, start, len } => {
+                return Ok((start, start + len));
+            }
+
+            Self::StackDead { loc } => {
+                return ierr!(
+                "InvalidPointer",
+                "the pointer {} points to memory from a local variable, but that variable no longer exists because the function has already returned",
+                ptr
+            );
+            }
+
+            Self::HeapLive { loc, start, len } => {
+                return Ok((start, start + len));
+            }
+            Self::HeapDead { loc, free_loc } => {
+                return ierr!(
+                    "InvalidPointer",
+                    "the pointer {} points to freed memory",
+                    ptr
+                );
+            }
+
+            Self::Static { start, len } => {
+                return Ok((start, start + len));
+            }
+
+            Self::Exe { start, len } => {
+                if let Mut = mutable {
+                    return ierr!("ModifiedExe", "tried to modify memory where code is stored");
+                }
+
+                return Ok((start, start + len));
+            }
+        }
+    }
+
+    pub fn is_live(&self) -> bool {
+        return match *self {
+            Self::StackLive { loc, start, len } => true,
+            Self::StackDead { loc } => false,
+
+            Self::HeapLive { loc, start, len } => true,
+            Self::HeapDead { loc, free_loc } => false,
+
+            Self::Static { start, len } => true,
+            Self::Exe { start, len } => false,
+        };
+    }
+
+    pub fn range(&self) -> Option<(u32, u32)> {
+        let range = match *self {
+            Self::StackLive { loc, start, len } => (start, start + len),
+            Self::StackDead { loc } => {
+                return None;
+            }
+
+            Self::HeapLive { loc, start, len } => (start, start + len),
+            Self::HeapDead { loc, free_loc } => {
+                return None;
+            }
+
+            Self::Static { start, len } => (start, start + len),
+
+            Self::Exe { start, len } => (start, start + len),
+        };
+
+        return Some(range);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Var<T> {
@@ -13,43 +105,50 @@ impl<T> Var<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct BinaryData {
-    pub data: Vec<u8>,
-    pub vars: Vec<Var<()>>,
+    pub data: Pod<u8>,
+    pub vars: Pod<AllocTracker>,
 }
 
 impl BinaryData {
     pub fn new() -> Self {
         Self {
-            data: Vec::new(),
-            vars: Vec::new(),
+            data: Pod::new(),
+            vars: Pod::new(),
         }
     }
 
-    pub fn reserve(&mut self, len: u32) -> VarPointer {
-        let data_len = self.data.len();
+    pub fn reserve_static(&mut self, len: u32) -> (VarPointer, &mut [u8]) {
+        let data_len = self.data.len() as u32;
 
+        self.data.reserve(len as usize);
         for _ in 0..len {
             self.data.push(0);
         }
 
-        self.vars.push(Var::new(data_len, ()));
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
+        self.vars.push(AllocTracker::Static {
+            start: data_len,
+            len,
+        });
+
+        return (
+            VarPointer::new(self.vars.len() as u32, 0),
+            &mut self.data[r(data_len, data_len + len)],
+        );
     }
 
-    pub fn add_data(&mut self, data: &mut Vec<u8>) -> VarPointer {
+    pub fn add_exe_slice(&mut self, data: &[u8]) -> VarPointer {
         let data_len = self.data.len();
-        self.data.append(data);
-        self.vars.push(Var::new(data_len, ()));
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
-    }
 
-    pub fn add_slice(&mut self, data: &[u8]) -> VarPointer {
-        let data_len = self.data.len();
         self.data.extend_from_slice(data);
-        self.vars.push(Var::new(data_len, ()));
-        return VarPointer::new_binary(self.vars.len() as u32, 0);
+
+        self.vars.push(AllocTracker::Exe {
+            start: data_len as u32,
+            len: data.len() as u32,
+        });
+
+        return VarPointer::new(self.vars.len() as u32, 0);
     }
 
     pub fn read<T: Copy>(&mut self, ptr: VarPointer) -> Option<T> {
@@ -58,11 +157,9 @@ impl BinaryData {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let lower = self.vars.get(var_idx)?.idx;
-        let upper = self.vars.get(var_idx + 1).map(|a| a.idx);
-        let upper = upper.unwrap_or(self.data.len());
+        let (lower, upper) = self.vars.get(var_idx)?.range()?;
 
-        let data = &mut self.data[lower..upper];
+        let data = &mut self.data[r(lower, upper)];
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
         let from_bytes = data.get(idx..(idx + len))?;
 
@@ -77,9 +174,7 @@ impl BinaryData {
         }
 
         let var_idx = ptr.var_idx() - 1;
-        let lower = self.vars.get(var_idx).unwrap().idx;
-        let upper = self.vars.get(var_idx + 1).map(|a| a.idx);
-        let upper = upper.unwrap_or(self.data.len());
+        let (lower, upper) = self.vars[var_idx].range().unwrap();
 
         let data = &mut self.data[lower..upper];
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
@@ -90,7 +185,7 @@ impl BinaryData {
     }
 }
 
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy)]
 pub struct VarPointer(u64);
 
 impl fmt::Display for VarPointer {
@@ -105,64 +200,17 @@ impl fmt::Debug for VarPointer {
     }
 }
 impl VarPointer {
-    pub const BINARY_BIT: u64 = 1u64 << 63;
-    pub const STACK_BIT: u64 = 1u64 << 62;
-    pub const RESERVED_BITS: u64 = Self::BINARY_BIT | Self::STACK_BIT;
-
     pub const TOP_BITS: u64 = (u32::MAX as u64) << 32;
     pub const BOTTOM_BITS: u64 = u32::MAX as u64;
-    pub const THREAD_BITS: u64 = ((u16::MAX as u64) << 48) ^ Self::RESERVED_BITS;
 
-    pub fn new_stack(idx: u16, offset: u32) -> VarPointer {
-        let (idx, offset) = (idx as u64, offset as u64);
-        return Self(Self::STACK_BIT | (idx << 32) | offset);
-    }
-
-    pub fn new_heap(idx: u32, offset: u32) -> VarPointer {
+    pub fn new(idx: u32, offset: u32) -> VarPointer {
         let (idx, offset) = ((idx as u64) << 32, offset as u64);
-        if idx & Self::RESERVED_BITS != 0 {
-            panic!("idx is too large");
-        }
 
         return Self(idx | offset);
     }
 
-    pub fn new_binary(idx: u32, offset: u32) -> VarPointer {
-        let (idx, offset) = ((idx as u64) << 32, offset as u64);
-        if idx & Self::RESERVED_BITS != 0 {
-            panic!("idx is too large");
-        }
-
-        return Self(Self::BINARY_BIT | idx | offset);
-    }
-
-    pub fn is_stack(self) -> bool {
-        return (self.0 & Self::RESERVED_BITS) == Self::STACK_BIT;
-    }
-
-    pub fn is_binary(self) -> bool {
-        return (self.0 & Self::RESERVED_BITS) == Self::BINARY_BIT;
-    }
-
-    pub fn is_heap(self) -> bool {
-        return (self.0 & Self::RESERVED_BITS) == 0;
-    }
-
-    // returns u16::MAX if not attached to a thread
-    pub fn tid(self) -> u16 {
-        if self.is_stack() {
-            return ((self.0 & Self::THREAD_BITS) >> 48) as u16;
-        }
-
-        return u16::MAX;
-    }
-
     pub fn var_idx(self) -> usize {
-        let top = if self.is_stack() {
-            self.0 & !(Self::THREAD_BITS | Self::RESERVED_BITS)
-        } else {
-            self.0 & !Self::RESERVED_BITS
-        };
+        let top = self.0;
 
         return (top >> 32) as usize;
     }
@@ -188,7 +236,7 @@ impl VarPointer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LinkName {
     pub name: u32,
     pub file: n32,
@@ -455,6 +503,11 @@ pub enum Opcode {
     HeapAlloc,
     HeapDealloc,
 
+    // For use with varargs, so we can get the next variable argument from a
+    // decrementing stack id
+    MakeStackId,
+    TranslateStackId,
+
     CopySrcToDest,
     Memset,
 
@@ -573,4 +626,70 @@ pub enum FdKind {
     ProcessStdin(u32),
     ProcessStdout(u32),
     ProcessStderr(u32),
+}
+
+const ID_MASK: u32 = 0b10100110_01101010_01001010_10101010;
+const ID_ADD: u32 = 2740160927;
+
+// These two numbers are multiplicative inverses mod 2^32
+const ID_MUL_TO: u32 = 0x01000193;
+const ID_MUL_FROM: u32 = 0x359c449b;
+
+// const ID_ROTATE_BITS: u32 = 16;
+// let s2 = s1.swap_bytes();
+// let s5 = s4.rotate_left(ID_ROTATE_BITS);
+
+pub fn to_id(raw: u32) -> u32 {
+    let s1 = raw ^ ID_MASK;
+    let s2 = s1.wrapping_mul(ID_MUL_TO);
+    let s3 = s2.wrapping_sub(ID_ADD);
+
+    return s3;
+}
+
+pub fn from_id(id: u32) -> u32 {
+    let s3 = id.wrapping_add(ID_ADD);
+    let s2 = s3.wrapping_mul(ID_MUL_FROM);
+    let s1 = s2 ^ ID_MASK;
+
+    return s1;
+}
+
+#[test]
+fn id_test() {
+    assert_eq!(ID_MUL_TO.wrapping_mul(ID_MUL_FROM), 1);
+
+    let tests = &[ID_MASK, ID_ADD, ID_MUL_TO, ID_MUL_FROM];
+
+    for id in 0..100 {
+        let value = from_id(id);
+        let out_id = to_id(value);
+
+        // println!("{} -> {}", id, value);
+
+        // println!("{:>10}", value);
+
+        assert_eq!(id, out_id);
+    }
+
+    for &id in tests {
+        let value = from_id(id);
+        let out_id = to_id(value);
+
+        // println!("{} -> {}", id, value);
+
+        assert_eq!(id, out_id);
+    }
+
+    for value in 0..100 {
+        let id = to_id(value);
+        let out_value = from_id(id);
+
+        // println!("{} -> {}", id, value);
+
+        assert_eq!(value, out_value);
+    }
+
+    // the null address needs to not be a sequential ID that we'll use often
+    assert_eq!(to_id(0), u32::MAX);
 }

@@ -1,6 +1,5 @@
 #ifndef __TCI_TCI_H
 #define __TCI_TCI_H
-#include <stddef.h>
 
 #define TCI_ECALL_EXIT 0U
 #define TCI_ECALL_ARGC 1U
@@ -27,7 +26,7 @@
 #define TCI_ERRNO_TOO_MANY_FILES 5U
 #define TCI_ERRNO_FILES_TOO_LARGE 6U
 
-size_t tci_var_size(void *var);
+unsigned long tci_var_size(void *var);
 
 void tci_throw_error(const char *name, const char *message,
                      unsigned int skip_frames);

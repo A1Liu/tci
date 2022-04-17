@@ -10,9 +10,9 @@ checksum = "739f4a8db6605981345c5654f3a85b056ce52f37a39d34da03f25bf2151ea16e"
 
 [[package]]
 name = "aliu"
-version = "0.1.18"
+version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea4de3e5185c1a1875f4e436f88e1800ed6ecadd8d00251d198380036b6a58b0"
+checksum = "2e45d0b63ae95c3408d7c5666fa416be3ec2717673341635e097479dc2079d1e"
 dependencies = [
  "libc",
  "winapi",
@@ -55,16 +55,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddfc5b9aa5d4507acaf872de71051dfd0e309860e88966e1051e462a077aac4f"
 dependencies = [
  "bitflags",
-]
-
-[[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if 1.0.0",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -498,7 +488,6 @@ name = "tci"
 version = "0.1.0"
 dependencies = [
  "aliu",
- "console_error_panic_hook",
  "hashbrown",
  "interloc",
  "js-sys",

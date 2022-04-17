@@ -17,7 +17,7 @@ pub fn render_err(error: &IError, stack_trace: &Vec<CallFrame>, files: &FileDb) 
     return out;
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone)]
 pub struct IError {
     pub short_name: String,
     pub message: String,
