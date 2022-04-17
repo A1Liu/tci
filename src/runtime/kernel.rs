@@ -39,7 +39,7 @@ impl Process {
 pub struct Kernel {
     pub files: FileSystem,
     pub in_begin: usize,
-    pub input: Vec<u8>,
+    pub input: Pod<u8>,
     pub output: TaggedMultiArray<WriteEvt, u8>,
 
     pub process: Option<Process>,
@@ -53,7 +53,7 @@ impl Kernel {
         Self {
             files: FileSystem::new(files),
             in_begin: 0,
-            input: Vec::new(),
+            input: Pod::new(),
             output: TaggedMultiArray::new(),
 
             process: None,
@@ -375,7 +375,7 @@ impl Kernel {
     }
 
     fn write(&mut self, s: &[u8]) -> core::fmt::Result {
-        self.input.extend(s);
+        self.input.extend_from_slice(s);
 
         self.output.push_from(WriteEvt::StdinWrite, s);
         return Ok(());

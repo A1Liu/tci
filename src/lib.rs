@@ -52,22 +52,35 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
     let mut lexer = lexer::Lexer::new(env);
 
-    let files = env.impls().into_iter();
-    let lexed: Vec<_> = files
-        .filter_map(compile_filter(|idx| lexer.lex(idx), &mut errors))
-        .collect();
+    let files = env.impls();
+    let file_count = files.len();
+    let mut lexed = Vec::with_capacity(file_count);
+
+    for &file in &*files {
+        match lexer.lex(file) {
+            Ok(t) => lexed.push(t),
+            Err(e) => {
+                errors.push(e);
+                continue;
+            }
+        }
+    }
 
     if errors.len() != 0 {
         return Err(errors);
     }
 
-    let parsed: Vec<_> = lexed
-        .into_iter()
-        .filter_map(compile_filter(
-            |(id, toks, locs)| parser::parse(id, toks, locs),
-            &mut errors,
-        ))
-        .collect();
+    let mut parsed = Vec::with_capacity(file_count);
+
+    for (id, toks, locs) in lexed.into_iter() {
+        match parser::parse(id, toks, locs) {
+            Ok(t) => parsed.push(t),
+            Err(e) => {
+                errors.push(e);
+                continue;
+            }
+        }
+    }
 
     let symbols = lexer.symbols();
 
@@ -75,18 +88,24 @@ fn compile(env: &FileDb) -> Result<BinaryData, Vec<Error>> {
         return Err(errors);
     }
 
-    let map = |env: parser::ParseEnv| type_checker::check_tree(env.file, &symbols, &env.tree);
-    let checked: Vec<_> = parsed
-        .into_iter()
-        .filter_map(compile_filter(map, &mut errors))
-        .collect();
+    let mut checked = Vec::with_capacity(file_count);
+
+    for env in parsed.into_iter() {
+        match type_checker::check_tree(env.file, &symbols, &env.tree) {
+            Ok(t) => checked.push(t),
+            Err(e) => {
+                errors.push(e);
+                continue;
+            }
+        }
+    }
 
     if errors.len() != 0 {
         return Err(errors);
     }
 
     let mut assembler = assembler::Assembler::new();
-    for tu in checked {
+    for tu in checked.into_iter() {
         match assembler.add_file(tu) {
             Ok(_) => {}
             Err(err) => return Err(vec![err]),

@@ -4,14 +4,14 @@ use crate::tc_ast::*;
 use crate::util::*;
 use core::mem;
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ASMFunc {
     pub func_type: TCFuncType,
     pub decl_loc: CodeLoc,
     pub func_header: Option<(VarPointer, CodeLoc)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ASMVar {
     pub ty: TCType,
     pub decl_loc: CodeLoc,
@@ -20,22 +20,22 @@ pub struct ASMVar {
 
 pub struct FuncEnv {
     pub opcodes: VecU8,
-    pub labels: Vec<LabelData>,
-    pub gotos: Vec<u32>,
-    pub var_offsets: Vec<i16>,
-    pub var_temps: Vec<u32>,
-    pub func_temps: Vec<u32>,
+    pub labels: Pod<LabelData>,
+    pub gotos: Pod<u32>,
+    pub var_offsets: Pod<i16>,
+    pub var_temps: Pod<u32>,
+    pub func_temps: Pod<u32>,
 }
 
 impl FuncEnv {
     pub fn new() -> Self {
         Self {
             opcodes: VecU8::new(),
-            labels: Vec::new(),
-            gotos: Vec::new(),
-            var_offsets: Vec::new(),
-            var_temps: Vec::new(),
-            func_temps: Vec::new(),
+            labels: Pod::new(),
+            gotos: Pod::new(),
+            var_offsets: Pod::new(),
+            var_temps: Pod::new(),
+            func_temps: Pod::new(),
         }
     }
 
@@ -51,14 +51,14 @@ impl FuncEnv {
 
 pub struct FileEnv {
     pub link_names: HashMap<u32, LinkName>,
-    pub binary_offsets: Vec<u32>,
+    pub binary_offsets: Pod<u32>,
 }
 
 impl FileEnv {
     pub fn new() -> Self {
         Self {
             link_names: HashMap::new(),
-            binary_offsets: Vec::new(),
+            binary_offsets: Pod::new(),
         }
     }
 
@@ -113,12 +113,12 @@ pub struct Assembler {
     pub buckets: BucketList,
 
     pub func_linkage: HashMap<LinkName, u32>,
-    pub functions: Vec<ASMFunc>,
-    pub function_temps: Vec<(VarPointer, CodeLoc)>,
+    pub functions: Pod<ASMFunc>,
+    pub function_temps: Pod<(VarPointer, CodeLoc)>,
 
     pub var_linkage: HashMap<LinkName, u32>,
-    pub vars: Vec<ASMVar>,
-    pub var_temps: Vec<(VarPointer, CodeLoc)>,
+    pub vars: Pod<ASMVar>,
+    pub var_temps: Pod<(VarPointer, CodeLoc)>,
 
     pub func: FuncEnv,
     pub file: FileEnv,
@@ -147,12 +147,12 @@ impl Assembler {
             data: BINARY_INIT.init.clone(),
 
             func_linkage: HashMap::new(),
-            functions: Vec::new(),
-            function_temps: Vec::new(),
+            functions: Pod::new(),
+            function_temps: Pod::new(),
 
             var_linkage: HashMap::new(),
-            vars: Vec::new(),
-            var_temps: Vec::new(),
+            vars: Pod::new(),
+            var_temps: Pod::new(),
 
             func: FuncEnv::new(),
             file: FileEnv::new(),
@@ -1758,7 +1758,7 @@ impl Assembler {
 
         self.data.write(BINARY_INIT.main_call, main_ptr);
 
-        for (temp, loc) in &self.var_temps {
+        for (temp, loc) in &*self.var_temps {
             let ptr: VarPointer = self.data.read(*temp).unwrap();
             let offset = ptr.offset();
             let var = &self.vars[ptr.var_idx()];
@@ -1772,7 +1772,7 @@ impl Assembler {
             }
         }
 
-        for (temp, loc) in &self.function_temps {
+        for (temp, loc) in &*self.function_temps {
             let ptr: VarPointer = self.data.read(*temp).unwrap();
             let function = &self.functions[ptr.offset() as usize];
             if let Some((fptr, _loc)) = function.func_header {
