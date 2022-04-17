@@ -4,23 +4,6 @@ use crate::util::*;
 use core::mem;
 
 #[derive(Debug)]
-pub struct AllocInfo {
-    pub alloc_loc: CodeLoc,
-    pub free_loc: CodeLoc,
-    pub len: n32,
-}
-
-impl AllocInfo {
-    pub fn new(alloc_loc: CodeLoc) -> Self {
-        Self {
-            alloc_loc,
-            free_loc: NO_FILE,
-            len: n32::NULL,
-        }
-    }
-}
-
-#[derive(Debug)]
 pub struct Memory {
     freed: usize,
     binary_var_len: u32,
