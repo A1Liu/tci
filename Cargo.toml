@@ -10,6 +10,7 @@ license = "MIT"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+aliu = "0.1.22"
 wasm-bindgen = { version = "0.2.70", default-features = false }
 js-sys = "0.3.46"
 wasm-bindgen-futures = "0.4.19"
@@ -22,7 +23,6 @@ strum = { version = "0.24.0", features = ["derive"] }
 peg = { version = "0.8.0" }
 hashbrown = { version = "0.9.1", features = ["serde"] }
 unicode-width = "0.1.7"
-aliu = "0.1.20"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libc-print = "0.1.16"

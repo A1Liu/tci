@@ -28,10 +28,10 @@ pub struct Memory {
 
     data: Pod<u8>,
     ranges: Pod<AllocTracker>,
-    pub expr_stack: Pod<u8>,
-    stack_data: Vec<u8>,
-    pub stack: Vec<Var<()>>,
-    pub callstack: Vec<CallFrame>,
+    expr_stack: Pod<u8>,
+    stack_data: Pod<u8>,
+    pub stack: Pod<Var<()>>,
+    pub callstack: Pod<CallFrame>,
     pub current_func: LinkName,
     pub fp: u16,
     pub pc: VarPointer,
@@ -51,10 +51,10 @@ impl Memory {
             binary_data_len,
 
             expr_stack: Pod::new(),
-            stack_data: Vec::new(),
-            stack: Vec::new(),
+            stack_data: Pod::new(),
+            stack: Pod::new(),
 
-            callstack: Vec::new(),
+            callstack: Pod::new(),
             current_func: LinkName::new(!0),
             loc: NO_FILE,
             fp: 1,
@@ -112,6 +112,16 @@ impl Memory {
     }
 
     pub fn read_pc<T: Copy>(&mut self) -> Result<T, IError> {
+        let len = mem::size_of::<T>();
+
+        let from_bytes = self.read_pc_bytes(len)?;
+
+        let mut out = mem::MaybeUninit::<T>::uninit();
+        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
+        return Ok(unsafe { out.assume_init() });
+    }
+
+    pub fn read_pc_bytes(&mut self, len: usize) -> Result<&[u8], IError> {
         if self.pc.var_idx() == 0 {
             return Err(invalid_ptr(self.pc));
         }
@@ -137,15 +147,14 @@ impl Memory {
             }
         };
 
-        let (len, from_len, ptr) = (mem::size_of::<T>(), from_bytes.len() as u32, self.pc);
+        let (from_len, ptr) = (from_bytes.len() as u32, self.pc);
         let range = (self.pc.offset() as usize)..(ptr.offset() as usize + len);
         let or_else = move || invalid_offset(from_len, ptr, len as u32);
         let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
 
         self.pc = self.pc.add(len as u64);
-        let mut out = mem::MaybeUninit::uninit();
-        unsafe { any_as_u8_slice_mut(&mut out).copy_from_slice(from_bytes) };
-        return Ok(unsafe { out.assume_init() });
+
+        return Ok(from_bytes);
     }
 
     pub fn add_stack_var(&mut self, len: u32) -> Result<VarPointer, IError> {
@@ -281,17 +290,10 @@ impl Memory {
                 continue;
             }
 
-            if write_to + len > write_from {
-                let src = &self.data[write_from] as *const u8;
-                let dest = &mut self.data[write_to] as *mut u8;
+            let src = &self.data[write_from] as *const u8;
+            let dest = &mut self.data[write_to] as *mut u8;
 
-                unsafe { core::ptr::copy(src, dest, len as usize) };
-            } else {
-                let src = &self.data[write_from] as *const u8;
-                let dest = &mut self.data[write_to] as *mut u8;
-
-                unsafe { core::ptr::copy_nonoverlapping(src, dest, len as usize) };
-            }
+            unsafe { core::ptr::copy(src, dest, len as usize) };
 
             *start = write_to;
             write_to += len;

@@ -69,8 +69,6 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         Opcode::PushUndef => {
             let bytes: u32 = memory.read_pc()?;
             memory.push_undef(bytes);
-            // let stack_len = memory.expr_stack.len();
-            // memory.expr_stack.resize(stack_len + bytes as usize, 0);
         }
         Opcode::Pop => {
             let bytes: u32 = memory.read_pc()?;
