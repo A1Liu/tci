@@ -61,7 +61,7 @@ pub fn run_op(memory: &mut Memory) -> Result<Option<EcallExt>, IError> {
         }
         Opcode::MakeFp => {
             let var_offset: i16 = memory.read_pc()?;
-            let var = (memory.fp as i16 + var_offset) as u16;
+            let var = (memory.frame.fp as i16 + var_offset) as u16;
 
             memory.push(VarPointer::new_stack(var, 0));
         }

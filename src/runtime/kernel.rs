@@ -67,7 +67,7 @@ impl Kernel {
             Some(p) => p,
         };
 
-        return tag.memory.loc;
+        return tag.memory.frame.loc;
     }
 
     pub fn cur_mem(&self) -> Option<&Memory> {

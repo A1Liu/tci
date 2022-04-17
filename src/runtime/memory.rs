@@ -32,10 +32,7 @@ pub struct Memory {
     stack_data: Pod<u8>,
     pub stack: Pod<Var<()>>,
     pub callstack: Pod<CallFrame>,
-    pub current_func: LinkName,
-    pub fp: u16,
-    pub pc: VarPointer,
-    pub loc: CodeLoc,
+    pub frame: CallFrame,
 }
 
 impl Memory {
@@ -55,21 +52,18 @@ impl Memory {
             stack: Pod::new(),
 
             callstack: Pod::new(),
-            current_func: LinkName::new(!0),
-            loc: NO_FILE,
-            fp: 1,
-            pc: VarPointer::new(1, 0),
+            frame: CallFrame {
+                name: LinkName::new(!0),
+                loc: NO_FILE,
+                fp: 1,
+                pc: VarPointer::new(1, 0),
+            },
         }
     }
 
     pub fn ret(&mut self) -> Result<(), IError> {
         let or_else = || ierror!("InvalidReturn", "returned when not in a function");
-        let frame = self.callstack.pop().ok_or_else(or_else)?;
-
-        self.current_func = frame.name;
-        self.fp = frame.fp;
-        self.pc = frame.pc;
-        self.loc = frame.loc;
+        self.frame = self.callstack.pop().ok_or_else(or_else)?;
 
         return Ok(());
     }
@@ -79,14 +73,9 @@ impl Memory {
             return Err(ierror!("StackOverflow", "maximum number of calls reached"));
         }
 
-        self.callstack.push(CallFrame::new(
-            self.current_func,
-            self.loc,
-            self.fp,
-            self.pc,
-        ));
+        self.callstack.push(self.frame);
 
-        self.pc = new_pc;
+        self.frame.pc = new_pc;
         let func: Opcode = self.read_pc()?;
         if func != Opcode::Func {
             return Err(ierror!(
@@ -96,19 +85,19 @@ impl Memory {
             ));
         }
 
-        self.current_func = self.read_pc()?;
-        self.loc = self.read_pc()?;
-        self.fp = self.stack.len() as u16 + 1;
+        self.frame.name = self.read_pc()?;
+        self.frame.loc = self.read_pc()?;
+        self.frame.fp = self.stack.len() as u16 + 1;
 
         return Ok(());
     }
 
     pub fn jump(&mut self, pc: VarPointer) {
-        self.pc = pc;
+        self.frame.pc = pc;
     }
 
     pub fn set_loc(&mut self, loc: CodeLoc) {
-        self.loc = loc;
+        self.frame.loc = loc;
     }
 
     pub fn read_pc<T: Copy>(&mut self) -> Result<T, IError> {
@@ -122,14 +111,14 @@ impl Memory {
     }
 
     pub fn read_pc_bytes(&mut self, len: usize) -> Result<&[u8], IError> {
-        if self.pc.var_idx() == 0 {
-            return Err(invalid_ptr(self.pc));
+        if self.frame.pc.var_idx() == 0 {
+            return Err(invalid_ptr(self.frame.pc));
         }
 
-        let var_idx = self.pc.var_idx() - 1;
-        let or_else = || invalid_ptr(self.pc);
+        let var_idx = self.frame.pc.var_idx() - 1;
+        let or_else = || invalid_ptr(self.frame.pc);
 
-        if self.pc.is_stack() {
+        if self.frame.pc.is_stack() {
             return Err(ierror!(
                 "PermissionDenied",
                 "tried to execute memory outside of functions"
@@ -147,12 +136,12 @@ impl Memory {
             }
         };
 
-        let (from_len, ptr) = (from_bytes.len() as u32, self.pc);
-        let range = (self.pc.offset() as usize)..(ptr.offset() as usize + len);
+        let (from_len, ptr) = (from_bytes.len() as u32, self.frame.pc);
+        let range = (self.frame.pc.offset() as usize)..(ptr.offset() as usize + len);
         let or_else = move || invalid_offset(from_len, ptr, len as u32);
         let from_bytes = from_bytes.get(range).ok_or_else(or_else)?;
 
-        self.pc = self.pc.add(len as u64);
+        self.frame.pc = self.frame.pc.add(len as u64);
 
         return Ok(from_bytes);
     }
@@ -182,7 +171,7 @@ impl Memory {
     pub fn frame_loc(&self, skip_frames: u32) -> Result<CodeLoc, IError> {
         let skip_frames = skip_frames as usize;
         if skip_frames == 0 {
-            return Ok(self.loc);
+            return Ok(self.frame.loc);
         }
 
         if skip_frames > self.callstack.len() {
