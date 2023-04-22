@@ -45,13 +45,13 @@ impl VecU8 {
     }
 
     pub fn push<T: Copy + 'static>(&mut self, t: T) {
-        let from_bytes = any_as_u8_slice(&t);
+        let from_bytes = unsafe { any_as_u8_slice(&t) };
         self.data.extend_from_slice(from_bytes);
     }
 
     pub fn push_aligned<T: Copy + 'static>(&mut self, t: T) {
         self.align(mem::align_of::<T>());
-        let from_bytes = any_as_u8_slice(&t);
+        let from_bytes = unsafe { any_as_u8_slice(&t) };
         self.data.extend_from_slice(from_bytes);
     }
 
@@ -102,13 +102,13 @@ impl<T, E> TaggedMultiArray<T, E> {
         let begin = align_usize(self.elements.len(), mem::align_of::<T>());
         let len = data.len();
         self.elements.resize(begin, 0);
-        self.elements.extend_from_slice(any_as_u8_slice(&tag));
+        self.elements.extend_from_slice(unsafe { any_as_u8_slice(&tag) });
         mem::forget(tag);
         let elem_begin = align_usize(self.elements.len(), mem::align_of::<E>());
         self.elements.resize(elem_begin, 0);
 
         for elem in data {
-            self.elements.extend_from_slice(any_as_u8_slice(&elem));
+            self.elements.extend_from_slice(unsafe { any_as_u8_slice(&elem) });
             mem::forget(elem);
         }
 
@@ -122,14 +122,14 @@ impl<T, E> TaggedMultiArray<T, E> {
         let begin = align_usize(self.elements.len(), mem::align_of::<T>());
         let len = data.len();
         self.elements.resize(begin, 0);
-        self.elements.extend_from_slice(any_as_u8_slice(&tag));
+        self.elements.extend_from_slice(unsafe { any_as_u8_slice(&tag) });
         mem::forget(tag);
         let elem_begin = align_usize(self.elements.len(), mem::align_of::<E>());
         self.elements.resize(elem_begin, 0);
 
         for elem in data {
             let elem = elem.clone();
-            self.elements.extend_from_slice(any_as_u8_slice(&elem));
+            self.elements.extend_from_slice(unsafe { any_as_u8_slice(&elem) });
             mem::forget(elem);
         }
 

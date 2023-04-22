@@ -174,7 +174,7 @@ impl BinaryData {
         let (idx, len) = (ptr.offset() as usize, mem::size_of::<T>());
         let to_bytes = data.get_mut(idx..(idx + len)).unwrap();
 
-        let from_bytes = any_as_u8_slice(&t);
+        let from_bytes = unsafe { any_as_u8_slice(&t) };
         to_bytes.copy_from_slice(from_bytes);
     }
 }

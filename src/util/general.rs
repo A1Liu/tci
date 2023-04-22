@@ -290,7 +290,7 @@ pub unsafe fn any_as_u8_slice_mut<T: Sized + Copy>(p: &mut T) -> &mut [u8] {
     core::slice::from_raw_parts_mut(p as *mut T as *mut u8, mem::size_of::<T>())
 }
 
-pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+pub unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     unsafe { core::slice::from_raw_parts(p as *const T as *const u8, mem::size_of::<T>()) }
 }
 

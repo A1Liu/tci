@@ -471,7 +471,7 @@ impl Memory {
     }
 
     pub fn push<T: Copy>(&mut self, t: T) {
-        let from_bytes = any_as_u8_slice(&t);
+        let from_bytes = unsafe { any_as_u8_slice(&t) };
         self.expr_stack.extend_from_slice(from_bytes);
     }
 
