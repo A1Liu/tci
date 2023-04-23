@@ -1,5 +1,6 @@
 import { get, getMany, set, update } from "idb-keyval";
-import { run } from "../Cargo.toml";
+
+const run = () => {};
 
 const resolver = { wasmListener: undefined, ecallListener: undefined };
 const postMessage = self.postMessage;

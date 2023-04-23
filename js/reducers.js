@@ -117,8 +117,8 @@ const appReducer = (state = initialState, action) => {
 };
 
 const tciMiddleware = (store) => {
-  const worker = new Worker("./worker.js");
-  worker.onmessage = (e) => store.dispatch(e.data);
+  const worker = { postMessage: (a) => {} }; // new Worker(new URL("./worker.js", import.meta.url));
+  // worker.onmessage = (e) => store.dispatch(e.data);
 
   const setupState = async () => {
     const files = await get("sources");
