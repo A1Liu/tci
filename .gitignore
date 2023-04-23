@@ -4,6 +4,8 @@
 /.cache
 /.pkg
 /.letsencrypt
+/.next
+/out
 
 /lib/codespan-reporting/target
 /letsencrypt
