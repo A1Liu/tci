@@ -5,4 +5,4 @@
 #[macro_use]
 extern crate soa_derive;
 
-mod lexer;
+mod flexer;
