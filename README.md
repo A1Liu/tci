@@ -55,10 +55,6 @@ Lots of stuff left to do still.
 - Implicit types on functions will never be supported
 - Implicit function declarations will never be supported
 
-# Credit
-- TCI uses an error renderer plagiarised from
-  [`codespan-reporting`](https://github.com/brendanzab/codespan) to make error messages.
-- TCI uses a parser plagiarized from [`lang-c`](https://github.com/vickenty/lang-c)
-  to handle parsing the C language
-
-
+## Resources
+- Preprocessor General Info - https://gcc.gnu.org/onlinedocs/cpp/index.html
+- Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
