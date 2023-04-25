@@ -1,0 +1,20 @@
+.TerminalTitle {
+  height: 2.5rem;
+  --text-opacity: 1;
+  color: #fff;
+  color: rgba(255, 255, 255, var(--text-opacity));
+  --bg-opacity: 1;
+  background-color: #424242;
+  background-color: rgba(66, 66, 66, var(--bg-opacity));
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  width: 100%;
+}
+
+.TerminalText {
+  flex-grow: 1;
+  width: 100%;
+  padding: 0.5rem;
+}
