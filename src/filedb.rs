@@ -19,15 +19,19 @@ struct FileStatic {
     pub source: &'static str,
 }
 
+macro_rules! sys {
+    (header $file:literal) => {
+        FileStatic {
+            name: $file,
+            source: include_str!(concat!("stdlib/header/", $file)),
+        }
+    };
+}
+
 const SYS_HEADERS: &[FileStatic] = &[
-    FileStatic {
-        name: "stdio.h",
-        source: include_str!("header/stdio.h"),
-    },
-    FileStatic {
-        name: "stdbool.h",
-        source: include_str!("header/stdbool.h"),
-    },
+    sys!(header "stdio.h"),
+    sys!(header "stdbool.h"),
+    sys!(header "ctype.h"),
 ];
 
 const SYS_LIB: &[FileStatic] = &[];
