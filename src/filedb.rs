@@ -40,7 +40,11 @@ const SYS_HEADERS: &[FileStatic] = &[
     sys!(header "ctype.h"),
 ];
 
-const SYS_LIB: &[FileStatic] = &[];
+const SYS_LIB: &[FileStatic] = &[
+    sys!(lib "stdlib.c"),
+    sys!(lib "string.c"),
+    sys!(lib "strings.c"),
+];
 
 pub struct FileDb {
     pub names: HashMap<(FileType, String), u32>,
