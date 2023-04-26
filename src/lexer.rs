@@ -1,4 +1,4 @@
-use crate::api::*;
+use crate::{api::*, filedb::FileType};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum TokenKind {
@@ -185,21 +185,11 @@ pub struct FileStarts {
     pub file_index: usize,
 }
 
-struct IncludeEntry {
-    file: u32,
-    contents: Vec<u8>,
-    file_index: usize,
-}
-
-// Processes tokens and also expands #include
-struct Lexer {
-    index: u32,
-    input_file: u32,
-    input: Vec<u8>,
-    input_index: usize,
-    include_stack: Vec<IncludeEntry>,
-
-    result: LexResult,
+#[derive(Clone, Copy)]
+struct IncludeEntry<'a> {
+    file_id: u32,
+    contents: &'a [u8],
+    index: usize,
 }
 
 pub struct LexResult {
@@ -209,86 +199,109 @@ pub struct LexResult {
 }
 
 pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
-    let mut lexer = Lexer::new(files, file);
+    let mut result = LexResult {
+        file_starts: vec![FileStarts {
+            index: 0,
+            file: file.id,
+            file_index: 0,
+        }],
+        symbols: SymbolTable::new(),
+        tokens: TokenVec::new(),
+    };
+    let mut index = 0;
+    let mut include_stack = vec![IncludeEntry {
+        file_id: file.id,
+        contents: &file.source.as_bytes(),
+        index: 0,
+    }];
 
     loop {
-        while lexer.input_index < lexer.input.len() {
-            // Skip whitespace
-            while lexer.input_index < lexer.input.len() {
-                let b = lexer.input[lexer.input_index];
-                if b != b' ' && b != b'\t' {
-                    break;
-                }
-
-                lexer.input_index += 1;
-                lexer.index += 1;
-            }
-
-            let data = &lexer.input[lexer.input_index..];
-            let res = lex_tok_from_bytes(data)?;
-            let kind = res.kind;
-
-            let start = lexer.index;
-            lexer.index += res.consumed as u32;
-            lexer.input_index += res.consumed;
-
-            if res.kind == TokenKind::Ident {
-                let s = unsafe { core::str::from_utf8_unchecked(&data[..res.consumed]) };
-                let symbol = lexer.result.symbols.add_str(s);
-
-                lexer.result.tokens.push(Token {
-                    start,
-                    kind,
-                    symbol,
-                });
-                continue;
-            }
-
-            lexer.result.tokens.push(Token {
-                start,
-                kind,
-                symbol: Symbol::NullSymbol,
-            });
-        }
-
-        let entry = match lexer.include_stack.pop() {
+        let mut input = match include_stack.pop() {
             Some(f) => f,
             None => break,
         };
 
-        lexer.input = entry.contents;
-        lexer.input_index = entry.file_index;
-        lexer.input_file = entry.file;
-        lexer.result.file_starts.push(FileStarts {
-            file: entry.file,
-            index: lexer.index,
-            file_index: lexer.input_index,
+        result.file_starts.push(FileStarts {
+            file: input.file_id,
+            index: index,
+            file_index: input.index,
         });
-    }
 
-    return Ok(lexer.result);
-}
+        let mut token_count = 0;
+        let mut was_hashtag = false;
+        while input.index < input.contents.len() {
+            // Skip whitespace
+            while input.index < input.contents.len() {
+                let b = input.contents[input.index];
+                if b != b' ' && b != b'\t' {
+                    break;
+                }
 
-impl Lexer {
-    fn new(files: &FileDb, file: &File) -> Self {
-        return Self {
-            result: LexResult {
-                file_starts: vec![FileStarts {
+                input.index += 1;
+                index += 1;
+            }
+
+            let data = &input.contents[input.index..];
+            let res = lex_tok_from_bytes(data)?;
+            let kind = res.kind;
+            let start = index;
+
+            index += res.consumed as u32;
+            input.index += res.consumed;
+
+            let symbol = match kind {
+                TokenKind::Ident => {
+                    let s = unsafe { core::str::from_utf8_unchecked(&data[..res.consumed]) };
+                    let symbol = result.symbols.add_str(s);
+
+                    symbol
+                }
+
+                _ => Symbol::NullSymbol,
+            };
+
+            if was_hashtag && symbol == Symbol::Include {
+                // Get rid of the hashtag we got previously
+                result.tokens.pop().unwrap();
+                token_count -= 1;
+
+                let res = lex_include_line(&input.contents[input.index..])?;
+
+                index += res.consumed as u32;
+                input.index += res.consumed;
+
+                let resolved = match res.file_type {
+                    FileType::System => files.resolve_system_include(res.file, input.file_id)?,
+                    FileType::User => files.resolve_include(res.file, input.file_id)?,
+                };
+
+                include_stack.push(input);
+
+                include_stack.push(IncludeEntry {
+                    file_id: resolved.id,
+                    contents: resolved.source.as_bytes(),
                     index: 0,
-                    file: file.id,
-                    file_index: 0,
-                }],
-                symbols: SymbolTable::new(),
-                tokens: TokenVec::new(),
-            },
+                });
 
-            index: 0,
-            input: file.source.clone().into_bytes(),
-            input_file: file.id,
-            input_index: 0,
-            include_stack: Vec::new(),
-        };
+                break;
+            }
+
+            result.tokens.push(Token {
+                start,
+                kind,
+                symbol,
+            });
+
+            token_count += 1;
+            was_hashtag = kind == TokenKind::Hashtag;
+        }
+
+        if !token_count > 0 {
+            result.file_starts.pop().unwrap();
+        }
     }
+
+    return Ok(result);
 }
 
 struct LexedTok {
@@ -554,6 +567,74 @@ fn lex_character(
     }
 
     return Err("File ended before the string was closed".to_owned());
+}
+
+struct IncludeResult<'a> {
+    file: &'a str,
+    file_type: FileType,
+    consumed: usize,
+}
+
+fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
+    let mut index = 0;
+    while index < data.len() {
+        match data[index] {
+            b' ' | b'\t' => index += 1,
+            _ => break,
+        }
+    }
+
+    let quote = match data[index] {
+        x @ (b'<' | b'"') => x,
+        _ => return Err("expected a file string".to_string()),
+    };
+
+    index += 1;
+
+    let begin = index;
+
+    loop {
+        match data.get(index) {
+            None => return Err("file ended before include file string was done".to_string()),
+            Some(b'\n') => return Err("line ended before file string was done".to_string()),
+
+            Some(x) if *x == quote => break,
+            _ => index += 1,
+        }
+    }
+
+    let end = index;
+
+    index += 1;
+
+    while index < data.len() {
+        match data[index] {
+            b' ' | b'\t' => index += 1,
+            _ => break,
+        }
+    }
+
+    let increment = match (data[index], data.get(index + 1)) {
+        (b'\n', Some(b'\r')) => 2,
+        (b'\r', Some(b'\n')) => 2,
+
+        (b'\n', _) => 1,
+        (b'\r', _) => 1,
+
+        _ => return Err("extra stuff after include file name".to_string()),
+    };
+
+    index += increment;
+
+    return Ok(IncludeResult {
+        file: unsafe { core::str::from_utf8_unchecked(&data[begin..end]) },
+        file_type: if quote == b'<' {
+            FileType::System
+        } else {
+            FileType::User
+        },
+        consumed: index,
+    });
 }
 
 // TODO: Add ability to skip escaped newlines

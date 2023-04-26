@@ -79,7 +79,7 @@ impl FileDb {
         return Ok(id);
     }
 
-    pub fn resolve_include(&self, include: &str, file: u32) -> Result<u32, &'static str> {
+    pub fn resolve_include(&self, include: &str, file: u32) -> Result<&File, &'static str> {
         if !include.starts_with("/") {
             let or_else = || -> &'static str { "not found" };
             let mut path =
@@ -91,22 +91,22 @@ impl FileDb {
             path.push_str(include);
 
             if let Some(id) = self.names.get(&(FileType::User, path)) {
-                return Ok(*id);
+                return Ok(&self.files[*id as usize]);
             }
 
             return Err("not found");
         }
 
         if let Some(id) = self.names.get(&(FileType::User, include.to_string())) {
-            return Ok(*id);
+            return Ok(&self.files[*id as usize]);
         }
 
         return Err("not found");
     }
 
-    pub fn resolve_system_include(&self, include: &str, file: u32) -> Result<u32, &'static str> {
+    pub fn resolve_system_include(&self, include: &str, file: u32) -> Result<&File, &'static str> {
         if let Some(id) = self.names.get(&(FileType::System, include.to_string())) {
-            return Ok(*id);
+            return Ok(&self.files[*id as usize]);
         }
 
         return Err("not found");
