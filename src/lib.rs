@@ -12,9 +12,15 @@ mod lexer;
 mod macros;
 mod symbol_table;
 
+#[cfg(test)]
+mod tests;
+
 pub mod api {
     pub use super::error::Error;
     pub use super::lexer::{lex, Token, TokenKind, TokenVec};
     pub use super::symbol_table::{Symbol, SymbolTable};
     pub use std::collections::HashMap;
+
+    #[cfg(test)]
+    pub use ntest::*;
 }

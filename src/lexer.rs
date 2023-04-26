@@ -1,8 +1,6 @@
-use std::fs::File;
-
 use crate::api::*;
 
-#[derive(Debug, PartialEq, Clone, Copy, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum TokenKind {
     PreprocessingNum,
 
@@ -37,14 +35,14 @@ pub enum TokenKind {
     LtLt, // <<
     Geq,
     Gt,
-    GtGt, // >>
-    Amp,
-    AmpAmp,
+    GtGt,     // >>
+    Amp,      // &
+    AmpAmp,   // &&
     Line,     // |
     LineLine, // ||
-    Caret,
+    Caret,    // ^
     AmpEq,
-    LineEq,
+    LineEq, // |=
     CaretEq,
     PlusEq,
     DashEq,
@@ -54,11 +52,11 @@ pub enum TokenKind {
     LtLtEq,
     GtGtEq,
 
-    LBrace,
+    LBrace, // {
     RBrace,
     LParen,
     RParen,
-    LBracket,
+    LBracket, // [
     RBracket,
 
     Semicolon,
@@ -181,10 +179,10 @@ lazy_static! {
 // Book-keeping to track which ranges belong to which file, so that we can
 // compute file and line number from `start`
 #[derive(Clone, Copy)]
-struct FileStarts {
-    index: u32,
-    file: Symbol,
-    file_index: usize,
+pub struct FileStarts {
+    pub index: u32,
+    pub file: Symbol,
+    pub file_index: usize,
 }
 
 struct IncludeEntry {
@@ -205,9 +203,9 @@ struct Lexer {
 }
 
 pub struct LexResult {
-    file_starts: Vec<FileStarts>,
-    symbols: SymbolTable,
-    tokens: TokenVec,
+    pub file_starts: Vec<FileStarts>,
+    pub symbols: SymbolTable,
+    pub tokens: TokenVec,
 }
 
 pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
@@ -215,6 +213,17 @@ pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
 
     loop {
         while lexer.input_index < lexer.input.len() {
+            // Skip whitespace
+            while lexer.input_index < lexer.input.len() {
+                let b = lexer.input[lexer.input_index];
+                if b != b' ' && b != b'\t' {
+                    break;
+                }
+
+                lexer.input_index += 1;
+                lexer.index += 1;
+            }
+
             let data = &lexer.input[lexer.input_index..];
             let res = lex_tok_from_bytes(data)?;
             let kind = res.kind;
@@ -240,10 +249,6 @@ pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
                 kind,
                 symbol: Symbol::NullSymbol,
             });
-        }
-
-        if lexer.include_stack.len() == 0 {
-            break;
         }
 
         let entry = match lexer.include_stack.pop() {
@@ -296,14 +301,9 @@ struct LexedTok {
 fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
     let mut index: usize = 0;
 
-    // Skip whitespace
-    while index < data.len() && (data[index] == b' ' || data[index] == b'\t') {
-        index += 1;
-    }
-
     if index >= data.len() {
         return Ok(LexedTok {
-            consumed: 0,
+            consumed: index,
             kind: TokenKind::EOF,
         });
     }
@@ -424,12 +424,36 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
             });
         }
 
-        x if x >= b'0' && x <= b'9' => {
-            unimplemented!()
+        x if x >= b'0' && x <= b'9' => return lex_num(index, data),
+
+        b'.' => {
+            if let Some(true) = data.get(index).map(|c| *c >= b'0' && *c <= b'9') {
+                index += 1;
+                return lex_num(index, data);
+            }
+
+            if let Some(b'.') = data.get(index) {
+                index += 1;
+                if let Some(b'.') = data.get(index) {
+                    index += 1;
+
+                    return Ok(LexedTok {
+                        consumed: index,
+                        kind: TokenKind::DotDotDot,
+                    });
+                }
+
+                return Err("'..' isn't valid".to_string());
+            }
+
+            return Ok(LexedTok {
+                consumed: index,
+                kind: TokenKind::Dot,
+            });
         }
 
-        b'\"' => return lex_character(TokenKind::StringLit, b'\"', data),
-        b'\'' => return lex_character(TokenKind::CharLit, b'\'', data),
+        b'\"' => return lex_character(TokenKind::StringLit, b'\"', index, data),
+        b'\'' => return lex_character(TokenKind::CharLit, b'\'', index, data),
 
         x => return Err("".to_string()),
     }
@@ -442,8 +466,61 @@ pub fn is_ident_char(cur: u8) -> bool {
         || (cur >= b'0' && cur <= b'9')
 }
 
-fn lex_character(kind: TokenKind, surround: u8, data: &[u8]) -> Result<LexedTok, String> {
-    let mut index = 1;
+// NOTE: We assume at this point that we are in fact lexing a number.
+fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, String> {
+    /*
+    https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
+
+    A preprocessing number has a rather bizarre definition. The category includes all the
+    normal integer and floating point constants one expects of C, but also a number of other
+    things one might not initially recognize as a number. Formally, preprocessing numbers
+    begin with an optional period, a required decimal digit, and then continue with any sequence
+    of letters, digits, underscores, periods, and exponents. Exponents are the two-character
+    sequences ‘e+’, ‘e-’, ‘E+’, ‘E-’, ‘p+’, ‘p-’, ‘P+’, and ‘P-’. (The exponents that begin with
+    ‘p’ or ‘P’ are used for hexadecimal floating-point constants.)
+    */
+
+    while index < data.len() {
+        let lower = data[index].to_ascii_lowercase();
+
+        match lower {
+            b'a'..=b'z' => {}
+            b'0'..=b'9' => {}
+            b'.' => {}
+            b'_' => {}
+            x => {
+                println!("breaking at {} bc '{}'", index, x as char);
+                break;
+            }
+        }
+
+        index += 1;
+
+        // Match against exponent
+        if lower == b'e' || lower == b'p' {
+            match data.get(index) {
+                Some(b'-') | Some(b'+') => index += 1,
+                _ => {}
+            }
+
+            continue;
+        }
+    }
+
+    println!("{}", index);
+
+    return Ok(LexedTok {
+        consumed: index,
+        kind: TokenKind::PreprocessingNum,
+    });
+}
+
+fn lex_character(
+    kind: TokenKind,
+    surround: u8,
+    mut index: usize,
+    data: &[u8],
+) -> Result<LexedTok, String> {
     while index < data.len() {
         let cur = data[index];
         if !cur.is_ascii() {

@@ -23,6 +23,9 @@ unicode-width = "0.1.7"
 soa_derive = "0.12.0"
 codespan-reporting = "0.11.1"
 
+[dev-dependencies]
+ntest = "0.9.0"
+
 [profile.dev]
 opt-level = "s"
 

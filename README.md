@@ -58,3 +58,4 @@ Lots of stuff left to do still.
 ## Resources
 - Preprocessor General Info - https://gcc.gnu.org/onlinedocs/cpp/index.html
 - Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
+- AST & Compiler Architecture - https://scholarworks.iu.edu/dspace/handle/2022/24749
