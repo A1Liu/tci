@@ -14,7 +14,7 @@ mod symbol_table;
 
 pub mod api {
     pub use super::error::Error;
-    pub use super::lexer::{Lexer, Token, TokenKind, TokenVec};
+    pub use super::lexer::{lex, Token, TokenKind, TokenVec};
     pub use super::symbol_table::{Symbol, SymbolTable};
     pub use std::collections::HashMap;
 }
