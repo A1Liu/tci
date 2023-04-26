@@ -9,6 +9,7 @@ extern crate lazy_static;
 
 mod error;
 mod lexer;
+mod macros;
 mod symbol_table;
 
 pub mod api {

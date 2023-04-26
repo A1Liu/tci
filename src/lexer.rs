@@ -1,3 +1,5 @@
+use std::fs::File;
+
 use crate::api::*;
 
 #[derive(Debug, PartialEq, Clone, Copy, Hash)]
@@ -9,7 +11,7 @@ pub enum TokenKind {
     StringLit,
     CharLit,
 
-    Whitespace,
+    EOF,
     Newline,
 
     Hashtag,
@@ -107,7 +109,7 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub start: u32,
-    pub symbol: u32,
+    pub symbol: Symbol,
 }
 
 lazy_static! {
@@ -182,64 +184,116 @@ lazy_static! {
 struct FileStarts {
     index: u32,
     file: Symbol,
-    file_index: u32,
+    file_index: usize,
 }
 
 struct IncludeEntry {
+    symbol: Symbol,
     contents: Vec<u8>,
-    file_index: u32,
+    file_index: usize,
 }
 
 // Processes tokens and also expands #include
-pub struct Lexer {
+struct Lexer {
+    index: u32,
+    input_symbol: Symbol,
+    input: Vec<u8>,
+    input_index: usize,
+    include_stack: Vec<IncludeEntry>,
+
+    result: LexResult,
+}
+
+pub struct LexResult {
     file_starts: Vec<FileStarts>,
     symbols: SymbolTable,
     tokens: TokenVec,
+}
 
-    index: u32,
-    input: Vec<u8>,
-    input_index: u32,
-    include_stack: Vec<IncludeEntry>,
+pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
+    let mut lexer = Lexer::new(file, text);
+
+    loop {
+        while lexer.input_index < lexer.input.len() {
+            let data = &lexer.input[lexer.input_index..];
+            let res = lex_tok_from_bytes(data)?;
+            let kind = res.kind;
+
+            let start = lexer.index;
+            lexer.index += res.consumed as u32;
+            lexer.input_index += res.consumed;
+
+            if res.kind == TokenKind::Ident {
+                let s = unsafe { core::str::from_utf8_unchecked(&data[..res.consumed]) };
+                let symbol = lexer.result.symbols.add_str(s);
+
+                lexer.result.tokens.push(Token {
+                    start,
+                    kind,
+                    symbol,
+                });
+                continue;
+            }
+
+            lexer.result.tokens.push(Token {
+                start,
+                kind,
+                symbol: Symbol::NullSymbol,
+            });
+        }
+
+        if lexer.include_stack.len() == 0 {
+            break;
+        }
+
+        let entry = match lexer.include_stack.pop() {
+            Some(f) => f,
+            None => break,
+        };
+
+        lexer.input = entry.contents;
+        lexer.input_index = entry.file_index;
+        lexer.input_symbol = entry.symbol;
+        lexer.result.file_starts.push(FileStarts {
+            file: entry.symbol,
+            index: lexer.index,
+            file_index: lexer.input_index,
+        });
+    }
+
+    return Ok(lexer.result);
 }
 
 impl Lexer {
-    pub fn new(text: &str) -> Self {
+    fn new(file: &str, text: &str) -> Self {
+        let mut symbols = SymbolTable::new();
+        let file = symbols.add_str(file);
         return Self {
-            file_starts: Vec::new(),
-            symbols: SymbolTable::new(),
-            tokens: TokenVec::new(),
+            result: LexResult {
+                file_starts: vec![FileStarts {
+                    index: 0,
+                    file,
+                    file_index: 0,
+                }],
+                symbols,
+                tokens: TokenVec::new(),
+            },
 
             index: 0,
             input: text.as_bytes().to_owned(),
+            input_symbol: file,
             input_index: 0,
             include_stack: Vec::new(),
         };
     }
-
-    pub fn peek(&self) -> Option<u8> {
-        return self.input.get(self.input_index as usize).map(|i| *i);
-    }
-
-    pub fn pop(&mut self) -> Option<u8> {
-        loop {
-            if let Some(next) = self.input.get(self.input_index as usize).map(|i| *i) {
-                self.input_index += 1;
-                return Some(next);
-            }
-
-            let next_input = self.include_stack.pop()?;
-            self.input = next_input.contents;
-            self.input_index = next_input.file_index;
-        }
-    }
 }
 
-struct LexResult {
+struct LexedTok {
     consumed: usize,
     kind: TokenKind,
 }
 
-fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
+fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
     let mut index: usize = 0;
 
     // Skip whitespace
@@ -248,9 +302,9 @@ fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
     }
 
     if index >= data.len() {
-        return Ok(LexResult {
+        return Ok(LexedTok {
             consumed: 0,
-            kind: TokenKind::Whitespace,
+            kind: TokenKind::EOF,
         });
     }
 
@@ -278,7 +332,7 @@ fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
             _ => break 'simple_syntax,
         };
 
-        return Ok(LexResult {
+        return Ok(LexedTok {
             consumed: index,
             kind,
         });
@@ -340,7 +394,7 @@ fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
 
         index += increment;
 
-        return Ok(LexResult {
+        return Ok(LexedTok {
             consumed: index,
             kind,
         });
@@ -358,13 +412,13 @@ fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
 
             let word = unsafe { core::str::from_utf8_unchecked(&data[..index]) };
             if let Some(&kind) = RESERVED_KEYWORDS.get(word) {
-                return Ok(LexResult {
+                return Ok(LexedTok {
                     consumed: index,
                     kind,
                 });
             }
 
-            return Ok(LexResult {
+            return Ok(LexedTok {
                 consumed: index,
                 kind: TokenKind::Ident,
             });
@@ -388,7 +442,7 @@ pub fn is_ident_char(cur: u8) -> bool {
         || (cur >= b'0' && cur <= b'9')
 }
 
-fn lex_character(kind: TokenKind, surround: u8, data: &[u8]) -> Result<LexResult, String> {
+fn lex_character(kind: TokenKind, surround: u8, data: &[u8]) -> Result<LexedTok, String> {
     let mut index = 1;
     while index < data.len() {
         let cur = data[index];
@@ -397,7 +451,7 @@ fn lex_character(kind: TokenKind, surround: u8, data: &[u8]) -> Result<LexResult
         }
 
         if cur == surround {
-            return Ok(LexResult {
+            return Ok(LexedTok {
                 consumed: index + 1,
                 kind,
             });
