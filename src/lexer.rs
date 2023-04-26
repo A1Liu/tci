@@ -240,15 +240,111 @@ struct LexResult {
 }
 
 fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
-    if data.len() == 0 {
+    let mut index: usize = 0;
+
+    // Skip whitespace
+    while index < data.len() && (data[index] == b' ' || data[index] == b'\t') {
+        index += 1;
+    }
+
+    if index >= data.len() {
         return Ok(LexResult {
             consumed: 0,
             kind: TokenKind::Whitespace,
         });
     }
 
-    let mut index: usize = 1;
-    let first = data[0];
+    let first = data[index];
+    index += 1;
+
+    'simple_syntax: {
+        let kind = match first {
+            b'{' => TokenKind::LBrace,
+            b'}' => TokenKind::RBrace,
+            b'(' => TokenKind::LParen,
+            b')' => TokenKind::RParen,
+            b'[' => TokenKind::LBracket,
+            b']' => TokenKind::RBracket,
+            b'~' => TokenKind::Tilde,
+            b';' => TokenKind::Semicolon,
+            b':' => TokenKind::Colon,
+            b',' => TokenKind::Comma,
+            b'?' => TokenKind::Question,
+            b'#' => TokenKind::Hashtag,
+
+            // NOTE: This will spit out 2 newlines for CRLF, maybe that's bad, but i think its probably fine
+            b'\r' | b'\n' => TokenKind::Newline,
+
+            _ => break 'simple_syntax,
+        };
+
+        return Ok(LexResult {
+            consumed: index,
+            kind,
+        });
+    }
+
+    'operator: {
+        let (increment, kind) = match (first, data.get(index).map(|i| *i)) {
+            (b'+', Some(b'+')) => (1 as usize, TokenKind::PlusPlus),
+            (b'+', Some(b'=')) => (1, TokenKind::PlusEq),
+            (b'+', _) => (0, TokenKind::Plus),
+
+            (b'-', Some(b'-')) => (1 as usize, TokenKind::DashDash),
+            (b'-', Some(b'>')) => (1 as usize, TokenKind::Arrow),
+            (b'-', Some(b'=')) => (1, TokenKind::DashEq),
+            (b'-', _) => (0, TokenKind::Dash),
+
+            (b'/', Some(b'=')) => (1, TokenKind::SlashEq),
+            (b'/', _) => (0, TokenKind::Slash),
+
+            (b'*', Some(b'=')) => (1, TokenKind::StarEq),
+            (b'*', _) => (0, TokenKind::Star),
+
+            (b'%', Some(b'=')) => (1, TokenKind::PercentEq),
+            (b'%', _) => (0, TokenKind::Percent),
+
+            (b'>', Some(b'=')) => (1, TokenKind::Geq),
+            (b'>', Some(b'>')) => match data.get(index + 1).map(|i| *i) {
+                Some(b'=') => (2, TokenKind::GtGtEq),
+                _ => (1, TokenKind::GtGt),
+            },
+            (b'>', _) => (0, TokenKind::Gt),
+
+            (b'<', Some(b'=')) => (1, TokenKind::Leq),
+            (b'<', Some(b'<')) => match data.get(index + 1).map(|i| *i) {
+                Some(b'=') => (2, TokenKind::LtLtEq),
+                _ => (1, TokenKind::LtLt),
+            },
+            (b'<', _) => (0, TokenKind::Lt),
+
+            (b'!', Some(b'=')) => (1, TokenKind::Neq),
+            (b'!', _) => (0, TokenKind::Bang),
+
+            (b'=', Some(b'=')) => (1, TokenKind::EqEq),
+            (b'=', _) => (0, TokenKind::Eq),
+
+            (b'|', Some(b'=')) => (1, TokenKind::LineEq),
+            (b'|', Some(b'|')) => (1, TokenKind::LineLine),
+            (b'|', _) => (0, TokenKind::Line),
+
+            (b'&', Some(b'=')) => (1, TokenKind::AmpEq),
+            (b'&', Some(b'&')) => (1, TokenKind::AmpAmp),
+            (b'&', _) => (0, TokenKind::Amp),
+
+            (b'^', Some(b'=')) => (1, TokenKind::CaretEq),
+            (b'^', _) => (0, TokenKind::Caret),
+
+            _ => break 'operator,
+        };
+
+        index += increment;
+
+        return Ok(LexResult {
+            consumed: index,
+            kind,
+        });
+    }
 
     match first {
         x if (x >= b'A' && x <= b'Z') || (x >= b'a' && x <= b'z') || x == b'_' => {
@@ -278,172 +374,10 @@ fn lex_from_bytes<'a>(data: &'a [u8]) -> Result<LexResult, String> {
             unimplemented!()
         }
 
-        b'\"' => {
-            unimplemented!()
-        }
+        b'\"' => return lex_character(TokenKind::StringLit, b'\"', data),
+        b'\'' => return lex_character(TokenKind::CharLit, b'\'', data),
 
-        /*
-
-                b'\'' => {
-                    let byte = self.lex_character(b'\'', data)?;
-                    if byte == CLOSING_CHAR {
-                        return Err(error!("empty character literal", self.loc(), "found here"));
-                    }
-
-                    let closing = self.expect(data)?;
-                    if closing != b'\'' {
-                        return Err(error!(
-                            "expected closing single quote",
-                            self.loc(),
-                            "this should be a closing single quote"
-                        ));
-                    }
-
-                    ret!(TokenKind::CharLit(byte as i8));
-                }
-
-                b'{' => ret!(TokenKind::LBrace),
-                b'}' => ret!(TokenKind::RBrace),
-                b'(' => ret!(TokenKind::LParen),
-                b')' => ret!(TokenKind::RParen),
-                b'[' => ret!(TokenKind::LBracket),
-                b']' => ret!(TokenKind::RBracket),
-                b'~' => ret!(TokenKind::Tilde),
-                b';' => ret!(TokenKind::Semicolon),
-                b':' => ret!(TokenKind::Colon),
-                b',' => ret!(TokenKind::Comma),
-                b'?' => ret!(TokenKind::Question),
-                b'#' => {
-                    if self.at_line_begin {
-                        self.at_line_begin = false;
-                        return Ok(Some(self.lex_directive(buckets, symbols, files, data)?));
-                    } else {
-                        return Err(error!("unexpected token", self.loc(), "this token"));
-                    }
-                }
-
-                b'.' => {
-                    if self.peek_eq(data, b'.') {
-                        self.current += 1;
-                        if self.peek_eq(data, b'.') {
-                            incr_ret!(TokenKind::DotDotDot);
-                        }
-
-                        return Err(invalid_token(self.begin, self.current, self.file));
-                    }
-
-                    ret!(TokenKind::Dot);
-                }
-                b'+' => {
-                    if self.peek_eq(data, b'+') {
-                        incr_ret!(TokenKind::PlusPlus);
-                    } else if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::PlusEq);
-                    } else {
-                        ret!(TokenKind::Plus);
-                    }
-                }
-                b'-' => {
-                    if self.peek_eq(data, b'-') {
-                        incr_ret!(TokenKind::DashDash);
-                    } else if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::DashEq);
-                    } else if self.peek_eq(data, b'>') {
-                        incr_ret!(TokenKind::Arrow);
-                    } else {
-                        ret!(TokenKind::Dash);
-                    }
-                }
-                b'/' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::SlashEq);
-                    } else {
-                        ret!(TokenKind::Slash);
-                    }
-                }
-                b'*' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::StarEq);
-                    } else {
-                        ret!(TokenKind::Star);
-                    }
-                }
-                b'%' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::PercentEq);
-                    } else {
-                        ret!(TokenKind::Percent);
-                    }
-                }
-                b'>' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::Geq);
-                    } else if self.peek_eq(data, b'>') {
-                        self.current += 1;
-                        if self.peek_eq(data, b'=') {
-                            incr_ret!(TokenKind::GtGtEq);
-                        }
-                        ret!(TokenKind::GtGt);
-                    } else {
-                        ret!(TokenKind::Gt);
-                    }
-                }
-                b'<' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::Leq);
-                    } else if self.peek_eq(data, b'<') {
-                        self.current += 1;
-                        if self.peek_eq(data, b'=') {
-                            incr_ret!(TokenKind::LtLtEq);
-                        }
-                        ret!(TokenKind::LtLt);
-                    } else {
-                        ret!(TokenKind::Lt);
-                    }
-                }
-                b'!' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::Neq);
-                    } else {
-                        ret!(TokenKind::Bang);
-                    }
-                }
-                b'=' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::EqEq);
-                    } else {
-                        ret!(TokenKind::Eq);
-                    }
-                }
-                b'|' => {
-                    if self.peek_eq(data, b'|') {
-                        incr_ret!(TokenKind::LineLine);
-                    } else if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::LineEq);
-                    } else {
-                        ret!(TokenKind::Line);
-                    }
-                }
-                b'&' => {
-                    if self.peek_eq(data, b'&') {
-                        incr_ret!(TokenKind::AmpAmp);
-                    } else if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::AmpEq);
-                    } else {
-                        ret!(TokenKind::Amp);
-                    }
-                }
-                b'^' => {
-                    if self.peek_eq(data, b'=') {
-                        incr_ret!(TokenKind::CaretEq);
-                    } else {
-                        ret!(TokenKind::Caret);
-                    }
-                }
-        */
-        x => {
-            return Err("".to_string());
-        }
+        x => return Err("".to_string()),
     }
 }
 
@@ -455,26 +389,59 @@ pub fn is_ident_char(cur: u8) -> bool {
 }
 
 fn lex_character(kind: TokenKind, surround: u8, data: &[u8]) -> Result<LexResult, String> {
-    let mut escaped = false;
-    for (index, &cur_b) in data.iter().enumerate().skip(1) {
-        let cur: char = cur_b.into();
+    let mut index = 1;
+    while index < data.len() {
+        let cur = data[index];
         if !cur.is_ascii() {
             return Err("character is not valid ascii".to_owned());
         }
 
-        if cur_b == surround && !escaped {
+        if cur == surround {
             return Ok(LexResult {
                 consumed: index + 1,
                 kind,
             });
         }
 
-        // handle backslash-enter
+        // handle early newline
+        if cur == b'\n' || cur == b'\r' {
+            return Err("invalid character found when parsing string literal".to_string());
+        }
 
-        // handle all the escape cases
+        // handle escape cases
+        if cur == b'\\' {
+            index += 1;
 
-        escaped = cur_b == b'\\';
+            let mut iterations_left = 3;
+            while iterations_left > 0 {
+                match cur {
+                    b'0'..=b'7' => iterations_left -= 1, // Octals
+                    _ => iterations_left = 0,
+                }
+            }
+        }
+
+        index += 1;
     }
 
     return Err("File ended before the string was closed".to_owned());
+}
+
+// TODO: Add ability to skip escaped newlines
+fn skip_line_ext(data: &[u8]) -> usize {
+    let mut bytes: [u8; 3] = [0, 0, 0];
+
+    let len = std::cmp::min(data.len(), bytes.len());
+    for idx in 0..len {
+        bytes[idx] = data[idx];
+    }
+
+    if &bytes == b"\\\r\n" || &bytes == b"\\\n\r" {
+        return 3;
+    }
+    if &bytes[..2] == b"\\\n" || &bytes[..2] == b"\\\r" {
+        return 2;
+    }
+
+    return 0;
 }
