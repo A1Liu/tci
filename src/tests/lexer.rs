@@ -1,8 +1,33 @@
 use crate::api::*;
 
+fn run_test(source: &str, expected: &[TokenKind]) {
+    let mut files = FileDb::new();
+    let file_id = files
+        .add_file("main.c".to_string(), source.to_string())
+        .expect("file should add properly");
+    let file = &files.files[file_id as usize];
+
+    let res = lex(&files, file).expect("Expected lex to succeed");
+    let mut index = 0;
+    for tok in res.tokens.iter() {
+        if *tok.kind != expected[index] {
+            panic!(
+                "At index {}, expected {:?} but got {:?}",
+                index, expected[index], tok.kind
+            );
+        }
+
+        index += 1;
+    }
+
+    if index != expected.len() {
+        panic!("didn't consume all tokens (only consumed {})", index);
+    }
+}
+
 #[test]
 #[timeout(300)]
-fn test_lexer() {
+fn test_lexer_simple() {
     const SOURCE_TEXT: &'static str = r#"
 int main(int argc, char* argv[]) {
     return *"printf"[1 + 1];
@@ -39,28 +64,7 @@ int main(int argc, char* argv[]) {
         TokenKind::Newline,
     ];
 
-    let mut files = FileDb::new();
-    let file_id = files
-        .add_file("main.c".to_string(), SOURCE_TEXT.to_string())
-        .expect("file should add properly");
-    let file = &files.files[file_id as usize];
-
-    let res = lex(&files, file).expect("Expected lex to succeed");
-    let mut index = 0;
-    for tok in res.tokens.iter() {
-        if *tok.kind != TOKENS[index] {
-            panic!(
-                "At index {}, expected {:?} but got {:?}",
-                index, TOKENS[index], tok.kind
-            );
-        }
-
-        index += 1;
-    }
-
-    if index != TOKENS.len() {
-        panic!("didn't consume all tokens (only consumed {})", index);
-    }
+    run_test(SOURCE_TEXT, TOKENS);
 }
 
 #[test]
@@ -106,26 +110,5 @@ int main() {}
         TokenKind::Newline,
     ];
 
-    let mut files = FileDb::new();
-    let file_id = files
-        .add_file("main.c".to_string(), SOURCE_TEXT.to_string())
-        .expect("file should add properly");
-    let file = &files.files[file_id as usize];
-
-    let res = lex(&files, file).expect("Expected lex to succeed");
-    let mut index = 0;
-    for tok in res.tokens.iter() {
-        if *tok.kind != TOKENS[index] {
-            panic!(
-                "At index {}, expected {:?} but got {:?}",
-                index, TOKENS[index], tok.kind
-            );
-        }
-
-        index += 1;
-    }
-
-    if index != TOKENS.len() {
-        panic!("didn't consume all tokens (only consumed {})", index);
-    }
+    run_test(SOURCE_TEXT, TOKENS);
 }
