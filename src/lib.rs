@@ -31,7 +31,7 @@ pub mod api {
     pub use ntest::*;
 }
 
-const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n";
+const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
 
 #[derive(serde::Serialize)]
 pub struct PipelineOutput<'a> {
