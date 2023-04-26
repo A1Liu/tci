@@ -8,17 +8,17 @@ extern crate soa_derive;
 extern crate lazy_static;
 
 mod error;
+mod filedb;
 mod lexer;
 mod macros;
-mod symbol_table;
 
 #[cfg(test)]
 mod tests;
 
 pub mod api {
     pub use super::error::Error;
+    pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenVec};
-    pub use super::symbol_table::{Symbol, SymbolTable};
     pub use std::collections::HashMap;
 
     #[cfg(test)]

@@ -181,12 +181,12 @@ lazy_static! {
 #[derive(Clone, Copy)]
 pub struct FileStarts {
     pub index: u32,
-    pub file: Symbol,
+    pub file: u32,
     pub file_index: usize,
 }
 
 struct IncludeEntry {
-    symbol: Symbol,
+    file: u32,
     contents: Vec<u8>,
     file_index: usize,
 }
@@ -194,7 +194,7 @@ struct IncludeEntry {
 // Processes tokens and also expands #include
 struct Lexer {
     index: u32,
-    input_symbol: Symbol,
+    input_file: u32,
     input: Vec<u8>,
     input_index: usize,
     include_stack: Vec<IncludeEntry>,
@@ -208,8 +208,8 @@ pub struct LexResult {
     pub tokens: TokenVec,
 }
 
-pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
-    let mut lexer = Lexer::new(file, text);
+pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
+    let mut lexer = Lexer::new(files, file);
 
     loop {
         while lexer.input_index < lexer.input.len() {
@@ -258,9 +258,9 @@ pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
 
         lexer.input = entry.contents;
         lexer.input_index = entry.file_index;
-        lexer.input_symbol = entry.symbol;
+        lexer.input_file = entry.file;
         lexer.result.file_starts.push(FileStarts {
-            file: entry.symbol,
+            file: entry.file,
             index: lexer.index,
             file_index: lexer.input_index,
         });
@@ -270,23 +270,21 @@ pub fn lex(file: &str, text: &str) -> Result<LexResult, String> {
 }
 
 impl Lexer {
-    fn new(file: &str, text: &str) -> Self {
-        let mut symbols = SymbolTable::new();
-        let file = symbols.add_str(file);
+    fn new(files: &FileDb, file: &File) -> Self {
         return Self {
             result: LexResult {
                 file_starts: vec![FileStarts {
                     index: 0,
-                    file,
+                    file: file.id,
                     file_index: 0,
                 }],
-                symbols,
+                symbols: SymbolTable::new(),
                 tokens: TokenVec::new(),
             },
 
             index: 0,
-            input: text.as_bytes().to_owned(),
-            input_symbol: file,
+            input: file.source.clone().into_bytes(),
+            input_file: file.id,
             input_index: 0,
             include_stack: Vec::new(),
         };

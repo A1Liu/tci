@@ -39,7 +39,13 @@ int main(int argc, char* argv[]) {
         TokenKind::Newline,
     ];
 
-    let res = lex("main.c", SOURCE_TEXT).expect("Expected lex to succeed");
+    let mut files = FileDb::new();
+    let file_id = files
+        .add_file("main.c".to_string(), SOURCE_TEXT.to_string())
+        .expect("file should add properly");
+    let file = &files.files[file_id as usize];
+
+    let res = lex(&files, file).expect("Expected lex to succeed");
     let mut index = 0;
     for tok in res.tokens.iter() {
         if *tok.kind != TOKENS[index] {
