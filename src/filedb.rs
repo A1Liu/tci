@@ -1,24 +1,58 @@
 use crate::api::*;
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum FileType {
+    User,
+    System,
+}
+
 #[derive(Debug, Clone)]
 pub struct File {
     pub id: u32,
+    pub ty: FileType,
     pub name: String,
     pub source: String,
 }
 
+struct FileStatic {
+    pub name: &'static str,
+    pub source: &'static str,
+}
+
+const SYS_HEADERS: &[FileStatic] = &[FileStatic {
+    name: "stdio.h",
+    source: include_str!("header/stdio.h"),
+}];
+
+const SYS_LIB: &[FileStatic] = &[];
+
 pub struct FileDb {
-    pub names: HashMap<String, u32>,
+    pub names: HashMap<(FileType, String), u32>,
     pub files: Vec<File>,
 }
 
 impl FileDb {
     #[inline]
     pub fn new() -> Self {
-        let new_self = Self {
+        let mut new_self = Self {
             files: Vec::new(),
             names: HashMap::new(),
         };
+
+        let ty = FileType::System;
+        for file in SYS_HEADERS {
+            let name = file.name.to_string();
+            let source = file.source.to_string();
+            let id = new_self.files.len() as u32;
+
+            new_self.names.insert((ty, name.clone()), id);
+            new_self.files.push(File {
+                id,
+                ty,
+                name,
+                source,
+            });
+        }
 
         new_self
     }
@@ -26,13 +60,20 @@ impl FileDb {
     /// Add a file to the database, returning the handle that can be used to
     /// refer to it again. Errors if the file already exists in the database.
     pub fn add_file(&mut self, name: String, source: String) -> Result<u32, &'static str> {
-        if let Some(id) = self.names.get(&*name) {
+        let tup = (FileType::User, name);
+        if let Some(id) = self.names.get(&tup) {
             return Err("already exists");
         }
 
+        let name = tup.1;
         let id = self.files.len() as u32;
-        let file = File { id, name, source };
-        self.names.insert(file.name.clone(), id);
+        let file = File {
+            id,
+            ty: FileType::User,
+            name,
+            source,
+        };
+        self.names.insert((FileType::User, file.name.clone()), id);
         self.files.push(file);
 
         return Ok(id);
@@ -49,14 +90,22 @@ impl FileDb {
             }
             path.push_str(include);
 
-            if let Some(id) = self.names.get(&*path) {
+            if let Some(id) = self.names.get(&(FileType::User, path)) {
                 return Ok(*id);
             }
 
             return Err("not found");
         }
 
-        if let Some(id) = self.names.get(include) {
+        if let Some(id) = self.names.get(&(FileType::User, include.to_string())) {
+            return Ok(*id);
+        }
+
+        return Err("not found");
+    }
+
+    pub fn resolve_system_include(&self, include: &str, file: u32) -> Result<u32, &'static str> {
+        if let Some(id) = self.names.get(&(FileType::System, include.to_string())) {
             return Ok(*id);
         }
 
