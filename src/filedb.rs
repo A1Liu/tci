@@ -19,10 +19,16 @@ struct FileStatic {
     pub source: &'static str,
 }
 
-const SYS_HEADERS: &[FileStatic] = &[FileStatic {
-    name: "stdio.h",
-    source: include_str!("header/stdio.h"),
-}];
+const SYS_HEADERS: &[FileStatic] = &[
+    FileStatic {
+        name: "stdio.h",
+        source: include_str!("header/stdio.h"),
+    },
+    FileStatic {
+        name: "stdbool.h",
+        source: include_str!("header/stdbool.h"),
+    },
+];
 
 const SYS_LIB: &[FileStatic] = &[];
 

@@ -499,10 +499,7 @@ fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, String> {
             b'0'..=b'9' => {}
             b'.' => {}
             b'_' => {}
-            x => {
-                println!("breaking at {} bc '{}'", index, x as char);
-                break;
-            }
+            x => break,
         }
 
         index += 1;
@@ -517,8 +514,6 @@ fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, String> {
             continue;
         }
     }
-
-    println!("{}", index);
 
     return Ok(LexedTok {
         consumed: index,
@@ -584,8 +579,9 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
         }
     }
 
-    let quote = match data[index] {
-        x @ (b'<' | b'"') => x,
+    let (end_quote, file_type) = match data[index] {
+        b'"' => (b'"', FileType::User),
+        b'<' => (b'>', FileType::System),
         _ => return Err("expected a file string".to_string()),
     };
 
@@ -596,9 +592,11 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
     loop {
         match data.get(index) {
             None => return Err("file ended before include file string was done".to_string()),
-            Some(b'\n') => return Err("line ended before file string was done".to_string()),
+            Some(b'\n') | Some(b'\r') => {
+                return Err("line ended before file string was done".to_string())
+            }
 
-            Some(x) if *x == quote => break,
+            Some(x) if *x == end_quote => break,
             _ => index += 1,
         }
     }
@@ -628,11 +626,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
 
     return Ok(IncludeResult {
         file: unsafe { core::str::from_utf8_unchecked(&data[begin..end]) },
-        file_type: if quote == b'<' {
-            FileType::System
-        } else {
-            FileType::User
-        },
+        file_type,
         consumed: index,
     });
 }
