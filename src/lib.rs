@@ -21,6 +21,9 @@ pub mod api {
     pub use super::lexer::{lex, Token, TokenKind, TokenVec};
     pub use std::collections::HashMap;
 
+    #[cfg(debug_assertions)]
+    pub use serde::{Deserialize, Serialize};
+
     #[cfg(test)]
     pub use ntest::*;
 }
