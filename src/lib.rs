@@ -9,29 +9,30 @@ extern crate lazy_static;
 #[macro_use]
 extern crate bitfield_struct;
 
-mod ast;
-mod error;
-mod filedb;
-mod lexer;
-mod macros;
+pub mod ast;
+pub mod error;
+pub mod filedb;
+pub mod lexer;
+pub mod macros;
+pub mod parser;
 
 #[cfg(test)]
 mod tests;
 
 pub mod api {
+    pub use super::ast::{self, AstNode, AstNodeVec};
     pub use super::error::Error;
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenVec};
+
+    pub use num::FromPrimitive;
     pub use std::collections::HashMap;
 
     #[cfg(debug_assertions)]
     pub use super::run_test_code;
 
-    pub use num::FromPrimitive;
-
     #[cfg(debug_assertions)]
     pub use serde::{Deserialize, Serialize};
-
 
     #[cfg(test)]
     pub use ntest::*;
