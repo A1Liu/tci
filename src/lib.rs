@@ -6,6 +6,8 @@
 extern crate soa_derive;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate bitfield_struct;
 
 mod ast;
 mod error;
@@ -25,8 +27,11 @@ pub mod api {
     #[cfg(debug_assertions)]
     pub use super::run_test_code;
 
+    pub use num::FromPrimitive;
+
     #[cfg(debug_assertions)]
     pub use serde::{Deserialize, Serialize};
+
 
     #[cfg(test)]
     pub use ntest::*;
