@@ -86,27 +86,6 @@ pub enum UnaryOp {
     Ref,
 }
 
-#[bitfield(u8)]
-pub struct AstType {
-    const_: bool,
-    volatile: bool,
-    restrict: bool,
-    atomic: bool,
-
-    // This is just BARELY enough bits to represent this enum.
-    #[bits(4)]
-    ty: TypeSpecifier,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum AstDerivedDeclarator {
-    Pointer,
-    ArrayUnsized,
-    ArraySized, // children: size expr
-    Function,   // children
-    EmptyFunction,
-}
-
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, FromPrimitive)]
 #[repr(u8)]
 pub enum TypeSpecifier {
@@ -136,6 +115,43 @@ impl Into<u8> for TypeSpecifier {
     }
 }
 
+#[bitfield(u8)]
+#[derive(PartialEq, Eq)]
+pub struct TypeQualifiers {
+    // The order of this stuff matters!
+    // These first four values are in the least-significant 4 digits
+    // of the byte, meaning that when this object is stored in 4 bits,
+    // no information is lost. If
+    const_: bool,
+    volatile: bool,
+    restrict: bool,
+    atomic: bool,
+
+    #[bits(4)]
+    __ignore: usize,
+}
+
+#[test]
+fn bitfield_correctness() {
+    let qualifiers = TypeQualifiers::new()
+        .with_const_(true)
+        .with_restrict(true)
+        .with_volatile(true)
+        .with_atomic(true);
+    let ty = AstType::new().with_qualifiers(qualifiers);
+    assert_eq!(ty.qualifiers(), qualifiers);
+    // println!("{:x}", u8::from(qualifiers));
+}
+
+#[bitfield(u8)]
+pub struct AstType {
+    #[bits(4)]
+    qualifiers: TypeQualifiers,
+    // This is just BARELY enough bits to represent this enum.
+    #[bits(4)]
+    ty: TypeSpecifier,
+}
+
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 pub enum AstStatement {
     Labeled,            // data: label ; children: statement that is being labelled
@@ -155,3 +171,46 @@ pub enum AstStatement {
     Break,
     Continue,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum AstDerivedDeclarator {
+    Pointer,
+    ArrayUnsized,
+    ArraySized, // children: size expr
+    Function,   // children
+    EmptyFunction,
+}
+
+/*
+#[bitfield(u8)]
+pub struct AstType {
+    #[bits(4)]
+    qualifiers: TypeQualifiers,
+    // This is just BARELY enough bits to represent this enum.
+    #[bits(4)]
+    ty: TypeSpecifier,
+}
+
+// Children: 1 type, ??? for declarators (maybe type chain? maybe copy types and declarations?)
+// also ??? for initializers
+#[bitfield(u8)]
+#[derive(PartialEq, Hash, Eq)]
+pub struct AstDeclaration {
+    extern_: bool,
+    static_: bool,
+    typedef: bool,
+    register: bool,
+    inline: bool,
+    noreturn: bool,
+
+    #[bits(2)]
+    _unused: usize,
+}
+
+pub enum Declarator {
+    Abstract,        // children: derived declarator, init expr
+    Ident,           // data: Symbol ; children: derived declarators, init expr
+    NestedWithChild, // children: child declarator, derived declarators, init expr
+}
+
+*/
