@@ -12,7 +12,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 wasm-bindgen = "0.2.70"
 js-sys = "0.3.46"
-wasm-bindgen-futures = "0.4.19"
 wee_alloc = "0.4.5"
 lazy_static = "1.4.0"
 unicode-width = "0.1.7"
@@ -20,7 +19,6 @@ soa_derive = "0.12.0"
 codespan-reporting = "0.11.1"
 serde = { version = "1.0.59", features = ["derive"] }
 serde_json = "1.0.59"
-serde_repr = "0.1.7"
 clap = { version = "4.2.4", features = ["derive"] }
 bitfield-struct = "0.3"
 num = "0.4"
