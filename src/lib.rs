@@ -25,7 +25,6 @@ pub mod api {
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenVec};
 
-    pub use num::FromPrimitive;
     pub use std::collections::HashMap;
 
     #[cfg(debug_assertions)]

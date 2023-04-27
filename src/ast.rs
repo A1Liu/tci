@@ -1,7 +1,3 @@
-use num_derive::FromPrimitive;
-
-use crate::api::*;
-
 #[derive(Clone, StructOfArray)]
 pub struct AstNode {
     pub kind: AstNodeKind,
@@ -93,7 +89,7 @@ pub enum UnaryOp {
 
 // NOTE: THIS ACTUALLY NEEDS TO BE 4 BITS, NOT 8
 // BE CAREFUL
-#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, FromPrimitive)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
 #[repr(u8)]
 pub enum TypeSpecifier {
     Void = 0,
@@ -117,7 +113,11 @@ pub enum TypeSpecifier {
 
 impl From<u8> for TypeSpecifier {
     fn from(orig: u8) -> Self {
-        return <Self as FromPrimitive>::from_u8(orig).unwrap();
+        if orig < 14 {
+            return unsafe { core::mem::transmute(orig) };
+        }
+
+        panic!("invalid byte for type specifier");
     }
 }
 
@@ -183,33 +183,38 @@ pub struct AstDerivedDeclarator {
     kind: DerivedDeclaratorKind,
 }
 
-#[derive(Debug, Clone, Copy, FromPrimitive)]
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum DerivedDeclaratorKind {
-    Pointer,
+    Pointer = 0,
 
     /// []
-    ArrayUnknown,
+    ArrayUnknown = 1,
     /// `[*]`
-    ArrayVariableUnknown,
+    ArrayVariableUnknown = 2,
     /// `[10]`
     /// Children: size expression
-    ArrayVariableExpression,
+    ArrayVariableExpression = 3,
     /// `[static 10]`
     /// Children: size expression
-    ArrayStaticExpression,
+    ArrayStaticExpression = 4,
 
     /// x(int param1, char, long param3)
     /// children: AstParameterDeclarators
-    Function,
+    Function = 5,
 
     /// x(int param1, char, long param3, ...)
     /// children: AstParameterDeclarators
-    FunctionElipsis,
+    FunctionElipsis = 6,
 }
 
 impl From<u8> for DerivedDeclaratorKind {
     fn from(orig: u8) -> Self {
-        return <Self as FromPrimitive>::from_u8(orig).unwrap();
+        if orig < 7 {
+            return unsafe { core::mem::transmute(orig) };
+        }
+
+        panic!("invalid byte for derived declarator kind");
     }
 }
 
