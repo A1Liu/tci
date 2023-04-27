@@ -173,6 +173,8 @@ pub enum AstStatement {
     Continue,
 }
 
+/// A derived declarator. This is the `*const` part of
+/// `int *const a`, or the `[3]` part of `int b[3]`
 #[bitfield(u8)]
 pub struct AstDerivedDeclarator {
     #[bits(4)]
