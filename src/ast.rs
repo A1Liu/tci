@@ -225,9 +225,11 @@ impl Into<u8> for DerivedDeclaratorKind {
 }
 
 /// Describes the type in a declaration
-#[derive(Debug, Clone, Copy)]
+#[bitfield(u8)]
 pub struct BaseType {
+    #[bits(4)]
     qualifiers: TypeQualifiers,
+    #[bits(4)]
     specifier: TypeSpecifier,
 }
 
@@ -274,8 +276,7 @@ pub struct NonTypeSpecifiers {
 #[derive(Debug, Clone, Copy)]
 pub struct DeclarationSpecifiers {
     non_type_specifiers: NonTypeSpecifiers,
-    qualifiers: TypeQualifiers,
-    specifier: TypeSpecifier,
+    ty: BaseType,
 }
 
 /// A declaration of a parameter.
