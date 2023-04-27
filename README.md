@@ -33,6 +33,7 @@ Lots still to do. In the compiler:
 In the runtime:
 
 - [ ] Program arguments && Standard input - good functionality to have
+- [ ] `stdio.h` - not just printf, real files too
 - [ ] `unistd.h`: because sometimes professors be like that
 - [ ] `time.h`: because sometimes you gotta do that
 
