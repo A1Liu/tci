@@ -4,9 +4,6 @@ The goals of this compiler are:
 1. Provide better error messages for new programmers
 2. Make debugging C programs easier
 
-I'm primarily trying to make learning C easier, so I'm mostly
-targeting beginners.
-
 ## Features
 - [ ] Understandable error messages, written in plain english
 - [ ] Stack traces when the program crashes
