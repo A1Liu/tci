@@ -7,6 +7,7 @@ extern crate soa_derive;
 #[macro_use]
 extern crate lazy_static;
 
+mod ast;
 mod error;
 mod filedb;
 mod lexer;
