@@ -7,12 +7,10 @@ The goals of this compiler are:
 ## Features
 - [ ] Understandable error messages, written in plain english
 - [ ] Stack traces when the program crashes
-- [ ] Errors are louder: the following all cause a segmentation fault
+- [ ] Doing wrong stuff will crash instead of doing weird stuff to memory:
   - [ ] use-after-free
   - [ ] buffer overflow
   - [ ] double free
-  - [ ] out of memory
-  - [ ] stack overflow
   - [ ] calling string functions with a string that isn't null-terminated
 - [ ] Leak Detection
 - [ ] Replayable execution
