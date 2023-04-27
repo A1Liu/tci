@@ -16,15 +16,17 @@ pub struct AstNode {
     pub parse_order: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum AstNodeKind {
     Expr(AstExpr),
-    Type(AstType),
     Statement(AstStatement),
     DerivedDeclarator(AstDerivedDeclarator),
     Declarator(AstDeclarator),
+    InitDeclarator(AstInitDeclarator),
     StructField(AstStructField),
+    StructDeclaration(AstStructDeclaration),
     ParameterDeclaration(AstParameterDeclaration),
+    Declaration(AstDeclaration),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,29 +143,14 @@ pub struct TypeQualifiers {
     __ignore: usize,
 }
 
-#[test]
-fn bitfield_correctness() {
-    let qualifiers = TypeQualifiers::new()
-        .with_const_(true)
-        .with_restrict(true)
-        .with_volatile(true)
-        .with_atomic(true);
-    let ty = AstType::new().with_qualifiers(qualifiers);
-    assert_eq!(ty.qualifiers(), qualifiers);
-    // println!("{:x}", u8::from(qualifiers));
-}
-
-// Includes things like short int but also
-// struct a { int b; }
-// In the above, it would have children for each field
-// declaration, and a child for the identifier as well.
-#[bitfield(u8)]
-pub struct AstType {
-    #[bits(4)]
-    qualifiers: TypeQualifiers,
-    // This is just BARELY enough bits to represent this enum.
-    #[bits(4)]
-    ty: TypeSpecifier,
+/// Handles struct and union declarations:
+/// struct a { int b; }
+/// In the above, it would have children for each field
+/// declaration, and a child for the identifier as well.
+#[derive(Debug, Clone, Copy)]
+pub enum AstStructDeclaration {
+    Struct,
+    Union,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -230,27 +217,41 @@ impl Into<u8> for DerivedDeclaratorKind {
     }
 }
 
-// struct a { int b; }
-// StructField is the int b; part.
-// It has children that represent the declarators.
-#[bitfield(u8)]
-pub struct AstStructField {
-    #[bits(4)]
+/// Describes the type in a declaration
+#[derive(Debug, Clone, Copy)]
+pub struct BaseType {
     qualifiers: TypeQualifiers,
-    #[bits(4)]
-    ty: TypeSpecifier,
+    specifier: TypeSpecifier,
 }
 
+/// struct a { int b; }
+/// StructField is the int b; part.
+/// It has children that represent the declarators.
+///
+/// Data: BaseType
+/// Children: AstStructDeclaration if necessary, then a AstDeclarator for each declared variable.
+#[derive(Debug, Clone, Copy)]
+pub struct AstStructField {}
+
+/// children: a AstDerivedDeclarator for each derived declarator
 #[derive(Debug, Clone, Copy)]
 pub enum AstDeclarator {
-    Abstract,        // children: derived declarator
-    Ident,           // data: Symbol ; children: derived declarators
-    NestedWithChild, // children: child declarator, derived declarators
+    Abstract,
+    /// data: Symbol
+    Ident,
+    /// The declarator forwards to another declarator using parentheses
+    NestedWithChild,
 }
 
-// NOTE THIS IS ACTUALLY 6 BITS
+/// A declarator which can be initialized with a value
+/// children: a AstDeclarator and an optional AstExpr
+#[derive(Debug, Clone, Copy)]
+pub struct AstInitDeclarator {}
+
+/// Specifiers for things like storage class and typedefs
+/// Used for declarations and not for types.
 #[bitfield(u8)]
-pub struct DeclarationSpecifiers {
+pub struct NonTypeSpecifiers {
     extern_: bool,
     static_: bool,
     typedef: bool,
@@ -262,29 +263,44 @@ pub struct DeclarationSpecifiers {
     __ignore: usize,
 }
 
-// Children: optional declarator
+/// Specifiers which apply to declarations
 #[derive(Debug, Clone, Copy)]
-pub struct AstParameterDeclaration {
-    specifiers: DeclarationSpecifiers,
+pub struct DeclarationSpecifiers {
+    non_type_specifiers: NonTypeSpecifiers,
+    qualifiers: TypeQualifiers,
+    specifier: TypeSpecifier,
 }
 
-/*
+/// A declaration of a parameter.
+///
+/// Data: DeclarationSpecifiers
+/// Children: AstStructDeclaration if necessary, optional declarator
+#[derive(Debug, Clone, Copy)]
+pub struct AstParameterDeclaration {}
 
-// Children: 1 type, ??? for declarators (maybe type chain? maybe copy types and declarations?)
-// also ??? for initializers
-#[bitfield(u8)]
-#[derive(PartialEq, Hash, Eq)]
-pub struct AstDeclaration {
-    extern_: bool,
-    static_: bool,
-    typedef: bool,
-    register: bool,
-    inline: bool,
-    noreturn: bool,
+/// A typical declaration; this is a stand-in for
+/// int *i[1] = {NULL}; or something similar
+///
+/// Data: DeclarationSpecifiers
+/// Children: AstStructDeclaration if necessary, an AstInitDeclarator for each declared variable
+#[derive(Debug, Clone, Copy)]
+pub struct AstDeclaration {}
 
-    #[bits(2)]
-    _unused: usize,
+#[test]
+fn bitfield_correctness() {
+    #[bitfield(u8)]
+    struct A {
+        #[bits(4)]
+        qualifiers: TypeQualifiers,
+        #[bits(4)]
+        ty: TypeSpecifier,
+    }
+    let qualifiers = TypeQualifiers::new()
+        .with_const_(true)
+        .with_restrict(true)
+        .with_volatile(true)
+        .with_atomic(true);
+    let ty = A::new().with_qualifiers(qualifiers);
+    assert_eq!(ty.qualifiers(), qualifiers);
+    // println!("{:x}", u8::from(qualifiers));
 }
-
-
-*/
