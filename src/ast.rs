@@ -180,37 +180,3 @@ pub enum AstDerivedDeclarator {
     Function,   // children
     EmptyFunction,
 }
-
-/*
-#[bitfield(u8)]
-pub struct AstType {
-    #[bits(4)]
-    qualifiers: TypeQualifiers,
-    // This is just BARELY enough bits to represent this enum.
-    #[bits(4)]
-    ty: TypeSpecifier,
-}
-
-// Children: 1 type, ??? for declarators (maybe type chain? maybe copy types and declarations?)
-// also ??? for initializers
-#[bitfield(u8)]
-#[derive(PartialEq, Hash, Eq)]
-pub struct AstDeclaration {
-    extern_: bool,
-    static_: bool,
-    typedef: bool,
-    register: bool,
-    inline: bool,
-    noreturn: bool,
-
-    #[bits(2)]
-    _unused: usize,
-}
-
-pub enum Declarator {
-    Abstract,        // children: derived declarator, init expr
-    Ident,           // data: Symbol ; children: derived declarators, init expr
-    NestedWithChild, // children: child declarator, derived declarators, init expr
-}
-
-*/
