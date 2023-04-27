@@ -22,6 +22,9 @@ pub enum AstNodeKind {
     Type(AstType),
     Statement(AstStatement),
     DerivedDeclarator(AstDerivedDeclarator),
+    Declarator(AstDeclarator),
+    StructField(AstStructField),
+    ParameterDeclaration(AstParameterDeclaration),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,26 +89,33 @@ pub enum UnaryOp {
     Ref,
 }
 
+// NOTE: THIS ACTUALLY NEEDS TO BE 4 BITS, NOT 8
+// BE CAREFUL
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, FromPrimitive)]
 #[repr(u8)]
 pub enum TypeSpecifier {
     Void = 0,
-    Char,
-    Short,
-    Int,
-    Long,
-    Float,
-    Double,
-    Signed,
-    Unsigned,
-    Struct, // children: ident declaration of struct, field declarations of struct
-    Union,  // children: ident declaration of union, field declarations of union
-    Ident,  // data: Symbol
+    Char = 1,
+    Short = 2,
+    Int = 3,
+    Long = 4,
+
+    Float = 5,
+    Double = 6,
+
+    UChar = 7,
+    UShort = 8,
+    UInt = 9,
+    ULong = 10,
+
+    Struct = 11, // children: ident declaration of struct, field declarations of struct
+    Union = 12,  // children: ident declaration of union, field declarations of union
+    Ident = 13,  // data: Symbol
 }
 
 impl From<u8> for TypeSpecifier {
     fn from(orig: u8) -> Self {
-        return FromPrimitive::from_u8(orig).unwrap();
+        return <Self as FromPrimitive>::from_u8(orig).unwrap();
     }
 }
 
@@ -143,6 +153,10 @@ fn bitfield_correctness() {
     // println!("{:x}", u8::from(qualifiers));
 }
 
+// Includes things like short int but also
+// struct a { int b; }
+// In the above, it would have children for each field
+// declaration, and a child for the identifier as well.
 #[bitfield(u8)]
 pub struct AstType {
     #[bits(4)]
@@ -152,7 +166,7 @@ pub struct AstType {
     ty: TypeSpecifier,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum AstStatement {
     Labeled,            // data: label ; children: statement that is being labelled
     CaseLabeled,        // children: case value expression, statement that is being labelled
@@ -172,11 +186,105 @@ pub enum AstStatement {
     Continue,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum AstDerivedDeclarator {
-    Pointer,
-    ArrayUnsized,
-    ArraySized, // children: size expr
-    Function,   // children
-    EmptyFunction,
+#[bitfield(u8)]
+pub struct AstDerivedDeclarator {
+    #[bits(4)]
+    qualifiers: TypeQualifiers,
+    #[bits(4)]
+    kind: DerivedDeclaratorKind,
 }
+
+#[derive(Debug, Clone, Copy, FromPrimitive)]
+pub enum DerivedDeclaratorKind {
+    Pointer,
+
+    /// []
+    ArrayUnknown,
+    /// `[*]`
+    ArrayVariableUnknown,
+    /// `[10]`
+    /// Children: size expression
+    ArrayVariableExpression,
+    /// `[static 10]`
+    /// Children: size expression
+    ArrayStaticExpression,
+
+    /// x(int param1, char, long param3)
+    /// children: AstParameterDeclarators
+    Function,
+
+    /// x(int param1, char, long param3, ...)
+    /// children: AstParameterDeclarators
+    FunctionElipsis,
+}
+
+impl From<u8> for DerivedDeclaratorKind {
+    fn from(orig: u8) -> Self {
+        return <Self as FromPrimitive>::from_u8(orig).unwrap();
+    }
+}
+
+impl Into<u8> for DerivedDeclaratorKind {
+    fn into(self) -> u8 {
+        return self as u8;
+    }
+}
+
+// struct a { int b; }
+// StructField is the int b; part.
+// It has children that represent the declarators.
+#[bitfield(u8)]
+pub struct AstStructField {
+    #[bits(4)]
+    qualifiers: TypeQualifiers,
+    #[bits(4)]
+    ty: TypeSpecifier,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AstDeclarator {
+    Abstract,        // children: derived declarator
+    Ident,           // data: Symbol ; children: derived declarators
+    NestedWithChild, // children: child declarator, derived declarators
+}
+
+// NOTE THIS IS ACTUALLY 6 BITS
+#[bitfield(u8)]
+pub struct DeclarationSpecifiers {
+    extern_: bool,
+    static_: bool,
+    typedef: bool,
+    register: bool,
+    inline: bool,
+    noreturn: bool,
+
+    #[bits(2)]
+    __ignore: usize,
+}
+
+// Children: optional declarator
+#[derive(Debug, Clone, Copy)]
+pub struct AstParameterDeclaration {
+    specifiers: DeclarationSpecifiers,
+}
+
+/*
+
+// Children: 1 type, ??? for declarators (maybe type chain? maybe copy types and declarations?)
+// also ??? for initializers
+#[bitfield(u8)]
+#[derive(PartialEq, Hash, Eq)]
+pub struct AstDeclaration {
+    extern_: bool,
+    static_: bool,
+    typedef: bool,
+    register: bool,
+    inline: bool,
+    noreturn: bool,
+
+    #[bits(2)]
+    _unused: usize,
+}
+
+
+*/
