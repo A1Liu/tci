@@ -15,10 +15,17 @@ and at the very least I need the practice.
 use crate::api::*;
 use std::cell::Cell;
 
+struct ParserTracker {
+    depth: Cell<u16>,
+    pre_order: Cell<u32>,
+}
+
 struct Parser<'a> {
     // type_names: HashMap<Symbol, u32>,
-    depth_tracker: &'a Cell<u16>,
-    pre_order_tracker: u32,
+    // TODO: use a global symbol hashmap for each type name
+    // and then in NodeTracker, add stuff to count which types
+    // are shadowed
+    tracker: &'a ParserTracker,
 
     tokens: TokenSlice<'a>,
     index: usize,
@@ -31,33 +38,52 @@ struct Parser<'a> {
 ///
 /// It can be "dereferenced" to get the depth value
 /// in the current parsing function.
-struct Depth<'a> {
+struct NodeTracker<'a> {
+    start: u32,
     depth: u16,
-    tracker: &'a Cell<u16>,
+    reserved_pre_order: Option<u32>,
+    tracker: &'a ParserTracker,
 }
 
-impl<'a> Drop for Depth<'a> {
+impl<'a> Drop for NodeTracker<'a> {
     fn drop(&mut self) {
-        self.tracker.set(self.depth);
+        self.tracker.depth.set(self.depth);
     }
 }
 
-impl<'a> std::ops::Deref for Depth<'a> {
-    type Target = u16;
+impl<'a> NodeTracker<'a> {
+    fn create_node(&mut self, kind: AstNodeKind) -> AstNode {
+        let node = self;
 
-    fn deref(&self) -> &Self::Target {
-        return &self.depth;
+        // You cannot call this more than once; maybe we should enforce that statically
+        // by taking in self instead of &self?
+        let pre_order = node.reserved_pre_order.take().unwrap();
+
+        return AstNode {
+            kind,
+            start: node.start,
+            depth: node.depth,
+            pre_order,
+            data: 0,
+        };
     }
 }
 
 impl<'a> Parser<'a> {
-    fn track_depth(&self) -> Depth<'a> {
-        let depth = self.depth_tracker.get();
-        self.depth_tracker.set(depth + 1);
+    fn track_node(&mut self) -> NodeTracker<'a> {
+        let depth = self.tracker.depth.get();
+        self.tracker.depth.set(depth + 1);
 
-        return Depth {
+        let pre_order = self.tracker.pre_order.get();
+        self.tracker.pre_order.set(pre_order + 1);
+
+        let start = self.tokens.start[self.index];
+
+        return NodeTracker {
+            start,
             depth,
-            tracker: self.depth_tracker,
+            reserved_pre_order: Some(pre_order),
+            tracker: self.tracker,
         };
     }
 
@@ -65,33 +91,25 @@ impl<'a> Parser<'a> {
         return self.tokens.kind[self.index];
     }
 
-    fn pop_to_node<T: Into<AstNodeKind>>(&mut self, kind: T) -> AstNode {
-        let start = self.tokens.start[self.index];
+    fn consume<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) {
         self.index += 1;
 
-        let pre_order = self.pre_order_tracker;
-        self.pre_order_tracker += 1;
+        self.push(node, kind);
+    }
 
-        return AstNode {
-            kind: kind.into(),
-            id: pre_order,
-            start,
-            depth: self.depth_tracker.get() - 1,
-            pre_order,
-            data: 0,
-
-            // This isn't used yet
-            parent: 0,
-        };
+    fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) {
+        let ast_node = node.create_node(kind.into());
+        self.ast.push(ast_node);
     }
 }
 
 pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
-    let depth = Cell::new(0);
+    let tracker = ParserTracker {
+        depth: Cell::new(0),
+        pre_order: Cell::new(0),
+    };
     let mut parser = Parser {
-        // type_names: HashMap::new(),
-        depth_tracker: &depth,
-        pre_order_tracker: 0,
+        tracker: &tracker,
 
         tokens: tokens.as_slice(),
         index: 0,
@@ -107,44 +125,159 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
 }
 
 fn parse_global(p: &mut Parser) -> Result<(), Error> {
-    let depth = p.track_depth();
+    let node = p.track_node();
 
-    let specs = match parse_declaration_specifiers(p) {
-        Some(specs) => specs,
-        None => unimplemented!("a global that's not a declaration"),
+    if !parse_declaration(p)? {
+        unimplemented!("a global that's not a declaration");
     };
+
+    return Ok(());
+}
+
+fn parse_declaration(p: &mut Parser) -> Result<bool, Error> {
+    let node = &mut p.track_node();
+
+    if !parse_declaration_specifier(p) {
+        return Ok(false);
+    };
+
+    while parse_declaration_specifier(p) {}
 
     parse_declarator(p)?;
 
-    unimplemented!();
+    if parse_block(p)? {
+        p.consume(node, AstFunctionDefinition);
+
+        return Ok(true);
+    }
+
+    match p.peek_kind() {
+        TokenKind::Comma | TokenKind::Semicolon => p.push(node, AstDeclaration),
+
+        _ => panic!("bad character after declartor"),
+    }
+
+    while p.peek_kind() == TokenKind::Comma {
+        p.index += 1;
+
+        parse_declarator(p)?;
+    }
+
+    return Ok(true);
 }
 
-fn parse_declaration_specifiers(p: &mut Parser) -> Option<Vec<AstNode>> {
-    let depth = p.track_depth();
+fn parse_declaration_specifier(p: &mut Parser) -> bool {
+    let node = &mut p.track_node();
 
-    let mut specifiers: Vec<AstNode> = Vec::new();
-    // DeclarationSpecifiers::new();
+    let specifier = match p.peek_kind() {
+        TokenKind::Char => ast::AstSpecifier::Char,
+        TokenKind::Short => ast::AstSpecifier::Short,
+        TokenKind::Int => ast::AstSpecifier::Int,
+        TokenKind::Long => ast::AstSpecifier::Long,
 
-    loop {
-        // TODO: handle long int or etc
-        match p.peek_kind() {
-            TokenKind::Int => specifiers.push(p.pop_to_node(ast::AstSpecifier::Int)),
+        _ => return false,
+    };
 
-            _ => {
-                if specifiers.len() == 0 {
-                    return None;
-                }
+    p.consume(node, specifier);
 
-                return Some(specifiers);
-            }
-        }
-
-        p.index += 1;
-    }
+    return true;
 }
 
 fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
-    let depth = p.track_depth();
+    let node = &mut p.track_node();
 
     unimplemented!()
+}
+
+fn parse_statement(p: &mut Parser) -> Result<(), Error> {
+    match () {
+        _ if parse_declaration(p)? => {}
+        _ if parse_block(p)? => {}
+        _ if parse_return(p)? => {}
+        _ => parse_expr(p)?,
+    }
+
+    return Ok(());
+}
+
+fn parse_block(p: &mut Parser) -> Result<bool, Error> {
+    let node = &mut p.track_node();
+
+    unimplemented!()
+}
+
+fn parse_return(p: &mut Parser) -> Result<bool, Error> {
+    let node = &mut p.track_node();
+
+    match p.peek_kind() {
+        TokenKind::Return => p.consume(node, AstStatement::Ret),
+        _ => return Ok(false),
+    }
+
+    if p.peek_kind() != TokenKind::Semicolon {
+        parse_expr(p)?;
+    }
+
+    return Ok(true);
+}
+
+fn parse_expr(p: &mut Parser) -> Result<(), Error> {
+    return parse_comma_expr(p);
+}
+
+fn parse_comma_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    return parse_assign_expr(p);
+}
+
+fn parse_assign_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    return parse_ternary_expr(p);
+}
+
+fn parse_ternary_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    return parse_bin_expr(p);
+}
+
+fn parse_bin_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    return parse_prefix_expr(p);
+}
+
+fn parse_prefix_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    return parse_postfix_expr(p);
+}
+
+fn parse_postfix_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    return parse_atom_expr(p);
+}
+
+fn parse_atom_expr(p: &mut Parser) -> Result<(), Error> {
+    let node = &mut p.track_node();
+
+    let expr = match p.peek_kind() {
+        TokenKind::Ident => {
+            // TODO: Set data field
+
+            AstExpr::Ident
+        }
+
+        // TODO: Remove this and replace with actually reasonable logic
+        TokenKind::PreprocessingNum => AstExpr::IntLit,
+
+        _ => panic!("OOOOOPS"),
+    };
+
+    p.consume(node, expr);
+
+    return Ok(());
 }

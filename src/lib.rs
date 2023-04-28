@@ -26,7 +26,7 @@ mod tests;
 pub mod api {
     pub use super::ast::{
         self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,
-        AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement, AstStructDeclaration,
+        AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
     };
     pub use super::error::Error;
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
