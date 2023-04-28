@@ -16,9 +16,9 @@ use crate::api::*;
 use std::cell::Cell;
 
 struct Parser<'a> {
-    type_names: HashMap<Symbol, u32>,
-
-    depth_tracker: &'a Cell<u32>,
+    // type_names: HashMap<Symbol, u32>,
+    depth_tracker: &'a Cell<u16>,
+    pre_order_tracker: u32,
 
     tokens: TokenSlice<'a>,
     index: usize,
@@ -32,8 +32,8 @@ struct Parser<'a> {
 /// It can be "dereferenced" to get the depth value
 /// in the current parsing function.
 struct Depth<'a> {
-    depth: u32,
-    tracker: &'a Cell<u32>,
+    depth: u16,
+    tracker: &'a Cell<u16>,
 }
 
 impl<'a> Drop for Depth<'a> {
@@ -43,7 +43,7 @@ impl<'a> Drop for Depth<'a> {
 }
 
 impl<'a> std::ops::Deref for Depth<'a> {
-    type Target = u32;
+    type Target = u16;
 
     fn deref(&self) -> &Self::Target {
         return &self.depth;
@@ -60,15 +60,42 @@ impl<'a> Parser<'a> {
             tracker: self.depth_tracker,
         };
     }
+
+    fn peek_kind(&self) -> TokenKind {
+        return self.tokens.kind[self.index];
+    }
+
+    fn pop_to_node<T: Into<AstNodeKind>>(&mut self, kind: T) -> AstNode {
+        let start = self.tokens.start[self.index];
+        self.index += 1;
+
+        let pre_order = self.pre_order_tracker;
+        self.pre_order_tracker += 1;
+
+        return AstNode {
+            kind: kind.into(),
+            id: pre_order,
+            start,
+            depth: self.depth_tracker.get() - 1,
+            pre_order,
+            data: 0,
+
+            // This isn't used yet
+            parent: 0,
+        };
+    }
 }
 
 pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
     let depth = Cell::new(0);
     let mut parser = Parser {
-        type_names: HashMap::new(),
+        // type_names: HashMap::new(),
         depth_tracker: &depth,
+        pre_order_tracker: 0,
+
         tokens: tokens.as_slice(),
         index: 0,
+
         ast: AstNodeVec::new(),
     };
 
@@ -82,24 +109,42 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
 fn parse_global(p: &mut Parser) -> Result<(), Error> {
     let depth = p.track_depth();
 
-    if !parse_declaration_specifiers(p)? {
-        unimplemented!("a global that's not a declaration");
-    }
+    let specs = match parse_declaration_specifiers(p) {
+        Some(specs) => specs,
+        None => unimplemented!("a global that's not a declaration"),
+    };
 
     parse_declarator(p)?;
 
     unimplemented!();
 }
 
-// false means that no parsing actually happened; the caller needs to determine
-// if this means that an error has occured or we can just continue to the next
-// rule.
-fn parse_declaration_specifiers(p: &mut Parser) -> Result<bool, Error> {
+fn parse_declaration_specifiers(p: &mut Parser) -> Option<Vec<AstNode>> {
     let depth = p.track_depth();
-    unimplemented!()
+
+    let mut specifiers: Vec<AstNode> = Vec::new();
+    // DeclarationSpecifiers::new();
+
+    loop {
+        // TODO: handle long int or etc
+        match p.peek_kind() {
+            TokenKind::Int => specifiers.push(p.pop_to_node(ast::AstSpecifier::Int)),
+
+            _ => {
+                if specifiers.len() == 0 {
+                    return None;
+                }
+
+                return Some(specifiers);
+            }
+        }
+
+        p.index += 1;
+    }
 }
 
 fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
     let depth = p.track_depth();
+
     unimplemented!()
 }

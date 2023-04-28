@@ -6,8 +6,12 @@
 extern crate soa_derive;
 #[macro_use]
 extern crate lazy_static;
+// #[macro_use]
+// extern crate bitfield_struct;
 #[macro_use]
-extern crate bitfield_struct;
+extern crate enum_derive;
+#[macro_use]
+extern crate macro_attr;
 
 pub mod ast;
 pub mod error;
@@ -20,7 +24,10 @@ pub mod parser;
 mod tests;
 
 pub mod api {
-    pub use super::ast::{self, AstNode, AstNodeVec};
+    pub use super::ast::{
+        self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,
+        AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement, AstStructDeclaration,
+    };
     pub use super::error::Error;
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
