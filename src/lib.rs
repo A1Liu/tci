@@ -23,7 +23,8 @@ pub mod api {
     pub use super::ast::{self, AstNode, AstNodeVec};
     pub use super::error::Error;
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
-    pub use super::lexer::{lex, Token, TokenKind, TokenVec};
+    pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
+    pub use super::macros::expand_macros;
 
     pub use std::collections::HashMap;
 
@@ -37,13 +38,64 @@ pub mod api {
     pub use ntest::*;
 }
 
-const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
+#[derive(serde::Deserialize)]
+pub struct PipelineInput {
+    lexer: Option<Vec<lexer::TokenKind>>,
+    macro_expansion: Option<Vec<lexer::TokenKind>>,
+}
 
 #[derive(serde::Serialize)]
 pub struct PipelineOutput<'a> {
     #[serde(skip_serializing)]
     source: &'a str,
+
     lexer: Vec<lexer::TokenKind>,
+    macro_expansion: Vec<lexer::TokenKind>,
+}
+
+const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
+
+#[cfg(debug_assertions)]
+pub fn run_test_code(test_source: &str) -> PipelineOutput {
+    use crate::api::*;
+
+    let (source, expected_str) = test_source
+        .split_once(TEST_CASE_DELIMITER)
+        .unwrap_or((test_source, "null"));
+
+    let expected = serde_json::from_str::<Option<PipelineInput>>(expected_str)
+        .expect("Test case expected value didn't parse")
+        .unwrap_or(PipelineInput {
+            lexer: None,
+            macro_expansion: None,
+        });
+
+    let mut source_string = source.to_string();
+    if !source_string.ends_with("\n") {
+        source_string.push('\n');
+    }
+
+    let mut files = FileDb::new();
+    let file_id = files
+        .add_file("main.c".to_string(), source_string)
+        .expect("file should add properly");
+    let file = &files.files[file_id as usize];
+
+    let lexer_res = lex(&files, file).expect("Expected lex to succeed");
+    if let Some(expected) = &expected.lexer {
+        assert_eq!(&lexer_res.tokens.kind, expected, "Invalid token stream");
+    }
+
+    let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
+    if let Some(expected) = &expected.macro_expansion {
+        assert_eq!(&macro_expansion_res.kind, expected, "Invalid token stream");
+    }
+
+    return PipelineOutput {
+        source,
+        lexer: lexer_res.tokens.kind,
+        macro_expansion: macro_expansion_res.kind,
+    };
 }
 
 impl<'a> PipelineOutput<'a> {
@@ -62,44 +114,4 @@ impl<'a> PipelineOutput<'a> {
 
         return output;
     }
-}
-
-#[derive(serde::Deserialize)]
-pub struct PipelineInput {
-    lexer: Option<Vec<lexer::TokenKind>>,
-}
-
-#[cfg(debug_assertions)]
-pub fn run_test_code(test_source: &str) -> PipelineOutput {
-    use crate::api::*;
-
-    let (source, expected_str) = test_source
-        .split_once(TEST_CASE_DELIMITER)
-        .unwrap_or((test_source, "null"));
-
-    let expected = serde_json::from_str::<Option<PipelineInput>>(expected_str)
-        .expect("Test case expected value didn't parse")
-        .unwrap_or(PipelineInput { lexer: None });
-
-    let mut source_string = source.to_string();
-    if !source_string.ends_with("\n") {
-        source_string.push('\n');
-    }
-
-    let mut files = FileDb::new();
-    let file_id = files
-        .add_file("main.c".to_string(), source_string)
-        .expect("file should add properly");
-    let file = &files.files[file_id as usize];
-
-    let res = lex(&files, file).expect("Expected lex to succeed");
-
-    if let Some(expected) = &expected.lexer {
-        assert_eq!(&res.tokens.kind, expected, "Invalid token stream");
-    }
-
-    return PipelineOutput {
-        source,
-        lexer: res.tokens.kind,
-    };
 }
