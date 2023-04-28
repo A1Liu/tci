@@ -23,6 +23,7 @@ pub enum AstNodeKind {
     StructDeclaration(AstStructDeclaration),
     ParameterDeclaration(AstParameterDeclaration),
     Declaration(AstDeclaration),
+    FunctionDefinition(AstFunctionDefinition),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -293,6 +294,14 @@ pub struct AstParameterDeclaration {}
 /// Children: AstStructDeclaration if necessary, an AstInitDeclarator for each declared variable
 #[derive(Debug, Clone, Copy)]
 pub struct AstDeclaration {}
+
+/// A typical declaration; this is a stand-in for
+/// int *i[1] = {NULL}; or something similar
+///
+/// Data: DeclarationSpecifiers
+/// Children: an AstDeclarator, and all the statements associated with the function
+#[derive(Debug, Clone, Copy)]
+pub struct AstFunctionDefinition {}
 
 #[test]
 fn bitfield_correctness() {

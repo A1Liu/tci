@@ -243,6 +243,10 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
                 index += 1;
             }
 
+            if input.index >= input.contents.len() {
+                break;
+            }
+
             let data = &input.contents[input.index..];
             let res = lex_tok_from_bytes(data)?;
             let kind = res.kind;
@@ -311,15 +315,10 @@ struct LexedTok {
     kind: TokenKind,
 }
 
+/// Lex a token from the bytes given. Assumes that we're not at EOF, and
+/// theres no whitespace before the token.
 fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
     let mut index: usize = 0;
-
-    if index >= data.len() {
-        return Ok(LexedTok {
-            consumed: index,
-            kind: TokenKind::EOF,
-        });
-    }
 
     let first = data[index];
     index += 1;
