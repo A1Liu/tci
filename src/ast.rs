@@ -11,7 +11,7 @@ pub struct AstNode {
     // pub parent: u32,
 
     // Some order to be used to decide which children are first
-    pub pre_order: u32,
+    pub post_order: u32,
 }
 
 macro_attr! {

@@ -17,7 +17,6 @@ use std::cell::Cell;
 
 struct ParserTracker {
     depth: Cell<u16>,
-    pre_order: Cell<u32>,
 }
 
 struct Parser<'a> {
@@ -26,6 +25,7 @@ struct Parser<'a> {
     // and then in NodeTracker, add stuff to count which types
     // are shadowed
     tracker: &'a ParserTracker,
+    post_order: u32,
 
     tokens: TokenSlice<'a>,
     index: usize,
@@ -41,7 +41,6 @@ struct Parser<'a> {
 struct NodeTracker<'a> {
     start: u32,
     depth: u16,
-    reserved_pre_order: Option<u32>,
     tracker: &'a ParserTracker,
 }
 
@@ -51,38 +50,16 @@ impl<'a> Drop for NodeTracker<'a> {
     }
 }
 
-impl<'a> NodeTracker<'a> {
-    fn create_node(&mut self, kind: AstNodeKind) -> AstNode {
-        let node = self;
-
-        // You cannot call this more than once; maybe we should enforce that statically
-        // by taking in self instead of &self?
-        let pre_order = node.reserved_pre_order.take().unwrap();
-
-        return AstNode {
-            kind,
-            start: node.start,
-            depth: node.depth,
-            pre_order,
-            data: 0,
-        };
-    }
-}
-
 impl<'a> Parser<'a> {
     fn track_node(&mut self) -> NodeTracker<'a> {
         let depth = self.tracker.depth.get();
         self.tracker.depth.set(depth + 1);
-
-        let pre_order = self.tracker.pre_order.get();
-        self.tracker.pre_order.set(pre_order + 1);
 
         let start = self.tokens.start[self.index];
 
         return NodeTracker {
             start,
             depth,
-            reserved_pre_order: Some(pre_order),
             tracker: self.tracker,
         };
     }
@@ -102,7 +79,17 @@ impl<'a> Parser<'a> {
     }
 
     fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) {
-        let ast_node = node.create_node(kind.into());
+        let post_order = self.post_order;
+        self.post_order += 1;
+
+        let ast_node = AstNode {
+            kind: kind.into(),
+            start: node.start,
+            depth: node.depth,
+            post_order,
+            data: 0,
+        };
+
         self.ast.push(ast_node);
     }
 }
@@ -110,10 +97,10 @@ impl<'a> Parser<'a> {
 pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
     let tracker = ParserTracker {
         depth: Cell::new(0),
-        pre_order: Cell::new(0),
     };
     let mut parser = Parser {
         tracker: &tracker,
+        post_order: 0,
 
         tokens: tokens.as_slice(),
         index: 0,
@@ -208,10 +195,10 @@ fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
 
     while parse_star_declarator(p)? {}
 
-    match p.peek_kind() {
-        TokenKind::LParen if parse_func_declarator(p)? => p.push(node, AstDeclarator::Abstract),
+    let kind = match p.peek_kind() {
+        TokenKind::LParen if parse_func_declarator(p)? => AstDeclarator::Abstract,
         TokenKind::LParen => {
-            p.consume(node, AstDeclarator::NestedWithChild);
+            p.index += 1;
 
             parse_declarator(p)?;
 
@@ -220,15 +207,14 @@ fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
             }
 
             p.index += 1;
+
+            AstDeclarator::NestedWithChild
         }
 
-        TokenKind::Ident => {
-            println!("ident at depth: {}", node.depth);
-            p.consume(node, AstDeclarator::Ident);
-        }
+        TokenKind::Ident => AstDeclarator::Ident,
 
-        _ => p.push(node, AstDeclarator::Abstract),
-    }
+        _ => AstDeclarator::Abstract,
+    };
 
     loop {
         let found_array = parse_array_declarator(p)?;
@@ -238,6 +224,8 @@ fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
             break;
         }
     }
+
+    p.push(node, kind);
 
     return Ok(());
 }
@@ -249,9 +237,11 @@ fn parse_star_declarator(p: &mut Parser) -> Result<bool, Error> {
         return Ok(false);
     }
 
-    p.consume(node, AstDerivedDeclarator::Pointer);
+    p.index += 1;
 
     while parse_declaration_specifier(p) {}
+
+    p.push(node, AstDerivedDeclarator::Pointer);
 
     return Ok(true);
 }
@@ -297,11 +287,13 @@ fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
         }
     }
 
-    if p.peek_kind() == TokenKind::DotDotDot {
-        p.consume(node, AstDerivedDeclarator::FunctionElipsis);
-    } else {
-        p.push(node, AstDerivedDeclarator::Function);
-    }
+    let kind = match p.peek_kind() {
+        TokenKind::DotDotDot => {
+            p.index += 1;
+            AstDerivedDeclarator::FunctionElipsis
+        }
+        _ => AstDerivedDeclarator::Function,
+    };
 
     if p.peek_kind() != TokenKind::RParen {
         println!("before: {:?}", p.tokens.kind[p.index - 1]);
@@ -311,7 +303,8 @@ fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
             p.peek_kind()
         );
     }
-    p.index += 1;
+
+    p.consume(node, kind);
 
     return Ok(true);
 }
@@ -336,7 +329,7 @@ fn parse_block(p: &mut Parser) -> Result<bool, Error> {
         return Ok(false);
     }
 
-    p.consume(node, AstStatement::Block);
+    p.index += 1;
 
     while p.peek_kind() == TokenKind::Semicolon {
         p.index += 1;
@@ -346,7 +339,7 @@ fn parse_block(p: &mut Parser) -> Result<bool, Error> {
         parse_statement(p)?;
     }
 
-    p.index += 1;
+    p.consume(node, AstStatement::Block);
 
     return Ok(true);
 }
@@ -355,13 +348,15 @@ fn parse_return(p: &mut Parser) -> Result<bool, Error> {
     let node = &mut p.track_node();
 
     match p.peek_kind() {
-        TokenKind::Return => p.consume(node, AstStatement::Ret),
+        TokenKind::Return => p.index += 1,
         _ => return Ok(false),
     }
 
     if p.peek_kind() != TokenKind::Semicolon {
         parse_expr(p)?;
     }
+
+    p.push(node, AstStatement::Ret);
 
     return Ok(true);
 }
@@ -381,7 +376,7 @@ fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<
             break;
         }
 
-        p.consume(node, info.op);
+        p.index += 1;
 
         if let AstExpr::Ternary = info.op {
             unimplemented!("TODO: special logic for middle part of ternary")
@@ -393,6 +388,8 @@ fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<
         }
 
         parse_precedence_climbing_expr(p, next_min_precedence)?;
+
+        p.push(node, info.op);
     }
 
     return Ok(());
