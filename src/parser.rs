@@ -7,7 +7,7 @@ refer to the post-fix order index.
 The output isn't fully validated, so various strange combinations are
 possible, like `static typedef *a() {}`. The goal here is to be
 as flexible and simple as possible, and then add validation passes
-later. 
+later.
 */
 
 // I think the plan is to make it very very flexible,
@@ -15,7 +15,7 @@ later.
 // will work (except for those goddamn K&R decls). Then,
 // most of the constraints placed upon the AST will be validated
 // in compiler passes.
-// 
+//
 // Doing it this way is maybe a little bit bonkers, but I have no
 // experience writing compiler passes with this AST structure,
 // and at the very least I need the practice.
@@ -36,8 +36,6 @@ struct Parser<'a> {
 
     tokens: TokenSlice<'a>,
     index: usize,
-
-    ast: AstNodeVec,
 }
 
 /// An RAII type to track Node depth in the tree
@@ -84,6 +82,14 @@ impl<'a> Parser<'a> {
         };
     }
 
+    fn track_node_from(&mut self, start: u32) -> NodeTracker {
+        return NodeTracker {
+            start,
+            children: Vec::new(),
+            height: 0,
+        };
+    }
+
     fn peek_kind(&self) -> TokenKind {
         if self.index >= self.tokens.len() {
             return TokenKind::EOF;
@@ -92,7 +98,7 @@ impl<'a> Parser<'a> {
         return self.tokens.kind[self.index];
     }
 
-    fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) -> NodeResult {
+    fn push<T: Into<AstNodeKind>>(&mut self, node: &NodeTracker, kind: T) -> NodeResult {
         let mut tracker = self.tracker.replace(ParserTracker {
             ast: AstNodeVec::new(),
         });
@@ -113,6 +119,7 @@ impl<'a> Parser<'a> {
 
         tracker.ast.push(ast_node);
 
+        // Fix-up the parent fields of the children of this node.
         for id in &node.children {
             tracker.ast.parent[*id as usize] = post_order;
         }
@@ -136,17 +143,13 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
 
         tokens: tokens.as_slice(),
         index: 0,
-
-        ast: AstNodeVec::new(),
     };
 
     while parser.index < parser.tokens.len() {
         parse_global(&mut parser)?;
     }
 
-    let ast = parser.ast;
-
-    return Ok(ast);
+    return Ok(tracker.into_inner().ast);
 }
 
 fn parse_global(p: &mut Parser) -> Result<(), Error> {
@@ -398,7 +401,7 @@ fn parse_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
 /// Handles commas, assignments, ternary, and binary expressions
 fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<NodeResult, Error> {
-    let node = &mut p.track_node();
+    let mut node = p.track_node();
     let mut res = parse_prefix_expr(p)?;
 
     node.child(res);
@@ -421,7 +424,8 @@ fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<
 
         node.child(parse_precedence_climbing_expr(p, next_min_precedence)?);
 
-        res = p.push(node, info.op);
+        res = p.push(&node, info.op);
+        node = p.track_node_from(node.start);
         node.child(res);
     }
 

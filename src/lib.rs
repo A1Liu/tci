@@ -67,6 +67,8 @@ pub struct PipelineOutput<'a> {
 #[derive(serde::Serialize)]
 pub struct SimpleAstNode {
     kind: AstNodeKind,
+    parent: u32,
+    post_order: u32,
     height: u16,
 }
 
@@ -113,6 +115,8 @@ pub fn run_test_code(test_source: &str) -> PipelineOutput {
     for node in parsed_ast.as_slice() {
         simple_ast.push(SimpleAstNode {
             kind: *node.kind,
+            parent: *node.parent,
+            post_order: *node.post_order,
             height: *node.height,
         });
     }
