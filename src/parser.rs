@@ -44,6 +44,7 @@ struct Parser<'a> {
 /// It can be "dereferenced" to get the depth value
 /// in the current parsing function.
 struct NodeTracker {
+    used: bool,
     children: Vec<u32>,
     start: u32,
     height: u16,
@@ -76,6 +77,7 @@ impl<'a> Parser<'a> {
         let start = self.tokens.start[self.index];
 
         return NodeTracker {
+            used: false,
             start,
             children: Vec::new(),
             height: 0,
@@ -84,6 +86,7 @@ impl<'a> Parser<'a> {
 
     fn track_node_from(&mut self, start: u32) -> NodeTracker {
         return NodeTracker {
+            used: false,
             start,
             children: Vec::new(),
             height: 0,
@@ -98,7 +101,13 @@ impl<'a> Parser<'a> {
         return self.tokens.kind[self.index];
     }
 
-    fn push<T: Into<AstNodeKind>>(&mut self, node: &NodeTracker, kind: T) -> NodeResult {
+    fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) -> NodeResult {
+        if node.used {
+            panic!("used a node twice");
+        }
+
+        node.used = true;
+
         let mut tracker = self.tracker.replace(ParserTracker {
             ast: AstNodeVec::new(),
         });
@@ -401,7 +410,7 @@ fn parse_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
 /// Handles commas, assignments, ternary, and binary expressions
 fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<NodeResult, Error> {
-    let mut node = p.track_node();
+    let node = &mut p.track_node();
     let mut res = parse_prefix_expr(p)?;
 
     node.child(res);
@@ -424,8 +433,8 @@ fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<
 
         node.child(parse_precedence_climbing_expr(p, next_min_precedence)?);
 
-        res = p.push(&node, info.op);
-        node = p.track_node_from(node.start);
+        res = p.push(node, info.op);
+        *node = p.track_node_from(node.start);
         node.child(res);
     }
 
