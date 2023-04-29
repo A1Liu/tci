@@ -1,22 +1,30 @@
 /*!
 Parser for the C programming language.
 
-I think the plan is to make it very very flexible,
-so that basically anything that could be considered C code
-will work (except for those goddamn K&R decls). Then,
-most of the constraints placed upon the AST will be validated
-in compiler passes.
+Outputs nodes in Post-fix order. Outputted parent indices
+refer to the post-fix order index.
 
-Doing it this way is maybe a little bit bonkers, but I have no
-experience writing compiler passes with this AST structure,
-and at the very least I need the practice.
+The output isn't fully validated, so various strange combinations are
+possible, like `static typedef *a() {}`. The goal here is to be
+as flexible and simple as possible, and then add validation passes
+later. 
 */
+
+// I think the plan is to make it very very flexible,
+// so that basically anything that could be considered C code
+// will work (except for those goddamn K&R decls). Then,
+// most of the constraints placed upon the AST will be validated
+// in compiler passes.
+// 
+// Doing it this way is maybe a little bit bonkers, but I have no
+// experience writing compiler passes with this AST structure,
+// and at the very least I need the practice.
 
 use crate::api::*;
 use std::cell::Cell;
 
 struct ParserTracker {
-    depth: Cell<u16>,
+    ast: AstNodeVec,
 }
 
 struct Parser<'a> {
@@ -24,8 +32,7 @@ struct Parser<'a> {
     // TODO: use a global symbol hashmap for each type name
     // and then in NodeTracker, add stuff to count which types
     // are shadowed
-    tracker: &'a ParserTracker,
-    post_order: u32,
+    tracker: &'a Cell<ParserTracker>,
 
     tokens: TokenSlice<'a>,
     index: usize,
@@ -39,18 +46,21 @@ struct Parser<'a> {
 /// It can be "dereferenced" to get the depth value
 /// in the current parsing function.
 struct NodeTracker {
+    children: Vec<u32>,
     start: u32,
     height: u16,
 }
 
 #[derive(Clone, Copy)]
 struct NodeResult {
+    post_order: u32,
     height: u16,
 }
 
 impl NodeTracker {
     fn child(&mut self, res: NodeResult) {
         self.height = core::cmp::max(self.height, res.height + 1);
+        self.children.push(res.post_order);
     }
 
     fn child_opt(&mut self, res: Option<NodeResult>) -> bool {
@@ -67,7 +77,11 @@ impl<'a> Parser<'a> {
     fn track_node(&mut self) -> NodeTracker {
         let start = self.tokens.start[self.index];
 
-        return NodeTracker { start, height: 0 };
+        return NodeTracker {
+            start,
+            children: Vec::new(),
+            height: 0,
+        };
     }
 
     fn peek_kind(&self) -> TokenKind {
@@ -79,33 +93,46 @@ impl<'a> Parser<'a> {
     }
 
     fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) -> NodeResult {
-        let post_order = self.post_order;
-        self.post_order += 1;
+        let mut tracker = self.tracker.replace(ParserTracker {
+            ast: AstNodeVec::new(),
+        });
+
+        let post_order = tracker.ast.len() as u32;
 
         let ast_node = AstNode {
             kind: kind.into(),
             start: node.start,
             height: node.height,
+
+            // Root nodes have themselves as their own parent.
+            parent: post_order,
+
             post_order,
             data: 0,
         };
 
-        self.ast.push(ast_node);
+        tracker.ast.push(ast_node);
+
+        for id in &node.children {
+            tracker.ast.parent[*id as usize] = post_order;
+        }
+
+        self.tracker.replace(tracker);
 
         return NodeResult {
+            post_order,
             height: node.height,
         };
     }
 }
 
 pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
-    let tracker = ParserTracker {
-        depth: Cell::new(0),
-    };
+    let tracker = Cell::new(ParserTracker {
+        ast: AstNodeVec::new(),
+    });
 
     let mut parser = Parser {
         tracker: &tracker,
-        post_order: 0,
 
         tokens: tokens.as_slice(),
         index: 0,
@@ -113,22 +140,18 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
         ast: AstNodeVec::new(),
     };
 
-    let node = &mut parser.track_node();
-
     while parser.index < parser.tokens.len() {
-        node.child(parse_global(&mut parser)?);
+        parse_global(&mut parser)?;
     }
-
-    parser.push(node, AstNodeKind::EOF(()));
 
     let ast = parser.ast;
 
     return Ok(ast);
 }
 
-fn parse_global(p: &mut Parser) -> Result<NodeResult, Error> {
+fn parse_global(p: &mut Parser) -> Result<(), Error> {
     if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
-        return Ok(res);
+        return Ok(());
     };
 
     unimplemented!("a global that's not a declaration");

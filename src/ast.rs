@@ -1,35 +1,8 @@
-use crate::api::*;
-
-/*
-NOTE: Need to use postfix ordering, and track the height
-variable, instead of depth.
-
-
+/*!
+This module describes the AST created by the parser.
 */
 
-/*
-{
-    int a;
-    int b;
-    {
-        int c;
-    }
-}
-
-Post order
-(int a) (int b) (int c) Scope Scope
-
-Post order with sentinel
-ScopeOpen (int a) ScopeOpen (int b) (int c) Scope Scope
-
-Post order with count
-(int a) (int b) (int c) Scope(2) Scope(2)
-
-Post order with tree "height"
-(int a)(0) (int b)(0) (int c)(0) Scope(1) Scope(2)
-
-
- */
+use crate::api::*;
 
 #[derive(Debug, Clone, Copy, StructOfArray)]
 pub struct AstNode {
@@ -38,10 +11,12 @@ pub struct AstNode {
     pub height: u16,
     pub data: u64,
 
-    // pub id: u32,
-    // pub parent: u32,
+    /// refers to the post_order index of the node that's the parent
+    /// of this one.
+    pub parent: u32,
 
-    // Some order to be used to decide which children are first
+    /// The post-order index of this node. The parser returns nodes in post-order,
+    /// so these will also be the index in the AST after parsing.
     pub post_order: u32,
 }
 
