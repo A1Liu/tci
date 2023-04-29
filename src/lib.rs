@@ -67,8 +67,7 @@ pub struct PipelineOutput<'a> {
 #[derive(serde::Serialize)]
 pub struct SimpleAstNode {
     kind: AstNodeKind,
-    depth: u16,
-    post_order: u32,
+    height: u16,
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
@@ -114,11 +113,9 @@ pub fn run_test_code(test_source: &str) -> PipelineOutput {
     for node in parsed_ast.as_slice() {
         simple_ast.push(SimpleAstNode {
             kind: *node.kind,
-            depth: *node.depth,
-            post_order: *node.post_order,
+            height: *node.height,
         });
     }
-    simple_ast.sort_by_key(|n| n.post_order);
 
     return PipelineOutput {
         source,

@@ -1,10 +1,41 @@
 use crate::api::*;
 
+/*
+NOTE: Need to use postfix ordering, and track the height
+variable, instead of depth.
+
+
+*/
+
+/*
+{
+    int a;
+    int b;
+    {
+        int c;
+    }
+}
+
+Post order
+(int a) (int b) (int c) Scope Scope
+
+Post order with sentinel
+ScopeOpen (int a) ScopeOpen (int b) (int c) Scope Scope
+
+Post order with count
+(int a) (int b) (int c) Scope(2) Scope(2)
+
+Post order with tree "height"
+(int a)(0) (int b)(0) (int c)(0) Scope(1) Scope(2)
+
+
+ */
+
 #[derive(Debug, Clone, Copy, StructOfArray)]
 pub struct AstNode {
     pub kind: AstNodeKind,
     pub start: u32,
-    pub depth: u16,
+    pub height: u16,
     pub data: u64,
 
     // pub id: u32,
@@ -25,6 +56,7 @@ pub enum AstNodeKind {
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
     FunctionDefinition(AstFunctionDefinition),
+    EOF(()),
 }
 }
 

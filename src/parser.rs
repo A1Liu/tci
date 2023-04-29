@@ -38,30 +38,36 @@ struct Parser<'a> {
 ///
 /// It can be "dereferenced" to get the depth value
 /// in the current parsing function.
-struct NodeTracker<'a> {
+struct NodeTracker {
     start: u32,
-    depth: u16,
-    tracker: &'a ParserTracker,
+    height: u16,
 }
 
-impl<'a> Drop for NodeTracker<'a> {
-    fn drop(&mut self) {
-        self.tracker.depth.set(self.depth);
+#[derive(Clone, Copy)]
+struct NodeResult {
+    height: u16,
+}
+
+impl NodeTracker {
+    fn child(&mut self, res: NodeResult) {
+        self.height = core::cmp::max(self.height, res.height + 1);
+    }
+
+    fn child_opt(&mut self, res: Option<NodeResult>) -> bool {
+        if let Some(res) = res {
+            self.child(res);
+            return true;
+        }
+
+        return false;
     }
 }
 
 impl<'a> Parser<'a> {
-    fn track_node(&mut self) -> NodeTracker<'a> {
-        let depth = self.tracker.depth.get();
-        self.tracker.depth.set(depth + 1);
-
+    fn track_node(&mut self) -> NodeTracker {
         let start = self.tokens.start[self.index];
 
-        return NodeTracker {
-            start,
-            depth,
-            tracker: self.tracker,
-        };
+        return NodeTracker { start, height: 0 };
     }
 
     fn peek_kind(&self) -> TokenKind {
@@ -72,19 +78,23 @@ impl<'a> Parser<'a> {
         return self.tokens.kind[self.index];
     }
 
-    fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) {
+    fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) -> NodeResult {
         let post_order = self.post_order;
         self.post_order += 1;
 
         let ast_node = AstNode {
             kind: kind.into(),
             start: node.start,
-            depth: node.depth,
+            height: node.height,
             post_order,
             data: 0,
         };
 
         self.ast.push(ast_node);
+
+        return NodeResult {
+            height: node.height,
+        };
     }
 }
 
@@ -92,6 +102,7 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
     let tracker = ParserTracker {
         depth: Cell::new(0),
     };
+
     let mut parser = Parser {
         tracker: &tracker,
         post_order: 0,
@@ -102,23 +113,25 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
         ast: AstNodeVec::new(),
     };
 
+    let node = &mut parser.track_node();
+
     while parser.index < parser.tokens.len() {
-        parse_global(&mut parser)?;
+        node.child(parse_global(&mut parser)?);
     }
 
-    let ast = parser.ast;
+    parser.push(node, AstNodeKind::EOF(()));
 
-    // TODO: Sort the AST
+    let ast = parser.ast;
 
     return Ok(ast);
 }
 
-fn parse_global(p: &mut Parser) -> Result<(), Error> {
-    if !parse_declaration(p, DeclarationKind::Variable)? {
-        unimplemented!("a global that's not a declaration");
+fn parse_global(p: &mut Parser) -> Result<NodeResult, Error> {
+    if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
+        return Ok(res);
     };
 
-    return Ok(());
+    unimplemented!("a global that's not a declaration");
 }
 
 enum DeclarationKind {
@@ -126,30 +139,27 @@ enum DeclarationKind {
     Variable,
 }
 
-fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<bool, Error> {
+fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
-    if !parse_declaration_specifier(p) {
-        return Ok(false);
+    if !node.child_opt(parse_declaration_specifier(p)) {
+        return Ok(None);
     };
 
-    while parse_declaration_specifier(p) {}
+    while node.child_opt(parse_declaration_specifier(p)) {}
 
-    parse_declarator(p)?;
+    node.child(parse_declarator(p)?);
 
     if let DeclarationKind::Param = kind {
-        p.push(node, AstDeclaration);
-        return Ok(true);
+        return Ok(Some(p.push(node, AstDeclaration)));
     }
 
-    if parse_block(p)? {
-        p.push(node, AstFunctionDefinition);
-
-        return Ok(true);
+    if node.child_opt(parse_block(p)?) {
+        return Ok(Some(p.push(node, AstFunctionDefinition)));
     }
 
     match p.peek_kind() {
-        TokenKind::Comma | TokenKind::Semicolon => p.push(node, AstDeclaration),
+        TokenKind::Comma | TokenKind::Semicolon => {}
 
         x => panic!("bad character after declartor: {:?}", x),
     }
@@ -157,17 +167,15 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<bool, Erro
     while p.peek_kind() == TokenKind::Comma {
         p.index += 1;
 
-        parse_declarator(p)?;
+        node.child(parse_declarator(p)?);
     }
 
     expect_semicolon(p)?;
 
-    p.push(node, AstDeclaration);
-
-    return Ok(true);
+    return Ok(Some(p.push(node, AstDeclaration)));
 }
 
-fn parse_declaration_specifier(p: &mut Parser) -> bool {
+fn parse_declaration_specifier(p: &mut Parser) -> Option<NodeResult> {
     let node = &mut p.track_node();
 
     let specifier = match p.peek_kind() {
@@ -176,26 +184,24 @@ fn parse_declaration_specifier(p: &mut Parser) -> bool {
         TokenKind::Int => ast::AstSpecifier::Int,
         TokenKind::Long => ast::AstSpecifier::Long,
 
-        _ => return false,
+        _ => return None,
     };
 
     p.index += 1;
-    p.push(node, specifier);
-
-    return true;
+    return Some(p.push(node, specifier));
 }
 
-fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
+fn parse_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
-    while parse_star_declarator(p)? {}
+    while node.child_opt(parse_star_declarator(p)?) {}
 
     let kind = match p.peek_kind() {
-        TokenKind::LParen if parse_func_declarator(p)? => AstDeclarator::Abstract,
+        TokenKind::LParen if node.child_opt(parse_func_declarator(p)?) => AstDeclarator::Abstract,
         TokenKind::LParen => {
             p.index += 1;
 
-            parse_declarator(p)?;
+            node.child(parse_declarator(p)?);
 
             if p.peek_kind() != TokenKind::RParen {
                 panic!("nested declarator didn't have closing paren");
@@ -215,46 +221,42 @@ fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
     };
 
     loop {
-        let found_array = parse_array_declarator(p)?;
-        let found_func = parse_func_declarator(p)?;
+        let found_array = node.child_opt(parse_array_declarator(p)?);
+        let found_func = node.child_opt(parse_func_declarator(p)?);
 
         if !found_array && !found_func {
             break;
         }
     }
 
-    p.push(node, kind);
-
-    return Ok(());
+    return Ok(p.push(node, kind));
 }
 
-fn parse_star_declarator(p: &mut Parser) -> Result<bool, Error> {
+fn parse_star_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
     if p.peek_kind() != TokenKind::Star {
-        return Ok(false);
+        return Ok(None);
     }
 
     p.index += 1;
 
-    while parse_declaration_specifier(p) {}
+    while node.child_opt(parse_declaration_specifier(p)) {}
 
-    p.push(node, AstDerivedDeclarator::Pointer);
-
-    return Ok(true);
+    return Ok(Some(p.push(node, AstDerivedDeclarator::Pointer)));
 }
 
-fn parse_array_declarator(p: &mut Parser) -> Result<bool, Error> {
+fn parse_array_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
-    return Ok(false);
+    return Ok(None);
 }
 
-fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
+fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
     if p.peek_kind() != TokenKind::LParen {
-        return Ok(false);
+        return Ok(None);
     }
 
     // We honestly don't know yet whether or not this is a
@@ -266,22 +268,21 @@ fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
     // abstract declarator
     if p.peek_kind() == TokenKind::RParen {
         p.index += 1;
-        p.push(node, AstDerivedDeclarator::Function);
-        return Ok(true);
+        return Ok(Some(p.push(node, AstDerivedDeclarator::Function)));
     }
 
-    if !parse_declaration(p, DeclarationKind::Param)? {
+    if !node.child_opt(parse_declaration(p, DeclarationKind::Param)?) {
         // We didn't find a declaration; this means we need to backtrack to before
         // the parenthesis, and parse the next guy as an abstract declarator.
         p.index -= 1;
 
-        return Ok(false);
+        return Ok(None);
     }
 
     while p.peek_kind() == TokenKind::Comma {
         p.index += 1;
 
-        if !parse_declaration(p, DeclarationKind::Param)? {
+        if !node.child_opt(parse_declaration(p, DeclarationKind::Param)?) {
             panic!("why not");
         }
     }
@@ -304,29 +305,39 @@ fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
     }
 
     p.index += 1;
-    p.push(node, kind);
 
-    return Ok(true);
+    return Ok(Some(p.push(node, kind)));
 }
 
-fn parse_statement(p: &mut Parser) -> Result<(), Error> {
-    match () {
-        _ if parse_declaration(p, DeclarationKind::Variable)? => {}
-        _ if parse_block(p)? => {}
-        _ if parse_return(p)? => {}
-        _ => parse_expr(p)?,
-    }
+fn parse_statement(p: &mut Parser) -> Result<NodeResult, Error> {
+    let node = &mut p.track_node();
+
+    let res = 'stmt: {
+        if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
+            break 'stmt res;
+        }
+
+        if let Some(res) = parse_block(p)? {
+            break 'stmt res;
+        }
+
+        if let Some(res) = parse_return(p)? {
+            break 'stmt res;
+        }
+
+        break 'stmt parse_expr(p)?;
+    };
 
     expect_semicolon(p)?;
 
-    return Ok(());
+    return Ok(res);
 }
 
-fn parse_block(p: &mut Parser) -> Result<bool, Error> {
+fn parse_block(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
     if p.peek_kind() != TokenKind::LBrace {
-        return Ok(false);
+        return Ok(None);
     }
 
     p.index += 1;
@@ -336,41 +347,38 @@ fn parse_block(p: &mut Parser) -> Result<bool, Error> {
     }
 
     while p.peek_kind() != TokenKind::RBrace {
-        parse_statement(p)?;
+        node.child(parse_statement(p)?);
     }
 
     p.index += 1;
-    p.push(node, AstStatement::Block);
-
-    return Ok(true);
+    return Ok(Some(p.push(node, AstStatement::Block)));
 }
 
-fn parse_return(p: &mut Parser) -> Result<bool, Error> {
+fn parse_return(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
     match p.peek_kind() {
         TokenKind::Return => p.index += 1,
-        _ => return Ok(false),
+        _ => return Ok(None),
     }
 
     if p.peek_kind() != TokenKind::Semicolon {
-        parse_expr(p)?;
+        node.child(parse_expr(p)?);
     }
 
-    p.push(node, AstStatement::Ret);
-
-    return Ok(true);
+    return Ok(Some(p.push(node, AstStatement::Ret)));
 }
 
-fn parse_expr(p: &mut Parser) -> Result<(), Error> {
+fn parse_expr(p: &mut Parser) -> Result<NodeResult, Error> {
     return parse_precedence_climbing_expr(p, 0);
 }
 
 /// Handles commas, assignments, ternary, and binary expressions
-fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<(), Error> {
+fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
+    let mut res = parse_prefix_expr(p)?;
 
-    parse_prefix_expr(p)?;
+    node.child(res);
 
     while let Some(info) = get_precedence(p.peek_kind()) {
         if info.precedence < min_precedence {
@@ -388,12 +396,13 @@ fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<
             next_min_precedence += 1;
         }
 
-        parse_precedence_climbing_expr(p, next_min_precedence)?;
+        node.child(parse_precedence_climbing_expr(p, next_min_precedence)?);
 
-        p.push(node, info.op);
+        res = p.push(node, info.op);
+        node.child(res);
     }
 
-    return Ok(());
+    return Ok(res);
 }
 
 struct PrecedenceInfo {
@@ -456,19 +465,19 @@ fn get_precedence(t: TokenKind) -> Option<PrecedenceInfo> {
     });
 }
 
-fn parse_prefix_expr(p: &mut Parser) -> Result<(), Error> {
+fn parse_prefix_expr(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
     return parse_postfix_expr(p);
 }
 
-fn parse_postfix_expr(p: &mut Parser) -> Result<(), Error> {
+fn parse_postfix_expr(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
     return parse_atom_expr(p);
 }
 
-fn parse_atom_expr(p: &mut Parser) -> Result<(), Error> {
+fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
     let expr = match p.peek_kind() {
@@ -487,9 +496,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<(), Error> {
     };
 
     p.index += 1;
-    p.push(node, expr);
-
-    return Ok(());
+    return Ok(p.push(node, expr));
 }
 
 fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
