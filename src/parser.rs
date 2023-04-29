@@ -181,6 +181,8 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<bool, Erro
 
     expect_semicolon(p)?;
 
+    p.push(node, AstDeclaration);
+
     return Ok(true);
 }
 
