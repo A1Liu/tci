@@ -141,7 +141,7 @@ impl FileDb {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
 #[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
 #[non_exhaustive]
 #[repr(u32)]
