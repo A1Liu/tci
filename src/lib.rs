@@ -2,6 +2,8 @@
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
 
+use api::AstNodeKind;
+
 #[macro_use]
 extern crate soa_derive;
 #[macro_use]
@@ -32,6 +34,7 @@ pub mod api {
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
     pub use super::macros::expand_macros;
+    pub use super::parser::parse;
 
     pub use std::collections::HashMap;
 
@@ -58,6 +61,14 @@ pub struct PipelineOutput<'a> {
 
     lexer: Vec<lexer::TokenKind>,
     macro_expansion: Vec<lexer::TokenKind>,
+    parsed_ast: Vec<SimpleAstNode>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SimpleAstNode {
+    kind: AstNodeKind,
+    depth: u16,
+    preorder: u32,
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
@@ -98,10 +109,22 @@ pub fn run_test_code(test_source: &str) -> PipelineOutput {
         assert_eq!(&macro_expansion_res.kind, expected, "Invalid token stream");
     }
 
+    let parsed_ast = parse(&macro_expansion_res).expect("parsing failed");
+    let mut simple_ast = Vec::with_capacity(parsed_ast.len());
+    for node in parsed_ast.as_slice() {
+        simple_ast.push(SimpleAstNode {
+            kind: *node.kind,
+            depth: *node.depth,
+            preorder: *node.pre_order,
+        });
+    }
+    simple_ast.sort_by_key(|n| n.preorder);
+
     return PipelineOutput {
         source,
         lexer: lexer_res.tokens.kind,
         macro_expansion: macro_expansion_res.kind,
+        parsed_ast: simple_ast,
     };
 }
 

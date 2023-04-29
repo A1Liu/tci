@@ -88,6 +88,10 @@ impl<'a> Parser<'a> {
     }
 
     fn peek_kind(&self) -> TokenKind {
+        if self.index >= self.tokens.len() {
+            return TokenKind::EOF;
+        }
+
         return self.tokens.kind[self.index];
     }
 
@@ -121,20 +125,27 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
         parse_global(&mut parser)?;
     }
 
-    return Ok(parser.ast);
+    let ast = parser.ast;
+
+    // TODO: Sort the AST
+
+    return Ok(ast);
 }
 
 fn parse_global(p: &mut Parser) -> Result<(), Error> {
-    let node = p.track_node();
-
-    if !parse_declaration(p)? {
+    if !parse_declaration(p, DeclarationKind::Variable)? {
         unimplemented!("a global that's not a declaration");
     };
 
     return Ok(());
 }
 
-fn parse_declaration(p: &mut Parser) -> Result<bool, Error> {
+enum DeclarationKind {
+    Param,
+    Variable,
+}
+
+fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<bool, Error> {
     let node = &mut p.track_node();
 
     if !parse_declaration_specifier(p) {
@@ -145,8 +156,13 @@ fn parse_declaration(p: &mut Parser) -> Result<bool, Error> {
 
     parse_declarator(p)?;
 
+    if let DeclarationKind::Param = kind {
+        p.push(node, AstDeclaration);
+        return Ok(true);
+    }
+
     if parse_block(p)? {
-        p.consume(node, AstFunctionDefinition);
+        p.push(node, AstFunctionDefinition);
 
         return Ok(true);
     }
@@ -162,6 +178,8 @@ fn parse_declaration(p: &mut Parser) -> Result<bool, Error> {
 
         parse_declarator(p)?;
     }
+
+    expect_semicolon(p)?;
 
     return Ok(true);
 }
@@ -186,16 +204,125 @@ fn parse_declaration_specifier(p: &mut Parser) -> bool {
 fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
     let node = &mut p.track_node();
 
-    unimplemented!()
+    while parse_star_declarator(p)? {}
+
+    match p.peek_kind() {
+        TokenKind::LParen if parse_func_declarator(p)? => p.push(node, AstDeclarator::Abstract),
+        TokenKind::LParen => {
+            p.consume(node, AstDeclarator::NestedWithChild);
+
+            parse_declarator(p)?;
+
+            if p.peek_kind() != TokenKind::RParen {
+                panic!("nested declarator didn't have closing paren");
+            }
+
+            p.index += 1;
+        }
+
+        TokenKind::Ident => {
+            println!("ident at depth: {}", node.depth);
+            p.consume(node, AstDeclarator::Ident);
+        }
+
+        _ => p.push(node, AstDeclarator::Abstract),
+    }
+
+    loop {
+        let found_array = parse_array_declarator(p)?;
+        let found_func = parse_func_declarator(p)?;
+
+        if !found_array && !found_func {
+            break;
+        }
+    }
+
+    return Ok(());
+}
+
+fn parse_star_declarator(p: &mut Parser) -> Result<bool, Error> {
+    let node = &mut p.track_node();
+
+    if p.peek_kind() != TokenKind::Star {
+        return Ok(false);
+    }
+
+    p.consume(node, AstDerivedDeclarator::Pointer);
+
+    while parse_declaration_specifier(p) {}
+
+    return Ok(true);
+}
+
+fn parse_array_declarator(p: &mut Parser) -> Result<bool, Error> {
+    let node = &mut p.track_node();
+
+    return Ok(false);
+}
+
+fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
+    let node = &mut p.track_node();
+
+    if p.peek_kind() != TokenKind::LParen {
+        return Ok(false);
+    }
+
+    // We honestly don't know yet whether or not this is a
+    // func declarator; later on we need to then we might need to
+    // backtrack a bit.
+    p.index += 1;
+
+    // We know it's a function declarator because `()` is illegal as an
+    // abstract declarator
+    if p.peek_kind() == TokenKind::RParen {
+        p.consume(node, AstDerivedDeclarator::Function);
+        return Ok(true);
+    }
+
+    if !parse_declaration(p, DeclarationKind::Param)? {
+        // We didn't find a declaration; this means we need to backtrack to before
+        // the parenthesis, and parse the next guy as an abstract declarator.
+        p.index -= 1;
+
+        return Ok(false);
+    }
+
+    while p.peek_kind() == TokenKind::Comma {
+        p.index += 1;
+
+        if !parse_declaration(p, DeclarationKind::Param)? {
+            panic!("why not");
+        }
+    }
+
+    if p.peek_kind() == TokenKind::DotDotDot {
+        p.consume(node, AstDerivedDeclarator::FunctionElipsis);
+    } else {
+        p.push(node, AstDerivedDeclarator::Function);
+    }
+
+    if p.peek_kind() != TokenKind::RParen {
+        println!("before: {:?}", p.tokens.kind[p.index - 1]);
+        println!("after: {:?}", p.tokens.kind[p.index + 1]);
+        panic!(
+            "missing closing paren for func declarator (got {:?})",
+            p.peek_kind()
+        );
+    }
+    p.index += 1;
+
+    return Ok(true);
 }
 
 fn parse_statement(p: &mut Parser) -> Result<(), Error> {
     match () {
-        _ if parse_declaration(p)? => {}
+        _ if parse_declaration(p, DeclarationKind::Variable)? => {}
         _ if parse_block(p)? => {}
         _ if parse_return(p)? => {}
         _ => parse_expr(p)?,
     }
+
+    expect_semicolon(p)?;
 
     return Ok(());
 }
@@ -203,7 +330,23 @@ fn parse_statement(p: &mut Parser) -> Result<(), Error> {
 fn parse_block(p: &mut Parser) -> Result<bool, Error> {
     let node = &mut p.track_node();
 
-    unimplemented!()
+    if p.peek_kind() != TokenKind::LBrace {
+        return Ok(false);
+    }
+
+    p.consume(node, AstStatement::Block);
+
+    while p.peek_kind() == TokenKind::Semicolon {
+        p.index += 1;
+    }
+
+    while p.peek_kind() != TokenKind::RBrace {
+        parse_statement(p)?;
+    }
+
+    p.index += 1;
+
+    return Ok(true);
 }
 
 fn parse_return(p: &mut Parser) -> Result<bool, Error> {
@@ -222,31 +365,95 @@ fn parse_return(p: &mut Parser) -> Result<bool, Error> {
 }
 
 fn parse_expr(p: &mut Parser) -> Result<(), Error> {
-    return parse_comma_expr(p);
+    return parse_precedence_climbing_expr(p, 0);
 }
 
-fn parse_comma_expr(p: &mut Parser) -> Result<(), Error> {
+/// Handles commas, assignments, ternary, and binary expressions
+fn parse_precedence_climbing_expr(p: &mut Parser, min_precedence: u8) -> Result<(), Error> {
     let node = &mut p.track_node();
 
-    return parse_assign_expr(p);
+    parse_prefix_expr(p)?;
+
+    while let Some(info) = get_precedence(p.peek_kind()) {
+        if info.precedence < min_precedence {
+            break;
+        }
+
+        p.consume(node, info.op);
+
+        if let AstExpr::Ternary = info.op {
+            unimplemented!("TODO: special logic for middle part of ternary")
+        }
+
+        let mut next_min_precedence = info.precedence;
+        if info.left_associative {
+            next_min_precedence += 1;
+        }
+
+        parse_precedence_climbing_expr(p, next_min_precedence)?;
+    }
+
+    return Ok(());
 }
 
-fn parse_assign_expr(p: &mut Parser) -> Result<(), Error> {
-    let node = &mut p.track_node();
-
-    return parse_ternary_expr(p);
+struct PrecedenceInfo {
+    left_associative: bool,
+    precedence: u8,
+    op: AstExpr,
 }
 
-fn parse_ternary_expr(p: &mut Parser) -> Result<(), Error> {
-    let node = &mut p.track_node();
+fn get_precedence(t: TokenKind) -> Option<PrecedenceInfo> {
+    use ast::{AstExpr::*, BinOp::*};
+    let (left_associative, precedence, op) = match t {
+        TokenKind::Star => (true, 100, BinOp(Mul)),
+        TokenKind::Percent => (true, 100, BinOp(Mod)),
+        TokenKind::Slash => (true, 100, BinOp(Div)),
 
-    return parse_bin_expr(p);
-}
+        TokenKind::Plus => (true, 90, BinOp(Add)),
+        TokenKind::Dash => (true, 90, BinOp(Sub)),
 
-fn parse_bin_expr(p: &mut Parser) -> Result<(), Error> {
-    let node = &mut p.track_node();
+        TokenKind::LtLt => (true, 80, BinOp(LShift)),
+        TokenKind::GtGt => (true, 80, BinOp(RShift)),
 
-    return parse_prefix_expr(p);
+        TokenKind::Lt => (true, 70, BinOp(Lt)),
+        TokenKind::Leq => (true, 70, BinOp(Leq)),
+        TokenKind::Gt => (true, 70, BinOp(Gt)),
+        TokenKind::Geq => (true, 70, BinOp(Geq)),
+
+        TokenKind::EqEq => (true, 70, BinOp(Eq)),
+        TokenKind::Neq => (true, 70, BinOp(Neq)),
+
+        TokenKind::Amp => (true, 66, BinOp(BitAnd)),
+        TokenKind::Caret => (true, 63, BinOp(BitXor)),
+        TokenKind::Line => (true, 60, BinOp(BitOr)),
+
+        TokenKind::AmpAmp => (true, 56, BinOp(BoolAnd)),
+        TokenKind::LineLine => (true, 50, BinOp(BoolOr)),
+
+        TokenKind::Question => (true, 50, Ternary),
+
+        TokenKind::Eq => (true, 40, Assign),
+        TokenKind::PlusEq => (true, 40, BinOpAssign(Add)),
+        TokenKind::DashEq => (true, 40, BinOpAssign(Sub)),
+        TokenKind::StarEq => (true, 40, BinOpAssign(Mul)),
+        TokenKind::PercentEq => (true, 40, BinOpAssign(Mod)),
+        TokenKind::SlashEq => (true, 40, BinOpAssign(Div)),
+        TokenKind::LtLtEq => (true, 40, BinOpAssign(LShift)),
+        TokenKind::GtGtEq => (true, 40, BinOpAssign(RShift)),
+        TokenKind::AmpEq => (true, 40, BinOpAssign(BitAnd)),
+        TokenKind::CaretEq => (true, 40, BinOpAssign(BitXor)),
+        TokenKind::LineEq => (true, 40, BinOpAssign(BitOr)),
+
+        TokenKind::Comma => (true, 40, BinOp(Comma)),
+
+        _ => return None,
+    };
+
+    return Some(PrecedenceInfo {
+        left_associative,
+        precedence,
+        op,
+    });
 }
 
 fn parse_prefix_expr(p: &mut Parser) -> Result<(), Error> {
@@ -274,10 +481,24 @@ fn parse_atom_expr(p: &mut Parser) -> Result<(), Error> {
         // TODO: Remove this and replace with actually reasonable logic
         TokenKind::PreprocessingNum => AstExpr::IntLit,
 
+        TokenKind::StringLit => AstExpr::StringLit,
+
         _ => panic!("OOOOOPS"),
     };
 
     p.consume(node, expr);
+
+    return Ok(());
+}
+
+fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
+    if p.peek_kind() != TokenKind::Semicolon {
+        panic!("expected a semicolon");
+    }
+
+    while p.peek_kind() == TokenKind::Semicolon {
+        p.index += 1;
+    }
 
     return Ok(());
 }

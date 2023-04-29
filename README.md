@@ -51,3 +51,5 @@ In the UI:
 - Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
 - Translation of C standard to AST types - https://github.com/vickenty/lang-c/blob/master/src/ast.rs
 - Compiler Architecture - https://scholarworks.iu.edu/dspace/handle/2022/24749
+- Precedence climbing method - https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing
+
