@@ -72,12 +72,6 @@ impl<'a> Parser<'a> {
         return self.tokens.kind[self.index];
     }
 
-    fn consume<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) {
-        self.index += 1;
-
-        self.push(node, kind);
-    }
-
     fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) {
         let post_order = self.post_order;
         self.post_order += 1;
@@ -157,7 +151,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<bool, Erro
     match p.peek_kind() {
         TokenKind::Comma | TokenKind::Semicolon => p.push(node, AstDeclaration),
 
-        _ => panic!("bad character after declartor"),
+        x => panic!("bad character after declartor: {:?}", x),
     }
 
     while p.peek_kind() == TokenKind::Comma {
@@ -185,7 +179,8 @@ fn parse_declaration_specifier(p: &mut Parser) -> bool {
         _ => return false,
     };
 
-    p.consume(node, specifier);
+    p.index += 1;
+    p.push(node, specifier);
 
     return true;
 }
@@ -211,7 +206,10 @@ fn parse_declarator(p: &mut Parser) -> Result<(), Error> {
             AstDeclarator::NestedWithChild
         }
 
-        TokenKind::Ident => AstDeclarator::Ident,
+        TokenKind::Ident => {
+            p.index += 1;
+            AstDeclarator::Ident
+        }
 
         _ => AstDeclarator::Abstract,
     };
@@ -267,7 +265,8 @@ fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
     // We know it's a function declarator because `()` is illegal as an
     // abstract declarator
     if p.peek_kind() == TokenKind::RParen {
-        p.consume(node, AstDerivedDeclarator::Function);
+        p.index += 1;
+        p.push(node, AstDerivedDeclarator::Function);
         return Ok(true);
     }
 
@@ -304,7 +303,8 @@ fn parse_func_declarator(p: &mut Parser) -> Result<bool, Error> {
         );
     }
 
-    p.consume(node, kind);
+    p.index += 1;
+    p.push(node, kind);
 
     return Ok(true);
 }
@@ -339,7 +339,8 @@ fn parse_block(p: &mut Parser) -> Result<bool, Error> {
         parse_statement(p)?;
     }
 
-    p.consume(node, AstStatement::Block);
+    p.index += 1;
+    p.push(node, AstStatement::Block);
 
     return Ok(true);
 }
@@ -485,7 +486,8 @@ fn parse_atom_expr(p: &mut Parser) -> Result<(), Error> {
         _ => panic!("OOOOOPS"),
     };
 
-    p.consume(node, expr);
+    p.index += 1;
+    p.push(node, expr);
 
     return Ok(());
 }

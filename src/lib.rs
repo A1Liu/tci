@@ -68,7 +68,7 @@ pub struct PipelineOutput<'a> {
 pub struct SimpleAstNode {
     kind: AstNodeKind,
     depth: u16,
-    preorder: u32,
+    post_order: u32,
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
@@ -115,10 +115,10 @@ pub fn run_test_code(test_source: &str) -> PipelineOutput {
         simple_ast.push(SimpleAstNode {
             kind: *node.kind,
             depth: *node.depth,
-            preorder: *node.pre_order,
+            post_order: *node.post_order,
         });
     }
-    simple_ast.sort_by_key(|n| n.preorder);
+    simple_ast.sort_by_key(|n| n.post_order);
 
     return PipelineOutput {
         source,
