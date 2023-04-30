@@ -13,14 +13,14 @@ struct Cli {
     out_file: Option<std::path::PathBuf>,
 }
 
+#[cfg(debug_assertions)]
 fn main() {
     let args = Cli::parse();
 
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");
 
-
-    let result = tci::run_test_code(&*test_case);
+    let result = tci::api::run_test_code(&*test_case);
 
     let text = result.test_case();
 
@@ -32,3 +32,6 @@ fn main() {
         print!("{}", text);
     }
 }
+
+#[cfg(not(debug_assertions))]
+fn main() {}

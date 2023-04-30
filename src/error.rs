@@ -1,3 +1,7 @@
+// translate file by removing all the `\'-`\n' characters,
+// then during lexing, get the set of file start-points
+// to use during error generation.
+
 #[derive(Debug, Clone)]
 pub struct ErrorContext {
     translation_unit: u32,
