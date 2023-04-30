@@ -64,10 +64,10 @@ pub struct PipelineOutput<'a> {
 
 #[derive(serde::Serialize)]
 pub struct SimpleAstNode {
-    kind: AstNodeKind,
-    parent: u32,
-    post_order: u32,
-    height: u16,
+    pub kind: AstNodeKind,
+    pub parent: u32,
+    pub post_order: u32,
+    pub height: u16,
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
