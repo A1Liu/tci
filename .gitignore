@@ -3,13 +3,11 @@
 /.dist
 /.cache
 /.pkg
-/.letsencrypt
 /.next
 /out
 
-/lib/codespan-reporting/target
-/letsencrypt
-/node_modules
+pkg
+node_modules
 
 /test.c
 /a.out
