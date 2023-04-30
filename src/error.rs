@@ -1,14 +1,40 @@
 #[derive(Debug, Clone)]
-pub struct Error {
-    pub message: String,
-    pub start: u32,
+pub struct ErrorContext {
+    translation_unit: u32,
+    errors: Vec<Error>,
+}
+
+impl ErrorContext {
+    pub fn new(translation_unit: u32) -> Self {
+        return Self {
+            translation_unit,
+            errors: Vec::new(),
+        };
+    }
+
+    pub fn add(&mut self, err: Error) {
+        self.errors.push(err);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Error {
+    Any { message: &'static str, idx: u32 },
+
+    UnrecognizedCharacter { idx: u32 },
+
+    UnrecognizedToken { idx: u32 },
 }
 
 impl Error {
-    pub fn new(s: &str, start: u32) -> Error {
-        return Error {
-            message: s.to_string(),
-            start,
-        };
+    pub fn message(&self) -> String {
+        use Error::*;
+
+        match *self {
+            Any { message, idx } => format!("{}", message),
+
+            UnrecognizedCharacter { idx } => format!("unrecognized character"),
+            UnrecognizedToken { idx } => format!("unrecognized token"),
+        }
     }
 }
