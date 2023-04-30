@@ -1,3 +1,4 @@
+import Link from "next/link";
 import styles from "./tci.module.css";
 
 export function App() {
@@ -11,12 +12,12 @@ export function App() {
       }}
     >
       <div className={styles.nameBox}>
-        <a className={styles.name} href="/">
+        <Link className={styles.name} href="/">
           TCI
-        </a>
-        <a className={styles.name} href="https://github.com/A1Liu/tci">
+        </Link>
+        <Link className={styles.name} href="https://github.com/A1Liu/tci">
           Check out TCI on Github!
-        </a>
+        </Link>
       </div>
     </div>
   );

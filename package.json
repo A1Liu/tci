@@ -15,6 +15,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "tci": "file:./web/pkg",
     "@monaco-editor/react": "^4.0.7",
     "autoprefixer": "10.4.14",
     "eslint": "8.39.0",
