@@ -8,6 +8,7 @@
   "private": false,
   "scripts": {
     "start": "next start",
+    "build-wasm": "wasm-pack build web",
     "build": "next build",
     "deploy": "git push origin main:production",
     "dev": "next",
@@ -27,6 +28,7 @@
     "react-is": ">= 16.8.0"
   },
   "devDependencies": {
+    "wasm-pack": "^0.11.0",
     "@types/node": "18.16.0",
     "@types/react": "18.0.38",
     "@types/react-dom": "18.0.11",

@@ -36,11 +36,10 @@ pub mod api {
     pub use super::macros::expand_macros;
     pub use super::parser::parse;
 
-    pub use std::collections::HashMap;
-
     pub use super::run_test_code;
 
-    pub use serde::{Deserialize, Serialize};
+    pub(crate) use serde::{Deserialize, Serialize};
+    pub(crate) use std::collections::HashMap;
 
     #[cfg(test)]
     pub use ntest::*;

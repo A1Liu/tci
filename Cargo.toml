@@ -11,3 +11,4 @@ opt-level = 0
 [profile.release]
 opt-level = "z"
 lto = true
+debug = 0
