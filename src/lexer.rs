@@ -1,7 +1,6 @@
 use crate::{api::*, filedb::FileType};
 
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum TokenKind {
     PreprocessingNum,
 
@@ -104,8 +103,7 @@ pub enum TokenKind {
     Ident,
 }
 
-#[derive(Clone, Copy, StructOfArray)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Clone, Copy, StructOfArray, Serialize, Deserialize)]
 pub struct Token {
     pub kind: TokenKind,
     pub start: u32,
