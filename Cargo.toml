@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
-    "tci",
+    "compiler",
     "web"
 ]
 

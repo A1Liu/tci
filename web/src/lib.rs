@@ -1,5 +1,5 @@
+use compiler::api::*;
 use serde::Serialize;
-use tci::api::*;
 use wasm_bindgen::prelude::*;
 
 #[global_allocator]
@@ -10,7 +10,7 @@ pub struct PipelineOutput {
     source: String,
     lexer: Vec<TokenKind>,
     macro_expansion: Vec<TokenKind>,
-    parsed_ast: Vec<tci::SimpleAstNode>,
+    parsed_ast: Vec<compiler::SimpleAstNode>,
 }
 
 #[wasm_bindgen]
@@ -31,7 +31,7 @@ pub fn compile(source: String) -> Result<JsValue, String> {
     let parsed_ast = parse(&macro_expansion_res).map_err(|_e| "parsing failed")?;
     let mut simple_ast = Vec::with_capacity(parsed_ast.len());
     for node in parsed_ast.as_slice() {
-        simple_ast.push(tci::SimpleAstNode {
+        simple_ast.push(compiler::SimpleAstNode {
             kind: *node.kind,
             parent: *node.parent,
             post_order: *node.post_order,
