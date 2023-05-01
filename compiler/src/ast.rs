@@ -101,7 +101,11 @@ pub enum UnaryOp {
 }
 
 /// Handles struct and union declarations:
+///
+/// ```text
 /// struct a { int b; }
+/// ```
+///
 /// In the above, it would have children for each field
 /// declaration, and a child for the identifier as well.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -200,20 +204,39 @@ pub enum AstSpecifier {
 }
 
 /// A typical declaration; this is a stand-in for
-/// int *i[1] = {NULL}; or something similar
+/// `int *i[1] = {NULL};` or something similar
 ///
 /// Children: AstSpecifier for each specifier, AstStructDeclaration if necessary, an AstInitDeclarator for each declared variable
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct AstDeclaration;
 
-/// A typical declaration; this is a stand-in for
-/// int *i[1] = {NULL}; or something similar
+/// A function definition
 ///
 /// Data: DeclarationSpecifiers
 /// Children: AstSpecifier for each specifier, san AstDeclarator, and all the statements associated with the function
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
 
+/// Prints the tree in a text format, so that it's a lil easier to read.
+/// Output right now looks like this:
+///
+/// ```text
+/// FunctionDefinition(AstFunctionDefinition)                                  
+/// └ Specifier(Int)                                                               
+/// └ Declarator(Ident)                                                            
+/// | └ DerivedDeclarator(Function)                                                
+/// | | └ Declaration(AstDeclaration)                                              
+/// | | | └ Specifier(Int)                                                         
+/// | | | └ Declarator(Ident)                                                      
+/// | | └ Declaration(AstDeclaration)                                              
+/// | | | └ Specifier(Char)                                                        
+/// | | | └ Declarator(Ident)                                                      
+/// | | | | └ DerivedDeclarator(Pointer)                                           
+/// | | | | └ DerivedDeclarator(Pointer)                                           
+/// └ Statement(Block)                                                             
+/// | └ Statement(Ret)                                                             
+/// | | └ Expr(StringLit)
+/// ```
 pub fn display_tree(ast: &AstNodeVec) -> String {
     let mut children = Vec::<Vec<usize>>::with_capacity(ast.len());
     children.resize_with(ast.len(), || Vec::new());
