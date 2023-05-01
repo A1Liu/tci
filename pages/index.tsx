@@ -4,7 +4,7 @@ import Editor, { Monaco } from "@monaco-editor/react";
 import type monaco from "monaco-editor";
 import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
-import { CompileResult } from "@/components/compiler.schema";
+import { CompileResult, CompilerOutput } from "@/components/compiler.schema";
 
 const INITIAL_TEXT = `
 int main() {
@@ -13,7 +13,8 @@ int main() {
 `;
 
 export function App() {
-  const [result, setResult] = React.useState<CompileResult>();
+  const [result, setResult] =
+    React.useState<Partial<CompileResult & { error?: any }>>();
 
   const worker = useCompilerWorker((res) => {
     switch (res.kind) {
@@ -25,6 +26,7 @@ export function App() {
         console.log("message:", res.message);
         break;
       case "error":
+        setResult({ error: res.error });
         console.error(res.error);
         break;
       case "result":
@@ -107,7 +109,9 @@ export function App() {
                 {JSON.stringify(
                   result.parsed_ast.map((obj) => ({
                     ...obj,
-                    kind: Object.entries(obj.kind)[0].join(","),
+                    kind: `${obj.kind.kind}${
+                      obj.kind.data ? `,${obj.kind.data}` : ""
+                    }`,
                   })),
                   undefined,
                   2

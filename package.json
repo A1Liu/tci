@@ -8,7 +8,7 @@
   "private": false,
   "scripts": {
     "start": "next start",
-    "build-wasm": "wasm-pack build web",
+    "build-wasm": "wasm-pack build tci-web && yarn install --check-files",
     "build": "next build",
     "deploy": "git push origin main:production",
     "dev": "next",
@@ -26,7 +26,7 @@
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-is": ">= 16.8.0",
-    "tci": "file:./web/pkg",
+    "tci-web": "file:./tci-web/pkg",
     "zod": "^3.21.4"
   },
   "devDependencies": {

@@ -2394,7 +2394,7 @@ tar@^6.1.11:
     mkdirp "^1.0.3"
     yallist "^4.0.0"
 
-"tci@file:./web/pkg":
+"tci-web@file:./tci-web/pkg":
   version "0.1.0"
 
 text-table@^0.2.0:

@@ -21,8 +21,8 @@ pub struct AstNode {
 }
 
 macro_attr! {
-#[derive(Debug, Clone, Copy, EnumFromInner!)]
-#[ derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, EnumFromInner!)]
+#[serde(tag = "kind", content = "data")]
 pub enum AstNodeKind {
     Expr(AstExpr),
     Statement(AstStatement),
@@ -31,9 +31,11 @@ pub enum AstNodeKind {
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
     FunctionDefinition(AstFunctionDefinition),
-    EOF(()),
 }
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AstEof;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AstExpr {

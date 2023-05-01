@@ -12,7 +12,10 @@ export const CompileResult = z.object({
   parsed_ast: z.array(
     z.object({
       parent: z.number(),
-      kind: z.record(z.string(), z.string()),
+      kind: z.object({
+        kind: z.string(),
+        data: z.any().optional(),
+      }),
     })
   ),
 });
@@ -22,7 +25,7 @@ export const CompilerOutput = z.union([
   z.object({ kind: z.literal("init") }),
   z.object({
     kind: z.literal("result"),
-    result: z.any(),
+    result: CompileResult,
   }),
   z.object({
     kind: z.literal("error"),

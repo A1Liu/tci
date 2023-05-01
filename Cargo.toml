@@ -2,7 +2,7 @@
 
 members = [
     "compiler",
-    "web"
+    "tci-web"
 ]
 
 [profile.dev]

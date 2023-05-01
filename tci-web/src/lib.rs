@@ -14,7 +14,7 @@ pub struct PipelineOutput {
 }
 
 #[wasm_bindgen]
-pub fn compile(source: String) -> Result<JsValue, String> {
+pub fn compile(source: String) -> Result<String, String> {
     let mut source_string = source.to_string();
     if !source_string.ends_with("\n") {
         source_string.push('\n');
@@ -46,5 +46,7 @@ pub fn compile(source: String) -> Result<JsValue, String> {
         parsed_ast: simple_ast,
     };
 
-    return Ok(serde_wasm_bindgen::to_value(&out).unwrap());
+    let out = serde_json::to_string(&out).map_err(|e| e.to_string())?;
+
+    return Ok(out);
 }

@@ -1,4 +1,4 @@
-import { compile } from "tci";
+import { compile } from "tci-web";
 import { CompileCommand, CompilerOutput } from "./compiler.schema";
 
 const post = (message: CompilerOutput) => postMessage(message);
@@ -14,7 +14,7 @@ onmessage = (event) => {
     const { source } = parseResult.data;
     const result = compile(source);
 
-    post({ kind: "result", result });
+    post({ kind: "result", result: JSON.parse(result) });
   } catch (error) {
     console.log(error);
     post({
