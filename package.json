@@ -8,8 +8,8 @@
   "private": false,
   "scripts": {
     "start": "next start",
-    "build-wasm": "wasm-pack build tci-web && yarn install --check-files",
-    "build": "next build",
+    "link-wasm": "cd tci-web/pkg && yarn link && cd ../.. && yarn link tci-web",
+    "build-wasm": "wasm-pack build --debug tci-web",
     "deploy": "git push origin main:production",
     "dev": "next",
     "lint": "next lint"
