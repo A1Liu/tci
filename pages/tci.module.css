@@ -26,3 +26,28 @@
   color: #fff;
   color: rgba(255, 255, 255, var(--text-opacity));
 }
+
+.scrollBox {
+  position: relative;
+  min-height: 33%;
+  width: 100%;
+
+  border-radius: 4px;
+  border: 2px solid black;
+}
+
+.scrollBox .title {
+  position: absolute;
+  top: 0;
+  right: 2rem;
+}
+
+.scrollBox .text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  padding: 10px;
+  overflow-y: scroll;
+}

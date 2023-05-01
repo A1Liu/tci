@@ -34,8 +34,7 @@ macro_rules! throw {
 pub struct Error {
     kind: ErrorKind,
 
-    #[cfg(debug_assertions)]
-    backtrace: std::backtrace::Backtrace,
+    backtrace: Option<std::backtrace::Backtrace>,
 }
 
 impl Error {
@@ -44,7 +43,10 @@ impl Error {
             kind,
 
             #[cfg(debug_assertions)]
-            backtrace: std::backtrace::Backtrace::capture(),
+            backtrace: Some(std::backtrace::Backtrace::capture()),
+
+            #[cfg(not(debug_assertions))]
+            backtrace: None,
         };
     }
 

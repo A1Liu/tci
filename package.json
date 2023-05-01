@@ -15,27 +15,28 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "tci": "file:./web/pkg",
     "@monaco-editor/react": "^4.0.7",
     "autoprefixer": "10.4.14",
     "eslint": "8.39.0",
     "eslint-config-next": "13.3.1",
     "idb-keyval": "^5.0.2",
-    "monaco-editor": "^0.21.2",
+    "monaco-editor": "^0.37.1",
     "next": "13.3.1",
     "prop-types": "^15.7.2",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "react-is": ">= 16.8.0"
+    "react-is": ">= 16.8.0",
+    "tci": "file:./web/pkg",
+    "zod": "^3.21.4"
   },
   "devDependencies": {
-    "wasm-pack": "^0.11.0",
     "@types/node": "18.16.0",
     "@types/react": "18.0.38",
     "@types/react-dom": "18.0.11",
     "postcss": "8.4.23",
     "tailwindcss": "3.3.1",
-    "typescript": "5.0.4"
+    "typescript": "5.0.4",
+    "wasm-pack": "^0.11.0"
   },
   "browserslist": [
     "last 5 chrome version",
