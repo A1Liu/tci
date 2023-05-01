@@ -1,5 +1,5 @@
 [alias]
-wc = "check --target wasm32-unknown-unknown"
+wasm = "build --target wasm32-unknown-unknown"
 
 [build]
 target-dir = ".cargo/target"

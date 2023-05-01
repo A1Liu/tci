@@ -1,4 +1,3 @@
-extern crate tci;
 use clap::Parser;
 
 /// Search for a pattern in a file and display the lines that contain it.
@@ -19,8 +18,7 @@ fn main() {
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");
 
-
-    let result = tci::run_test_code(&*test_case);
+    let result = compiler::api::run_test_code(&*test_case);
 
     let text = result.test_case();
 

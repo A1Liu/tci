@@ -21,8 +21,8 @@ pub struct AstNode {
 }
 
 macro_attr! {
-#[derive(Debug, Clone, Copy, EnumFromInner!)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, EnumFromInner!)]
+#[serde(tag = "kind", content = "data")]
 pub enum AstNodeKind {
     Expr(AstExpr),
     Statement(AstStatement),
@@ -31,12 +31,13 @@ pub enum AstNodeKind {
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
     FunctionDefinition(AstFunctionDefinition),
-    EOF(()),
 }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AstEof;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AstExpr {
     IntLit,     // data: i32
     LongLit,    // data: i64
@@ -61,8 +62,7 @@ pub enum AstExpr {
     BinOpAssign(BinOp), // children: expression being assigned to, expression being assigned
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -87,8 +87,7 @@ pub enum BinOp {
     Comma,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, Serialize, Deserialize)]
 pub enum UnaryOp {
     Neg,
     BoolNot,
@@ -105,15 +104,13 @@ pub enum UnaryOp {
 /// struct a { int b; }
 /// In the above, it would have children for each field
 /// declaration, and a child for the identifier as well.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum StructDeclaration {
     Struct,
     Union,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AstStatement {
     Labeled,            // data: label ; children: statement that is being labelled
     CaseLabeled,        // children: case value expression, statement that is being labelled
@@ -136,8 +133,7 @@ pub enum AstStatement {
 /// `int *const a`, or the `[3]` part of `int b[3]`
 ///
 /// Children: AstSpecifer for each type qualifier
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AstDerivedDeclarator {
     Pointer = 0,
 
@@ -162,8 +158,7 @@ pub enum AstDerivedDeclarator {
 }
 
 /// children: a AstDerivedDeclarator for each derived declarator
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AstDeclarator {
     Abstract,
     /// data: Symbol
@@ -172,8 +167,7 @@ pub enum AstDeclarator {
     NestedWithChild,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AstSpecifier {
     Extern,
     Static,
@@ -209,8 +203,7 @@ pub enum AstSpecifier {
 /// int *i[1] = {NULL}; or something similar
 ///
 /// Children: AstSpecifier for each specifier, AstStructDeclaration if necessary, an AstInitDeclarator for each declared variable
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct AstDeclaration;
 
 /// A typical declaration; this is a stand-in for
@@ -218,6 +211,5 @@ pub struct AstDeclaration;
 ///
 /// Data: DeclarationSpecifiers
 /// Children: AstSpecifier for each specifier, san AstDeclarator, and all the statements associated with the function
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;

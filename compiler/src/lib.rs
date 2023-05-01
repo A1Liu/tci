@@ -15,8 +15,10 @@ extern crate enum_derive;
 #[macro_use]
 extern crate macro_attr;
 
-pub mod ast;
+#[macro_use]
 pub mod error;
+
+pub mod ast;
 pub mod filedb;
 pub mod lexer;
 pub mod macros;
@@ -30,19 +32,16 @@ pub mod api {
         self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,
         AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
     };
-    pub use super::error::Error;
+    pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
     pub use super::macros::expand_macros;
     pub use super::parser::parse;
 
-    pub use std::collections::HashMap;
-
-    #[cfg(debug_assertions)]
     pub use super::run_test_code;
 
-    #[cfg(debug_assertions)]
-    pub use serde::{Deserialize, Serialize};
+    pub(crate) use serde::{Deserialize, Serialize};
+    pub(crate) use std::collections::HashMap;
 
     #[cfg(test)]
     pub use ntest::*;
@@ -66,15 +65,14 @@ pub struct PipelineOutput<'a> {
 
 #[derive(serde::Serialize)]
 pub struct SimpleAstNode {
-    kind: AstNodeKind,
-    parent: u32,
-    post_order: u32,
-    height: u16,
+    pub kind: AstNodeKind,
+    pub parent: u32,
+    pub post_order: u32,
+    pub height: u16,
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
 
-#[cfg(debug_assertions)]
 pub fn run_test_code(test_source: &str) -> PipelineOutput {
     use crate::api::*;
 

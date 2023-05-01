@@ -141,8 +141,7 @@ impl FileDb {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
-#[cfg_attr(all(debug_assertions), derive(Serialize, Deserialize))]
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[non_exhaustive]
 #[repr(u32)]
 pub enum Symbol {

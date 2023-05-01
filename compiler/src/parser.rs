@@ -196,7 +196,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     match p.peek_kind() {
         TokenKind::Comma | TokenKind::Semicolon => {}
 
-        x => panic!("bad character after declartor: {:?}", x),
+        x => throw!(Todo("bad character after declartor")),
     }
 
     while p.peek_kind() == TokenKind::Comma {
@@ -239,7 +239,7 @@ fn parse_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
             node.child(parse_declarator(p)?);
 
             if p.peek_kind() != TokenKind::RParen {
-                panic!("nested declarator didn't have closing paren");
+                throw!(Todo("nested declarator didn't have closing paren"));
             }
 
             p.index += 1;
@@ -318,7 +318,7 @@ fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
         p.index += 1;
 
         if !node.child_opt(parse_declaration(p, DeclarationKind::Param)?) {
-            panic!("why not");
+            throw!(Todo("parameter list has extra comma at the end"));
         }
     }
 
@@ -331,12 +331,7 @@ fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     };
 
     if p.peek_kind() != TokenKind::RParen {
-        println!("before: {:?}", p.tokens.kind[p.index - 1]);
-        println!("after: {:?}", p.tokens.kind[p.index + 1]);
-        panic!(
-            "missing closing paren for func declarator (got {:?})",
-            p.peek_kind()
-        );
+        throw!(Todo("missing closing paren for func declarator"));
     }
 
     p.index += 1;
@@ -528,7 +523,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
         TokenKind::StringLit => AstExpr::StringLit,
 
-        _ => panic!("OOOOOPS"),
+        _ => throw!(Todo("unrecognized atom token")),
     };
 
     p.index += 1;
@@ -537,7 +532,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
 fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
     if p.peek_kind() != TokenKind::Semicolon {
-        panic!("expected a semicolon");
+        throw!(Todo("expected a semicolon"));
     }
 
     while p.peek_kind() == TokenKind::Semicolon {
