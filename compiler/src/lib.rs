@@ -119,6 +119,8 @@ pub fn run_test_code(test_source: &str) -> PipelineOutput {
         });
     }
 
+    println!("{}", ast::display_tree(&parsed_ast));
+
     return PipelineOutput {
         source,
         lexer: lexer_res.tokens.kind,
