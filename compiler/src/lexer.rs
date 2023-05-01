@@ -300,7 +300,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
                     Err(e) => {
                         return Err(LexError {
                             translation_unit: result.translation_unit,
-                            error: Error::Todo(e),
+                            error: Error::new(ErrorKind::Todo(e)),
                         })
                     }
                 };
@@ -479,7 +479,7 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
                     });
                 }
 
-                return Err(Error::Todo("'..' isn't valid"));
+                throw!(Todo("'..' isn't valid"));
             }
 
             return Ok(LexedTok {
@@ -491,7 +491,7 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
         b'\"' => return lex_character(TokenKind::StringLit, b'\"', index, data),
         b'\'' => return lex_character(TokenKind::CharLit, b'\'', index, data),
 
-        x => return Err(Error::Todo("invalid character")),
+        x => throw!(Todo("invalid character")),
     }
 }
 
@@ -555,7 +555,7 @@ fn lex_character(
     while index < data.len() {
         let cur = data[index];
         if !cur.is_ascii() {
-            return Err(Error::Todo("character is not valid ascii"));
+            throw!(Todo("character is not valid ascii"));
         }
 
         if cur == surround {
@@ -567,9 +567,7 @@ fn lex_character(
 
         // handle early newline
         if cur == b'\n' || cur == b'\r' {
-            return Err(Error::Todo(
-                "invalid character found when parsing string literal",
-            ));
+            throw!(Todo("invalid character found when parsing string literal",));
         }
 
         // handle escape cases
@@ -588,7 +586,7 @@ fn lex_character(
         index += 1;
     }
 
-    return Err(Error::Todo("File ended before the string was closed"));
+    throw!(Todo("File ended before ohe string was closed"));
 }
 
 struct IncludeResult<'a> {
@@ -609,7 +607,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
     let (end_quote, file_type) = match data[index] {
         b'"' => (b'"', FileType::User),
         b'<' => (b'>', FileType::System),
-        _ => return Err(Error::Todo("expected a file string")),
+        _ => throw!(Todo("expected a file string")),
     };
 
     index += 1;
@@ -619,12 +617,10 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
     loop {
         match data.get(index) {
             None => {
-                return Err(Error::Todo(
-                    "file ended before include file string was done",
-                ))
+                throw!(Todo("file ended before include file string was done",))
             }
             Some(b'\n') | Some(b'\r') => {
-                return Err(Error::Todo("line ended before file string was done"))
+                throw!(Todo("line ended before file string was done"))
             }
 
             Some(x) if *x == end_quote => break,
@@ -650,7 +646,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
         (b'\n', _) => 1,
         (b'\r', _) => 1,
 
-        _ => return Err(Error::Todo("extra stuff after include file name")),
+        _ => throw!(Todo("extra stuff after include file name")),
     };
 
     index += increment;

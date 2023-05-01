@@ -15,8 +15,10 @@ extern crate enum_derive;
 #[macro_use]
 extern crate macro_attr;
 
-pub mod ast;
+#[macro_use]
 pub mod error;
+
+pub mod ast;
 pub mod filedb;
 pub mod lexer;
 pub mod macros;
@@ -30,7 +32,7 @@ pub mod api {
         self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,
         AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
     };
-    pub use super::error::{Error, FileStarts, TranslationUnitDebugInfo};
+    pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
     pub use super::macros::expand_macros;

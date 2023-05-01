@@ -16,7 +16,7 @@ pub struct TranslationUnitDebugInfo {
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub enum ErrorKind {
     Todo(&'static str),
 
     UnrecognizedCharacter { idx: u32 },
@@ -24,11 +24,38 @@ pub enum Error {
     UnrecognizedToken { idx: u32 },
 }
 
-impl Error {
-    pub fn message(&self) -> String {
-        use Error::*;
+macro_rules! throw {
+    ($e:ident $t:tt) => {
+        return Err(Error::new(crate::error::ErrorKind::$e $t))
+    };
+}
 
-        match *self {
+#[derive(Debug)]
+pub struct Error {
+    kind: ErrorKind,
+
+    #[cfg(debug_assertions)]
+    backtrace: std::backtrace::Backtrace,
+}
+
+impl Error {
+    pub fn new(kind: ErrorKind) -> Self {
+        return Error {
+            kind,
+
+            #[cfg(debug_assertions)]
+            backtrace: std::backtrace::Backtrace::capture(),
+        };
+    }
+
+    fn todo() -> Result<(), Self> {
+        throw!(Todo("hello"));
+    }
+
+    pub fn message(&self) -> String {
+        use ErrorKind::*;
+
+        match self.kind {
             Todo(message) => format!("{}", message),
 
             UnrecognizedCharacter { idx } => format!("unrecognized character"),
