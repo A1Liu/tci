@@ -3,7 +3,7 @@ name = "compiler"
 version = "0.1.0"
 authors = ["Albert Liu <albertymliu@gmail.com>"]
 edition = "2021"
-description = "Teaching C Interpreter"
+description = "C compiler for students"
 license = "MIT"
 
 [dependencies]
