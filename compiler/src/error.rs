@@ -15,7 +15,7 @@ pub struct TranslationUnitDebugInfo {
     pub file_starts: Vec<FileStarts>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub enum Error {
     Todo(&'static str),
 
