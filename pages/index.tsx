@@ -6,8 +6,7 @@ import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
 import { CompileResult, CompilerOutput } from "@/components/compiler.schema";
 
-const INITIAL_TEXT = `
-int main() {
+const INITIAL_TEXT = `int main() {
   return 0;
 }
 `;
@@ -93,30 +92,60 @@ export function App() {
             gap: "10px",
           }}
         >
-          {result?.lexer && (
-            <div className={styles.scrollBox}>
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              minHeight: "33%",
+              flexGrow: 1,
+            }}
+          >
+            <div className={styles.scrollBox} style={{ width: "40%" }}>
               <p className={styles.title}>Lexed Tokens</p>
-              <pre className={styles.text}>
-                {JSON.stringify(result.lexer, undefined, 2)}
-              </pre>
+              {result?.lexer && (
+                <pre className={styles.text}>
+                  {JSON.stringify(result.lexer, undefined, 2)}
+                </pre>
+              )}
             </div>
-          )}
 
-          {result?.parsed_ast && (
-            <div className={styles.scrollBox}>
+            <div className={styles.scrollBox} style={{ width: "60%" }}>
               <p className={styles.title}>Parsed AST</p>
-              <pre className={styles.text}>
-                {JSON.stringify(
-                  result.parsed_ast.map((obj) => ({
-                    ...obj,
-                    kind: `${obj.kind.kind}${
-                      obj.kind.data ? `,${obj.kind.data}` : ""
-                    }`,
-                  })),
-                  undefined,
-                  2
-                )}
-              </pre>
+
+              {result?.parsed_ast && (
+                <div
+                  className={styles.text}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    padding: "20px",
+                    gap: "5px",
+                  }}
+                >
+                  {result.parsed_ast.map((obj, index) => {
+                    const data = obj.kind.data
+                      ? `,${JSON.stringify(obj.kind.data)}`
+                      : "";
+                    return (
+                      <pre
+                        key={`${index}`}
+                        style={{ padding: "4px", background: "lightblue" }}
+                      >
+                        kind: {`${obj.kind.kind}${data}`}
+                        {"\n"}
+                        parent: {obj.parent}
+                      </pre>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {result?.error && (
+            <div className={styles.scrollBox}>
+              <p className={styles.title}>Error</p>
+              <pre className={styles.text}>{JSON.stringify(result.error)}</pre>
             </div>
           )}
         </div>
