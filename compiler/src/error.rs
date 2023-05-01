@@ -15,32 +15,9 @@ pub struct TranslationUnitDebugInfo {
     pub file_starts: Vec<FileStarts>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ErrorContext {
-    translation_unit: TranslationUnitDebugInfo,
-    errors: Vec<Error>,
-}
-
-impl ErrorContext {
-    pub fn new(translation_unit: TranslationUnitDebugInfo) -> Self {
-        return Self {
-            translation_unit,
-            errors: Vec::new(),
-        };
-    }
-
-    pub fn add(&mut self, err: Error) {
-        self.errors.push(err);
-    }
-
-    pub fn todo(&mut self, message: &'static str) {
-        self.errors.push(Error::Todo { message });
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
-    Todo { message: &'static str },
+    Todo(&'static str),
 
     UnrecognizedCharacter { idx: u32 },
 
@@ -52,7 +29,7 @@ impl Error {
         use Error::*;
 
         match *self {
-            Todo { message } => format!("{}", message),
+            Todo(message) => format!("{}", message),
 
             UnrecognizedCharacter { idx } => format!("unrecognized character"),
             UnrecognizedToken { idx } => format!("unrecognized token"),

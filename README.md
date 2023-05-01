@@ -1,4 +1,4 @@
-# C Compiler
+# TCI - C Compiler for Students
 The goals of this compiler are:
 
 1. Provide better error messages for new programmers

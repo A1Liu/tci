@@ -176,15 +176,6 @@ lazy_static! {
     };
 }
 
-// Book-keeping to track which ranges belong to which file, so that we can
-// compute file and line number from `start`
-#[derive(Clone, Copy)]
-pub struct FileStarts {
-    pub index: u32,
-    pub file: u32,
-    pub file_index: usize,
-}
-
 #[derive(Clone, Copy)]
 struct IncludeEntry<'a> {
     file_id: u32,
@@ -193,18 +184,26 @@ struct IncludeEntry<'a> {
 }
 
 pub struct LexResult {
-    pub file_starts: Vec<FileStarts>,
+    pub translation_unit: TranslationUnitDebugInfo,
     pub symbols: SymbolTable,
     pub tokens: TokenVec,
 }
 
-pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
+#[derive(Debug)]
+pub struct LexError {
+    pub translation_unit: TranslationUnitDebugInfo,
+    pub error: Error,
+}
+
+pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
     let mut result = LexResult {
-        file_starts: vec![FileStarts {
-            index: 0,
-            file: file.id,
-            file_index: 0,
-        }],
+        translation_unit: TranslationUnitDebugInfo {
+            file_starts: vec![FileStarts {
+                index: 0,
+                file: file.id,
+                file_index: 0,
+            }],
+        },
         symbols: SymbolTable::new(),
         tokens: TokenVec::new(),
     };
@@ -221,7 +220,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
             None => break,
         };
 
-        result.file_starts.push(FileStarts {
+        result.translation_unit.file_starts.push(FileStarts {
             file: input.file_id,
             index: index,
             file_index: input.index,
@@ -246,7 +245,16 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
             }
 
             let data = &input.contents[input.index..];
-            let res = lex_tok_from_bytes(data)?;
+            let res = match lex_tok_from_bytes(data) {
+                Ok(res) => res,
+                Err(error) => {
+                    return Err(LexError {
+                        translation_unit: result.translation_unit,
+                        error,
+                    })
+                }
+            };
+
             let kind = res.kind;
             let start = index;
 
@@ -269,14 +277,32 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
                 result.tokens.pop().unwrap();
                 token_count -= 1;
 
-                let res = lex_include_line(&input.contents[input.index..])?;
+                let res = match lex_include_line(&input.contents[input.index..]) {
+                    Ok(res) => res,
+                    Err(error) => {
+                        return Err(LexError {
+                            translation_unit: result.translation_unit,
+                            error,
+                        })
+                    }
+                };
 
                 index += res.consumed as u32;
                 input.index += res.consumed;
 
-                let resolved = match res.file_type {
-                    FileType::System => files.resolve_system_include(res.file, input.file_id)?,
-                    FileType::User => files.resolve_include(res.file, input.file_id)?,
+                let resolved_result = match res.file_type {
+                    FileType::System => files.resolve_system_include(res.file, input.file_id),
+                    FileType::User => files.resolve_include(res.file, input.file_id),
+                };
+
+                let resolved = match resolved_result {
+                    Ok(res) => res,
+                    Err(e) => {
+                        return Err(LexError {
+                            translation_unit: result.translation_unit,
+                            error: Error::Todo(e),
+                        })
+                    }
                 };
 
                 include_stack.push(input);
@@ -301,7 +327,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, String> {
         }
 
         if !token_count > 0 {
-            result.file_starts.pop().unwrap();
+            result.translation_unit.file_starts.pop().unwrap();
         }
     }
 
@@ -315,7 +341,7 @@ struct LexedTok {
 
 /// Lex a token from the bytes given. Assumes that we're not at EOF, and
 /// theres no whitespace before the token.
-fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
+fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
     let mut index: usize = 0;
 
     let first = data[index];
@@ -453,7 +479,7 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
                     });
                 }
 
-                return Err("'..' isn't valid".to_string());
+                return Err(Error::Todo("'..' isn't valid"));
             }
 
             return Ok(LexedTok {
@@ -465,7 +491,7 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, String> {
         b'\"' => return lex_character(TokenKind::StringLit, b'\"', index, data),
         b'\'' => return lex_character(TokenKind::CharLit, b'\'', index, data),
 
-        x => return Err("".to_string()),
+        x => return Err(Error::Todo("invalid character")),
     }
 }
 
@@ -477,7 +503,7 @@ pub fn is_ident_char(cur: u8) -> bool {
 }
 
 // NOTE: We assume at this point that we are in fact lexing a number.
-fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, String> {
+fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, Error> {
     /*
     https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
 
@@ -525,11 +551,11 @@ fn lex_character(
     surround: u8,
     mut index: usize,
     data: &[u8],
-) -> Result<LexedTok, String> {
+) -> Result<LexedTok, Error> {
     while index < data.len() {
         let cur = data[index];
         if !cur.is_ascii() {
-            return Err("character is not valid ascii".to_owned());
+            return Err(Error::Todo("character is not valid ascii"));
         }
 
         if cur == surround {
@@ -541,7 +567,9 @@ fn lex_character(
 
         // handle early newline
         if cur == b'\n' || cur == b'\r' {
-            return Err("invalid character found when parsing string literal".to_string());
+            return Err(Error::Todo(
+                "invalid character found when parsing string literal",
+            ));
         }
 
         // handle escape cases
@@ -560,7 +588,7 @@ fn lex_character(
         index += 1;
     }
 
-    return Err("File ended before the string was closed".to_owned());
+    return Err(Error::Todo("File ended before the string was closed"));
 }
 
 struct IncludeResult<'a> {
@@ -569,7 +597,7 @@ struct IncludeResult<'a> {
     consumed: usize,
 }
 
-fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
+fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
     let mut index = 0;
     while index < data.len() {
         match data[index] {
@@ -581,7 +609,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
     let (end_quote, file_type) = match data[index] {
         b'"' => (b'"', FileType::User),
         b'<' => (b'>', FileType::System),
-        _ => return Err("expected a file string".to_string()),
+        _ => return Err(Error::Todo("expected a file string")),
     };
 
     index += 1;
@@ -590,9 +618,13 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
 
     loop {
         match data.get(index) {
-            None => return Err("file ended before include file string was done".to_string()),
+            None => {
+                return Err(Error::Todo(
+                    "file ended before include file string was done",
+                ))
+            }
             Some(b'\n') | Some(b'\r') => {
-                return Err("line ended before file string was done".to_string())
+                return Err(Error::Todo("line ended before file string was done"))
             }
 
             Some(x) if *x == end_quote => break,
@@ -618,7 +650,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, String> {
         (b'\n', _) => 1,
         (b'\r', _) => 1,
 
-        _ => return Err("extra stuff after include file name".to_string()),
+        _ => return Err(Error::Todo("extra stuff after include file name")),
     };
 
     index += increment;
