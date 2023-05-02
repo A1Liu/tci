@@ -6,7 +6,7 @@ import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
 import { CompileResult, CompilerOutput } from "@/components/compiler.schema";
 
-const INITIAL_TEXT = `int main() {
+const INITIAL_TEXT = `int main(int argc, char** argv) {
   return 0;
 }
 `;

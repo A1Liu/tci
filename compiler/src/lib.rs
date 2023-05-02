@@ -23,6 +23,7 @@ pub mod filedb;
 pub mod lexer;
 pub mod macros;
 pub mod parser;
+pub mod pass;
 
 #[cfg(test)]
 mod tests;
