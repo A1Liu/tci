@@ -166,9 +166,7 @@ fn parse_global(p: &mut Parser) -> Result<(), Error> {
         return Ok(());
     };
 
-    throw!(NotImplemented(
-        "a global that's not a declaration".to_string()
-    ));
+    throw!(NotImplemented("a global that's not a declaration"));
 }
 
 enum DeclarationKind {
@@ -198,7 +196,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     match p.peek_kind() {
         TokenKind::Comma | TokenKind::Semicolon => {}
 
-        x => throw!(Todo("bad character after declartor".to_string())),
+        x => throw!(Todo("bad character after declartor")),
     }
 
     while p.peek_kind() == TokenKind::Comma {
@@ -241,9 +239,7 @@ fn parse_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
             node.child(parse_declarator(p)?);
 
             if p.peek_kind() != TokenKind::RParen {
-                throw!(Todo(
-                    "nested declarator didn't have closing paren".to_string()
-                ));
+                throw!(Todo("nested declarator didn't have closing paren"));
             }
 
             p.index += 1;
@@ -322,9 +318,7 @@ fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
         p.index += 1;
 
         if !node.child_opt(parse_declaration(p, DeclarationKind::Param)?) {
-            throw!(Todo(
-                "parameter list has extra comma at the end".to_string()
-            ));
+            throw!(Todo("parameter list has extra comma at the end"));
         }
     }
 
@@ -337,9 +331,7 @@ fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     };
 
     if p.peek_kind() != TokenKind::RParen {
-        throw!(Todo(
-            "missing closing paren for func declarator".to_string()
-        ));
+        throw!(Todo("missing closing paren for func declarator"));
     }
 
     p.index += 1;
@@ -531,7 +523,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
         TokenKind::StringLit => AstExpr::StringLit,
 
-        _ => throw!(Todo("unrecognized atom token".to_string())),
+        _ => throw!(Todo("unrecognized atom token")),
     };
 
     p.index += 1;
@@ -540,7 +532,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
 fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
     if p.peek_kind() != TokenKind::Semicolon {
-        throw!(Todo("expected a semicolon".to_string()));
+        throw!(Todo("expected a semicolon"));
     }
 
     while p.peek_kind() == TokenKind::Semicolon {

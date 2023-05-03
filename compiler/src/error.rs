@@ -28,6 +28,9 @@ pub enum ErrorKind {
 }
 
 macro_rules! error {
+    ($e:ident ( $str:literal )) => {
+        Error::new(crate::error::ErrorKind::$e ( $str.to_string() ))
+    };
     ($e:ident) => {
         Error::new(crate::error::ErrorKind::$e)
     };
@@ -37,11 +40,8 @@ macro_rules! error {
 }
 
 macro_rules! throw {
-    ($e:ident) => {
-        return Err(Error::new(crate::error::ErrorKind::$e))
-    };
-    ($e:ident $t:tt) => {
-        return Err(Error::new(crate::error::ErrorKind::$e $t))
+    ($($e:tt)*) => {
+        { return Err(error!($($e)*)); }
     };
 }
 
