@@ -7,10 +7,10 @@ static GLOBAL: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[derive(Serialize)]
 pub struct PipelineOutput {
-    source: String,
-    lexer: Vec<TokenKind>,
-    macro_expansion: Vec<TokenKind>,
-    parsed_ast: Vec<compiler::SimpleAstNode>,
+    lexer: Option<Vec<TokenKind>>,
+    macro_expansion: Option<Vec<TokenKind>>,
+    parsed_ast: Option<Vec<compiler::SimpleAstNode>>,
+    error: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -24,29 +24,47 @@ pub fn compile(source: String) -> Result<String, String> {
     let file_id = files.add_file("main.c".to_string(), source_string)?;
     let file = &files.files[file_id as usize];
 
-    let lexer_res = lex(&files, file).expect("Expected lex to succeed");
-
-    let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
-
-    let parsed_ast = parse(&macro_expansion_res).map_err(|_e| "parsing failed")?;
-    let mut simple_ast = Vec::with_capacity(parsed_ast.len());
-    for node in parsed_ast.as_slice() {
-        simple_ast.push(compiler::SimpleAstNode {
-            kind: *node.kind,
-            parent: *node.parent,
-            post_order: *node.post_order,
-            height: *node.height,
-        });
-    }
-
-    let out = PipelineOutput {
-        source,
-        lexer: lexer_res.tokens.kind,
-        macro_expansion: macro_expansion_res.kind,
-        parsed_ast: simple_ast,
+    let mut output = PipelineOutput {
+        lexer: None,
+        macro_expansion: None,
+        parsed_ast: None,
+        error: None,
     };
 
-    let out = serde_json::to_string(&out).map_err(|e| e.to_string())?;
+    'done: {
+        let lexer_res = match lex(&files, file) {
+            Ok(l) => l,
+            Err(e) => {
+                output.error = Some(format!("lex error: {:?}", e));
+                break 'done;
+            }
+        };
+
+        output.lexer = Some(lexer_res.tokens.kind.clone());
+
+        let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
+
+        let parsed_ast = match parse(&macro_expansion_res) {
+            Ok(l) => l,
+            Err(e) => {
+                output.error = Some(format!("parse error: {:?}", e));
+                break 'done;
+            }
+        };
+
+        let mut simple_ast = Vec::with_capacity(parsed_ast.len());
+        for node in parsed_ast.as_slice() {
+            simple_ast.push(compiler::SimpleAstNode {
+                kind: *node.kind,
+                parent: *node.parent,
+                post_order: *node.post_order,
+                height: *node.height,
+            });
+        }
+        output.parsed_ast = Some(simple_ast);
+    }
+
+    let out = serde_json::to_string(&output).map_err(|e| e.to_string())?;
 
     return Ok(out);
 }

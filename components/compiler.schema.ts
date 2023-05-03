@@ -7,17 +7,19 @@ export const CompileCommand = z.object({
 
 export type CompileResult = z.infer<typeof CompileResult>;
 export const CompileResult = z.object({
-  source: z.string(),
-  lexer: z.array(z.string()),
-  parsed_ast: z.array(
-    z.object({
-      parent: z.number(),
-      kind: z.object({
-        kind: z.string(),
-        data: z.any().optional(),
-      }),
-    })
-  ),
+  lexer: z.array(z.string()).nullish(),
+  parsed_ast: z
+    .array(
+      z.object({
+        parent: z.number(),
+        kind: z.object({
+          kind: z.string(),
+          data: z.any().optional(),
+        }),
+      })
+    )
+    .nullish(),
+  error: z.any().nullish(),
 });
 
 export type CompilerOutput = z.infer<typeof CompilerOutput>;

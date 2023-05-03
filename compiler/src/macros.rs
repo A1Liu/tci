@@ -20,6 +20,7 @@ pub fn expand_macros(tokens: TokenSlice) -> TokenVec {
     for tok in &tokens {
         match *tok.kind {
             TokenKind::Newline => continue,
+            TokenKind::Comment => continue,
 
             _ => {}
         }

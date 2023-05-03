@@ -9,8 +9,9 @@ pub enum TokenKind {
     StringLit,
     CharLit,
 
-    EOF,
+    Comment,
     Newline,
+    EOF,
 
     Hashtag,
     Dot,
@@ -386,6 +387,38 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
             (b'-', _) => (0, TokenKind::Dash),
 
             (b'/', Some(b'=')) => (1, TokenKind::SlashEq),
+            (b'/', Some(b'/')) => {
+                // we've consumed 1 extra character already from the second '/'
+                // ALSO though, index is already pushed forwards by one
+                // So this code leaves our index right before the newline we just found
+                let mut i = 1;
+                while let Some(&b) = data.get(index + i) {
+                    // Consume until the newline
+                    match b {
+                        b'\n' | b'\r' => break,
+                        _ => i += 1,
+                    }
+                }
+                (i, TokenKind::Comment)
+            }
+            (b'/', Some(b'*')) => {
+                let mut i = 1;
+                let mut prev = 0u8;
+                loop {
+                    let b = *data.get(index + i).ok_or(Error::new(ErrorKind::Todo(
+                        "EOF while inside a block comment",
+                    )))?;
+                    i += 1;
+
+                    // Consume until we hit the suffix
+                    match (prev, b) {
+                        (b'*', b'/') => break,
+                        _ => prev = b,
+                    }
+                }
+
+                (i, TokenKind::Comment)
+            }
             (b'/', _) => (0, TokenKind::Slash),
 
             (b'*', Some(b'=')) => (1, TokenKind::StarEq),

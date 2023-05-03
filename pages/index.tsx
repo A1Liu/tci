@@ -4,16 +4,16 @@ import Editor, { Monaco } from "@monaco-editor/react";
 import type monaco from "monaco-editor";
 import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
-import { CompileResult, CompilerOutput } from "@/components/compiler.schema";
+import { CompileResult } from "@/components/compiler.schema";
 
-const INITIAL_TEXT = `int main(int argc, char** argv) {
+const INITIAL_TEXT = `// Write C code here
+int main(int argc, char** argv) {
   return 0;
 }
 `;
 
 export function App() {
-  const [result, setResult] =
-    React.useState<Partial<CompileResult & { error?: any }>>();
+  const [result, setResult] = React.useState<CompileResult>();
 
   const worker = useCompilerWorker((res) => {
     switch (res.kind) {
@@ -25,10 +25,11 @@ export function App() {
         console.log("message:", res.message);
         break;
       case "error":
-        setResult({ error: res.error });
+        console.log("Error returned");
         console.error(res.error);
         break;
       case "result":
+        console.log("Compiled");
         setResult(res.result);
         break;
     }
@@ -74,7 +75,7 @@ export function App() {
         <div style={{ width: "50%" }}>
           <Editor
             height="100%"
-            language="C"
+            language="c"
             defaultValue={INITIAL_TEXT}
             onMount={(editor, monaco) => {
               editorRef.current = editor;
