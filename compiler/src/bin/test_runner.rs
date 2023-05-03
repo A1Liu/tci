@@ -9,20 +9,36 @@ enum Stage {
     Parse,
 }
 
-/// Search for a pattern in a file and display the lines that contain it.
+/// Run
 #[derive(Parser)]
+#[clap(author = "Albert Liu", about = "Test runner for TCI.")]
 struct Cli {
+    #[clap(help = "a path to a test case")]
     test_case: std::path::PathBuf,
 
-    #[clap(short, long)]
+    #[clap(
+        short,
+        long,
+        value_delimiter = ',',
+        help = "a stage to ignore",
+        long_help = r#"A stage to ignore. This can be repeated, or you can pass
+the stage names as a comma-separated list.
+
+Examples:
+"lex,macro" skips the lexing and macro expansion stages."#
+    )]
     #[arg(value_enum)]
     ignore: Vec<Stage>,
 
-    #[clap(short, long)]
-    write: bool,
-
-    #[clap(short, long)]
+    #[clap(
+        short,
+        long,
+        help = "output the result to OUT_FILE. Overrides `--write`"
+    )]
     out_file: Option<std::path::PathBuf>,
+
+    #[clap(short, long, help = "write to the input file in-place")]
+    write: bool,
 }
 
 fn main() {
@@ -31,7 +47,7 @@ fn main() {
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");
 
-    let (source, mut result) = compiler::api::run_test_code(&*test_case);
+    let (source, mut result) = compiler::api::run_compiler_test_case(&*test_case);
 
     for stage in args.ignore {
         match stage {

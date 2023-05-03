@@ -39,7 +39,7 @@ pub mod api {
     pub use super::macros::expand_macros;
     pub use super::parser::parse;
 
-    pub use super::run_test_code;
+    pub use super::run_compiler_test_case;
 
     pub(crate) use serde::{Deserialize, Serialize};
     pub(crate) use std::collections::HashMap;
@@ -47,7 +47,6 @@ pub mod api {
     #[cfg(test)]
     pub use ntest::*;
 }
-
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum StageOutput<T> {
@@ -153,7 +152,7 @@ pub fn run_compiler_for_testing(source: String) -> PipelineData {
     return out;
 }
 
-pub fn run_test_code(test_source: &str) -> (&str, PipelineData) {
+pub fn run_compiler_test_case(test_source: &str) -> (&str, PipelineData) {
     let (source, expected_str) = test_source
         .split_once(TEST_CASE_DELIMITER)
         .unwrap_or((test_source, "null"));
