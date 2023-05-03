@@ -85,10 +85,22 @@ pub fn sort_by_postorder(ast: &mut AstNodeVec) {
     }
 }
 
+// TODO: set up "data" system so that it's possible to interpret the data field
+// of an AST node using the node's `kind` field
+
 // validate declarations -> produce declaration types
-// Function declarations need to have proper derived declarator and etc
 // Declaration specifiers need to make sense for the kind of declaration theyre on
-pub fn validate_declaration_types(ast: &mut ByKindAst) -> Result<(), Error> {
+pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
+    // Loop over all specifier nodes, and:
+    // 1. ensure their parent is a declaration of some kind
+    // 2. add them to their parent's data field
+    // 3. ensure the combined declaration specifiers are valid for each kind of declaration
+
+    // 4. Loop over all derived declarators, and combine them into their declarator
+    // 5. Loop over all declarators, and fold them into parents
+    // 6. Combine type from declaration and derived declarators to produce types for each declarator
+    // 7. Validate that types make sense for function definitions
+
     return Ok(());
 }
 
