@@ -78,6 +78,13 @@ export function App() {
             defaultValue={INITIAL_TEXT}
             onMount={(editor, monaco) => {
               editorRef.current = editor;
+              monaco.editor.addKeybindingRules([
+                {
+                  keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                  // TODO: make this do something useful
+                  command: "editor.action.formatDocument",
+                },
+              ]);
               compile();
             }}
           />

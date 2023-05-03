@@ -78,8 +78,19 @@ pub fn sort_to_postorder(ast: &mut AstNodeVec) {
     }
 }
 
-pub fn validate_ast(ast: &mut AstNodeVec) -> Result<(), Error> {
-    // sort
+// validate declarations -> produce declaration types
+// Function declarations need to have proper derived declarator and etc
+// Declaration specifiers need to make sense for the kind of declaration theyre on
+pub fn validate_declaration_types(ast: &mut ByKindAst) -> Result<(), Error> {
+    return Ok(());
+}
 
-    let mut id_translate = return Ok(());
+// validate declarators relative to their scopes
+//          -> produce scopes
+// validate identifiers
+//          -> produce types for the identifiers
+//          -> track which identifiers are pointer-referenced, and when each declaration is last used
+// produce global symbols?
+pub fn validate_scopes(ast: &mut ByKindAst) -> Result<(), Error> {
+    return Ok(());
 }
