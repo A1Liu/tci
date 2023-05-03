@@ -1,7 +1,7 @@
 import Link from "next/link";
 import styles from "./tci.module.css";
 import Editor from "@monaco-editor/react";
-import type monaco from "monaco-editor";
+import monaco from "monaco-editor";
 import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
 import { CompileResult } from "@/components/compiler.schema";
