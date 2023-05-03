@@ -1,10 +1,11 @@
 import Link from "next/link";
 import styles from "./tci.module.css";
-import Editor, { Monaco } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import type monaco from "monaco-editor";
 import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
 import { CompileResult } from "@/components/compiler.schema";
+import { Ast } from "@/components/Ast";
 
 const INITIAL_TEXT = `// Write C code here
 int main(int argc, char** argv) {
@@ -117,36 +118,8 @@ export function App() {
               )}
             </div>
 
-            <div className={styles.scrollBox} style={{ width: "60%" }}>
-              <p className={styles.title}>Parsed AST</p>
-
-              {result?.parsed_ast && (
-                <div
-                  className={styles.text}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    padding: "20px",
-                    gap: "5px",
-                  }}
-                >
-                  {result.parsed_ast.map((obj, index) => {
-                    const data = obj.kind.data
-                      ? `,${JSON.stringify(obj.kind.data)}`
-                      : "";
-                    return (
-                      <pre
-                        key={`${index}`}
-                        style={{ padding: "4px", background: "lightblue" }}
-                      >
-                        kind: {`${obj.kind.kind}${data}`}
-                        {"\n"}
-                        parent: {obj.parent}
-                      </pre>
-                    );
-                  })}
-                </div>
-              )}
+            <div style={{ height: "100%", width: "60%" }}>
+              {result?.parsed_ast && <Ast ast={result?.parsed_ast} />}
             </div>
           </div>
 

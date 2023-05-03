@@ -8,56 +8,69 @@ pub struct ByKindAst<'a> {
     pub by_kind_in_order: Vec<(AstNodeKind, Range<usize>)>,
 }
 
-pub fn sort_by_kind(ast: &mut AstNodeVec) -> ByKindAst {
-    let mut indices = Vec::with_capacity(ast.len());
-    for _ in 0..ast.len() {
-        indices.push(u32::MAX);
-    }
+impl<'a> ByKindAst<'a> {
+    pub fn new(ast: &'a mut AstNodeVec) -> Self {
+        Self::sort_by_kind(ast);
 
-    // TODO: Sort by kind,post_order
+        let mut by_kind = HashMap::new();
+        let mut by_kind_in_order = Vec::new();
 
-    for (index, &order) in ast.post_order.iter().enumerate() {
-        indices[order as usize] = index as u32;
-    }
+        let mut prev = *ast.index(0).kind;
+        let mut begin: usize = 0;
+        let mut index: usize = 0;
+        while index < ast.len() {
+            let node = ast.index(index);
+            let kind = *node.kind;
+            if kind == prev {
+                index += 1;
+                continue;
+            }
 
-    // Rebuild parent indices
-    for parent in &mut ast.parent {
-        *parent = indices[*parent as usize];
-    }
+            if let Some(_) = by_kind.insert(prev, begin..index) {
+                panic!("kind is somehow not sorted");
+            }
 
-    let mut by_kind = HashMap::new();
-    let mut by_kind_in_order = Vec::new();
+            by_kind_in_order.push((prev, begin..index));
 
-    let mut prev = *ast.index(0).kind;
-    let mut begin: usize = 0;
-    let mut index: usize = 0;
-    while index < ast.len() {
-        let node = ast.index(index);
-        let kind = *node.kind;
-        if kind == prev {
+            begin = index;
+            prev = kind;
             index += 1;
-            continue;
         }
 
-        if let Some(_) = by_kind.insert(prev, begin..index) {
-            panic!("kind is somehow not sorted");
-        }
-
-        by_kind_in_order.push((prev, begin..index));
-
-        begin = index;
-        prev = kind;
-        index += 1;
+        return ByKindAst {
+            ast,
+            by_kind,
+            by_kind_in_order,
+        };
     }
 
-    return ByKindAst {
-        ast,
-        by_kind,
-        by_kind_in_order,
-    };
+    // NOTE: Assumes that the input was originally sorted by post-order
+    fn sort_by_kind(ast: &mut AstNodeVec) {
+        let mut indices = Vec::with_capacity(ast.len());
+        for _ in 0..ast.len() {
+            indices.push(u32::MAX);
+        }
+
+        // TODO: Sort by kind,post_order
+
+        for (index, &order) in ast.post_order.iter().enumerate() {
+            indices[order as usize] = index as u32;
+        }
+
+        // Rebuild parent indices
+        for parent in &mut ast.parent {
+            *parent = indices[*parent as usize];
+        }
+    }
 }
 
-pub fn sort_to_postorder(ast: &mut AstNodeVec) {
+impl<'a> Drop for ByKindAst<'a> {
+    fn drop(&mut self) {
+        sort_by_postorder(self.ast);
+    }
+}
+
+pub fn sort_by_postorder(ast: &mut AstNodeVec) {
     let mut indices = Vec::with_capacity(ast.len());
 
     for &order in &ast.post_order {
