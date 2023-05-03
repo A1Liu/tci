@@ -69,12 +69,7 @@ export function App() {
         <button onClick={compile}>Compile</button>
       </div>
 
-      <div
-        style={{
-          flexGrow: 1,
-          display: "flex",
-        }}
-      >
+      <div style={{ flexGrow: 1, display: "flex" }}>
         <div style={{ width: "50%" }}>
           <Editor
             height="100%"
