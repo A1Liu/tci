@@ -1,4 +1,4 @@
-use compiler::api::*;
+use compiler::{api::*, run_compiler_for_testing, StageOutput};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -10,59 +10,41 @@ pub struct PipelineOutput {
     lexer: Option<Vec<TokenKind>>,
     macro_expansion: Option<Vec<TokenKind>>,
     parsed_ast: Option<Vec<compiler::SimpleAstNode>>,
-    error: Option<String>,
+    errors: Option<Vec<String>>,
 }
 
 #[wasm_bindgen]
 pub fn compile(source: String) -> Result<String, String> {
-    let mut source_string = source.to_string();
-    if !source_string.ends_with("\n") {
-        source_string.push('\n');
-    }
-
-    let mut files = FileDb::new();
-    let file_id = files.add_file("main.c".to_string(), source_string)?;
-    let file = &files.files[file_id as usize];
-
     let mut output = PipelineOutput {
         lexer: None,
         macro_expansion: None,
         parsed_ast: None,
-        error: None,
+        errors: None,
     };
 
     'done: {
-        let lexer_res = match lex(&files, file) {
-            Ok(l) => l,
-            Err(e) => {
-                output.error = Some(format!("lex error: {:?}", e));
-                break 'done;
-            }
-        };
+        let data = run_compiler_for_testing(source);
 
-        output.lexer = Some(lexer_res.tokens.kind.clone());
+        macro_rules! stage_transfer {
+            ($i:ident) => {
+                match data.$i {
+                    StageOutput::Ok(l) => output.$i = Some(l),
+                    StageOutput::Ignore => {}
+                    StageOutput::Err(e) => {
+                        output.$i = None;
 
-        let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
-        output.macro_expansion = Some(macro_expansion_res.kind.clone());
+                        let error = format!(concat!(stringify!($i), " error: {:?}"), e);
+                        output.errors.get_or_insert(Vec::new()).push(error);
 
-        let parsed_ast = match parse(&macro_expansion_res) {
-            Ok(l) => l,
-            Err(e) => {
-                output.error = Some(format!("parse error: {:?}", e));
-                break 'done;
-            }
-        };
-
-        let mut simple_ast = Vec::with_capacity(parsed_ast.len());
-        for node in parsed_ast.as_slice() {
-            simple_ast.push(compiler::SimpleAstNode {
-                kind: *node.kind,
-                parent: *node.parent,
-                post_order: *node.post_order,
-                height: *node.height,
-            });
+                        break 'done;
+                    }
+                }
+            };
         }
-        output.parsed_ast = Some(simple_ast);
+
+        stage_transfer!(lexer);
+        stage_transfer!(macro_expansion);
+        stage_transfer!(parsed_ast);
     }
 
     let out = serde_json::to_string(&output).map_err(|e| e.to_string())?;
