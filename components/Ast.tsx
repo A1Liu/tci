@@ -1,6 +1,7 @@
 import { AstNode } from "./compiler.schema";
 import React from "react";
 import styles from "Ast.module.css";
+import { ScrollWindow } from "./ScrollWindow";
 
 const DisplayAstNode = ({
   kind,
@@ -81,49 +82,40 @@ export const Ast = ({ ast }: { ast: AstNode[] }) => {
   const [recursive, setRecursive] = React.useState(true);
 
   return (
-    <div style={{ position: "relative", height: "100%", width: "100%" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "5px",
-          position: "absolute",
-          top: 0,
-          right: "2rem",
-          zIndex: 3,
-        }}
-      >
-        <button
-          onClick={() => setRecursive((r) => !r)}
+    <ScrollWindow
+      className="full"
+      style={{ borderRadius: "4px", border: "2px solid black" }}
+      title={
+        <div
           style={{
-            color: "white",
-            background: "blue",
-            borderRadius: "3px",
-            padding: "3px",
-            lineHeight: "0.7rem",
-            textAlign: "center",
-            verticalAlign: "center",
+            display: "flex",
+            alignItems: "center",
+            gap: "5px",
+            right: "2rem",
           }}
         >
-          {recursive ? "r" : "f"}
-        </button>
+          <button
+            onClick={() => setRecursive((r) => !r)}
+            style={{
+              color: "white",
+              background: "blue",
+              borderRadius: "3px",
+              padding: "3px",
+              lineHeight: "0.7rem",
+              textAlign: "center",
+              verticalAlign: "center",
+            }}
+          >
+            {recursive ? "r" : "f"}
+          </button>
 
-        <p>Parsed AST</p>
-      </div>
-
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          bottom: 0,
-          right: 0,
-          padding: "10px",
-          overflowY: "scroll",
-        }}
-      >
+          <p>Parsed AST</p>
+        </div>
+      }
+    >
+      <div style={{ padding: "10px" }}>
         {recursive ? <RecursiveAst ast={ast} /> : <FlatAst ast={ast} />}
       </div>
-    </div>
+    </ScrollWindow>
   );
 };

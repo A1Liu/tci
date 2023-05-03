@@ -6,6 +6,8 @@ import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
 import { CompileResult } from "@/components/compiler.schema";
 import { Ast } from "@/components/Ast";
+import { ScrollWindow } from "@/components/ScrollWindow";
+import { debounce } from "@/components/lodash";
 
 const INITIAL_TEXT = `// Write C code here
 int main(int argc, char** argv) {
@@ -35,6 +37,16 @@ export function App() {
         break;
     }
   });
+
+  React.useEffect(() => {
+    editorRef;
+
+    function pollEditorValue() {
+      if (editorRef.current) {
+        localStorage.setItem("tciEditorValue", editorRef.current.getValue());
+      }
+    }
+  }, []);
 
   const editorRef = React.useRef<monaco.editor.IStandaloneCodeEditor>();
 
@@ -80,6 +92,17 @@ export function App() {
             defaultValue={INITIAL_TEXT}
             onMount={(editor, monaco) => {
               editorRef.current = editor;
+
+              editor.setValue(
+                localStorage.getItem("tciEditorValue") ?? INITIAL_TEXT
+              );
+
+              const writeToStorage = debounce(
+                () => localStorage.setItem("tciEditorValue", editor.getValue()),
+                300
+              );
+              editor.getModel()?.onDidChangeContent((evt) => writeToStorage());
+
               monaco.editor.addKeybindingRules([
                 {
                   keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
@@ -109,14 +132,20 @@ export function App() {
               flexGrow: 1,
             }}
           >
-            <div className={styles.scrollBox} style={{ width: "40%" }}>
-              <p className={styles.title}>Lexed Tokens</p>
+            <ScrollWindow
+              style={{
+                borderRadius: "4px",
+                border: "2px solid black",
+                width: "40%",
+              }}
+              title={"Lexed Tokens"}
+            >
               {result?.lexer && (
                 <pre className={styles.text}>
                   {JSON.stringify(result.lexer, undefined, 2)}
                 </pre>
               )}
-            </div>
+            </ScrollWindow>
 
             <div style={{ height: "100%", width: "60%" }}>
               {result?.parsed_ast && <Ast ast={result?.parsed_ast} />}

@@ -23,6 +23,11 @@ div#__next {
   width: 100%;
 }
 
+.full {
+  height: 100%;
+  width: 100%;
+}
+
 .Resizer {
   background: #000;
   opacity: 0.2;
