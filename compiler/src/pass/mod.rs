@@ -1,8 +1,11 @@
+use core::ops::Range;
+
 use crate::api::*;
 
 pub struct ByKindAst<'a> {
-    pub by_kind: HashMap<AstNodeKind, usize>,
-    pub by_kind_in_order: Vec<(AstNodeKind, ast::AstNodeSliceMut<'a>)>,
+    pub ast: &'a mut AstNodeVec,
+    pub by_kind: HashMap<AstNodeKind, Range<usize>>,
+    pub by_kind_in_order: Vec<(AstNodeKind, Range<usize>)>,
 }
 
 pub fn sort_by_kind(ast: &mut AstNodeVec) -> ByKindAst {
@@ -36,10 +39,7 @@ pub fn sort_by_kind(ast: &mut AstNodeVec) -> ByKindAst {
             continue;
         }
 
-        let by_kind_in_order_index = by_kind_in_order.len();
-        let prev_slice = ast.slice_mut(begin..index);
-
-        if let Some(_) = by_kind.insert(prev, by_kind_in_order_index) {
+        if let Some(_) = by_kind.insert(prev, begin..index) {
             panic!("kind is somehow not sorted");
         }
 
@@ -50,7 +50,7 @@ pub fn sort_by_kind(ast: &mut AstNodeVec) -> ByKindAst {
         // split_at_mut uses the local borrow's lifetime instead of the lifetime of the original
         // slice, and you can't really do more than one split at mut.
         // Seems this will be fixed soon though.
-        by_kind_in_order.push((prev, unsafe { core::mem::transmute(prev_slice) }));
+        by_kind_in_order.push((prev, begin..index));
 
         begin = index;
         prev = kind;
@@ -58,6 +58,7 @@ pub fn sort_by_kind(ast: &mut AstNodeVec) -> ByKindAst {
     }
 
     return ByKindAst {
+        ast,
         by_kind,
         by_kind_in_order,
     };
