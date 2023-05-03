@@ -549,27 +549,20 @@ fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, Error> {
     ‘p’ or ‘P’ are used for hexadecimal floating-point constants.)
     */
 
-    while index < data.len() {
-        let lower = data[index].to_ascii_lowercase();
-
-        match lower {
+    while let Some(&c) = data.get(index) {
+        let c = c.to_ascii_lowercase();
+        match c {
             b'a'..=b'z' => {}
             b'0'..=b'9' => {}
-            b'.' => {}
-            b'_' => {}
+            b'.' | b'_' => {}
             x => break,
         }
 
         index += 1;
 
         // Match against exponent
-        if lower == b'e' || lower == b'p' {
-            match data.get(index) {
-                Some(b'-') | Some(b'+') => index += 1,
-                _ => {}
-            }
-
-            continue;
+        if let (b'e' | b'p', Some(b'-' | b'+')) = (c, data.get(index)) {
+            index += 1;
         }
     }
 
