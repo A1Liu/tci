@@ -15,16 +15,31 @@ pub struct TranslationUnitDebugInfo {
     pub file_starts: Vec<FileStarts>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ErrorKind {
-    Todo(&'static str),
+    Todo(String),
+
+    DidntRun,
+    NotImplemented(String),
 
     UnrecognizedCharacter { idx: u32 },
 
     UnrecognizedToken { idx: u32 },
 }
 
+macro_rules! error {
+    ($e:ident) => {
+        Error::new(crate::error::ErrorKind::$e)
+    };
+    ($e:ident $t:tt) => {
+        Error::new(crate::error::ErrorKind::$e $t)
+    };
+}
+
 macro_rules! throw {
+    ($e:ident) => {
+        return Err(Error::new(crate::error::ErrorKind::$e))
+    };
     ($e:ident $t:tt) => {
         return Err(Error::new(crate::error::ErrorKind::$e $t))
     };
@@ -32,7 +47,7 @@ macro_rules! throw {
 
 #[derive(Debug)]
 pub struct Error {
-    kind: ErrorKind,
+    pub kind: ErrorKind,
 
     backtrace: Option<std::backtrace::Backtrace>,
 }
@@ -50,15 +65,14 @@ impl Error {
         };
     }
 
-    fn todo() -> Result<(), Self> {
-        throw!(Todo("hello"));
-    }
-
     pub fn message(&self) -> String {
         use ErrorKind::*;
 
-        match self.kind {
+        match &self.kind {
             Todo(message) => format!("{}", message),
+
+            DidntRun => format!("compiler phase didn't run"),
+            NotImplemented(message) => format!("{}", message),
 
             UnrecognizedCharacter { idx } => format!("unrecognized character"),
             UnrecognizedToken { idx } => format!("unrecognized token"),

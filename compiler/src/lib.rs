@@ -48,23 +48,51 @@ pub mod api {
     pub use ntest::*;
 }
 
-#[derive(serde::Deserialize)]
-pub struct PipelineInput {
-    lexer: Option<Vec<lexer::TokenKind>>,
-    macro_expansion: Option<Vec<lexer::TokenKind>>,
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum StageOutput<T> {
+    Ok(Vec<T>),
+    Err(crate::error::ErrorKind),
+    Ignore,
 }
 
-#[derive(serde::Serialize)]
-pub struct PipelineOutput<'a> {
-    #[serde(skip_serializing)]
-    source: &'a str,
-
-    lexer: Vec<lexer::TokenKind>,
-    macro_expansion: Vec<lexer::TokenKind>,
-    parsed_ast: Vec<SimpleAstNode>,
+impl<T> Default for StageOutput<T> {
+    fn default() -> Self {
+        Self::Ignore
+    }
 }
 
-#[derive(serde::Serialize)]
+impl<T> PartialEq<StageOutput<T>> for StageOutput<T>
+where
+    T: PartialEq<T>,
+{
+    fn eq(&self, other: &StageOutput<T>) -> bool {
+        match (self, other) {
+            // If there's no stage, dw about it
+            (Self::Ignore, _) => return true,
+            (_, Self::Ignore) => return true,
+
+            (Self::Ok(s), Self::Ok(o)) => return s == o,
+            (Self::Err(s), Self::Err(o)) => return s == o,
+
+            _ => return false,
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct PipelineData {
+    #[serde(default)]
+    pub lexer: StageOutput<lexer::TokenKind>,
+
+    #[serde(default)]
+    pub macro_expansion: StageOutput<lexer::TokenKind>,
+
+    #[serde(default)]
+    pub parsed_ast: StageOutput<SimpleAstNode>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct SimpleAstNode {
     pub kind: AstNodeKind,
     pub parent: u32,
@@ -74,42 +102,42 @@ pub struct SimpleAstNode {
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
 
-pub fn run_test_code(test_source: &str) -> PipelineOutput {
+// NOTE: the "source" field is empty
+pub fn run_compiler_for_testing(source: String) -> PipelineData {
     use crate::api::*;
-
-    let (source, expected_str) = test_source
-        .split_once(TEST_CASE_DELIMITER)
-        .unwrap_or((test_source, "null"));
-
-    let expected = serde_json::from_str::<Option<PipelineInput>>(expected_str)
-        .expect("Test case expected value didn't parse")
-        .unwrap_or(PipelineInput {
-            lexer: None,
-            macro_expansion: None,
-        });
-
-    let mut source_string = source.to_string();
-    if !source_string.ends_with("\n") {
-        source_string.push('\n');
-    }
 
     let mut files = FileDb::new();
     let file_id = files
-        .add_file("main.c".to_string(), source_string)
+        .add_file("main.c".to_string(), source)
         .expect("file should add properly");
     let file = &files.files[file_id as usize];
 
-    let lexer_res = lex(&files, file).expect("Expected lex to succeed");
-    if let Some(expected) = &expected.lexer {
-        assert_eq!(&lexer_res.tokens.kind, expected, "Invalid token stream");
-    }
+    let mut out = PipelineData {
+        lexer: StageOutput::Err(ErrorKind::DidntRun),
+        macro_expansion: StageOutput::Err(ErrorKind::DidntRun),
+        parsed_ast: StageOutput::Err(ErrorKind::DidntRun),
+    };
+
+    let lexer_res = match lex(&files, file) {
+        Ok(res) => res,
+        Err(e) => {
+            out.lexer = StageOutput::Err(e.error.kind);
+            return out;
+        }
+    };
+    out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
 
     let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
-    if let Some(expected) = &expected.macro_expansion {
-        assert_eq!(&macro_expansion_res.kind, expected, "Invalid token stream");
-    }
+    out.macro_expansion = StageOutput::Ok(macro_expansion_res.kind.clone());
 
-    let parsed_ast = parse(&macro_expansion_res).expect("parsing failed");
+    let parsed_ast = match parse(&macro_expansion_res) {
+        Ok(res) => res,
+        Err(e) => {
+            out.parsed_ast = StageOutput::Err(e.kind);
+            return out;
+        }
+    };
+
     let mut simple_ast = Vec::with_capacity(parsed_ast.len());
     for node in parsed_ast.as_slice() {
         simple_ast.push(SimpleAstNode {
@@ -120,19 +148,38 @@ pub fn run_test_code(test_source: &str) -> PipelineOutput {
         });
     }
 
-    // println!("{}", ast::display_tree(&parsed_ast));
+    out.parsed_ast = StageOutput::Ok(simple_ast);
 
-    return PipelineOutput {
-        source,
-        lexer: lexer_res.tokens.kind,
-        macro_expansion: macro_expansion_res.kind,
-        parsed_ast: simple_ast,
-    };
+    return out;
 }
 
-impl<'a> PipelineOutput<'a> {
-    pub fn test_case(&self) -> String {
-        let mut output = self.source.to_string();
+pub fn run_test_code(test_source: &str) -> (&str, PipelineData) {
+    let (source, expected_str) = test_source
+        .split_once(TEST_CASE_DELIMITER)
+        .unwrap_or((test_source, "null"));
+
+    let mut source_string = source.to_string();
+    if !source_string.ends_with("\n") {
+        source_string.push('\n');
+    }
+
+    let expected = serde_json::from_str::<Option<PipelineData>>(expected_str)
+        .expect("Test case expected value didn't parse")
+        .unwrap_or(PipelineData {
+            lexer: StageOutput::Ignore,
+            macro_expansion: StageOutput::Ignore,
+            parsed_ast: StageOutput::Ignore,
+        });
+
+    let output = run_compiler_for_testing(source_string);
+    assert_eq!(output, expected);
+
+    return (source, output);
+}
+
+impl PipelineData {
+    pub fn test_case(&self, source: &str) -> String {
+        let mut output = source.to_string();
 
         let text = serde_json::to_string(self).expect("failed to serialize test output");
 
