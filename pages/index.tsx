@@ -38,16 +38,6 @@ export function App() {
     }
   });
 
-  React.useEffect(() => {
-    editorRef;
-
-    function pollEditorValue() {
-      if (editorRef.current) {
-        localStorage.setItem("tciEditorValue", editorRef.current.getValue());
-      }
-    }
-  }, []);
-
   const editorRef = React.useRef<monaco.editor.IStandaloneCodeEditor>();
 
   function compile() {
