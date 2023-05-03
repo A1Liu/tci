@@ -43,6 +43,7 @@ pub fn compile(source: String) -> Result<String, String> {
         output.lexer = Some(lexer_res.tokens.kind.clone());
 
         let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
+        output.macro_expansion = Some(macro_expansion_res.kind.clone());
 
         let parsed_ast = match parse(&macro_expansion_res) {
             Ok(l) => l,

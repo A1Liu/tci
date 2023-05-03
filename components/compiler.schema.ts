@@ -8,6 +8,7 @@ export const CompileCommand = z.object({
 export type CompileResult = z.infer<typeof CompileResult>;
 export const CompileResult = z.object({
   lexer: z.array(z.string()).nullish(),
+  macro_expansion: z.array(z.string()).nullish(),
   parsed_ast: z
     .array(
       z.object({
