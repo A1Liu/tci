@@ -43,13 +43,6 @@ pub fn sort_by_kind(ast: &mut AstNodeVec) -> ByKindAst {
             panic!("kind is somehow not sorted");
         }
 
-        // This *should* be safe, because we're really just trying to do a series of split_at_mut
-        // but for the SOA vec. This doesn't work because the lifetime on the output of
-        // AstNodeSliceMut.split_at_mut is the mut borrow of AstNodeSliceMut, instead of taking
-        // the AstNodeSliceMut by ownership and inheriting its lifetime. Thus, the result of
-        // split_at_mut uses the local borrow's lifetime instead of the lifetime of the original
-        // slice, and you can't really do more than one split at mut.
-        // Seems this will be fixed soon though.
         by_kind_in_order.push((prev, begin..index));
 
         begin = index;
