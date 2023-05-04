@@ -309,7 +309,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
                     Err(e) => {
                         return Err(LexError {
                             translation_unit: result.translation_unit,
-                            error: Error::new(ErrorKind::TodoAt {
+                            error: Error::new(ErrorKind::Todo {
                                 message: e.to_string(),
                                 index: begin,
                             }),

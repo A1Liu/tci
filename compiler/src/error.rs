@@ -50,7 +50,7 @@ impl TranslationUnitDebugInfo {
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ErrorKind {
-    TodoAt { message: String, index: u32 },
+    Todo{ message: String, index: u32 },
 
     DidntRun,
     NotImplemented(String),
@@ -60,7 +60,7 @@ pub enum ErrorKind {
 
 macro_rules! error {
     (todo $str:literal $index:expr) => {
-        Error::new(crate::error::ErrorKind::TodoAt {
+        Error::new(crate::error::ErrorKind::Todo {
             message: $str.to_string(),
             index: $index,
         })
@@ -88,7 +88,7 @@ impl ErrorKind {
         use ErrorKind::*;
 
         match self {
-            TodoAt { message, index } => format!("{}", message),
+            Todo{ message, index } => format!("{}", message),
 
             DidntRun => format!("compiler phase didn't run"),
             NotImplemented(message) => format!("{}", message),
@@ -101,7 +101,7 @@ impl ErrorKind {
         use ErrorKind::*;
 
         match self {
-            TodoAt { message, index } => "001",
+            Todo{ message, index } => "001",
 
             DidntRun => "000",
             NotImplemented(message) => "002",
@@ -116,7 +116,7 @@ impl ErrorKind {
         let mut labels = Vec::new();
 
         match self {
-            TodoAt { message, index } => {
+            Todo{ message, index } => {
                 let range = tu.token_range(*index);
                 labels.push(Label::primary(range.file, range.start..(range.start + 1)));
             }
