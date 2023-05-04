@@ -9,7 +9,7 @@
   "scripts": {
     "start": "next start",
     "link-wasm": "cd tci-web/pkg && yarn link && cd ../.. && yarn link tci-web",
-    "build-wasm": "wasm-pack build --debug tci-web",
+    "wasm": "wasm-pack build --debug tci-web",
     "deploy": "git push origin main:production",
     "dev": "next",
     "lint": "next lint"
