@@ -1,7 +1,7 @@
 use clap::Parser;
 use codespan_reporting::term::termcolor::*;
 use codespan_reporting::term::*;
-use compiler::StageOutput;
+use compiler::{parse_test_case, StageOutput};
 
 #[derive(clap::ValueEnum, Clone, Copy)]
 enum Stage {
@@ -50,15 +50,22 @@ fn main() {
 
     let writer = StandardStream::stderr(ColorChoice::Always);
     let config = Config::default();
+    let print_err: compiler::PrintFunc = &|files, tu, err| {
+        let diagnostic = tu.diagnostic(err);
+        codespan_reporting::term::emit(&mut writer.lock(), &config, files, &diagnostic)
+            .expect("wtf");
+    };
 
-    let (source, mut result) = compiler::api::run_compiler_test_case(
-        &*test_case,
-        Some(&|files, tu, err| {
-            let diagnostic = tu.diagnostic(err);
-            codespan_reporting::term::emit(&mut writer.lock(), &config, files, &diagnostic)
-                .expect("wtf");
-        }),
-    );
+    let (source, expected) = parse_test_case(&test_case);
+
+    let print_err = if args.out_file.is_some() || args.write {
+        None
+    } else {
+        Some(print_err)
+    };
+
+    let mut result = compiler::run_compiler_for_testing(source.to_string(), print_err);
+    assert_eq!(result, expected);
 
     for stage in args.ignore {
         match stage {

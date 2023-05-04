@@ -98,11 +98,15 @@ pub struct SimpleAstNode {
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
-type Printer<'a> = &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
+pub type PrintFunc<'a> = &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
 
 // NOTE: the "source" field is empty
-pub fn run_compiler_for_testing(source: String, print_err: Option<Printer>) -> PipelineData {
+pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>) -> PipelineData {
     use crate::api::*;
+
+    if !source.ends_with("\n") {
+        source.push('\n');
+    }
 
     let mut files = FileDb::new();
     let file_id = files
@@ -161,18 +165,19 @@ pub fn run_compiler_for_testing(source: String, print_err: Option<Printer>) -> P
     return out;
 }
 
-pub fn run_compiler_test_case<'a>(
-    test_source: &'a str,
-    print_err: Option<Printer>,
-) -> (&'a str, PipelineData) {
+pub fn run_compiler_test_case<'a>(test_source: &'a str) -> (&'a str, PipelineData) {
+    let (source, expected) = parse_test_case(test_source);
+
+    let output = run_compiler_for_testing(source.to_string(), None);
+    assert_eq!(output, expected);
+
+    return (source, output);
+}
+
+pub fn parse_test_case(test_source: &str) -> (&str, PipelineData) {
     let (source, expected_str) = test_source
         .split_once(TEST_CASE_DELIMITER)
         .unwrap_or((test_source, "null"));
-
-    let mut source_string = source.to_string();
-    if !source_string.ends_with("\n") {
-        source_string.push('\n');
-    }
 
     let expected = serde_json::from_str::<Option<PipelineData>>(expected_str)
         .expect("Test case expected value didn't parse")
@@ -182,10 +187,7 @@ pub fn run_compiler_test_case<'a>(
             parsed_ast: StageOutput::Ignore,
         });
 
-    let output = run_compiler_for_testing(source_string, print_err);
-    assert_eq!(output, expected);
-
-    return (source, output);
+    return (source, expected);
 }
 
 impl PipelineData {

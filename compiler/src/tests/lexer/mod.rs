@@ -1,11 +1,11 @@
 #[test]
 fn simple() {
-    crate::run_compiler_test_case(include_str!("simple.c"), None);
+    crate::run_compiler_test_case(include_str!("simple.c"));
 }
 
 #[test]
 fn dotdot() {
-    crate::run_compiler_test_case(include_str!("dotdot.c"), None);
+    crate::run_compiler_test_case(include_str!("dotdot.c"));
 }
 
 // #[test]
