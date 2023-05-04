@@ -4,6 +4,14 @@ This module describes the AST created by the parser.
 
 use crate::api::*;
 
+pub trait AstInterpretData {
+    type Output;
+
+    fn read(&self, field: &u64) -> Self::Output;
+
+    fn as_mut_ref(&self, field: &mut u64) -> &mut Self::Output;
+}
+
 #[derive(Debug, Clone, Copy, StructOfArray)]
 pub struct AstNode {
     pub kind: AstNodeKind,
@@ -188,13 +196,11 @@ pub enum AstSpecifier {
     Int,
     Long,
 
+    Unsigned,
+    Signed,
+
     Float,
     Double,
-
-    UChar,
-    UShort,
-    UInt,
-    ULong,
 
     Struct(StructDeclaration), // children: ident declaration of struct, field declarations of struct
     Ident,                     // data: Symbol

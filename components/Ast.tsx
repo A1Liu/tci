@@ -15,12 +15,20 @@ const DisplayAstNode = ({
       style={{
         display: "flex",
         flexDirection: "column",
-        paddingLeft: "10px",
-        borderLeft: "3px solid black",
       }}
     >
       <pre>{kind}</pre>
-      {children}
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          paddingLeft: "10px",
+          borderLeft: "3px solid black",
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 };

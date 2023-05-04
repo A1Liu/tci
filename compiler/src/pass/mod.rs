@@ -3,7 +3,7 @@ use core::ops::Range;
 use crate::api::*;
 
 pub struct ByKindAst<'a> {
-    pub ast: &'a mut AstNodeVec,
+    pub nodes: &'a mut AstNodeVec,
     pub by_kind: HashMap<AstNodeKind, Range<usize>>,
     pub by_kind_in_order: Vec<(AstNodeKind, Range<usize>)>,
 }
@@ -38,7 +38,7 @@ impl<'a> ByKindAst<'a> {
         }
 
         return ByKindAst {
-            ast,
+            nodes: ast,
             by_kind,
             by_kind_in_order,
         };
@@ -66,7 +66,7 @@ impl<'a> ByKindAst<'a> {
 
 impl<'a> Drop for ByKindAst<'a> {
     fn drop(&mut self) {
-        sort_by_postorder(self.ast);
+        sort_by_postorder(self.nodes);
     }
 }
 
@@ -91,6 +91,17 @@ pub fn sort_by_postorder(ast: &mut AstNodeVec) {
 // validate declarations -> produce declaration types
 // Declaration specifiers need to make sense for the kind of declaration theyre on
 pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
+    for (kind, range) in &ast.by_kind_in_order {
+        let kind = match kind {
+            AstNodeKind::Specifier(k) => *k,
+            _ => continue,
+        };
+
+
+
+
+    }
+
     // Loop over all specifier nodes, and:
     // 1. ensure their parent is a declaration of some kind
     // 2. add them to their parent's data field
