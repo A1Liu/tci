@@ -27,7 +27,7 @@ impl TranslationUnitDebugInfo {
         return Diagnostic::error()
             .with_message(err.message())
             .with_code(err.code())
-            .with_labels(err.kind.labels(self));
+            .with_labels(err.labels(self));
     }
 
     pub fn token_range(&self, start: u32) -> FileRange {
@@ -151,5 +151,9 @@ impl Error {
 
     pub fn code(&self) -> &'static str {
         return self.kind.code();
+    }
+
+    pub fn labels(&self, tu: &TranslationUnitDebugInfo) -> Vec<Label<u32>> {
+        return self.kind.labels(tu);
     }
 }
