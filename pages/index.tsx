@@ -1,20 +1,23 @@
 import Link from "next/link";
+import cx from "classnames";
 import styles from "./tci.module.css";
-import Editor, { Monaco } from "@monaco-editor/react";
-import type monaco from "monaco-editor";
+import Editor from "@monaco-editor/react";
+import monaco from "monaco-editor";
 import React from "react";
 import { useCompilerWorker } from "@/components/hooks";
-import { CompileResult, CompilerOutput } from "@/components/compiler.schema";
+import { CompileResult } from "@/components/compiler.schema";
+import { Ast } from "@/components/Ast";
+import { ScrollWindow } from "@/components/ScrollWindow";
+import { debounce } from "@/components/lodash";
 
-const INITIAL_TEXT = `
-int main() {
+const INITIAL_TEXT = `// Write C code here
+int main(int argc, char** argv) {
   return 0;
 }
 `;
 
 export function App() {
-  const [result, setResult] =
-    React.useState<Partial<CompileResult & { error?: any }>>();
+  const [result, setResult] = React.useState<CompileResult>();
 
   const worker = useCompilerWorker((res) => {
     switch (res.kind) {
@@ -26,10 +29,11 @@ export function App() {
         console.log("message:", res.message);
         break;
       case "error":
-        setResult({ error: res.error });
+        console.log("Error returned");
         console.error(res.error);
         break;
       case "result":
+        console.log("Compiled ", res.result);
         setResult(res.result);
         break;
     }
@@ -66,58 +70,62 @@ export function App() {
         <button onClick={compile}>Compile</button>
       </div>
 
-      <div
-        style={{
-          flexGrow: 1,
-          display: "flex",
-        }}
-      >
-        <div style={{ width: "50%" }}>
+      <div style={{ flexGrow: 1, display: "flex", maxHeight: "100%" }}>
+        <div style={{ width: "50%", height: "100%" }}>
           <Editor
-            height="100%"
-            language="C"
+            // This prevents weird scrolling behavior during resizing and maybe when re-opening the page;
+            // nameBox is 2.5rem each, so this just takes up the rest of the screen
+            height="calc(100vh - 5rem)"
+            language="c"
             defaultValue={INITIAL_TEXT}
             onMount={(editor, monaco) => {
               editorRef.current = editor;
+
+              editor.setValue(
+                localStorage.getItem("tciEditorValue") ?? INITIAL_TEXT
+              );
+
+              const writeToStorage = debounce(
+                () => localStorage.setItem("tciEditorValue", editor.getValue()),
+                300
+              );
+              editor.getModel()?.onDidChangeContent((evt) => writeToStorage());
+
+              monaco.editor.addKeybindingRules([
+                {
+                  keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                  // TODO: make this do something useful
+                  command: "editor.action.formatDocument",
+                },
+              ]);
               compile();
             }}
           />
         </div>
 
-        <div
-          style={{
-            width: "50%",
-            display: "flex",
-            flexDirection: "column",
-            height: "100%",
-            gap: "10px",
-          }}
-        >
-          {result?.lexer && (
-            <div className={styles.scrollBox}>
-              <p className={styles.title}>Lexed Tokens</p>
-              <pre className={styles.text}>
-                {JSON.stringify(result.lexer, undefined, 2)}
-              </pre>
-            </div>
-          )}
+        <div className={"full col gap"} style={{ width: "50%" }}>
+          <div className={"row gap"} style={{ minHeight: "33%", flexGrow: 1 }}>
+            <ScrollWindow
+              title={"Lexed Tokens"}
+              className="full rounded border"
+              style={{ width: "40%" }}
+            >
+              {result?.lexer && (
+                <pre className="pad">
+                  {JSON.stringify(result.lexer, undefined, 2)}
+                </pre>
+              )}
+            </ScrollWindow>
 
-          {result?.parsed_ast && (
-            <div className={styles.scrollBox}>
-              <p className={styles.title}>Parsed AST</p>
-              <pre className={styles.text}>
-                {JSON.stringify(
-                  result.parsed_ast.map((obj) => ({
-                    ...obj,
-                    kind: `${obj.kind.kind}${
-                      obj.kind.data ? `,${obj.kind.data}` : ""
-                    }`,
-                  })),
-                  undefined,
-                  2
-                )}
-              </pre>
+            <div className="full" style={{ width: "60%" }}>
+              {result?.parsed_ast && <Ast ast={result?.parsed_ast} />}
             </div>
+          </div>
+
+          {result?.errors && (
+            <ScrollWindow className={"full rounded border"} title="Error">
+              <pre>{JSON.stringify(result.errors)}</pre>
+            </ScrollWindow>
           )}
         </div>
       </div>

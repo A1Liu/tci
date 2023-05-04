@@ -9,8 +9,9 @@ pub enum TokenKind {
     StringLit,
     CharLit,
 
-    EOF,
+    Comment,
     Newline,
+    EOF,
 
     Hashtag,
     Dot,
@@ -183,6 +184,12 @@ struct IncludeEntry<'a> {
     index: usize,
 }
 
+struct TokInfo<'a> {
+    begin: u32,
+    index: &'a mut usize,
+    data: &'a [u8],
+}
+
 pub struct LexResult {
     pub translation_unit: TranslationUnitDebugInfo,
     pub symbols: SymbolTable,
@@ -245,7 +252,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
             }
 
             let data = &input.contents[input.index..];
-            let res = match lex_tok_from_bytes(data) {
+            let res = match lex_tok_from_bytes(index, data) {
                 Ok(res) => res,
                 Err(error) => {
                     return Err(LexError {
@@ -300,7 +307,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
                     Err(e) => {
                         return Err(LexError {
                             translation_unit: result.translation_unit,
-                            error: Error::new(ErrorKind::Todo(e)),
+                            error: Error::new(ErrorKind::Todo(e.to_string())),
                         })
                     }
                 };
@@ -341,7 +348,7 @@ struct LexedTok {
 
 /// Lex a token from the bytes given. Assumes that we're not at EOF, and
 /// theres no whitespace before the token.
-fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
+fn lex_tok_from_bytes<'a>(global_index: u32, data: &'a [u8]) -> Result<LexedTok, Error> {
     let mut index: usize = 0;
 
     let first = data[index];
@@ -386,6 +393,38 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
             (b'-', _) => (0, TokenKind::Dash),
 
             (b'/', Some(b'=')) => (1, TokenKind::SlashEq),
+            (b'/', Some(b'/')) => {
+                // we've consumed 1 extra character already from the second '/'
+                // ALSO though, index is already pushed forwards by one
+                // So this code leaves our index right before the newline we just found
+                let mut i = 1;
+                while let Some(&b) = data.get(index + i) {
+                    // Consume until the newline
+                    match b {
+                        b'\n' | b'\r' => break,
+                        _ => i += 1,
+                    }
+                }
+                (i, TokenKind::Comment)
+            }
+            (b'/', Some(b'*')) => {
+                let mut i = 1;
+                let mut prev = 0u8;
+                loop {
+                    let b = *data
+                        .get(index + i)
+                        .ok_or(error!(Todo("EOF while inside a block comment")))?;
+                    i += 1;
+
+                    // Consume until we hit the suffix
+                    match (prev, b) {
+                        (b'*', b'/') => break,
+                        _ => prev = b,
+                    }
+                }
+
+                (i, TokenKind::Comment)
+            }
             (b'/', _) => (0, TokenKind::Slash),
 
             (b'*', Some(b'=')) => (1, TokenKind::StarEq),
@@ -479,7 +518,10 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
                     });
                 }
 
-                throw!(Todo("'..' isn't valid"));
+                throw!(InvalidCharacterSequence {
+                    seq: "..".to_string(),
+                    index: global_index,
+                });
             }
 
             return Ok(LexedTok {
@@ -516,27 +558,20 @@ fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, Error> {
     ‘p’ or ‘P’ are used for hexadecimal floating-point constants.)
     */
 
-    while index < data.len() {
-        let lower = data[index].to_ascii_lowercase();
-
-        match lower {
+    while let Some(&c) = data.get(index) {
+        let c = c.to_ascii_lowercase();
+        match c {
             b'a'..=b'z' => {}
             b'0'..=b'9' => {}
-            b'.' => {}
-            b'_' => {}
+            b'.' | b'_' => {}
             x => break,
         }
 
         index += 1;
 
         // Match against exponent
-        if lower == b'e' || lower == b'p' {
-            match data.get(index) {
-                Some(b'-') | Some(b'+') => index += 1,
-                _ => {}
-            }
-
-            continue;
+        if let (b'e' | b'p', Some(b'-' | b'+')) = (c, data.get(index)) {
+            index += 1;
         }
     }
 
@@ -567,7 +602,7 @@ fn lex_character(
 
         // handle early newline
         if cur == b'\n' || cur == b'\r' {
-            throw!(Todo("invalid character found when parsing string literal",));
+            throw!(Todo("invalid character found when parsing string literal"));
         }
 
         // handle escape cases
@@ -617,7 +652,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
     loop {
         match data.get(index) {
             None => {
-                throw!(Todo("file ended before include file string was done",))
+                throw!(Todo("file ended before include file string was done"))
             }
             Some(b'\n') | Some(b'\r') => {
                 throw!(Todo("line ended before file string was done"))

@@ -1,12 +1,9 @@
 [workspace]
 
-members = [
-    "compiler",
-    "tci-web"
-]
+members = ["compiler", "tci-web"]
 
 [profile.dev]
-opt-level = 0 
+opt-level = 0
 
 [profile.release]
 opt-level = "z"

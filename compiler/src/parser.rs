@@ -166,7 +166,7 @@ fn parse_global(p: &mut Parser) -> Result<(), Error> {
         return Ok(());
     };
 
-    unimplemented!("a global that's not a declaration");
+    throw!(NotImplemented("a global that's not a declaration"));
 }
 
 enum DeclarationKind {

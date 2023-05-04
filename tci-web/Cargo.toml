@@ -1,7 +1,13 @@
 [package]
 name = "tci-web"
+description = "TCI compiler server for the web"
+repository = "https://github.com/A1Liu/tci"
 version = "0.1.0"
 edition = "2021"
+
+# Neither of these seem to be processed properly by wasm-pack, so I just disabled them. Whatever
+# license-file = "../LICENSE"
+# readme = "../README.md"
 
 [lib]
 crate-type = ["cdylib"]
