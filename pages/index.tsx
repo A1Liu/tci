@@ -91,13 +91,12 @@ export function App() {
               );
               editor.getModel()?.onDidChangeContent((evt) => writeToStorage());
 
-              monaco.editor.addKeybindingRules([
-                {
-                  keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-                  // TODO: make this do something useful
-                  command: "editor.action.formatDocument",
-                },
-              ]);
+              monaco.editor.addKeybindingRule({
+                keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                // TODO: make this do something useful
+                command: "editor.action.formatDocument",
+              });
+
               compile();
             }}
           />
