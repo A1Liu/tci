@@ -1,4 +1,5 @@
 import Link from "next/link";
+import cx from "classnames";
 import styles from "./tci.module.css";
 import Editor from "@monaco-editor/react";
 import monaco from "monaco-editor";
@@ -102,49 +103,29 @@ export function App() {
           />
         </div>
 
-        <div
-          style={{
-            width: "50%",
-            display: "flex",
-            flexDirection: "column",
-            height: "100%",
-            gap: "10px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              gap: "10px",
-              minHeight: "33%",
-              flexGrow: 1,
-            }}
-          >
+        <div className={"full col gap"} style={{ width: "50%" }}>
+          <div className={"row gap"} style={{ minHeight: "33%", flexGrow: 1 }}>
             <ScrollWindow
-              style={{
-                borderRadius: "4px",
-                border: "2px solid black",
-                height: "100%",
-                width: "40%",
-              }}
               title={"Lexed Tokens"}
+              className="full rounded border"
+              style={{ width: "40%" }}
             >
               {result?.lexer && (
-                <pre className={styles.text}>
+                <pre className="pad">
                   {JSON.stringify(result.lexer, undefined, 2)}
                 </pre>
               )}
             </ScrollWindow>
 
-            <div style={{ height: "100%", width: "60%" }}>
+            <div className="full" style={{ width: "60%" }}>
               {result?.parsed_ast && <Ast ast={result?.parsed_ast} />}
             </div>
           </div>
 
           {result?.errors && (
-            <div className={styles.scrollBox} style={{ minHeight: "33%" }}>
-              <p className={styles.title}>Error</p>
-              <pre className={styles.text}>{JSON.stringify(result.errors)}</pre>
-            </div>
+            <ScrollWindow className={"full rounded border"} title="Error">
+              <pre>{JSON.stringify(result.errors)}</pre>
+            </ScrollWindow>
           )}
         </div>
       </div>

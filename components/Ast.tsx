@@ -11,21 +11,12 @@ const DisplayAstNode = ({
   children?: React.ReactNode;
 }) => {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
+    <div className="col">
       <pre>{kind}</pre>
 
       <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          paddingLeft: "10px",
-          borderLeft: "3px solid black",
-        }}
+        className="col"
+        style={{ paddingLeft: "10px", borderLeft: "3px solid black" }}
       >
         {children}
       </div>
@@ -61,14 +52,7 @@ const RecursiveAst = ({ ast }: { ast: AstNode[] }) => {
 
 const FlatAst = ({ ast }: { ast: AstNode[] }) => {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        padding: "20px",
-        gap: "5px",
-      }}
-    >
+    <div className="col gap">
       {ast.map((obj, index) => {
         const data = obj.kind.data ? `,${JSON.stringify(obj.kind.data)}` : "";
         return (
@@ -91,17 +75,10 @@ export const Ast = ({ ast }: { ast: AstNode[] }) => {
 
   return (
     <ScrollWindow
-      className="full"
-      style={{ borderRadius: "4px", border: "2px solid black", height: "100%" }}
+      className="full rounded border"
+      style={{ height: "100%" }}
       title={
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "5px",
-            right: "2rem",
-          }}
-        >
+        <div className="row" style={{ gap: "5px", right: "2rem" }}>
           <button
             onClick={() => setRecursive((r) => !r)}
             style={{
@@ -121,7 +98,7 @@ export const Ast = ({ ast }: { ast: AstNode[] }) => {
         </div>
       }
     >
-      <div style={{ padding: "10px" }}>
+      <div className="pad">
         {recursive ? <RecursiveAst ast={ast} /> : <FlatAst ast={ast} />}
       </div>
     </ScrollWindow>

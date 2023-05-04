@@ -6,6 +6,9 @@
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;
   --background-end-rgb: 255, 255, 255;
+
+  --border-radius: 0.25rem;
+  --spacing: 1.25rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -18,14 +21,47 @@
 
 html,
 body,
+.full,
 div#__next {
   height: 100%;
   width: 100%;
 }
 
-.full {
-  height: 100%;
-  width: 100%;
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  // flex-wrap: nowrap; Don't know whether or now rows should wrap yet
+
+  & > * {
+    margin: 0px;
+  }
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+
+  & > * {
+    margin: 0px;
+  }
+}
+
+.rounded {
+  border-radius: var(--border-radius);
+}
+
+.border {
+  border: 0.25rem solid black;
+}
+
+.pad {
+  padding: var(--spacing);
+}
+
+.gap {
+  gap: var(--spacing);
 }
 
 .Resizer {
