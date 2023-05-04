@@ -124,7 +124,15 @@ export function App() {
 
           {result?.errors && (
             <ScrollWindow className={"full rounded border"} title="Error">
-              <pre>{JSON.stringify(result.errors)}</pre>
+              <pre
+                className="pad"
+                style={{
+                  wordWrap: "break-word",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {JSON.stringify(result.errors, undefined, 2)}
+              </pre>
             </ScrollWindow>
           )}
         </div>
