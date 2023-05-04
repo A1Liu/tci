@@ -32,7 +32,7 @@ export function App() {
         console.error(res.error);
         break;
       case "result":
-        console.log("Compiled");
+        console.log("Compiled ", res.result);
         setResult(res.result);
         break;
     }
@@ -72,6 +72,9 @@ export function App() {
       <div style={{ flexGrow: 1, display: "flex", maxHeight: "100%" }}>
         <div style={{ width: "50%", height: "100%" }}>
           <Editor
+            // This prevents weird scrolling behavior during resizing and maybe when re-opening the page;
+            // nameBox is 2.5rem each, so this just takes up the rest of the screen
+            height="calc(100vh - 5rem)"
             language="c"
             defaultValue={INITIAL_TEXT}
             onMount={(editor, monaco) => {
@@ -137,10 +140,10 @@ export function App() {
             </div>
           </div>
 
-          {result?.error && (
-            <div className={styles.scrollBox}>
+          {result?.errors && (
+            <div className={styles.scrollBox} style={{ minHeight: "33%" }}>
               <p className={styles.title}>Error</p>
-              <pre className={styles.text}>{JSON.stringify(result.error)}</pre>
+              <pre className={styles.text}>{JSON.stringify(result.errors)}</pre>
             </div>
           )}
         </div>

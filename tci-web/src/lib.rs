@@ -31,8 +31,6 @@ pub fn compile(source: String) -> Result<String, String> {
                     StageOutput::Ok(l) => output.$i = Some(l),
                     StageOutput::Ignore => {}
                     StageOutput::Err(e) => {
-                        output.$i = None;
-
                         let error = format!(concat!(stringify!($i), " error: {:?}"), e);
                         output.errors.get_or_insert(Vec::new()).push(error);
 

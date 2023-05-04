@@ -20,7 +20,7 @@ export const CompileResult = z.object({
   lexer: z.array(z.string()).nullish(),
   macro_expansion: z.array(z.string()).nullish(),
   parsed_ast: z.array(AstNode).nullish(),
-  error: z.any().nullish(),
+  errors: z.any().nullish(),
 });
 
 export type CompilerOutput = z.infer<typeof CompilerOutput>;
