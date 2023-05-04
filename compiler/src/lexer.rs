@@ -184,6 +184,12 @@ struct IncludeEntry<'a> {
     index: usize,
 }
 
+struct TokInfo<'a> {
+    begin: u32,
+    index: &'a mut usize,
+    data: &'a [u8],
+}
+
 pub struct LexResult {
     pub translation_unit: TranslationUnitDebugInfo,
     pub symbols: SymbolTable,
@@ -246,7 +252,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
             }
 
             let data = &input.contents[input.index..];
-            let res = match lex_tok_from_bytes(data) {
+            let res = match lex_tok_from_bytes(index, data) {
                 Ok(res) => res,
                 Err(error) => {
                     return Err(LexError {
@@ -342,7 +348,7 @@ struct LexedTok {
 
 /// Lex a token from the bytes given. Assumes that we're not at EOF, and
 /// theres no whitespace before the token.
-fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
+fn lex_tok_from_bytes<'a>(global_index: u32, data: &'a [u8]) -> Result<LexedTok, Error> {
     let mut index: usize = 0;
 
     let first = data[index];
@@ -512,7 +518,10 @@ fn lex_tok_from_bytes<'a>(data: &'a [u8]) -> Result<LexedTok, Error> {
                     });
                 }
 
-                throw!(Todo("'..' isn't valid"));
+                throw!(InvalidCharacterSequence {
+                    seq: "..".to_string(),
+                    index: global_index,
+                });
             }
 
             return Ok(LexedTok {

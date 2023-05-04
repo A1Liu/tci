@@ -30,13 +30,8 @@ impl TranslationUnitDebugInfo {
             .with_labels(err.kind.labels(self));
     }
 
-    //
-    //           3|
-    // 0 0 1 2 3 3 3 4 5
-
     pub fn token_range(&self, start: u32) -> FileRange {
         // TODO: binary search
-
         let mut previous = self.file_starts[0];
         for file_start in &self.file_starts {
             if file_start.index > start {
@@ -60,9 +55,7 @@ pub enum ErrorKind {
     DidntRun,
     NotImplemented(String),
 
-    UnrecognizedCharacter { idx: u32 },
-
-    UnrecognizedToken { idx: u32 },
+    InvalidCharacterSequence { seq: String, index: u32 },
 }
 
 macro_rules! error {
@@ -93,8 +86,7 @@ impl ErrorKind {
             DidntRun => format!("compiler phase didn't run"),
             NotImplemented(message) => format!("{}", message),
 
-            UnrecognizedCharacter { idx } => format!("unrecognized character"),
-            UnrecognizedToken { idx } => format!("unrecognized token"),
+            InvalidCharacterSequence { seq, index } => format!("'{}' isn't valid", seq),
         }
     }
 
@@ -107,8 +99,7 @@ impl ErrorKind {
             DidntRun => "000",
             NotImplemented(message) => "002",
 
-            UnrecognizedCharacter { idx } => "100",
-            UnrecognizedToken { idx } => "101",
+            InvalidCharacterSequence { seq, index } => "100",
         }
     }
 
@@ -122,13 +113,12 @@ impl ErrorKind {
             DidntRun => {}
             NotImplemented(message) => {}
 
-            UnrecognizedCharacter { idx } => {
-                let range = tu.token_range(*idx);
-                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
-            }
-            UnrecognizedToken { idx } => {
-                let range = tu.token_range(*idx);
-                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            InvalidCharacterSequence { seq, index } => {
+                let range = tu.token_range(*index);
+                labels.push(Label::primary(
+                    range.file,
+                    range.start..(range.start + seq.len()),
+                ));
             }
         }
 

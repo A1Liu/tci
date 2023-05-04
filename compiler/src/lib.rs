@@ -2,8 +2,6 @@
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
 
-use api::AstNodeKind;
-
 #[macro_use]
 extern crate soa_derive;
 #[macro_use]
@@ -93,16 +91,17 @@ pub struct PipelineData {
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct SimpleAstNode {
-    pub kind: AstNodeKind,
+    pub kind: ast::AstNodeKind,
     pub parent: u32,
     pub post_order: u32,
     pub height: u16,
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
+type Printer<'a> = &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
 
 // NOTE: the "source" field is empty
-pub fn run_compiler_for_testing(source: String) -> PipelineData {
+pub fn run_compiler_for_testing(source: String, print_err: Option<Printer>) -> PipelineData {
     use crate::api::*;
 
     let mut files = FileDb::new();
@@ -120,10 +119,16 @@ pub fn run_compiler_for_testing(source: String) -> PipelineData {
     let lexer_res = match lex(&files, file) {
         Ok(res) => res,
         Err(e) => {
+            if let Some(print) = print_err {
+                print(&files, &e.translation_unit, &e.error);
+            }
+
             out.lexer = StageOutput::Err(e.error.kind);
             return out;
         }
     };
+
+    let tu = lexer_res.translation_unit;
     out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
 
     let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
@@ -132,6 +137,10 @@ pub fn run_compiler_for_testing(source: String) -> PipelineData {
     let parsed_ast = match parse(&macro_expansion_res) {
         Ok(res) => res,
         Err(e) => {
+            if let Some(print) = print_err {
+                print(&files, &tu, &e);
+            }
+
             out.parsed_ast = StageOutput::Err(e.kind);
             return out;
         }
@@ -152,7 +161,10 @@ pub fn run_compiler_for_testing(source: String) -> PipelineData {
     return out;
 }
 
-pub fn run_compiler_test_case(test_source: &str) -> (&str, PipelineData) {
+pub fn run_compiler_test_case<'a>(
+    test_source: &'a str,
+    print_err: Option<Printer>,
+) -> (&'a str, PipelineData) {
     let (source, expected_str) = test_source
         .split_once(TEST_CASE_DELIMITER)
         .unwrap_or((test_source, "null"));
@@ -170,7 +182,7 @@ pub fn run_compiler_test_case(test_source: &str) -> (&str, PipelineData) {
             parsed_ast: StageOutput::Ignore,
         });
 
-    let output = run_compiler_for_testing(source_string);
+    let output = run_compiler_for_testing(source_string, print_err);
     assert_eq!(output, expected);
 
     return (source, output);

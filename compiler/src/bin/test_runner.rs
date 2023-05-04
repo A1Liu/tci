@@ -1,5 +1,6 @@
 use clap::Parser;
-
+use codespan_reporting::term::termcolor::*;
+use codespan_reporting::term::*;
 use compiler::StageOutput;
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -47,7 +48,17 @@ fn main() {
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");
 
-    let (source, mut result) = compiler::api::run_compiler_test_case(&*test_case);
+    let writer = StandardStream::stderr(ColorChoice::Always);
+    let config = Config::default();
+
+    let (source, mut result) = compiler::api::run_compiler_test_case(
+        &*test_case,
+        Some(&|files, tu, err| {
+            let diagnostic = tu.diagnostic(err);
+            codespan_reporting::term::emit(&mut writer.lock(), &config, files, &diagnostic)
+                .expect("wtf");
+        }),
+    );
 
     for stage in args.ignore {
         match stage {

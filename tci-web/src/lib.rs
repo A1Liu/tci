@@ -23,7 +23,7 @@ pub fn compile(source: String) -> Result<String, String> {
     };
 
     'done: {
-        let data = run_compiler_for_testing(source);
+        let data = run_compiler_for_testing(source, None);
 
         macro_rules! stage_transfer {
             ($i:ident) => {

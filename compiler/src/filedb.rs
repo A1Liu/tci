@@ -1,4 +1,5 @@
 use crate::api::*;
+use codespan_reporting::files::{line_starts, Error as SpanErr, Files};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum FileType {
@@ -12,6 +13,7 @@ pub struct File {
     pub ty: FileType,
     pub name: String,
     pub source: String,
+    pub line_starts: Vec<usize>,
 }
 
 struct FileStatic {
@@ -70,6 +72,7 @@ impl FileDb {
                 id,
                 ty,
                 name,
+                line_starts: line_starts(&source).collect(),
                 source,
             });
         }
@@ -91,6 +94,7 @@ impl FileDb {
             id,
             ty: FileType::User,
             name,
+            line_starts: line_starts(&source).collect(),
             source,
         };
         self.names.insert((FileType::User, file.name.clone()), id);
@@ -138,6 +142,66 @@ impl FileDb {
 
     pub fn source(&self, file_id: u32) -> Option<&str> {
         Some(&*self.files.get(file_id as usize)?.source)
+    }
+}
+
+/// Return the starting byte index of the line with the specified line index.
+/// Convenience method that already generates errors if necessary.
+///
+/// Copied from codespan_reporting
+fn get_line_start(len: usize, line_starts: &[usize], line_index: usize) -> Result<usize, SpanErr> {
+    use std::cmp::Ordering;
+
+    match line_index.cmp(&line_starts.len()) {
+        Ordering::Less => Ok(line_starts
+            .get(line_index)
+            .cloned()
+            .expect("failed despite previous check")),
+        Ordering::Equal => Ok(len),
+        Ordering::Greater => Err(SpanErr::LineTooLarge {
+            given: line_index,
+            max: line_starts.len() - 1,
+        }),
+    }
+}
+
+impl<'a> Files<'a> for FileDb {
+    type FileId = u32;
+
+    type Name = &'a str;
+
+    type Source = &'a str;
+
+    fn name(&'a self, id: Self::FileId) -> Result<Self::Name, SpanErr> {
+        let f = self.files.get(id as usize).ok_or(SpanErr::FileMissing)?;
+        return Ok(&f.name);
+    }
+
+    fn source(&'a self, id: Self::FileId) -> Result<Self::Source, SpanErr> {
+        let f = self.files.get(id as usize).ok_or(SpanErr::FileMissing)?;
+        return Ok(&f.source);
+    }
+
+    fn line_index(&'a self, id: Self::FileId, byte_index: usize) -> Result<usize, SpanErr> {
+        let f = self.files.get(id as usize).ok_or(SpanErr::FileMissing)?;
+
+        return Ok(f
+            .line_starts
+            .binary_search(&byte_index)
+            .unwrap_or_else(|next_line| next_line - 1));
+    }
+
+    fn line_range(
+        &'a self,
+        id: Self::FileId,
+        line_index: usize,
+    ) -> Result<std::ops::Range<usize>, SpanErr> {
+        let f = self.files.get(id as usize).ok_or(SpanErr::FileMissing)?;
+
+        let line_start = get_line_start(f.source.len(), &f.line_starts, line_index)?;
+        let next_line_start = get_line_start(f.source.len(), &f.line_starts, line_index + 1)?;
+
+        return Ok(line_start..next_line_start);
     }
 }
 
