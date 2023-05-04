@@ -144,26 +144,26 @@ pub enum AstStatement {
 /// Children: AstSpecifer for each type qualifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
 pub enum AstDerivedDeclarator {
-    Pointer = 0,
+    Pointer,
 
     /// []
-    ArrayUnknown = 1,
+    ArrayUnknown,
     /// `[*]`
-    ArrayVariableUnknown = 2,
+    ArrayVariableUnknown,
     /// `[10]`
     /// Children: size expression
-    ArrayVariableExpression = 3,
+    ArrayVariableExpression,
     /// `[static 10]`
     /// Children: size expression
-    ArrayStaticExpression = 4,
+    ArrayStaticExpression,
 
     /// x(int param1, char, long param3)
     /// children: AstParameterDeclarators
-    Function = 5,
+    Function,
 
     /// x(int param1, char, long param3, ...)
     /// children: AstParameterDeclarators
-    FunctionElipsis = 6,
+    FunctionElipsis,
 }
 
 /// children: a AstDerivedDeclarator for each derived declarator

@@ -29,7 +29,7 @@ mod tests;
 pub mod api {
     pub use super::ast::{
         self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,
-        AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
+        AstInterpretData, AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
     };
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
@@ -98,7 +98,8 @@ pub struct SimpleAstNode {
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
-pub type PrintFunc<'a> = &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
+pub type PrintFunc<'a> =
+    &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
 
 // NOTE: the "source" field is empty
 pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>) -> PipelineData {
