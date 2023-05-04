@@ -69,10 +69,9 @@ export function App() {
         <button onClick={compile}>Compile</button>
       </div>
 
-      <div style={{ flexGrow: 1, display: "flex" }}>
-        <div style={{ width: "50%" }}>
+      <div style={{ flexGrow: 1, display: "flex", maxHeight: "100%" }}>
+        <div style={{ width: "50%", height: "100%" }}>
           <Editor
-            height="100%"
             language="c"
             defaultValue={INITIAL_TEXT}
             onMount={(editor, monaco) => {
@@ -121,6 +120,7 @@ export function App() {
               style={{
                 borderRadius: "4px",
                 border: "2px solid black",
+                height: "100%",
                 width: "40%",
               }}
               title={"Lexed Tokens"}

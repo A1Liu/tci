@@ -6,13 +6,7 @@
   padding-right: 0.5rem;
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
-  --bg-opacity: 1;
-  background-color: #424242;
-  background-color: rgba(66, 66, 66, var(--bg-opacity));
   border-bottom-width: 1px;
-  --border-opacity: 1;
-  border-color: #757575;
-  border-color: rgba(117, 117, 117, var(--border-opacity));
 }
 
 .name {

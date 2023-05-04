@@ -96,10 +96,6 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
             AstNodeKind::Specifier(k) => *k,
             _ => continue,
         };
-
-
-
-
     }
 
     // Loop over all specifier nodes, and:

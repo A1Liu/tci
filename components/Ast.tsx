@@ -92,7 +92,7 @@ export const Ast = ({ ast }: { ast: AstNode[] }) => {
   return (
     <ScrollWindow
       className="full"
-      style={{ borderRadius: "4px", border: "2px solid black" }}
+      style={{ borderRadius: "4px", border: "2px solid black", height: "100%" }}
       title={
         <div
           style={{

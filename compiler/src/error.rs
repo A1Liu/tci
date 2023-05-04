@@ -1,3 +1,5 @@
+use codespan_reporting::diagnostic::{Diagnostic, Label};
+
 // Book-keeping to track which ranges belong to which file, so that we can
 // compute file and line number from `start`
 #[derive(Debug, Clone, Copy)]
@@ -13,6 +15,42 @@ pub struct FileStarts {
 #[derive(Debug, Clone)]
 pub struct TranslationUnitDebugInfo {
     pub file_starts: Vec<FileStarts>,
+}
+
+pub struct FileRange {
+    pub file: u32,
+    pub start: usize,
+}
+
+impl TranslationUnitDebugInfo {
+    pub fn diagnostic(&self, err: &Error) -> Diagnostic<u32> {
+        return Diagnostic::error()
+            .with_message(err.message())
+            .with_code(err.code())
+            .with_labels(err.kind.labels(self));
+    }
+
+    //
+    //           3|
+    // 0 0 1 2 3 3 3 4 5
+
+    pub fn token_range(&self, start: u32) -> FileRange {
+        // TODO: binary search
+
+        let mut previous = self.file_starts[0];
+        for file_start in &self.file_starts {
+            if file_start.index > start {
+                break;
+            }
+
+            previous = *file_start;
+        }
+
+        return FileRange {
+            file: previous.file,
+            start: previous.file_index + (start as usize - previous.index as usize),
+        };
+    }
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -45,10 +83,62 @@ macro_rules! throw {
     };
 }
 
+impl ErrorKind {
+    pub fn message(&self) -> String {
+        use ErrorKind::*;
+
+        match self {
+            Todo(message) => format!("{}", message),
+
+            DidntRun => format!("compiler phase didn't run"),
+            NotImplemented(message) => format!("{}", message),
+
+            UnrecognizedCharacter { idx } => format!("unrecognized character"),
+            UnrecognizedToken { idx } => format!("unrecognized token"),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        use ErrorKind::*;
+
+        match self {
+            Todo(message) => "001",
+
+            DidntRun => "000",
+            NotImplemented(message) => "002",
+
+            UnrecognizedCharacter { idx } => "100",
+            UnrecognizedToken { idx } => "101",
+        }
+    }
+
+    pub fn labels(&self, tu: &TranslationUnitDebugInfo) -> Vec<Label<u32>> {
+        use ErrorKind::*;
+
+        let mut labels = Vec::new();
+
+        match self {
+            Todo(message) => {}
+            DidntRun => {}
+            NotImplemented(message) => {}
+
+            UnrecognizedCharacter { idx } => {
+                let range = tu.token_range(*idx);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
+            UnrecognizedToken { idx } => {
+                let range = tu.token_range(*idx);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
+        }
+
+        return labels;
+    }
+}
+
 #[derive(Debug)]
 pub struct Error {
     pub kind: ErrorKind,
-
     backtrace: Option<std::backtrace::Backtrace>,
 }
 
@@ -66,16 +156,10 @@ impl Error {
     }
 
     pub fn message(&self) -> String {
-        use ErrorKind::*;
+        return self.kind.message();
+    }
 
-        match &self.kind {
-            Todo(message) => format!("{}", message),
-
-            DidntRun => format!("compiler phase didn't run"),
-            NotImplemented(message) => format!("{}", message),
-
-            UnrecognizedCharacter { idx } => format!("unrecognized character"),
-            UnrecognizedToken { idx } => format!("unrecognized token"),
-        }
+    pub fn code(&self) -> &'static str {
+        return self.kind.code();
     }
 }
