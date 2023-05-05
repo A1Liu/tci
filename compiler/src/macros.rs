@@ -25,11 +25,7 @@ pub fn expand_macros(tokens: TokenSlice) -> TokenVec {
             _ => {}
         }
 
-        output.push(Token {
-            kind: *tok.kind,
-            start: *tok.start,
-            symbol: *tok.symbol,
-        })
+        output.push(tok.to_owned());
     }
 
     return output;

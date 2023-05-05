@@ -77,7 +77,7 @@ where
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Default)]
 pub struct PipelineData {
     #[serde(default)]
     pub lexer: StageOutput<lexer::TokenKind>,
@@ -87,6 +87,9 @@ pub struct PipelineData {
 
     #[serde(default)]
     pub parsed_ast: StageOutput<SimpleAstNode>,
+
+    #[serde(default)]
+    pub ast_validation: StageOutput<SimpleAstNode>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -95,6 +98,17 @@ pub struct SimpleAstNode {
     pub parent: u32,
     pub post_order: u32,
     pub height: u16,
+}
+
+impl<'a> From<ast::AstNodeRef<'a>> for SimpleAstNode {
+    fn from(node: ast::AstNodeRef) -> Self {
+        return Self {
+            kind: *node.kind,
+            parent: *node.parent,
+            post_order: *node.post_order,
+            height: *node.height,
+        };
+    }
 }
 
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
@@ -119,6 +133,7 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
         lexer: StageOutput::Err(ErrorKind::DidntRun),
         macro_expansion: StageOutput::Err(ErrorKind::DidntRun),
         parsed_ast: StageOutput::Err(ErrorKind::DidntRun),
+        ast_validation: StageOutput::Err(ErrorKind::DidntRun),
     };
 
     let lexer_res = match lex(&files, file) {
@@ -151,17 +166,13 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
         }
     };
 
-    let mut simple_ast = Vec::with_capacity(parsed_ast.len());
-    for node in parsed_ast.as_slice() {
-        simple_ast.push(SimpleAstNode {
-            kind: *node.kind,
-            parent: *node.parent,
-            post_order: *node.post_order,
-            height: *node.height,
-        });
-    }
-
-    out.parsed_ast = StageOutput::Ok(simple_ast);
+    out.parsed_ast = StageOutput::Ok(
+        parsed_ast
+            .as_slice()
+            .into_iter()
+            .map(SimpleAstNode::from)
+            .collect(),
+    );
 
     return out;
 }
@@ -182,11 +193,7 @@ pub fn parse_test_case(test_source: &str) -> (&str, PipelineData) {
 
     let expected = serde_json::from_str::<Option<PipelineData>>(expected_str)
         .expect("Test case expected value didn't parse")
-        .unwrap_or(PipelineData {
-            lexer: StageOutput::Ignore,
-            macro_expansion: StageOutput::Ignore,
-            parsed_ast: StageOutput::Ignore,
-        });
+        .unwrap_or_default();
 
     return (source, expected);
 }

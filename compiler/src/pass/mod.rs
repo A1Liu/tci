@@ -1,6 +1,8 @@
 use crate::api::*;
 use core::ops::Range;
 
+// TODO: how do we do node insertions and node deletions?
+
 pub struct ByKindAst<'a> {
     pub nodes: &'a mut AstNodeVec,
     pub by_kind: HashMap<AstNodeKind, Range<usize>>,
@@ -50,7 +52,16 @@ impl<'a> ByKindAst<'a> {
             indices.push(u32::MAX);
         }
 
-        // TODO: Sort by kind,height,post_order
+        // Sort by kind,height,post_order
+        ast.as_mut_slice().sort_by(|a, b| {
+            let kind_cmp = a.kind.cmp(b.kind);
+            let order_cmp = a.post_order.cmp(b.post_order);
+
+            match (kind_cmp, order_cmp) {
+                (core::cmp::Ordering::Equal, x) => return x,
+                (x, _) => return x,
+            }
+        });
 
         for (index, &order) in ast.post_order.iter().enumerate() {
             indices[order as usize] = index as u32;
@@ -76,16 +87,14 @@ pub fn sort_by_postorder(ast: &mut AstNodeVec) {
         indices.push(order);
     }
 
-    // TODO: Sort by post_order
+    // Sort by post_order
+    ast.as_mut_slice().sort_by_key(|r| *r.post_order);
 
     // Rebuild parent indices
     for parent in &mut ast.parent {
         *parent = indices[*parent as usize];
     }
 }
-
-// TODO: set up "data" system so that it's possible to interpret the data field
-// of an AST node using the node's `kind` field
 
 // validate declarations -> produce declaration types
 // Declaration specifiers need to make sense for the kind of declaration theyre on
