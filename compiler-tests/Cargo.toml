@@ -1,6 +1,7 @@
 [package]
 name = "compiler-tests"
 version = "0.0.1"
+description = "test cases for the compiler"
 
 [dependencies]
 # Until 0.13.0 is released, gotta use the github version to get sorting and ToOwned 
