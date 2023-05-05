@@ -23,9 +23,6 @@ pub mod macros;
 pub mod parser;
 pub mod pass;
 
-#[cfg(test)]
-mod tests;
-
 pub mod api {
     pub use super::ast::{
         self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,

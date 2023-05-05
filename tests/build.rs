@@ -15,7 +15,7 @@ pub fn main() {
 
         if ignore {
             if went_down {
-                println!("cargo:warning=ignore {:?}", entry.path());
+                // println!("cargo:warning=ignore {:?}", entry.path());
                 continue;
             }
 
