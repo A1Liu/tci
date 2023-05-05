@@ -54,6 +54,10 @@ fn main() {
         let diagnostic = tu.diagnostic(err);
         codespan_reporting::term::emit(&mut writer.lock(), &config, files, &diagnostic)
             .expect("wtf");
+
+        if let Some(b) = &err.backtrace {
+            println!("{}", b);
+        }
     };
 
     let (source, expected) = parse_test_case(&test_case);

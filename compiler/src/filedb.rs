@@ -223,6 +223,18 @@ pub enum Symbol {
     NullSymbol = !0,
 }
 
+impl Into<u64> for Symbol {
+    fn into(self) -> u64 {
+        return self as u64;
+    }
+}
+
+impl From<u64> for Symbol {
+    fn from(value: u64) -> Self {
+        return Self::from_u32(value as u32);
+    }
+}
+
 impl Symbol {
     fn from_u32(id: u32) -> Self {
         return unsafe { core::mem::transmute(id) };

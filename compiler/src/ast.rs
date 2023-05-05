@@ -5,11 +5,15 @@ This module describes the AST created by the parser.
 use crate::api::*;
 
 pub trait AstInterpretData {
-    type Output;
+    type AstData: From<u64> + Into<u64>;
 
-    fn read(&self, field: &u64) -> Self::Output;
+    fn read(field: &u64) -> Self::AstData {
+        return Self::AstData::from(*field);
+    }
 
-    fn as_mut_ref(&self, field: &mut u64) -> &mut Self::Output;
+    fn write(field: &mut u64, value: Self::AstData) {
+        *field = value.into();
+    }
 }
 
 #[derive(Debug, Clone, Copy, StructOfArray)]
@@ -29,7 +33,7 @@ pub struct AstNode {
 }
 
 macro_attr! {
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, EnumFromInner!)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, EnumFromInner!)]
 #[serde(tag = "kind", content = "data")]
 pub enum AstNodeKind {
     Expr(AstExpr),
@@ -39,10 +43,13 @@ pub enum AstNodeKind {
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
     FunctionDefinition(AstFunctionDefinition),
+
+    // TODO: maybe we wanna delete stuff from the AST later
+    // Nop(()),
 }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstExpr {
     IntLit,     // data: i32
     LongLit,    // data: i64
@@ -67,7 +74,7 @@ pub enum AstExpr {
     BinOpAssign(BinOp), // children: expression being assigned to, expression being assigned
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -92,7 +99,7 @@ pub enum BinOp {
     Comma,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Copy, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UnaryOp {
     Neg,
     BoolNot,
@@ -113,13 +120,13 @@ pub enum UnaryOp {
 ///
 /// In the above, it would have children for each field
 /// declaration, and a child for the identifier as well.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum StructDeclaration {
     Struct,
     Union,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstStatement {
     Labeled,            // data: label ; children: statement that is being labelled
     CaseLabeled,        // children: case value expression, statement that is being labelled
@@ -142,32 +149,32 @@ pub enum AstStatement {
 /// `int *const a`, or the `[3]` part of `int b[3]`
 ///
 /// Children: AstSpecifer for each type qualifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstDerivedDeclarator {
-    Pointer = 0,
+    Pointer,
 
     /// []
-    ArrayUnknown = 1,
+    ArrayUnknown,
     /// `[*]`
-    ArrayVariableUnknown = 2,
+    ArrayVariableUnknown,
     /// `[10]`
     /// Children: size expression
-    ArrayVariableExpression = 3,
+    ArrayVariableExpression,
     /// `[static 10]`
     /// Children: size expression
-    ArrayStaticExpression = 4,
+    ArrayStaticExpression,
 
     /// x(int param1, char, long param3)
     /// children: AstParameterDeclarators
-    Function = 5,
+    Function,
 
     /// x(int param1, char, long param3, ...)
     /// children: AstParameterDeclarators
-    FunctionElipsis = 6,
+    FunctionElipsis,
 }
 
 /// children: a AstDerivedDeclarator for each derived declarator
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstDeclarator {
     Abstract,
     /// data: Symbol
@@ -176,7 +183,8 @@ pub enum AstDeclarator {
     NestedWithChild,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+// NOTE: This should probably not be a node, and instead should be a data field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstSpecifier {
     Extern,
     Static,
@@ -209,16 +217,127 @@ pub enum AstSpecifier {
 /// A typical declaration; this is a stand-in for
 /// `int *i[1] = {NULL};` or something similar
 ///
-/// Children: AstSpecifier for each specifier, AstStructDeclaration if necessary, an AstInitDeclarator for each declared variable
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+/// Children: AstSpecifier for each specifier, AstStructDeclaration if necessary,
+/// an AstInitDeclarator for each declared variable
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AstDeclaration;
 
 /// A function definition
 ///
 /// Data: DeclarationSpecifiers
-/// Children: AstSpecifier for each specifier, san AstDeclarator, and all the statements associated with the function
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+/// Children: AstSpecifier for each specifier, san AstDeclarator, and all the
+/// statements associated with the function
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum TypeSpecifier {
+    Void = 0,
+
+    Char = 1,
+    Short = 2,
+    Int = 3,
+    Long = 4,
+
+    UChar = 5,
+    UShort = 6,
+    UInt = 7,
+    ULong = 8,
+
+    Float = 9,
+    Double = 10,
+
+    Struct = 11,
+    Union = 12,
+    Ident = 13,
+
+    Invalid = 14,
+}
+
+impl Into<u64> for TypeSpecifier {
+    fn into(self) -> u64 {
+        return self as u64;
+    }
+}
+
+impl From<u64> for TypeSpecifier {
+    fn from(value: u64) -> Self {
+        match value {
+            0 => Self::Void,
+            1 => Self::Char,
+            2 => Self::Short,
+            3 => Self::Int,
+            4 => Self::Long,
+
+            5 => Self::UChar,
+            6 => Self::UShort,
+            7 => Self::UInt,
+            8 => Self::ULong,
+
+            9 => Self::Float,
+            10 => Self::Double,
+
+            11 => Self::Struct,
+            12 => Self::Union,
+            13 => Self::Ident,
+
+            _ => Self::Invalid,
+        }
+    }
+}
+
+#[bitfield(u64)]
+pub struct DeclSpecifiers {
+    // Inline doesn't make sense for non-definitions
+    pub static_: bool,
+    pub extern_: bool,
+    pub noreturn_: bool,
+    pub register_: bool,
+    pub typedef_: bool,
+
+    pub const_: bool,
+    pub volatile_: bool,
+    pub restrict_: bool,
+    pub atomic_: bool,
+
+    #[bits(15)]
+    _asdf2: u16,
+
+    #[bits(8)]
+    pub specifier: TypeSpecifier,
+
+    #[bits(32)]
+    pub symbol: Symbol,
+}
+
+impl AstInterpretData for AstDeclaration {
+    type AstData = DeclSpecifiers;
+}
+
+#[bitfield(u64)]
+pub struct FuncDefSpecifiers {
+    pub static_: bool,
+    pub extern_: bool,
+    pub inline_: bool,
+    pub noreturn_: bool,
+
+    pub const_: bool,
+    pub volatile_: bool,
+    pub restrict_: bool,
+    pub atomic_: bool,
+
+    _asdf2: u16,
+
+    #[bits(8)]
+    pub specifier: TypeSpecifier,
+
+    #[bits(32)]
+    pub symbol: Symbol,
+}
+
+impl AstInterpretData for AstFunctionDefinition {
+    type AstData = FuncDefSpecifiers;
+}
 
 /// Prints the tree in a text format, so that it's a lil easier to read.
 /// Output right now looks like this:

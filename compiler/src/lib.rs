@@ -6,8 +6,8 @@
 extern crate soa_derive;
 #[macro_use]
 extern crate lazy_static;
-// #[macro_use]
-// extern crate bitfield_struct;
+#[macro_use]
+extern crate bitfield_struct;
 #[macro_use]
 extern crate enum_derive;
 #[macro_use]
@@ -23,13 +23,10 @@ pub mod macros;
 pub mod parser;
 pub mod pass;
 
-#[cfg(test)]
-mod tests;
-
 pub mod api {
     pub use super::ast::{
         self, AstDeclaration, AstDeclarator, AstDerivedDeclarator, AstExpr, AstFunctionDefinition,
-        AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
+        AstInterpretData, AstNode, AstNodeKind, AstNodeVec, AstSpecifier, AstStatement,
     };
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
@@ -77,7 +74,7 @@ where
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Default)]
 pub struct PipelineData {
     #[serde(default)]
     pub lexer: StageOutput<lexer::TokenKind>,
@@ -87,6 +84,9 @@ pub struct PipelineData {
 
     #[serde(default)]
     pub parsed_ast: StageOutput<SimpleAstNode>,
+
+    #[serde(default)]
+    pub ast_validation: StageOutput<SimpleAstNode>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -97,8 +97,20 @@ pub struct SimpleAstNode {
     pub height: u16,
 }
 
+impl<'a> From<ast::AstNodeRef<'a>> for SimpleAstNode {
+    fn from(node: ast::AstNodeRef) -> Self {
+        return Self {
+            kind: *node.kind,
+            parent: *node.parent,
+            post_order: *node.post_order,
+            height: *node.height,
+        };
+    }
+}
+
 const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
-pub type PrintFunc<'a> = &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
+pub type PrintFunc<'a> =
+    &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
 
 // NOTE: the "source" field is empty
 pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>) -> PipelineData {
@@ -118,6 +130,7 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
         lexer: StageOutput::Err(ErrorKind::DidntRun),
         macro_expansion: StageOutput::Err(ErrorKind::DidntRun),
         parsed_ast: StageOutput::Err(ErrorKind::DidntRun),
+        ast_validation: StageOutput::Err(ErrorKind::DidntRun),
     };
 
     let lexer_res = match lex(&files, file) {
@@ -150,17 +163,37 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
         }
     };
 
-    let mut simple_ast = Vec::with_capacity(parsed_ast.len());
-    for node in parsed_ast.as_slice() {
-        simple_ast.push(SimpleAstNode {
-            kind: *node.kind,
-            parent: *node.parent,
-            post_order: *node.post_order,
-            height: *node.height,
-        });
+    out.parsed_ast = StageOutput::Ok(
+        parsed_ast
+            .as_slice()
+            .into_iter()
+            .map(SimpleAstNode::from)
+            .collect(),
+    );
+
+    let mut parsed_ast = parsed_ast;
+    {
+        let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
+
+        if let Err(e) = pass::validate_declaration_nodes(&mut by_kind) {
+            if let Some(print) = print_err {
+                print(&files, &tu, &e);
+            }
+
+            out.ast_validation = StageOutput::Err(e.kind);
+            return out;
+        }
     }
 
-    out.parsed_ast = StageOutput::Ok(simple_ast);
+    println!("{}", ast::display_tree(&parsed_ast));
+
+    out.ast_validation = StageOutput::Ok(
+        parsed_ast
+            .as_slice()
+            .into_iter()
+            .map(SimpleAstNode::from)
+            .collect(),
+    );
 
     return out;
 }
@@ -181,11 +214,7 @@ pub fn parse_test_case(test_source: &str) -> (&str, PipelineData) {
 
     let expected = serde_json::from_str::<Option<PipelineData>>(expected_str)
         .expect("Test case expected value didn't parse")
-        .unwrap_or(PipelineData {
-            lexer: StageOutput::Ignore,
-            macro_expansion: StageOutput::Ignore,
-            parsed_ast: StageOutput::Ignore,
-        });
+        .unwrap_or_default();
 
     return (source, expected);
 }

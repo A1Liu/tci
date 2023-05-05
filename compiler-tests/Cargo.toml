@@ -1,0 +1,14 @@
+[package]
+name = "compiler-tests"
+version = "0.0.1"
+
+[dependencies]
+# Until 0.13.0 is released, gotta use the github version to get sorting and ToOwned 
+soa_derive = { git = "https://github.com/lumol-org/soa-derive" }
+compiler = { path = "../compiler" }
+
+[dev-dependencies]
+ntest = "0.9.0"
+
+[build-dependencies]
+walkdir = "2.3.3"

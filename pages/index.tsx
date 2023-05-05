@@ -91,13 +91,12 @@ export function App() {
               );
               editor.getModel()?.onDidChangeContent((evt) => writeToStorage());
 
-              monaco.editor.addKeybindingRules([
-                {
-                  keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-                  // TODO: make this do something useful
-                  command: "editor.action.formatDocument",
-                },
-              ]);
+              monaco.editor.addKeybindingRule({
+                keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                // TODO: make this do something useful
+                command: "editor.action.formatDocument",
+              });
+
               compile();
             }}
           />
@@ -124,7 +123,12 @@ export function App() {
 
           {result?.errors && (
             <ScrollWindow className={"full rounded border"} title="Error">
-              <pre>{JSON.stringify(result.errors)}</pre>
+              <pre
+                className="pad"
+                style={{ wordWrap: "break-word", whiteSpace: "pre-wrap" }}
+              >
+                {JSON.stringify(result.errors, undefined, 2)}
+              </pre>
             </ScrollWindow>
           )}
         </div>

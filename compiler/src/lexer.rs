@@ -284,7 +284,9 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
                 result.tokens.pop().unwrap();
                 token_count -= 1;
 
-                let res = match lex_include_line(&input.contents[input.index..]) {
+                let begin = index;
+
+                let res = match lex_include_line(index, &input.contents[input.index..]) {
                     Ok(res) => res,
                     Err(error) => {
                         return Err(LexError {
@@ -307,7 +309,10 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
                     Err(e) => {
                         return Err(LexError {
                             translation_unit: result.translation_unit,
-                            error: Error::new(ErrorKind::Todo(e.to_string())),
+                            error: Error::new(ErrorKind::Todo {
+                                message: e.to_string(),
+                                index: begin,
+                            }),
                         })
                     }
                 };
@@ -413,7 +418,7 @@ fn lex_tok_from_bytes<'a>(global_index: u32, data: &'a [u8]) -> Result<LexedTok,
                 loop {
                     let b = *data
                         .get(index + i)
-                        .ok_or(error!(Todo("EOF while inside a block comment")))?;
+                        .ok_or(error!(todo "EOF while inside a block comment" global_index))?;
                     i += 1;
 
                     // Consume until we hit the suffix
@@ -530,10 +535,10 @@ fn lex_tok_from_bytes<'a>(global_index: u32, data: &'a [u8]) -> Result<LexedTok,
             });
         }
 
-        b'\"' => return lex_character(TokenKind::StringLit, b'\"', index, data),
-        b'\'' => return lex_character(TokenKind::CharLit, b'\'', index, data),
+        b'\"' => return lex_character(TokenKind::StringLit, b'\"', global_index, index, data),
+        b'\'' => return lex_character(TokenKind::CharLit, b'\'', global_index, index, data),
 
-        x => throw!(Todo("invalid character")),
+        x => throw!(todo "invalid character" global_index),
     }
 }
 
@@ -584,13 +589,14 @@ fn lex_num(mut index: usize, data: &[u8]) -> Result<LexedTok, Error> {
 fn lex_character(
     kind: TokenKind,
     surround: u8,
+    global_index: u32,
     mut index: usize,
     data: &[u8],
 ) -> Result<LexedTok, Error> {
     while index < data.len() {
         let cur = data[index];
         if !cur.is_ascii() {
-            throw!(Todo("character is not valid ascii"));
+            throw!(todo "character is not valid ascii" global_index);
         }
 
         if cur == surround {
@@ -602,7 +608,7 @@ fn lex_character(
 
         // handle early newline
         if cur == b'\n' || cur == b'\r' {
-            throw!(Todo("invalid character found when parsing string literal"));
+            throw!(todo "invalid character found when parsing string literal" global_index);
         }
 
         // handle escape cases
@@ -621,7 +627,7 @@ fn lex_character(
         index += 1;
     }
 
-    throw!(Todo("File ended before ohe string was closed"));
+    throw!(todo "File ended before ohe string was closed" global_index);
 }
 
 struct IncludeResult<'a> {
@@ -630,7 +636,7 @@ struct IncludeResult<'a> {
     consumed: usize,
 }
 
-fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
+fn lex_include_line(global_index: u32, data: &[u8]) -> Result<IncludeResult, Error> {
     let mut index = 0;
     while index < data.len() {
         match data[index] {
@@ -642,7 +648,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
     let (end_quote, file_type) = match data[index] {
         b'"' => (b'"', FileType::User),
         b'<' => (b'>', FileType::System),
-        _ => throw!(Todo("expected a file string")),
+        _ => throw!(todo "expected a file string" global_index),
     };
 
     index += 1;
@@ -652,10 +658,10 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
     loop {
         match data.get(index) {
             None => {
-                throw!(Todo("file ended before include file string was done"))
+                throw!(todo "file ended before include file string was done" global_index)
             }
             Some(b'\n') | Some(b'\r') => {
-                throw!(Todo("line ended before file string was done"))
+                throw!(todo "line ended before file string was done" global_index)
             }
 
             Some(x) if *x == end_quote => break,
@@ -681,7 +687,7 @@ fn lex_include_line(data: &[u8]) -> Result<IncludeResult, Error> {
         (b'\n', _) => 1,
         (b'\r', _) => 1,
 
-        _ => throw!(Todo("extra stuff after include file name")),
+        _ => throw!(todo "extra stuff after include file name" global_index),
     };
 
     index += increment;

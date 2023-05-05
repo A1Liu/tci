@@ -27,7 +27,7 @@ impl TranslationUnitDebugInfo {
         return Diagnostic::error()
             .with_message(err.message())
             .with_code(err.code())
-            .with_labels(err.kind.labels(self));
+            .with_labels(err.labels(self));
     }
 
     pub fn token_range(&self, start: u32) -> FileRange {
@@ -50,15 +50,30 @@ impl TranslationUnitDebugInfo {
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ErrorKind {
-    Todo(String),
+    Todo { message: String, index: u32 },
+    Tci { message: String, index: u32 },
 
     DidntRun,
-    NotImplemented(String),
+    NotImplemented { message: String, index: u32 },
 
     InvalidCharacterSequence { seq: String, index: u32 },
 }
 
 macro_rules! error {
+    (todo $str:literal $index:expr) => {
+        Error::new(crate::error::ErrorKind::Todo {
+            message: $str.to_string(),
+            index: $index,
+        })
+    };
+
+    ($id:ident $str:literal $index:expr) => {
+        Error::new(crate::error::ErrorKind::$id {
+            message: $str.to_string(),
+            index: $index,
+        })
+    };
+
     ($e:ident ( $str:literal )) => {
         Error::new(crate::error::ErrorKind::$e ( $str.to_string() ))
     };
@@ -81,10 +96,11 @@ impl ErrorKind {
         use ErrorKind::*;
 
         match self {
-            Todo(message) => format!("{}", message),
+            Todo { message, index } => format!("{}", message),
+            Tci { message, index } => format!("INTERNAL TCI ERROR: {}", message),
 
             DidntRun => format!("compiler phase didn't run"),
-            NotImplemented(message) => format!("{}", message),
+            NotImplemented { message, index } => format!("{}", message),
 
             InvalidCharacterSequence { seq, index } => format!("'{}' isn't valid", seq),
         }
@@ -94,10 +110,11 @@ impl ErrorKind {
         use ErrorKind::*;
 
         match self {
-            Todo(message) => "001",
+            Todo { message, index } => "001",
+            Tci { message, index } => "999",
 
             DidntRun => "000",
-            NotImplemented(message) => "002",
+            NotImplemented { message, index } => "002",
 
             InvalidCharacterSequence { seq, index } => "100",
         }
@@ -109,9 +126,21 @@ impl ErrorKind {
         let mut labels = Vec::new();
 
         match self {
-            Todo(message) => {}
+            Todo { message, index } => {
+                let range = tu.token_range(*index);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
+
+            Tci { message, index } => {
+                let range = tu.token_range(*index);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
+
             DidntRun => {}
-            NotImplemented(message) => {}
+            NotImplemented { message, index } => {
+                let range = tu.token_range(*index);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
 
             InvalidCharacterSequence { seq, index } => {
                 let range = tu.token_range(*index);
@@ -129,7 +158,7 @@ impl ErrorKind {
 #[derive(Debug)]
 pub struct Error {
     pub kind: ErrorKind,
-    backtrace: Option<std::backtrace::Backtrace>,
+    pub backtrace: Option<std::backtrace::Backtrace>,
 }
 
 impl Error {
@@ -151,5 +180,9 @@ impl Error {
 
     pub fn code(&self) -> &'static str {
         return self.kind.code();
+    }
+
+    pub fn labels(&self, tu: &TranslationUnitDebugInfo) -> Vec<Label<u32>> {
+        return self.kind.labels(tu);
     }
 }
