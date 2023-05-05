@@ -174,6 +174,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "compiler-tests"
+version = "0.0.1"
+dependencies = [
+ "compiler",
+ "ntest",
+ "soa_derive",
+ "walkdir",
+]
+
+[[package]]
+name = "compiler-web"
+version = "0.1.0"
+dependencies = [
+ "compiler",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+ "wee_alloc",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -608,34 +630,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "tci-web"
-version = "0.1.0"
-dependencies = [
- "compiler",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "wasm-bindgen",
- "wee_alloc",
-]
-
-[[package]]
 name = "termcolor"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be55cf8942feac5c765c2c993422806843c9a9a45d4d5c407ad6dd2ea95eb9b6"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "tests"
-version = "0.0.1"
-dependencies = [
- "compiler",
- "ntest",
- "soa_derive",
- "walkdir",
 ]
 
 [[package]]

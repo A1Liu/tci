@@ -1,5 +1,5 @@
 [package]
-name = "tci-web"
+name = "compiler-web"
 description = "TCI compiler server for the web"
 repository = "https://github.com/A1Liu/tci"
 version = "0.1.0"
