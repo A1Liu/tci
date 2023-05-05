@@ -162,9 +162,7 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
                         Some(Ok(t))
                     }
                 }
-                (Int, Some(_)) => {
-                    Some(Err(dup_type(*node.start)))
-                },
+                (Int, Some(_)) => Some(Err(dup_type(*node.start))),
                 (Int, None) => {
                     tracker.has_int = true;
                     Some(Ok(Ty::Int))

@@ -13,15 +13,19 @@ pub fn main() {
 
         let went_down = entry.depth() > dir_depth;
 
-        if ignore && went_down {
-            continue;
+        if ignore {
+            if went_down {
+                println!("cargo:warning=ignore {:?}", entry.path());
+                continue;
+            }
+
+            ignore = false;
+            dir_depth -= 1;
         }
 
-        ignore = false;
-
         if !went_down {
-            for _ in 0..(1 + dir_depth - entry.depth()) {
-                write!(output, "}}\n").expect("");
+            for d in 0..(1 + dir_depth - entry.depth()) {
+                write!(output, "{}}}\n", "    ".repeat(dir_depth - d - 1)).expect("");
             }
 
             dir_depth = entry.depth() - 1;
@@ -29,6 +33,9 @@ pub fn main() {
 
         if entry.file_type().is_dir() {
             let ignore_file = entry.path().join("TEST_IGNORE.txt");
+            let prev_dir_depth = dir_depth;
+            dir_depth = entry.depth();
+
             if ignore_file.exists() {
                 // Skip directory
                 println!("cargo:rerun-if-changed={}", ignore_file.to_string_lossy());
@@ -36,10 +43,15 @@ pub fn main() {
                 continue;
             }
 
-            dir_depth = entry.depth();
             println!("cargo:rerun-if-changed={}", entry.path().to_string_lossy());
 
-            write!(output, "mod {} {{\n", entry.file_name().to_string_lossy()).expect("");
+            write!(
+                output,
+                "\n{}mod {} {{",
+                "    ".repeat(prev_dir_depth),
+                entry.file_name().to_string_lossy()
+            )
+            .expect("");
 
             continue;
         }
@@ -53,17 +65,25 @@ pub fn main() {
         let canonical = entry.path().canonicalize().expect("failed to canonicalize");
         println!("cargo:rerun-if-changed={}", entry.path().to_string_lossy());
 
-        write!(
-            output,
-            "#[test]
-fn test_{}() {{
-    compiler::run_compiler_test_case(include_str!({:?}));
-}}\n
+        let indent = "    ".repeat(dir_depth);
+        output += &format!(
+            "
+{}#[test]
+{}fn test_{}() {{
+{}    compiler::run_compiler_test_case(include_str!({:?}));
+{}}}
 ",
+            indent,
+            indent,
             f_name.replace(|c: char| !c.is_alphanumeric(), "_"),
-            canonical
-        )
-        .expect("failed to write to output");
+            indent,
+            canonical,
+            indent,
+        );
+    }
+
+    if ignore {
+        dir_depth -= 1;
     }
 
     for _ in 0..dir_depth {
