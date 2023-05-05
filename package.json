@@ -8,8 +8,8 @@
   "private": false,
   "scripts": {
     "start": "next start",
-    "link-wasm": "cd tci-web/pkg && yarn link && cd ../.. && yarn link tci-web",
-    "wasm": "wasm-pack build --debug tci-web",
+    "link-wasm": "cd compiler-web/pkg && yarn link && cd ../.. && yarn link compiler-web",
+    "wasm": "wasm-pack build --debug compiler-web",
     "deploy": "git push origin main:production",
     "dev": "next",
     "lint": "next lint"
@@ -27,7 +27,7 @@
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-is": ">= 16.8.0",
-    "tci-web": "file:./tci-web/pkg",
+    "compiler-web": "file:./compiler-web/pkg",
     "zod": "^3.21.4"
   },
   "devDependencies": {
