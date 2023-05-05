@@ -65,21 +65,18 @@ pub fn main() {
         let canonical = entry.path().canonicalize().expect("failed to canonicalize");
         println!("cargo:rerun-if-changed={}", entry.path().to_string_lossy());
 
-        let indent = "    ".repeat(dir_depth);
+        let indent = "\n".to_string() + &"    ".repeat(dir_depth);
         output += &format!(
             "
-{}#[test]
-{}fn test_{}() {{
-{}    compiler::run_compiler_test_case(include_str!({:?}));
-{}}}
-",
-            indent,
-            indent,
+#[test]
+fn test_{}() {{
+    compiler::run_compiler_test_case(include_str!({:?}));
+}}",
             f_name.replace(|c: char| !c.is_alphanumeric(), "_"),
-            indent,
             canonical,
-            indent,
-        );
+        )
+        .replace("\n", &indent);
+        output += "\n";
     }
 
     if ignore {
@@ -90,5 +87,5 @@ pub fn main() {
         write!(output, "}}\n").expect("");
     }
 
-    std::fs::write("./src/lib.rs", output).expect("failed to generate code");
+    std::fs::write("./src/lib.rs", (&output).trim_start()).expect("failed to generate code");
 }
