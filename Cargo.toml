@@ -1,6 +1,6 @@
 [workspace]
 
-members = ["compiler", "tci-web"]
+members = ["compiler", "tci-web", "tests"]
 
 [profile.dev]
 opt-level = 0

@@ -8,7 +8,7 @@ fn dotdot() {
     crate::run_compiler_test_case(include_str!("dotdot.c"));
 }
 
-// #[test]
-// fn include() {
-//     crate::run_test_code(include_str!("include.c"));
-// }
+#[test]
+fn include() {
+    crate::run_compiler_test_case(include_str!("include.c"));
+}

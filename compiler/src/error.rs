@@ -158,7 +158,7 @@ impl ErrorKind {
 #[derive(Debug)]
 pub struct Error {
     pub kind: ErrorKind,
-    backtrace: Option<std::backtrace::Backtrace>,
+    pub backtrace: Option<std::backtrace::Backtrace>,
 }
 
 impl Error {

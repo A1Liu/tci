@@ -174,6 +174,30 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
             .collect(),
     );
 
+    let mut parsed_ast = parsed_ast;
+    {
+        let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
+
+        if let Err(e) = pass::validate_declaration_nodes(&mut by_kind) {
+            if let Some(print) = print_err {
+                print(&files, &tu, &e);
+            }
+
+            out.ast_validation = StageOutput::Err(e.kind);
+            return out;
+        }
+    }
+
+    println!("{}", ast::display_tree(&parsed_ast));
+
+    out.ast_validation = StageOutput::Ok(
+        parsed_ast
+            .as_slice()
+            .into_iter()
+            .map(SimpleAstNode::from)
+            .collect(),
+    );
+
     return out;
 }
 

@@ -121,7 +121,7 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
         use ast::TypeSpecifier as Ty;
         use AstSpecifier::*;
 
-        for node in ast.nodes.as_slice() {
+        for node in ast.nodes.as_slice().index(range.clone()) {
             let tracker = trackers
                 .entry(*node.parent)
                 .or_insert(SpecifierTracker::default());
@@ -162,7 +162,9 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
                         Some(Ok(t))
                     }
                 }
-                (Int, Some(_)) => Some(Err(dup_type(*node.start))),
+                (Int, Some(_)) => {
+                    Some(Err(dup_type(*node.start)))
+                },
                 (Int, None) => {
                     tracker.has_int = true;
                     Some(Ok(Ty::Int))

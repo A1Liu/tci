@@ -183,7 +183,8 @@ pub enum AstDeclarator {
     NestedWithChild,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, Serialize, Deserialize)]
+// NOTE: This should probably not be a node, and instead should be a data field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstSpecifier {
     Extern,
     Static,
@@ -211,15 +212,6 @@ pub enum AstSpecifier {
 
     Struct(StructDeclaration), // children: ident declaration of struct, field declarations of struct
     Ident,                     // data: Symbol
-}
-
-// Ordering these is super counter-productive, because there's no benefit I'm aware of for computing all static *specifiers*
-// at once. However, there are a lot of things that are useful about comparing the specifiers for
-// a single declaration all at once, which is what happens when these aren't ordered at all.
-impl PartialOrd for AstSpecifier {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        return Some(core::cmp::Ordering::Equal);
-    }
 }
 
 /// A typical declaration; this is a stand-in for

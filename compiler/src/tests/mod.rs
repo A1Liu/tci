@@ -1,2 +1,3 @@
-mod lexer;
 mod integration;
+mod lexer;
+mod pass;
