@@ -6,8 +6,8 @@
 extern crate soa_derive;
 #[macro_use]
 extern crate lazy_static;
-// #[macro_use]
-// extern crate bitfield_struct;
+#[macro_use]
+extern crate bitfield_struct;
 #[macro_use]
 extern crate enum_derive;
 #[macro_use]

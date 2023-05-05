@@ -5,11 +5,15 @@ This module describes the AST created by the parser.
 use crate::api::*;
 
 pub trait AstInterpretData {
-    type Output;
+    type AstData: From<u64> + Into<u64>;
 
-    fn read(&self, field: &u64) -> Self::Output;
+    fn read(field: &u64) -> Self::AstData {
+        return Self::AstData::from(*field);
+    }
 
-    fn as_mut_ref(&self, field: &mut u64) -> &mut Self::Output;
+    fn write(field: &mut u64, value: Self::AstData) {
+        *field = value.into();
+    }
 }
 
 #[derive(Debug, Clone, Copy, StructOfArray)]
@@ -39,6 +43,9 @@ pub enum AstNodeKind {
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
     FunctionDefinition(AstFunctionDefinition),
+
+    // TODO: maybe we wanna delete stuff from the AST later
+    // Nop(()),
 }
 }
 
@@ -209,16 +216,127 @@ pub enum AstSpecifier {
 /// A typical declaration; this is a stand-in for
 /// `int *i[1] = {NULL};` or something similar
 ///
-/// Children: AstSpecifier for each specifier, AstStructDeclaration if necessary, an AstInitDeclarator for each declared variable
+/// Children: AstSpecifier for each specifier, AstStructDeclaration if necessary,
+/// an AstInitDeclarator for each declared variable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
 pub struct AstDeclaration;
 
 /// A function definition
 ///
 /// Data: DeclarationSpecifiers
-/// Children: AstSpecifier for each specifier, san AstDeclarator, and all the statements associated with the function
+/// Children: AstSpecifier for each specifier, san AstDeclarator, and all the
+/// statements associated with the function
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Serialize, Deserialize)]
+pub enum TypeSpecifier {
+    Void = 0,
+
+    Char = 1,
+    Short = 2,
+    Int = 3,
+    Long = 4,
+
+    UChar = 5,
+    UShort = 6,
+    UInt = 7,
+    ULong = 8,
+
+    Float = 9,
+    Double = 10,
+
+    Struct = 11,
+    Union = 12,
+    Ident = 13,
+
+    Invalid = 14,
+}
+
+impl Into<u64> for TypeSpecifier {
+    fn into(self) -> u64 {
+        return self as u64;
+    }
+}
+
+impl From<u64> for TypeSpecifier {
+    fn from(value: u64) -> Self {
+        match value {
+            0 => Self::Void,
+            1 => Self::Char,
+            2 => Self::Short,
+            3 => Self::Int,
+            4 => Self::Long,
+
+            5 => Self::UChar,
+            6 => Self::UShort,
+            7 => Self::UInt,
+            8 => Self::ULong,
+
+            9 => Self::Float,
+            10 => Self::Double,
+
+            11 => Self::Struct,
+            12 => Self::Union,
+            13 => Self::Ident,
+
+            _ => Self::Invalid,
+        }
+    }
+}
+
+#[bitfield(u64)]
+pub struct DeclSpecifiers {
+    // Inline doesn't make sense for non-definitions
+    pub static_: bool,
+    pub extern_: bool,
+    pub noreturn_: bool,
+    pub register_: bool,
+    pub typedef_: bool,
+
+    pub const_: bool,
+    pub volatile_: bool,
+    pub restrict_: bool,
+    pub atomic_: bool,
+
+    #[bits(15)]
+    _asdf2: u16,
+
+    #[bits(8)]
+    pub specifier: TypeSpecifier,
+
+    #[bits(32)]
+    pub symbol: Symbol,
+}
+
+impl AstInterpretData for AstDeclaration {
+    type AstData = DeclSpecifiers;
+}
+
+#[bitfield(u64)]
+pub struct FuncDefSpecifiers {
+    pub static_: bool,
+    pub extern_: bool,
+    pub inline_: bool,
+    pub noreturn_: bool,
+
+    pub const_: bool,
+    pub volatile_: bool,
+    pub restrict_: bool,
+    pub atomic_: bool,
+
+    _asdf2: u16,
+
+    #[bits(8)]
+    pub specifier: TypeSpecifier,
+
+    #[bits(32)]
+    pub symbol: Symbol,
+}
+
+impl AstInterpretData for AstFunctionDefinition {
+    type AstData = FuncDefSpecifiers;
+}
 
 /// Prints the tree in a text format, so that it's a lil easier to read.
 /// Output right now looks like this:

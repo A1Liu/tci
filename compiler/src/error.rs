@@ -50,10 +50,11 @@ impl TranslationUnitDebugInfo {
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ErrorKind {
-    Todo{ message: String, index: u32 },
+    Todo { message: String, index: u32 },
+    Tci { message: String, index: u32 },
 
     DidntRun,
-    NotImplemented(String),
+    NotImplemented { message: String, index: u32 },
 
     InvalidCharacterSequence { seq: String, index: u32 },
 }
@@ -61,6 +62,13 @@ pub enum ErrorKind {
 macro_rules! error {
     (todo $str:literal $index:expr) => {
         Error::new(crate::error::ErrorKind::Todo {
+            message: $str.to_string(),
+            index: $index,
+        })
+    };
+
+    ($id:ident $str:literal $index:expr) => {
+        Error::new(crate::error::ErrorKind::$id {
             message: $str.to_string(),
             index: $index,
         })
@@ -88,10 +96,11 @@ impl ErrorKind {
         use ErrorKind::*;
 
         match self {
-            Todo{ message, index } => format!("{}", message),
+            Todo { message, index } => format!("{}", message),
+            Tci { message, index } => format!("INTERNAL TCI ERROR: {}", message),
 
             DidntRun => format!("compiler phase didn't run"),
-            NotImplemented(message) => format!("{}", message),
+            NotImplemented { message, index } => format!("{}", message),
 
             InvalidCharacterSequence { seq, index } => format!("'{}' isn't valid", seq),
         }
@@ -101,10 +110,11 @@ impl ErrorKind {
         use ErrorKind::*;
 
         match self {
-            Todo{ message, index } => "001",
+            Todo { message, index } => "001",
+            Tci { message, index } => "999",
 
             DidntRun => "000",
-            NotImplemented(message) => "002",
+            NotImplemented { message, index } => "002",
 
             InvalidCharacterSequence { seq, index } => "100",
         }
@@ -116,13 +126,21 @@ impl ErrorKind {
         let mut labels = Vec::new();
 
         match self {
-            Todo{ message, index } => {
+            Todo { message, index } => {
+                let range = tu.token_range(*index);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
+
+            Tci { message, index } => {
                 let range = tu.token_range(*index);
                 labels.push(Label::primary(range.file, range.start..(range.start + 1)));
             }
 
             DidntRun => {}
-            NotImplemented(message) => {}
+            NotImplemented { message, index } => {
+                let range = tu.token_range(*index);
+                labels.push(Label::primary(range.file, range.start..(range.start + 1)));
+            }
 
             InvalidCharacterSequence { seq, index } => {
                 let range = tu.token_range(*index);
