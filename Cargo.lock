@@ -161,7 +161,6 @@ name = "compiler"
 version = "0.1.0"
 dependencies = [
  "bitfield-struct",
- "clap",
  "codespan-reporting",
  "enum_derive",
  "lazy_static",
@@ -177,6 +176,8 @@ dependencies = [
 name = "compiler-tests"
 version = "0.0.1"
 dependencies = [
+ "clap",
+ "codespan-reporting",
  "compiler",
  "ntest",
  "soa_derive",

@@ -18,8 +18,6 @@ pub mod error;
 
 pub mod ast;
 pub mod filedb;
-pub mod lexer;
-pub mod macros;
 pub mod parser;
 pub mod pass;
 
@@ -30,9 +28,7 @@ pub mod api {
     };
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
-    pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
-    pub use super::macros::expand_macros;
-    pub use super::parser::parse;
+    pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
 
     pub use super::run_compiler_test_case;
 
@@ -77,10 +73,10 @@ where
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Default)]
 pub struct PipelineData {
     #[serde(default)]
-    pub lexer: StageOutput<lexer::TokenKind>,
+    pub lexer: StageOutput<parser::TokenKind>,
 
     #[serde(default)]
-    pub macro_expansion: StageOutput<lexer::TokenKind>,
+    pub macro_expansion: StageOutput<parser::TokenKind>,
 
     #[serde(default)]
     pub parsed_ast: StageOutput<SimpleAstNode>,
