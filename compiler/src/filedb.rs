@@ -25,13 +25,13 @@ macro_rules! sys {
     (header $file:literal) => {
         FileStatic {
             name: $file,
-            source: include_str!(concat!("stdlib/header/", $file)),
+            source: include_str!(concat!("../header/", $file)),
         }
     };
     (lib $file:literal) => {
         FileStatic {
             name: $file,
-            source: include_str!(concat!("stdlib/", $file)),
+            source: include_str!(concat!("../libc/", $file)),
         }
     };
 }
