@@ -295,10 +295,8 @@ pub struct DeclSpecifiers {
     pub register_: bool,
     pub typedef_: bool,
 
-    pub const_: bool,
-    pub volatile_: bool,
-    pub restrict_: bool,
-    pub atomic_: bool,
+    #[bits(4)]
+    quals: TyQuals,
 
     #[bits(15)]
     _asdf2: u16,
@@ -321,10 +319,8 @@ pub struct FuncDefSpecifiers {
     pub inline_: bool,
     pub noreturn_: bool,
 
-    pub const_: bool,
-    pub volatile_: bool,
-    pub restrict_: bool,
-    pub atomic_: bool,
+    #[bits(4)]
+    quals: TyQuals,
 
     _asdf2: u16,
 
@@ -399,3 +395,30 @@ pub fn display_tree(ast: &AstNodeVec) -> String {
 
     return out;
 }
+
+#[bitfield(u8)]
+pub struct TyQuals {
+    pub const_: bool,
+    pub atomic_: bool,
+    pub volatile_: bool,
+    pub restrict_: bool,
+
+    #[bits(4)]
+    a: usize,
+}
+
+impl From<u64> for TyQuals {
+    fn from(value: u64) -> Self {
+        Self::from(value as u8)
+    }
+}
+
+impl Into<u64> for TyQuals {
+    fn into(self) -> u64 {
+        u8::from(self) as u64
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TyId(u32);

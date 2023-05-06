@@ -1,6 +1,8 @@
 use crate::api::*;
 use core::ops::Range;
 
+pub mod types;
+
 // TODO: how do we do node insertions and node deletions?
 
 pub struct ByKindAst<'a> {
@@ -228,6 +230,7 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
     }
 
     // 4. Loop over all derived declarators, and combine them into their declarator
+
     // 5. Loop over all declarators, and fold them into parents
     // 6. Combine type from declaration and derived declarators to produce types for each declarator
     // 7. Validate that types make sense for function definitions
