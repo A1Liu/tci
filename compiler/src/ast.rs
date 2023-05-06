@@ -418,7 +418,3 @@ impl Into<u64> for TyQuals {
         u8::from(self) as u64
     }
 }
-
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TyId(u32);
