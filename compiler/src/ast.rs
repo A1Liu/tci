@@ -231,60 +231,6 @@ pub struct AstDeclaration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum TypeSpecifier {
-    Void = 0,
-
-    Char = 1,
-    Short = 2,
-    Int = 3,
-    Long = 4,
-
-    UChar = 5,
-    UShort = 6,
-    UInt = 7,
-    ULong = 8,
-
-    Float = 9,
-    Double = 10,
-
-    Struct = 11,
-    Union = 12,
-    Ident = 13,
-}
-
-impl Into<u64> for TypeSpecifier {
-    fn into(self) -> u64 {
-        return self as u64;
-    }
-}
-
-impl From<u64> for TypeSpecifier {
-    fn from(value: u64) -> Self {
-        match value {
-            0 => Self::Void,
-            1 => Self::Char,
-            2 => Self::Short,
-            3 => Self::Int,
-            4 => Self::Long,
-
-            5 => Self::UChar,
-            6 => Self::UShort,
-            7 => Self::UInt,
-            8 => Self::ULong,
-
-            9 => Self::Float,
-            10 => Self::Double,
-
-            11 => Self::Struct,
-            12 => Self::Union,
-            13 => Self::Ident,
-
-            _ => panic!("invalid type specifier"),
-        }
-    }
-}
-
 #[bitfield(u64)]
 pub struct DeclSpecifiers {
     #[bits(4)]
