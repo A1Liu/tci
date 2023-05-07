@@ -330,7 +330,9 @@ impl AstNode {
 /// | └ Statement(Ret)                                                             
 /// | | └ Expr(StringLit)
 /// ```
-pub fn display_tree(ast: &[AstNode]) -> String {
+pub fn display_tree(ast: &[AstNode], ty_db: Option<&TyDb>) -> String {
+    use std::fmt::Write;
+
     let mut children = Vec::<Vec<usize>>::with_capacity(ast.len());
     children.resize_with(ast.len(), || Vec::new());
 
@@ -364,7 +366,16 @@ pub fn display_tree(ast: &[AstNode]) -> String {
 
         match node.kind {
             AstNodeKind::Declarator(d) => {
-                out += &format!(" {:?}\n", node.read_data(&d));
+                out += " ";
+
+                let ty = node.read_data(&d);
+                if let Some(ty_db) = ty_db {
+                    ty_db.write(&mut out, ty);
+                } else {
+                    write!(out, "{:?}", ty).unwrap();
+                }
+
+                out += "\n";
             }
             _ => out.push('\n'),
         }

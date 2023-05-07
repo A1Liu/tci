@@ -8,22 +8,26 @@ struct SpecifierTracker {
     has_sign: bool,
 }
 
+#[derive(Clone)]
+struct Param {
+    post_order: u32,
+    ty_id: TyId,
+}
+
+#[derive(Default, Clone)]
+struct Params {
+    count: u32,
+    collected_params: Vec<Param>,
+}
+
 // validate declarations -> produce declaration types
 // Declaration specifiers need to make sense for the kind of declaration theyre on
-pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
+pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Error> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
-    // for (id, kind) in ast.nodes.kind.iter().enumerate() {
-    //     eprintln!(
-    //         "node: {} {:?} -> {}",
-    //         id, kind, ast.nodes.parent[id as usize]
-    //     );
-    // }
-    // eprintln!("");
-
     let mut trackers = HashMap::<u32, SpecifierTracker>::new();
-    let mut param_counters: HashMap<u32, (u32, Vec<(u32, TyId)>)> = HashMap::new();
+    let mut param_counters: HashMap<u32, Params> = HashMap::new();
 
     // Build summary of all specifiers for each node with a specifier
     for (kind, range) in &ast.by_kind_in_order {
@@ -139,14 +143,12 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
             AstNodeKind::ParamDecl(p) => {
                 node.write_data(&p, ast::DeclSpecifiers::new().with_ty_id(spec));
 
-                param_counters.entry(*node.parent).or_default().0 += 1;
+                param_counters.entry(*node.parent).or_default().count += 1;
             }
 
             _ => throw!(Tci "specifier attached to non-declaration" *node.start),
         };
     }
-
-    let ty_db = TyDb::new();
 
     let mut range: Vec<_> = [AstDeclarator::Ident, AstDeclarator::Abstract]
         .into_iter()
@@ -160,7 +162,7 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
 
         let (left, right): (Vec<_>, Vec<_>) = range
             .into_par_iter()
-            .partition_map(|index| type_for_declarator(index, ast, &ty_db, &param_counters));
+            .partition_map(|index| type_for_declarator(index, ast, ty_db, &param_counters));
 
         let mut errors = Vec::new();
         for res in left {
@@ -181,8 +183,11 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                 param_counters
                     .get_mut(parent.parent)
                     .unwrap()
-                    .1
-                    .push((*parent.post_order, data.ty_id));
+                    .collected_params
+                    .push(Param {
+                        post_order: *parent.post_order,
+                        ty_id: data.ty_id,
+                    });
             }
         }
 
@@ -194,7 +199,14 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
             break;
         }
 
-        range = right;
+        range = Vec::with_capacity(right.len());
+        for data in right {
+            range.push(data.index);
+
+            // let mut node = ast.nodes.index_mut(data.index);
+            // node.write_data(&AstDeclarator::Ident, data.ty_id);
+            // *node.parent = data.parent_index;
+        }
     }
 
     if loop_count >= 20 {
@@ -214,8 +226,8 @@ fn type_for_declarator(
     index: usize,
     ast: &ByKindAst,
     ty_db: &TyDb,
-    param_counters: &HashMap<u32, (u32, Vec<(u32, TyId)>)>,
-) -> Either<Result<DeclaratorData, Error>, usize> {
+    param_counters: &HashMap<u32, Params>,
+) -> Either<Result<DeclaratorData, Error>, DeclaratorData> {
     let node = ast.nodes.index(index);
 
     let mut derived = Vec::new();
@@ -263,22 +275,31 @@ fn type_for_declarator(
 
             // TODO: abstract declarators
             AstDerivedDeclarator::Function => {
-                let dummy = (0, Vec::new());
-                let (param_count, params) = match param_counters.get(&node_index) {
+                let dummy = Params::default();
+                let Params {
+                    count,
+                    collected_params,
+                } = match param_counters.get(&node_index) {
                     Some(s) => s,
 
                     // if the derived declarator has no paramers, the param_counters object won't have any information on it
                     None => &dummy,
                 };
 
-                // eprintln!("func: {} {:?} {:?}", node_index, param_count, params);
-                if params.len() < (*param_count as usize) {
-                    return Either::Right(index);
+                if collected_params.len() < (*count as usize) {
+                    return Either::Right(DeclaratorData {
+                        index,
+                        ty_id,
+                        parent_index: node_index,
+                    });
                 }
 
-                let mut params = params.clone();
-                params.sort_by_key(|p| p.0);
-                let params: Vec<_> = params.into_iter().map(|p| p.1).collect();
+                let mut params = collected_params.clone();
+
+                // Sort the collected parameters by their source order
+                params.sort_by_key(|p| p.post_order);
+
+                let params: Vec<_> = params.into_iter().map(|p| p.ty_id).collect();
                 ty_id = ty_db.add_func(ty_id, &params);
             }
 

@@ -110,9 +110,9 @@ fn main() {
     }
 
     if let (StageOutput::Ok(ast), true) = (&result.ast_validation, args.print_ast) {
-        eprintln!("{}", compiler::ast::display_tree(ast));
+        eprintln!("{}", compiler::ast::display_tree(ast, Some(&result.ty_db)));
     } else if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
-        eprintln!("{}", compiler::ast::display_tree(ast));
+        eprintln!("{}", compiler::ast::display_tree(ast, None));
     }
 
     assert_eq!(result, expected);

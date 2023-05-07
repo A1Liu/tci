@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TyId(u32);
@@ -5,7 +7,7 @@ pub struct TyId(u32);
 macro_rules! ty_id_defns {
     ($idx:expr ; ) => {};
 
-    ($idx:expr ; $id:ident $(, $rest:ident )* ) => {
+    ($idx:expr ; $id:ident $(, $rest:tt )* ) => {
         pub const $id : TyId = TyId($idx);
         ty_id_defns!($idx + 1 ; $( $rest ),* );
     };
@@ -95,8 +97,20 @@ impl Into<u64> for TyId {
 }
 
 pub struct TyDb {
-    types: std::sync::Mutex<TypeInfoVec>,
-    param_values: std::sync::Mutex<Vec<TyId>>,
+    types: Mutex<TypeInfoVec>,
+    param_values: Mutex<Vec<TyId>>,
+}
+
+impl core::fmt::Debug for TyDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TyDb()")
+    }
+}
+
+impl Default for TyDb {
+    fn default() -> Self {
+        return Self::new();
+    }
 }
 
 impl TyDb {
@@ -111,8 +125,8 @@ impl TyDb {
         }
 
         return Self {
-            types: std::sync::Mutex::new(types),
-            param_values: std::sync::Mutex::new(Vec::new()),
+            types: Mutex::new(types),
+            param_values: Mutex::new(Vec::new()),
         };
     }
 
@@ -154,6 +168,63 @@ impl TyDb {
             },
             TyQuals::new(),
         );
+    }
+
+    pub fn format(&self, id: TyId) -> String {
+        let mut out = String::new();
+
+        self.write(&mut out, id);
+
+        return out;
+    }
+
+    pub fn write(&self, out: &mut String, id: TyId) {
+        if let Some(info) = TY_ID_INFO.get(id.0 as usize) {
+            *out += info.name;
+            return;
+        }
+
+        let ty = {
+            // take mutex for as little time as possible
+            let types = self.types.lock().unwrap();
+            types.get(id.0 as usize).unwrap().to_owned()
+        };
+
+        match ty.kind {
+            TypeKind::Qualified(t) => self.write(out, t),
+            TypeKind::Pointer(p) => {
+                out.push('*');
+                self.write(out, p);
+            }
+            TypeKind::Function {
+                params_begin_index,
+                len,
+            } => {
+                let (ret, params) = {
+                    let params = self.param_values.lock().unwrap();
+
+                    let params = &*params;
+
+                    (params[0], params[1..].to_owned())
+                };
+
+                out.push('(');
+
+                let mut comma = false;
+                for t in params {
+                    if comma {
+                        out.push(',');
+                    }
+
+                    self.write(out, t);
+                    comma = true;
+                }
+
+                out.push_str(") => ");
+
+                self.write(out, ret);
+            }
+        }
     }
 }
 

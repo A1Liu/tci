@@ -2,9 +2,6 @@
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
 
-use api::AstNode;
-use error::TranslationUnitDebugInfo;
-
 #[macro_use]
 extern crate soa_derive;
 #[macro_use]
@@ -81,7 +78,10 @@ where
 #[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct PipelineData {
     #[serde(skip)]
-    pub translation_unit: TranslationUnitDebugInfo,
+    pub translation_unit: error::TranslationUnitDebugInfo,
+
+    #[serde(skip)]
+    pub ty_db: api::TyDb,
 
     #[serde(default)]
     pub lexer: StageOutput<parser::TokenKind>,
@@ -90,10 +90,10 @@ pub struct PipelineData {
     pub macro_expansion: StageOutput<parser::TokenKind>,
 
     #[serde(default)]
-    pub parsed_ast: StageOutput<AstNode>,
+    pub parsed_ast: StageOutput<ast::AstNode>,
 
     #[serde(default)]
-    pub ast_validation: StageOutput<AstNode>,
+    pub ast_validation: StageOutput<ast::AstNode>,
 }
 
 impl PartialEq for PipelineData {
@@ -151,6 +151,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
 
     let mut out = PipelineData {
         translation_unit: TranslationUnitDebugInfo::default(),
+        ty_db: TyDb::default(),
         lexer: StageOutput::Err(error!(DidntRun)),
         macro_expansion: StageOutput::Err(error!(DidntRun)),
         parsed_ast: StageOutput::Err(error!(DidntRun)),
@@ -186,7 +187,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     {
         let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
 
-        if let Err(e) = pass::declarations::validate_declarations(&mut by_kind) {
+        if let Err(e) = pass::declarations::validate_declarations(&mut by_kind, &out.ty_db) {
             out.ast_validation = StageOutput::Err(e);
             return out;
         }
