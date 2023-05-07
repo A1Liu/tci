@@ -12,7 +12,7 @@ pub struct FileStarts {
     pub file_index: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TranslationUnitDebugInfo {
     pub file_starts: Vec<FileStarts>,
 }

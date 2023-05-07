@@ -5,14 +5,14 @@ extern crate compiler;
 use clap::Parser;
 use codespan_reporting::term::termcolor::*;
 use codespan_reporting::term::*;
-use compiler::{parse_test_case, StageOutput};
+use compiler::{parse_test_case, single_file_db, StageOutput};
 
 #[derive(clap::ValueEnum, Clone, Copy)]
 enum Stage {
     Lex,
     Macro,
     Parse,
-    Validation,
+    Validate,
 }
 
 /// Run
@@ -21,6 +21,9 @@ enum Stage {
 struct Cli {
     #[clap(help = "a path to a test case")]
     test_case: std::path::PathBuf,
+
+    #[clap(long, help = "print a nested version of the AST")]
+    print_ast: bool,
 
     #[clap(
         short,
@@ -48,6 +51,10 @@ Examples:
 }
 
 fn main() {
+    // Rust backtraces are useful and it seems dumb to disable them by default, especially in debug mode.
+    #[cfg(debug_assertions)]
+    std::env::set_var("RUST_BACKTRACE", "1");
+
     let args = Cli::parse();
 
     let test_case =
@@ -67,23 +74,30 @@ fn main() {
 
     let (source, expected) = parse_test_case(&test_case);
 
-    let print_err = if args.out_file.is_some() || args.write {
-        None
-    } else {
-        Some(print_err)
-    };
+    let (db, file_id) = single_file_db(source.to_string());
 
-    let mut result = compiler::run_compiler_for_testing(source.to_string(), print_err);
-    assert_eq!(result, expected);
+    let mut result = compiler::run_compiler_for_testing(&db, file_id);
 
     for stage in args.ignore {
         match stage {
             Stage::Lex => result.lexer = StageOutput::Ignore,
             Stage::Macro => result.macro_expansion = StageOutput::Ignore,
             Stage::Parse => result.parsed_ast = StageOutput::Ignore,
-            Stage::Validation => result.ast_validation = StageOutput::Ignore,
+            Stage::Validate => result.ast_validation = StageOutput::Ignore,
         }
     }
+
+    if !args.out_file.is_some() && !args.write {
+        for err in result.errors() {
+            print_err(&db, &result.translation_unit, err);
+        }
+
+        if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
+            eprintln!("{}", compiler::ast::display_tree(ast));
+        }
+    }
+
+    assert_eq!(result, expected);
 
     let text = result.test_case(source);
 

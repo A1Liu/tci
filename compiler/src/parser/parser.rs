@@ -340,6 +340,7 @@ fn parse_array_declarator(p: &mut Parser, child: NodeResult) -> Result<Option<No
     }
 
     while node.child_opt(parse_declaration_specifier(p)) {}
+    node.child(child);
 
     let kind = match p.peek_kind() {
         TokenKind::RBracket => {

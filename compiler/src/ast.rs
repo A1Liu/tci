@@ -2,7 +2,7 @@
 This module describes the AST created by the parser.
 */
 
-use crate::api::*;
+use crate::{api::*, SimpleAstNode};
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
@@ -368,21 +368,19 @@ impl<'a> AstNodeRefMut<'a> {
 /// | └ Statement(Ret)                                                             
 /// | | └ Expr(StringLit)
 /// ```
-pub fn display_tree(ast: &AstNodeVec) -> String {
+pub fn display_tree(ast: &[SimpleAstNode]) -> String {
     let mut children = Vec::<Vec<usize>>::with_capacity(ast.len());
     children.resize_with(ast.len(), || Vec::new());
 
     let mut roots = Vec::new();
 
-    for node in ast.as_slice().into_iter() {
-        if *node.post_order != *node.parent {
-            children[*node.parent as usize].push(*node.post_order as usize);
+    for node in ast.into_iter() {
+        if node.post_order != node.parent {
+            children[node.parent as usize].push(node.post_order as usize);
         } else {
-            roots.push(*node.post_order);
+            roots.push(node.post_order);
         }
     }
-
-    roots.reverse();
 
     let mut parent_stack = Vec::with_capacity(roots.len());
     for root in roots.iter().rev() {
@@ -399,7 +397,7 @@ pub fn display_tree(ast: &AstNodeVec) -> String {
             out += "└ ";
         }
 
-        out += &format!("{:?}\n", ast.as_slice().index(node_id).kind);
+        out += &format!("{:?}\n", ast[node_id].kind);
 
         for id in children[node_id].iter().rev() {
             parent_stack.push((depth + 1, *id));

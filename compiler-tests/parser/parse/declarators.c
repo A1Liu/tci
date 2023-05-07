@@ -1,3 +1,2 @@
-char * *const a;
-
-char * *const a[const][const];
+int * *const a[][const];
+int * const (*a[const])();

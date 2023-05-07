@@ -2,6 +2,8 @@
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
 
+use error::TranslationUnitDebugInfo;
+
 #[macro_use]
 extern crate soa_derive;
 #[macro_use]
@@ -70,8 +72,11 @@ where
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct PipelineData {
+    #[serde(skip)]
+    pub translation_unit: TranslationUnitDebugInfo,
+
     #[serde(default)]
     pub lexer: StageOutput<parser::TokenKind>,
 
@@ -85,8 +90,17 @@ pub struct PipelineData {
     pub ast_validation: StageOutput<SimpleAstNode>,
 }
 
+impl PartialEq for PipelineData {
+    fn eq(&self, other: &Self) -> bool {
+        return self.lexer == other.lexer
+            && self.macro_expansion == other.macro_expansion
+            && self.parsed_ast == other.parsed_ast
+            && self.ast_validation == other.ast_validation;
+    }
+}
+
 impl PipelineData {
-    fn errors(&self) -> Vec<&error::Error> {
+    pub fn errors(&self) -> Vec<&error::Error> {
         let mut errors = Vec::new();
 
         macro_rules! add_err {
@@ -129,21 +143,27 @@ const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
 pub type PrintFunc<'a> =
     &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
 
-// NOTE: the "source" field is empty
-pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>) -> PipelineData {
-    use crate::api::*;
-
+pub fn single_file_db(mut source: String) -> (filedb::FileDb, u32) {
     if !source.ends_with("\n") {
         source.push('\n');
     }
 
-    let mut files = FileDb::new();
+    let mut files = filedb::FileDb::new();
     let file_id = files
         .add_file("main.c".to_string(), source)
         .expect("file should add properly");
+
+    return (files, file_id);
+}
+
+// NOTE: the "source" field is empty
+pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> PipelineData {
+    use crate::api::*;
+
     let file = &files.files[file_id as usize];
 
     let mut out = PipelineData {
+        translation_unit: TranslationUnitDebugInfo::default(),
         lexer: StageOutput::Err(error!(DidntRun)),
         macro_expansion: StageOutput::Err(error!(DidntRun)),
         parsed_ast: StageOutput::Err(error!(DidntRun)),
@@ -153,16 +173,13 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
     let lexer_res = match lex(&files, file) {
         Ok(res) => res,
         Err(e) => {
-            if let Some(print) = print_err {
-                print(&files, &e.translation_unit, &e.error);
-            }
-
+            out.translation_unit = e.translation_unit;
             out.lexer = StageOutput::Err(e.error);
             return out;
         }
     };
 
-    let tu = lexer_res.translation_unit;
+    out.translation_unit = lexer_res.translation_unit;
     out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
 
     let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
@@ -171,10 +188,6 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
     let parsed_ast = match parse(&macro_expansion_res) {
         Ok(res) => res,
         Err(e) => {
-            if let Some(print) = print_err {
-                print(&files, &tu, &e);
-            }
-
             out.parsed_ast = StageOutput::Err(e);
             return out;
         }
@@ -193,16 +206,11 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
         let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
 
         if let Err(e) = pass::validate_declaration_nodes(&mut by_kind) {
-            if let Some(print) = print_err {
-                print(&files, &tu, &e);
-            }
-
             out.ast_validation = StageOutput::Err(e);
             return out;
         }
     }
 
-    println!("{}", ast::display_tree(&parsed_ast));
 
     out.ast_validation = StageOutput::Ok(
         parsed_ast
@@ -218,7 +226,8 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
 pub fn run_compiler_test_case<'a>(test_source: &'a str) -> (&'a str, PipelineData) {
     let (source, expected) = parse_test_case(test_source);
 
-    let output = run_compiler_for_testing(source.to_string(), None);
+    let (db, file_id) = single_file_db(source.to_string());
+    let output = run_compiler_for_testing(&db, file_id);
     assert_eq!(output, expected);
 
     return (source, output);
