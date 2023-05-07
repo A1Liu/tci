@@ -22,9 +22,9 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
             _ => continue,
         };
 
-        use AstSpecifier::*;
-
         for node in ast.nodes.as_slice().index(range.clone()) {
+            use AstSpecifier::*;
+
             let tracker = trackers
                 .entry(*node.parent)
                 .or_insert(SpecifierTracker::default());
