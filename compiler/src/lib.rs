@@ -39,6 +39,7 @@ pub mod api {
 
     pub use super::run_compiler_test_case;
 
+    pub(crate) use rayon::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};
     pub(crate) use std::collections::HashMap;
 

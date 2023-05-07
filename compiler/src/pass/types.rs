@@ -96,6 +96,7 @@ impl Into<u64> for TyId {
 
 pub struct TyDb {
     types: TypeInfoVec,
+    param_values: Vec<TyId>,
 }
 
 impl TyDb {
@@ -109,7 +110,10 @@ impl TyDb {
             })
         }
 
-        return Self { types };
+        return Self {
+            types,
+            param_values: Vec::new(),
+        };
     }
 
     fn add(&mut self, kind: TypeKind, qualifiers: TyQuals) -> TyId {
@@ -146,6 +150,7 @@ pub struct TypeInfo {
 pub enum TypeKind {
     Qualified(TyId),
     Pointer(TyId),
+    Function { params_begin_index: u32, len: u16 },
 }
 
 #[bitfield(u8)]

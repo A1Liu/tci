@@ -102,6 +102,7 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                 (Ident | Struct(_), _) => {
                     throw!(NotImplemented "identifiers and structs not implemented yet" *node.start)
                 }
+
                 _ => throw!(NotImplemented "unsupported declaration specifier" *node.start),
             };
         }
@@ -133,8 +134,15 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
     let mut ty_db = TyDb::new();
 
     // TODO: abstract declarators
-    let kind = AstDeclarator::Ident;
-    let range = ast.by_kind[&kind.into()].clone();
+    let mut ranges = Vec::new();
+    for &k in &[AstDeclarator::Ident, AstDeclarator::Abstract] {
+        if let Some(s) = ast.by_kind.get(&k.into()) {
+            ranges.push(s.clone());
+        }
+    }
+
+    let range = ranges.into_iter().flat_map(|f| f);
+
     for index in range {
         let node = ast.nodes.index(index);
 
@@ -150,6 +158,7 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                     // TODO: qualifiers
                     AstNodeKind::DerivedDeclarator(d) => derived.push((*d, node)),
 
+                    // TODO: Add ParamDecl
                     AstNodeKind::Declaration(d) => {
                         let ty = node.read_data(d);
                         break (ty.quals(), ty.ty_id());
@@ -169,6 +178,8 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
             (cur_index, ty_db.add_type(ty_id, quals))
         };
 
+        // partition_map
+
         // Use the list we created to add types to the type db
         for (kind, node) in derived {
             match kind {
@@ -186,7 +197,9 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
 
         // 7. Validate that types make sense for function definitions
 
-        ast.nodes.index_mut(index).write_data(&kind, ty_id);
+        ast.nodes
+            .index_mut(index)
+            .write_data(&AstDeclarator::Ident, ty_id);
         ast.nodes.parent[index] = parent_idx;
     }
 
