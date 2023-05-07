@@ -2,44 +2,77 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TyId(u32);
 
-#[allow(non_upper_case_globals)]
-impl TyId {
-    pub const Untyped: Self = TyId(0);
-    pub const CheckFailure: Self = TyId(1);
-    pub const Void: Self = TyId(2);
-    pub const VoidPtr: Self = TyId(3);
-    pub const U8: Self = TyId(4);
-    pub const U16: Self = TyId(5);
-    pub const U32: Self = TyId(6);
-    pub const U64: Self = TyId(7);
-    pub const S8: Self = TyId(8);
-    pub const S16: Self = TyId(9);
-    pub const S32: Self = TyId(10);
-    pub const S64: Self = TyId(11);
-    pub const F32: Self = TyId(12);
-    pub const F64: Self = TyId(13);
+macro_rules! ty_id_defns {
+    ($idx:expr ; ) => {};
+
+    ($idx:expr ; $id:ident $(, $rest:ident )* ) => {
+        pub const $id : TyId = TyId($idx);
+        ty_id_defns!($idx + 1 ; $( $rest ),* );
+    };
+
+    ($($id:ident),* ) => {
+        struct TyIdInfo {
+            id: TyId,
+            name: &'static str,
+            ptr: Option<TyId>,
+            deref: Option<TyId>,
+        }
+
+        #[allow(non_upper_case_globals)]
+        impl TyId {
+            ty_id_defns!(0 ; $( $id ),* );
+        }
+
+        const TY_ID_INFO: &'static [TyIdInfo] = &[
+        $(
+            TyIdInfo {
+                id: TyId::$id,
+                name: stringify!($id),
+                ptr: if TyId::$id.0 % 2 == 0 && TyId::$id.0 > 1 { Some(TyId(TyId::$id.0 + 1)) } else { None },
+                deref: if TyId::$id.0 % 2 == 1 && TyId::$id.0 > 1 { Some(TyId(TyId::$id.0 - 1)) } else { None },
+            },
+        )*
+
+        ];
+    };
 }
+
+ty_id_defns!(
+    Untyped,
+    CheckFailure,
+    Void,
+    PtrVoid,
+    U8,
+    PtrU8,
+    U16,
+    PtrU16,
+    U32,
+    PtrU32,
+    U64,
+    PtrU64,
+    S8,
+    PtrS8,
+    S16,
+    PtrS16,
+    S32,
+    PtrS32,
+    S64,
+    PtrS64,
+    F32,
+    PtrF32,
+    F64,
+    PtrF64
+);
 
 impl core::fmt::Debug for TyId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {
-            TyId::Untyped => f.write_str("Untyped"),
-            TyId::CheckFailure => f.write_str("Untyped"),
-            TyId::Void => f.write_str("Void"),
-            TyId::VoidPtr => f.write_str("VoidPtr"),
-            TyId::U8 => f.write_str("u8"),
-            TyId::U16 => f.write_str("u16"),
-            TyId::U32 => f.write_str("u32"),
-            TyId::U64 => f.write_str("u64"),
-            TyId::S8 => f.write_str("s8"),
-            TyId::S16 => f.write_str("s16"),
-            TyId::S32 => f.write_str("s32"),
-            TyId::S64 => f.write_str("s64"),
-            TyId::F32 => f.write_str("F32"),
-            TyId::F64 => f.write_str("F64"),
+        if let Some(info) = TY_ID_INFO.get(self.0 as usize) {
+            debug_assert!(info.id == *self);
 
-            _ => write!(f, "TyId({})", self.0),
+            return f.write_str(info.name);
         }
+
+        return write!(f, "TyId({})", self.0);
     }
 }
 
@@ -69,26 +102,9 @@ impl TyDb {
     pub fn new() -> TyDb {
         let mut types = TypeInfoVec::new();
 
-        let base_types = &[
-            TyId::Untyped,
-            TyId::CheckFailure,
-            TyId::Void,
-            TyId::VoidPtr,
-            TyId::U8,
-            TyId::U16,
-            TyId::U32,
-            TyId::U64,
-            TyId::S8,
-            TyId::S16,
-            TyId::S32,
-            TyId::S64,
-            TyId::F32,
-            TyId::F64,
-        ];
-
-        for &ty in base_types {
+        for info in TY_ID_INFO {
             types.push(TypeInfo {
-                kind: TypeKind::Qualified(ty),
+                kind: TypeKind::Qualified(info.id),
                 qualifiers: TyQuals::new(),
             })
         }
@@ -96,28 +112,27 @@ impl TyDb {
         return Self { types };
     }
 
+    fn add(&mut self, kind: TypeKind, qualifiers: TyQuals) -> TyId {
+        let next_id = self.types.len() as u32;
+        self.types.push(TypeInfo { kind, qualifiers });
+
+        return TyId(next_id);
+    }
+
     pub fn add_type(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
         if u8::from(qualifiers) == 0 {
             return id;
         }
 
-        let next_id = self.types.len() as u32;
-        self.types.push(TypeInfo {
-            kind: TypeKind::Qualified(id),
-            qualifiers,
-        });
-
-        return unsafe { core::mem::transmute(next_id) };
+        return self.add(TypeKind::Qualified(id), qualifiers);
     }
 
     pub fn add_ptr(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
-        let next_id = self.types.len() as u32;
-        self.types.push(TypeInfo {
-            kind: TypeKind::Pointer(id),
-            qualifiers,
-        });
+        if let Some(TyIdInfo { ptr: Some(i), .. }) = TY_ID_INFO.get(id.0 as usize) {
+            return *i;
+        }
 
-        return unsafe { core::mem::transmute(next_id) };
+        return self.add(TypeKind::Pointer(id), qualifiers);
     }
 }
 
