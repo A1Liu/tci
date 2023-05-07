@@ -178,8 +178,6 @@ pub enum AstDeclarator {
     Abstract,
     /// data: Symbol
     Ident,
-    /// The declarator forwards to another declarator using parentheses
-    NestedWithChild,
 }
 
 // NOTE: This should probably not be a node, and instead should be a data field.
@@ -249,8 +247,6 @@ pub enum TypeSpecifier {
     Struct = 11,
     Union = 12,
     Ident = 13,
-
-    Invalid = 14,
 }
 
 impl Into<u64> for TypeSpecifier {
@@ -280,7 +276,7 @@ impl From<u64> for TypeSpecifier {
             12 => Self::Union,
             13 => Self::Ident,
 
-            _ => Self::Invalid,
+            _ => panic!("invalid type specifier"),
         }
     }
 }
@@ -295,7 +291,7 @@ pub struct DeclSpecifiers {
     pub typedef_: bool,
 
     #[bits(4)]
-    quals: TyQuals,
+    pub quals: TyQuals,
 
     #[bits(15)]
     _asdf2: u16,
@@ -319,7 +315,7 @@ pub struct FuncDefSpecifiers {
     pub noreturn_: bool,
 
     #[bits(4)]
-    quals: TyQuals,
+    pub quals: TyQuals,
 
     _asdf2: u16,
 

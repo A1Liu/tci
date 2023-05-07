@@ -1,4 +1,4 @@
-use crate::api::*;
+use crate::{api::*, ast::TypeSpecifier};
 use core::ops::Range;
 
 pub mod types;
@@ -227,6 +227,72 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
 
             _ => throw!(Tci "specifier attached to non-declaration" *node.start),
         };
+    }
+
+    let mut ty_db = TyDb::new();
+    let range = ast.by_kind[&AstNodeKind::Declarator(AstDeclarator::Ident)].clone();
+    let mut types = vec![TyId::Untyped; ast.nodes.len()];
+    for index in range {
+        let node = ast.nodes.index(index);
+
+        let mut derived = Vec::new();
+        let mut cur_index = *node.parent;
+
+        let quals;
+        let spec;
+
+        loop {
+            let node = ast.nodes.index(cur_index as usize);
+
+            match node.kind {
+                AstNodeKind::DerivedDeclarator(d) => derived.push(d),
+
+                AstNodeKind::Declaration(d) => {
+                    let ty = node.read_data(d);
+                    quals = ty.quals();
+                    spec = ty.specifier();
+
+                    break;
+                }
+                AstNodeKind::FunctionDefinition(f) => {
+                    let ty = node.read_data(f);
+                    quals = ty.quals();
+                    spec = ty.specifier();
+
+                    break;
+                }
+
+                _ => panic!("wtf"),
+            }
+
+            cur_index = *node.parent;
+        }
+
+        // cur_index is the index of a declaration node
+        let mut ty_id = match spec {
+            TypeSpecifier::Void => TyId::Void,
+
+            TypeSpecifier::Char => TyId::S8,
+            TypeSpecifier::Short => TyId::S16,
+            TypeSpecifier::Int => TyId::S32,
+            TypeSpecifier::Long => TyId::S64,
+
+            TypeSpecifier::UChar => TyId::U8,
+            TypeSpecifier::UShort => TyId::U16,
+            TypeSpecifier::UInt => TyId::U32,
+            TypeSpecifier::ULong => TyId::U64,
+
+            TypeSpecifier::Float => TyId::F32,
+            TypeSpecifier::Double => TyId::F64,
+
+            _ => {
+                throw!(NotImplemented "structs, unions, idents" ast.nodes.start[cur_index as usize])
+            }
+        };
+
+        ty_id = ty_db.add_type(ty_id, quals);
+
+        for node in derived {}
     }
 
     // 4. Loop over all derived declarators, and combine them into their declarator
