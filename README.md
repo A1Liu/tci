@@ -19,6 +19,17 @@ The goals of this compiler are:
 - Implicit types on functions will never be supported (e.g. K&R style)
 - Implicit function declarations will never be supported
 
+## Development
+Here's some commands to use:
+
+```shell
+cargo wasm # build wasm project
+cargo run-test # run a test file
+yarn link-wasm # link compiler-web into the web project; only needs to be done once
+yarn wasm # build wasm project and bundle into web project
+yarn dev # run web project
+```
+
 ## Baseline Compliance
 Lots still to do. In the compiler:
 
