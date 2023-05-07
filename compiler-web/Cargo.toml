@@ -11,6 +11,7 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
+test = false
 
 [dependencies]
 serde = "1.0.160"
