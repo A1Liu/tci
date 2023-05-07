@@ -211,7 +211,6 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
         }
     }
 
-
     out.ast_validation = StageOutput::Ok(
         parsed_ast
             .as_slice()
