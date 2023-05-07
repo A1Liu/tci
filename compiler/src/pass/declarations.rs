@@ -190,6 +190,10 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
                     ty_id = ty_db.add_ptr(ty_id, quals);
                 }
 
+                AstDerivedDeclarator::Function => {
+                    // ????
+                }
+
                 _ => throw!(NotImplemented "most derived declarators" *node.start),
             }
         }

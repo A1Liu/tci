@@ -2,7 +2,7 @@
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TyId {
-    Untyped,
+    Untyped = 0,
     CheckFailure,
 
     Void,
