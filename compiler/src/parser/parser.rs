@@ -237,42 +237,67 @@ fn parse_declaration_specifier(p: &mut Parser) -> Option<NodeResult> {
 fn parse_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
-    while node.child_opt(parse_star_declarator(p)?) {}
+    // Make declarators recursive
+    if p.peek_kind() == TokenKind::Star {
+        p.index += 1;
 
-    let kind = match p.peek_kind() {
-        TokenKind::LParen if node.child_opt(parse_func_declarator(p)?) => AstDeclarator::Abstract,
-        TokenKind::LParen => {
-            p.index += 1;
+        while node.child_opt(parse_declaration_specifier(p)) {}
 
-            node.child(parse_declarator(p)?);
+        node.child(parse_declarator(p)?);
 
-            if p.peek_kind() != TokenKind::RParen {
-                throw!(todo "nested declarator didn't have closing paren" p.start_index());
+        return Ok(p.push(node, AstDerivedDeclarator::Pointer));
+    }
+
+    return parse_postfix_declarator(p);
+}
+
+fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
+    let mut child = 'child: {
+        if let Some(child) = parse_func_declarator(p, FuncDeclKind::CreateAbstract)? {
+            break 'child child;
+        }
+
+        let node = &mut p.track_node();
+        match p.peek_kind() {
+            TokenKind::LParen => {
+                p.index += 1;
+
+                let child = parse_declarator(p)?;
+
+                if p.peek_kind() != TokenKind::RParen {
+                    throw!(todo "nested declarator didn't have closing paren" p.start_index());
+                }
+
+                p.index += 1;
+
+                child
             }
 
-            p.index += 1;
+            TokenKind::Ident => {
+                p.index += 1;
 
-            AstDeclarator::NestedWithChild
+                p.push(node, AstDeclarator::Ident)
+            }
+
+            _ => p.push(node, AstDeclarator::Abstract),
         }
-
-        TokenKind::Ident => {
-            p.index += 1;
-            AstDeclarator::Ident
-        }
-
-        _ => AstDeclarator::Abstract,
     };
 
     loop {
-        let found_array = node.child_opt(parse_array_declarator(p)?);
-        let found_func = node.child_opt(parse_func_declarator(p)?);
-
-        if !found_array && !found_func {
-            break;
+        if let Some(node) = parse_func_declarator(p, FuncDeclKind::Child(child))? {
+            child = node;
+            continue;
         }
+
+        if let Some(node) = parse_array_declarator(p, child)? {
+            child = node;
+            continue;
+        }
+
+        break;
     }
 
-    return Ok(p.push(node, kind));
+    return Ok(child);
 }
 
 fn parse_star_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
@@ -289,14 +314,20 @@ fn parse_star_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     return Ok(Some(p.push(node, AstDerivedDeclarator::Pointer)));
 }
 
-fn parse_array_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
+fn parse_array_declarator(p: &mut Parser, child: NodeResult) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
     return Ok(None);
 }
 
-fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
+enum FuncDeclKind {
+    Child(NodeResult),
+    CreateAbstract,
+}
+
+fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
+    let abstract_decl_node = &mut p.track_node();
 
     if p.peek_kind() != TokenKind::LParen {
         return Ok(None);
@@ -311,6 +342,13 @@ fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     // abstract declarator
     if p.peek_kind() == TokenKind::RParen {
         p.index += 1;
+
+        let child = match kind {
+            FuncDeclKind::Child(c) => c,
+            FuncDeclKind::CreateAbstract => p.push(abstract_decl_node, AstDeclarator::Abstract),
+        };
+        node.child(child);
+
         return Ok(Some(p.push(node, AstDerivedDeclarator::Function)));
     }
 
@@ -321,6 +359,12 @@ fn parse_func_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
 
         return Ok(None);
     }
+
+    let child = match kind {
+        FuncDeclKind::Child(c) => c,
+        FuncDeclKind::CreateAbstract => p.push(abstract_decl_node, AstDeclarator::Abstract),
+    };
+    node.child(child);
 
     while p.peek_kind() == TokenKind::Comma {
         p.index += 1;

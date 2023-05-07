@@ -147,8 +147,6 @@ pub enum AstStatement {
 
 /// A derived declarator. This is the `*const` part of
 /// `int *const a`, or the `[3]` part of `int b[3]`
-///
-/// Children: AstSpecifer for each type qualifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstDerivedDeclarator {
     Pointer,
@@ -333,6 +331,21 @@ pub struct FuncDefSpecifiers {
 
 impl AstInterpretData for AstFunctionDefinition {
     type AstData = FuncDefSpecifiers;
+}
+
+impl AstInterpretData for AstDerivedDeclarator {
+    type AstData = TyQuals;
+}
+
+impl<'a> AstNodeRef<'a> {
+    pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
+        return T::read(self.data);
+    }
+}
+impl<'a> AstNodeRefMut<'a> {
+    pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
+        T::write(&mut self.data, data);
+    }
 }
 
 /// Prints the tree in a text format, so that it's a lil easier to read.
