@@ -62,15 +62,6 @@ fn main() {
 
     let writer = StandardStream::stderr(ColorChoice::Always);
     let config = Config::default();
-    let print_err: compiler::PrintFunc = &|files, tu, err| {
-        let diagnostic = tu.diagnostic(err);
-        codespan_reporting::term::emit(&mut writer.lock(), &config, files, &diagnostic)
-            .expect("wtf");
-
-        if let Some(b) = &err.backtrace {
-            println!("{}", b);
-        }
-    };
 
     let (source, expected) = parse_test_case(&test_case);
 
@@ -89,12 +80,18 @@ fn main() {
 
     if !args.out_file.is_some() && !args.write {
         for err in result.errors() {
-            print_err(&db, &result.translation_unit, err);
-        }
+            let diagnostic = result.translation_unit.diagnostic(err);
+            codespan_reporting::term::emit(&mut writer.lock(), &config, &db, &diagnostic)
+                .expect("wtf");
 
-        if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
-            eprintln!("{}", compiler::ast::display_tree(ast));
+            if let Some(b) = &err.backtrace {
+                eprintln!("{}", b);
+            }
         }
+    }
+
+    if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
+        eprintln!("{}", compiler::ast::display_tree(ast));
     }
 
     assert_eq!(result, expected);
