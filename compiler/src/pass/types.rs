@@ -12,7 +12,7 @@ macro_rules! ty_id_defns {
         ty_id_defns!($idx + 1 ; $( $rest ),* );
     };
 
-    ($($id:ident),* ) => {
+    ( $( ($id:ident, $fmt:literal ) ),* ) => {
         struct TyIdInfo {
             id: TyId,
             name: &'static str,
@@ -29,7 +29,7 @@ macro_rules! ty_id_defns {
         $(
             TyIdInfo {
                 id: TyId::$id,
-                name: stringify!($id),
+                name: $fmt,
                 ptr: if TyId::$id.0 % 2 == 0 && TyId::$id.0 > 1 { Some(TyId(TyId::$id.0 + 1)) } else { None },
                 deref: if TyId::$id.0 % 2 == 1 && TyId::$id.0 > 1 { Some(TyId(TyId::$id.0 - 1)) } else { None },
             },
@@ -40,30 +40,30 @@ macro_rules! ty_id_defns {
 }
 
 ty_id_defns!(
-    Untyped,
-    CheckFailure,
-    Void,
-    PtrVoid,
-    U8,
-    PtrU8,
-    U16,
-    PtrU16,
-    U32,
-    PtrU32,
-    U64,
-    PtrU64,
-    S8,
-    PtrS8,
-    S16,
-    PtrS16,
-    S32,
-    PtrS32,
-    S64,
-    PtrS64,
-    F32,
-    PtrF32,
-    F64,
-    PtrF64
+    (Untyped, "untyped"),
+    (CheckFailure, "fail"),
+    (Void, "void"),
+    (PtrVoid, "*void"),
+    (U8, "u8"),
+    (PtrU8, "*u8"),
+    (U16, "u16"),
+    (PtrU16, "*u16"),
+    (U32, "u32"),
+    (PtrU32, "*u32"),
+    (U64, "u64"),
+    (PtrU64, "*u64"),
+    (S8, "s8"),
+    (PtrS8, "*s8"),
+    (S16, "s16"),
+    (PtrS16, "*s16"),
+    (S32, "s32"),
+    (PtrS32, "*s32"),
+    (S64, "s64"),
+    (PtrS64, "*s64"),
+    (F32, "f32"),
+    (PtrF32, "*f32"),
+    (F64, "f64"),
+    (PtrF64, "*f64")
 );
 
 impl core::fmt::Debug for TyId {
