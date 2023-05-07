@@ -116,7 +116,7 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
             None => throw!(todo "no type provided" *node.start),
         };
 
-        // ensure the combined declaration specifiers are valid for each kind of declaration
+        // TODO: ensure the combined declaration specifiers are valid for each kind of declaration
         // add them to their parent's data field
         match *node.kind {
             AstNodeKind::Declaration(decl) => {
