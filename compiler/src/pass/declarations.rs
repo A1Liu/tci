@@ -127,18 +127,18 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
     }
 
     let mut ty_db = TyDb::new();
-    let range = ast.by_kind[&AstNodeKind::Declarator(AstDeclarator::Ident)].clone();
-    let mut types = vec![TyId::Untyped; ast.nodes.len()];
+
+    // TODO: abstract declarators
+    let kind = AstDeclarator::Ident;
+    let range = ast.by_kind[&kind.into()].clone();
     for index in range {
         let node = ast.nodes.index(index);
 
         let mut derived = Vec::new();
         let mut cur_index = *node.parent;
 
-        let quals;
-        let spec;
-
-        loop {
+        // Build a list of derived declarators + the final specifier & qualifier
+        let (quals, spec) = loop {
             let node = ast.nodes.index(cur_index as usize);
 
             match node.kind {
@@ -147,26 +147,19 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
 
                 AstNodeKind::Declaration(d) => {
                     let ty = node.read_data(d);
-                    quals = ty.quals();
-                    spec = ty.specifier();
-
-                    break;
+                    break (ty.quals(), ty.specifier());
                 }
                 AstNodeKind::FunctionDefinition(f) => {
                     let ty = node.read_data(f);
-                    quals = ty.quals();
-                    spec = ty.specifier();
-
-                    break;
+                    break (ty.quals(), ty.specifier());
                 }
 
                 _ => panic!("wtf"),
             }
 
             cur_index = *node.parent;
-        }
+        };
 
-        // cur_index is the index of a declaration node
         let mut ty_id = match spec {
             TypeSpecifier::Void => TyId::Void,
 
@@ -190,6 +183,7 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
 
         ty_id = ty_db.add_type(ty_id, quals);
 
+        // Use the list we created to add types to the type db
         for (kind, node) in derived {
             match kind {
                 AstDerivedDeclarator::Pointer => {
@@ -200,14 +194,10 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
             }
         }
 
-        types[index] = ty_id;
+        // 7. Validate that types make sense for function definitions
+
+        ast.nodes.index_mut(index).write_data(&kind, ty_id);
     }
-
-    // 4. Loop over all derived declarators, and combine them into their declarator
-
-    // 5. Loop over all declarators, and fold them into parents
-    // 6. Combine type from declaration and derived declarators to produce types for each declarator
-    // 7. Validate that types make sense for function definitions
 
     return Ok(());
 }
