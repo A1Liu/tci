@@ -161,10 +161,12 @@ impl TyDb {
         param_values.push(ret_type);
         param_values.extend(params.into_iter());
 
+        // TODO: length check
+
         return self.add(
             TypeKind::Function {
                 params_begin_index: begin,
-                len: params.len() as u16,
+                param_count: params.len().try_into().unwrap(),
             },
             TyQuals::new(),
         );
@@ -198,12 +200,17 @@ impl TyDb {
             }
             TypeKind::Function {
                 params_begin_index,
-                len,
+                param_count,
             } => {
+                let param_count = param_count as usize;
+                let begin = params_begin_index as usize;
+
+                // Extra slot for the return type
+                let end = begin + param_count + 1;
+
                 let (ret, params) = {
                     let params = self.param_values.lock().unwrap();
-
-                    let params = &*params;
+                    let params = &params.as_slice()[begin..end];
 
                     (params[0], params[1..].to_owned())
                 };
@@ -238,7 +245,10 @@ pub struct TypeInfo {
 pub enum TypeKind {
     Qualified(TyId),
     Pointer(TyId),
-    Function { params_begin_index: u32, len: u16 },
+    Function {
+        params_begin_index: u32,
+        param_count: u16,
+    },
 }
 
 #[bitfield(u8)]
