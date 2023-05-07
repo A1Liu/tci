@@ -290,10 +290,10 @@ pub struct DeclSpecifiers {
     #[bits(4)]
     pub quals: TyQuals,
 
-    #[bits(8)]
-    pub specifier: TypeSpecifier,
+    #[bits(32)]
+    pub ty_id: TyId,
 
-    #[bits(52)]
+    #[bits(28)]
     _asdf2: u64,
 }
 
@@ -311,13 +311,11 @@ pub struct FuncDefSpecifiers {
     #[bits(4)]
     pub quals: TyQuals,
 
-    _asdf2: u16,
-
-    #[bits(8)]
-    pub specifier: TypeSpecifier,
-
     #[bits(32)]
-    pub symbol: Symbol,
+    pub ty_id: TyId,
+
+    #[bits(24)]
+    _asdf2: u64,
 }
 
 impl AstInterpretData for AstFunctionDefinition {
