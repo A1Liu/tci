@@ -2,6 +2,9 @@
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
 
+use api::AstNode;
+use error::TranslationUnitDebugInfo;
+
 #[macro_use]
 extern crate soa_derive;
 #[macro_use]
@@ -18,8 +21,6 @@ pub mod error;
 
 pub mod ast;
 pub mod filedb;
-pub mod lexer;
-pub mod macros;
 pub mod parser;
 pub mod pass;
 
@@ -30,9 +31,11 @@ pub mod api {
     };
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
-    pub use super::lexer::{lex, Token, TokenKind, TokenSlice, TokenVec};
-    pub use super::macros::expand_macros;
-    pub use super::parser::parse;
+    pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
+    pub use super::pass::{
+        types::{TyDb, TyId, TyQuals},
+        ByKindAst,
+    };
 
     pub use super::run_compiler_test_case;
 
@@ -46,7 +49,7 @@ pub mod api {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum StageOutput<T> {
     Ok(Vec<T>),
-    Err(crate::error::ErrorKind),
+    Err(crate::error::Error),
     Ignore,
 }
 
@@ -74,37 +77,51 @@ where
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct PipelineData {
-    #[serde(default)]
-    pub lexer: StageOutput<lexer::TokenKind>,
+    #[serde(skip)]
+    pub translation_unit: TranslationUnitDebugInfo,
 
     #[serde(default)]
-    pub macro_expansion: StageOutput<lexer::TokenKind>,
+    pub lexer: StageOutput<parser::TokenKind>,
 
     #[serde(default)]
-    pub parsed_ast: StageOutput<SimpleAstNode>,
+    pub macro_expansion: StageOutput<parser::TokenKind>,
 
     #[serde(default)]
-    pub ast_validation: StageOutput<SimpleAstNode>,
+    pub parsed_ast: StageOutput<AstNode>,
+
+    #[serde(default)]
+    pub ast_validation: StageOutput<AstNode>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
-pub struct SimpleAstNode {
-    pub kind: ast::AstNodeKind,
-    pub parent: u32,
-    pub post_order: u32,
-    pub height: u16,
+impl PartialEq for PipelineData {
+    fn eq(&self, other: &Self) -> bool {
+        return self.lexer == other.lexer
+            && self.macro_expansion == other.macro_expansion
+            && self.parsed_ast == other.parsed_ast
+            && self.ast_validation == other.ast_validation;
+    }
 }
 
-impl<'a> From<ast::AstNodeRef<'a>> for SimpleAstNode {
-    fn from(node: ast::AstNodeRef) -> Self {
-        return Self {
-            kind: *node.kind,
-            parent: *node.parent,
-            post_order: *node.post_order,
-            height: *node.height,
-        };
+impl PipelineData {
+    pub fn errors(&self) -> Vec<&error::Error> {
+        let mut errors = Vec::new();
+
+        macro_rules! add_err {
+            ($id:ident) => {
+                if let StageOutput::Err(e) = &self.$id {
+                    errors.push(e);
+                }
+            };
+        }
+
+        add_err!(lexer);
+        add_err!(macro_expansion);
+        add_err!(parsed_ast);
+        add_err!(ast_validation);
+
+        return errors;
     }
 }
 
@@ -112,40 +129,43 @@ const TEST_CASE_DELIMITER: &'static str = "// -- END TEST CASE --\n// ";
 pub type PrintFunc<'a> =
     &'a dyn Fn(&filedb::FileDb, &error::TranslationUnitDebugInfo, &error::Error);
 
-// NOTE: the "source" field is empty
-pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>) -> PipelineData {
-    use crate::api::*;
-
+pub fn single_file_db(mut source: String) -> (filedb::FileDb, u32) {
     if !source.ends_with("\n") {
         source.push('\n');
     }
 
-    let mut files = FileDb::new();
+    let mut files = filedb::FileDb::new();
     let file_id = files
         .add_file("main.c".to_string(), source)
         .expect("file should add properly");
+
+    return (files, file_id);
+}
+
+// NOTE: the "source" field is empty
+pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> PipelineData {
+    use crate::api::*;
+
     let file = &files.files[file_id as usize];
 
     let mut out = PipelineData {
-        lexer: StageOutput::Err(ErrorKind::DidntRun),
-        macro_expansion: StageOutput::Err(ErrorKind::DidntRun),
-        parsed_ast: StageOutput::Err(ErrorKind::DidntRun),
-        ast_validation: StageOutput::Err(ErrorKind::DidntRun),
+        translation_unit: TranslationUnitDebugInfo::default(),
+        lexer: StageOutput::Err(error!(DidntRun)),
+        macro_expansion: StageOutput::Err(error!(DidntRun)),
+        parsed_ast: StageOutput::Err(error!(DidntRun)),
+        ast_validation: StageOutput::Err(error!(DidntRun)),
     };
 
     let lexer_res = match lex(&files, file) {
         Ok(res) => res,
         Err(e) => {
-            if let Some(print) = print_err {
-                print(&files, &e.translation_unit, &e.error);
-            }
-
-            out.lexer = StageOutput::Err(e.error.kind);
+            out.translation_unit = e.translation_unit;
+            out.lexer = StageOutput::Err(e.error);
             return out;
         }
     };
 
-    let tu = lexer_res.translation_unit;
+    out.translation_unit = lexer_res.translation_unit;
     out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
 
     let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
@@ -154,46 +174,24 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
     let parsed_ast = match parse(&macro_expansion_res) {
         Ok(res) => res,
         Err(e) => {
-            if let Some(print) = print_err {
-                print(&files, &tu, &e);
-            }
-
-            out.parsed_ast = StageOutput::Err(e.kind);
+            out.parsed_ast = StageOutput::Err(e);
             return out;
         }
     };
 
-    out.parsed_ast = StageOutput::Ok(
-        parsed_ast
-            .as_slice()
-            .into_iter()
-            .map(SimpleAstNode::from)
-            .collect(),
-    );
+    out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
     let mut parsed_ast = parsed_ast;
     {
         let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
 
-        if let Err(e) = pass::validate_declaration_nodes(&mut by_kind) {
-            if let Some(print) = print_err {
-                print(&files, &tu, &e);
-            }
-
-            out.ast_validation = StageOutput::Err(e.kind);
+        if let Err(e) = pass::declarations::validate_declarations(&mut by_kind) {
+            out.ast_validation = StageOutput::Err(e);
             return out;
         }
     }
 
-    println!("{}", ast::display_tree(&parsed_ast));
-
-    out.ast_validation = StageOutput::Ok(
-        parsed_ast
-            .as_slice()
-            .into_iter()
-            .map(SimpleAstNode::from)
-            .collect(),
-    );
+    out.ast_validation = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
     return out;
 }
@@ -201,7 +199,8 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
 pub fn run_compiler_test_case<'a>(test_source: &'a str) -> (&'a str, PipelineData) {
     let (source, expected) = parse_test_case(test_source);
 
-    let output = run_compiler_for_testing(source.to_string(), None);
+    let (db, file_id) = single_file_db(source.to_string());
+    let output = run_compiler_for_testing(&db, file_id);
     assert_eq!(output, expected);
 
     return (source, output);

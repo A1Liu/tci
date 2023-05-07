@@ -1,5 +1,10 @@
+# This is set up this way because otherwise it becomes
+# very hard to target different use-cases.
+#
+# - `compiler-tests` should run natively
+# - `compiler-web` is fully WASM
+# - `compiler` should be fully cross-platform
 [workspace]
-
 members = ["compiler", "compiler-web", "compiler-tests"]
 
 [profile.dev]

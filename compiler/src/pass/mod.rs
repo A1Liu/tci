@@ -1,6 +1,9 @@
 use crate::api::*;
 use core::ops::Range;
 
+pub mod declarations;
+pub mod types;
+
 // TODO: how do we do node insertions and node deletions?
 
 pub struct ByKindAst<'a> {
@@ -94,145 +97,6 @@ pub fn sort_by_postorder(ast: &mut AstNodeVec) {
     for parent in &mut ast.parent {
         *parent = indices[*parent as usize];
     }
-}
-
-// validate declarations -> produce declaration types
-// Declaration specifiers need to make sense for the kind of declaration theyre on
-pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
-    // NOTE: Going to early-return on the first error for now; ideally
-    // we can return multiple errors instead though
-
-    #[derive(Default)]
-    struct SpecifierTracker {
-        type_specifier: Option<Result<ast::TypeSpecifier, Error>>,
-        has_int: bool,
-        has_sign: bool,
-    }
-
-    let mut trackers = HashMap::<u32, SpecifierTracker>::new();
-
-    // Build summary of all specifiers for each node with a specifier
-    for (kind, range) in &ast.by_kind_in_order {
-        let kind = match kind {
-            AstNodeKind::Specifier(k) => *k,
-            _ => continue,
-        };
-
-        use ast::TypeSpecifier as Ty;
-        use AstSpecifier::*;
-
-        for node in ast.nodes.as_slice().index(range.clone()) {
-            let tracker = trackers
-                .entry(*node.parent)
-                .or_insert(SpecifierTracker::default());
-
-            let spec = match tracker.type_specifier.take().transpose() {
-                Ok(s) => s,
-                Err(e) => {
-                    tracker.type_specifier = Some(Err(e));
-                    continue;
-                }
-            };
-
-            fn dup_type(start: u32) -> Error {
-                return error!(todo "two or more types for a single declaration" start);
-            }
-
-            // ensure the combined specifiers are valid for the declaration
-            tracker.type_specifier = match (kind, spec) {
-                (Void, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Void, None) => Some(Ok(Ty::Void)),
-
-                (Char, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Char, None) => Some(Ok(Ty::Char)),
-
-                (Short, Some(Ty::Int) | None) => Some(Ok(Ty::Short)),
-                (Short, Some(Ty::UInt)) => Some(Ok(Ty::UShort)),
-                (Short, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Long, Some(Ty::Int) | None) => Some(Ok(Ty::Long)),
-                (Long, Some(Ty::UInt)) => Some(Ok(Ty::ULong)),
-                (Long, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Int, Some(t @ (Ty::UInt | Ty::Long | Ty::ULong | Ty::Short | Ty::UShort))) => {
-                    if tracker.has_int {
-                        Some(Err(dup_type(*node.start)))
-                    } else {
-                        tracker.has_int = true;
-                        Some(Ok(t))
-                    }
-                }
-                (Int, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Int, None) => {
-                    tracker.has_int = true;
-                    Some(Ok(Ty::Int))
-                }
-
-                (Unsigned | Signed, _) if tracker.has_sign => Some(Err(dup_type(*node.start))),
-
-                (Unsigned, None | Some(Ty::Int)) => Some(Ok(Ty::UInt)),
-                (Unsigned, Some(Ty::Short)) => Some(Ok(Ty::UShort)),
-                (Unsigned, Some(Ty::Long)) => Some(Ok(Ty::ULong)),
-                (Unsigned, Some(Ty::Char)) => Some(Ok(Ty::UChar)),
-                (Unsigned, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Signed, None) => {
-                    tracker.has_sign = true;
-                    Some(Ok(Ty::Int))
-                }
-                (Signed, Some(t @ (Ty::Short | Ty::Long | Ty::Char))) => {
-                    tracker.has_sign = true;
-                    Some(Ok(t))
-                }
-                (Signed, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Float, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Float, None) => Some(Ok(Ty::Float)),
-
-                (Double, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Double, None) => Some(Ok(Ty::Double)),
-
-                // AstSpecifier::Ident | AstSpecifier::Struct(_) => unimplemented!(),
-                _ => unimplemented!(),
-            };
-        }
-    }
-
-    for (node_id, specifiers) in trackers {
-        // ensure the specifiers' parent is a declaration of some kind
-        let node = ast.nodes.index_mut(node_id as usize);
-
-        let spec = match specifiers.type_specifier {
-            Some(s) => s?,
-            None => throw!(todo "no type provided" *node.start),
-        };
-
-        // ensure the combined declaration specifiers are valid for each kind of declaration
-        // add them to their parent's data field
-        match node.kind {
-            AstNodeKind::Declaration(decl) => {
-                ast::AstDeclaration::write(
-                    node.data,
-                    ast::DeclSpecifiers::new().with_specifier(spec),
-                );
-            }
-            AstNodeKind::FunctionDefinition(_) => {
-                ast::AstDeclaration::write(
-                    node.data,
-                    ast::DeclSpecifiers::new().with_specifier(spec),
-                );
-            }
-
-            _ => throw!(Tci "specifier attached to non-declaration" *node.start),
-        };
-    }
-
-    // 4. Loop over all derived declarators, and combine them into their declarator
-    // 5. Loop over all declarators, and fold them into parents
-    // 6. Combine type from declaration and derived declarators to produce types for each declarator
-    // 7. Validate that types make sense for function definitions
-
-    return Ok(());
 }
 
 // validate declarators relative to their scopes

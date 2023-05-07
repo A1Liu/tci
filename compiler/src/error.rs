@@ -12,7 +12,7 @@ pub struct FileStarts {
     pub file_index: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TranslationUnitDebugInfo {
     pub file_starts: Vec<FileStarts>,
 }
@@ -155,10 +155,25 @@ impl ErrorKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Error {
     pub kind: ErrorKind,
+
+    #[serde(skip)]
     pub backtrace: Option<std::backtrace::Backtrace>,
+}
+
+impl core::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Just format as the error kind
+        return self.kind.fmt(f);
+    }
+}
+
+impl core::cmp::PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        return self.kind == other.kind;
+    }
 }
 
 impl Error {

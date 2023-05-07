@@ -6,21 +6,16 @@ use crate::api::*;
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
-
-    fn read(field: &u64) -> Self::AstData {
-        return Self::AstData::from(*field);
-    }
-
-    fn write(field: &mut u64, value: Self::AstData) {
-        *field = value.into();
-    }
 }
 
-#[derive(Debug, Clone, Copy, StructOfArray)]
+#[derive(Debug, Clone, Copy, StructOfArray, serde::Serialize, serde::Deserialize)]
 pub struct AstNode {
     pub kind: AstNodeKind,
-    pub start: u32,
     pub height: u16,
+
+    #[serde(skip)]
+    pub start: u32,
+
     pub data: u64,
 
     /// refers to the post_order index of the node that's the parent
@@ -30,6 +25,16 @@ pub struct AstNode {
     /// The post-order index of this node. The parser returns nodes in post-order,
     /// so these will also be the index in the AST after parsing.
     pub post_order: u32,
+}
+
+impl PartialEq for AstNode {
+    fn eq(&self, other: &Self) -> bool {
+        return self.kind == other.kind
+            && self.height == other.height
+            && self.data == other.data
+            && self.parent == other.parent
+            && self.post_order == other.post_order;
+    }
 }
 
 macro_attr! {
@@ -147,8 +152,6 @@ pub enum AstStatement {
 
 /// A derived declarator. This is the `*const` part of
 /// `int *const a`, or the `[3]` part of `int b[3]`
-///
-/// Children: AstSpecifer for each type qualifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstDerivedDeclarator {
     Pointer,
@@ -179,8 +182,6 @@ pub enum AstDeclarator {
     Abstract,
     /// data: Symbol
     Ident,
-    /// The declarator forwards to another declarator using parentheses
-    NestedWithChild,
 }
 
 // NOTE: This should probably not be a node, and instead should be a data field.
@@ -230,84 +231,16 @@ pub struct AstDeclaration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum TypeSpecifier {
-    Void = 0,
-
-    Char = 1,
-    Short = 2,
-    Int = 3,
-    Long = 4,
-
-    UChar = 5,
-    UShort = 6,
-    UInt = 7,
-    ULong = 8,
-
-    Float = 9,
-    Double = 10,
-
-    Struct = 11,
-    Union = 12,
-    Ident = 13,
-
-    Invalid = 14,
-}
-
-impl Into<u64> for TypeSpecifier {
-    fn into(self) -> u64 {
-        return self as u64;
-    }
-}
-
-impl From<u64> for TypeSpecifier {
-    fn from(value: u64) -> Self {
-        match value {
-            0 => Self::Void,
-            1 => Self::Char,
-            2 => Self::Short,
-            3 => Self::Int,
-            4 => Self::Long,
-
-            5 => Self::UChar,
-            6 => Self::UShort,
-            7 => Self::UInt,
-            8 => Self::ULong,
-
-            9 => Self::Float,
-            10 => Self::Double,
-
-            11 => Self::Struct,
-            12 => Self::Union,
-            13 => Self::Ident,
-
-            _ => Self::Invalid,
-        }
-    }
-}
-
 #[bitfield(u64)]
 pub struct DeclSpecifiers {
-    // Inline doesn't make sense for non-definitions
-    pub static_: bool,
-    pub extern_: bool,
-    pub noreturn_: bool,
-    pub register_: bool,
-    pub typedef_: bool,
-
-    pub const_: bool,
-    pub volatile_: bool,
-    pub restrict_: bool,
-    pub atomic_: bool,
-
-    #[bits(15)]
-    _asdf2: u16,
-
-    #[bits(8)]
-    pub specifier: TypeSpecifier,
+    #[bits(4)]
+    pub quals: TyQuals,
 
     #[bits(32)]
-    pub symbol: Symbol,
+    pub ty_id: TyId,
+
+    #[bits(28)]
+    _asdf2: u64,
 }
 
 impl AstInterpretData for AstDeclaration {
@@ -321,22 +254,47 @@ pub struct FuncDefSpecifiers {
     pub inline_: bool,
     pub noreturn_: bool,
 
-    pub const_: bool,
-    pub volatile_: bool,
-    pub restrict_: bool,
-    pub atomic_: bool,
-
-    _asdf2: u16,
-
-    #[bits(8)]
-    pub specifier: TypeSpecifier,
+    #[bits(4)]
+    pub quals: TyQuals,
 
     #[bits(32)]
-    pub symbol: Symbol,
+    pub ty_id: TyId,
+
+    #[bits(24)]
+    _asdf2: u64,
 }
 
 impl AstInterpretData for AstFunctionDefinition {
     type AstData = FuncDefSpecifiers;
+}
+
+impl AstInterpretData for AstDerivedDeclarator {
+    type AstData = TyQuals;
+}
+
+impl AstInterpretData for AstDeclarator {
+    type AstData = TyId;
+}
+
+impl<'a> AstNodeRef<'a> {
+    pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
+        return T::AstData::from(*self.data);
+    }
+}
+impl<'a> AstNodeRefMut<'a> {
+    pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
+        *self.data = data.into();
+    }
+}
+
+impl AstNode {
+    pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
+        return T::AstData::from(self.data);
+    }
+
+    pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
+        self.data = data.into();
+    }
 }
 
 /// Prints the tree in a text format, so that it's a lil easier to read.
@@ -359,21 +317,19 @@ impl AstInterpretData for AstFunctionDefinition {
 /// | └ Statement(Ret)                                                             
 /// | | └ Expr(StringLit)
 /// ```
-pub fn display_tree(ast: &AstNodeVec) -> String {
+pub fn display_tree(ast: &[AstNode]) -> String {
     let mut children = Vec::<Vec<usize>>::with_capacity(ast.len());
     children.resize_with(ast.len(), || Vec::new());
 
     let mut roots = Vec::new();
 
-    for node in ast.as_slice().into_iter() {
-        if *node.post_order != *node.parent {
-            children[*node.parent as usize].push(*node.post_order as usize);
+    for node in ast.into_iter() {
+        if node.post_order != node.parent {
+            children[node.parent as usize].push(node.post_order as usize);
         } else {
-            roots.push(*node.post_order);
+            roots.push(node.post_order);
         }
     }
-
-    roots.reverse();
 
     let mut parent_stack = Vec::with_capacity(roots.len());
     for root in roots.iter().rev() {
@@ -390,7 +346,15 @@ pub fn display_tree(ast: &AstNodeVec) -> String {
             out += "└ ";
         }
 
-        out += &format!("{:?}\n", ast.as_slice().index(node_id).kind);
+        let node = &ast[node_id];
+        out += &format!("{:?}", node.kind);
+
+        match node.kind {
+            AstNodeKind::Declarator(d) => {
+                out += &format!(" {:?}\n", node.read_data(&d));
+            }
+            _ => out.push('\n'),
+        }
 
         for id in children[node_id].iter().rev() {
             parent_stack.push((depth + 1, *id));

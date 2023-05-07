@@ -19,6 +19,17 @@ The goals of this compiler are:
 - Implicit types on functions will never be supported (e.g. K&R style)
 - Implicit function declarations will never be supported
 
+## Development
+Here's some commands to use:
+
+```shell
+cargo wasm # build wasm project
+cargo run-test # run a test file
+yarn link-wasm # link compiler-web into the web project; only needs to be done once
+yarn wasm # build wasm project and bundle into web project
+yarn dev # run web project
+```
+
 ## Baseline Compliance
 Lots still to do. In the compiler:
 
@@ -47,10 +58,11 @@ In the UI:
 - [ ] Compiler errors/warnings pop up as messages in the editor
 
 ## Resources
+- Compiler Architecture - https://scholarworks.iu.edu/dspace/handle/2022/24749
 - Preprocessor General Info - https://gcc.gnu.org/onlinedocs/cpp/index.html
 - Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
 - Translation of C standard to AST types - https://github.com/vickenty/lang-c/blob/master/src/ast.rs
-- Compiler Architecture - https://scholarworks.iu.edu/dspace/handle/2022/24749
 - Precedence climbing method - https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
+- WASM interpreter to look into - https://github.com/paritytech/wasmi

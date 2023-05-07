@@ -1,4 +1,4 @@
-use compiler::{api::*, run_compiler_for_testing, StageOutput};
+use compiler::{api::*, run_compiler_for_testing, single_file_db, StageOutput};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -9,7 +9,7 @@ static GLOBAL: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 pub struct PipelineOutput {
     lexer: Option<Vec<TokenKind>>,
     macro_expansion: Option<Vec<TokenKind>>,
-    parsed_ast: Option<Vec<compiler::SimpleAstNode>>,
+    parsed_ast: Option<Vec<AstNode>>,
     errors: Option<Vec<String>>,
 }
 
@@ -23,7 +23,8 @@ pub fn compile(source: String) -> Result<String, String> {
     };
 
     'done: {
-        let data = run_compiler_for_testing(source, None);
+        let (files, file_id) = single_file_db(source);
+        let data = run_compiler_for_testing(&files, file_id);
 
         macro_rules! stage_transfer {
             ($i:ident) => {
