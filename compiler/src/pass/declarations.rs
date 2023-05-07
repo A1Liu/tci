@@ -2,7 +2,7 @@ use crate::api::*;
 
 // validate declarations -> produce declaration types
 // Declaration specifiers need to make sense for the kind of declaration theyre on
-pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
+pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
@@ -135,38 +135,41 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
         let node = ast.nodes.index(index);
 
         let mut derived = Vec::new();
-        let mut cur_index = *node.parent;
+        let (parent_idx, mut ty_id) = {
+            let mut cur_index = *node.parent;
 
-        // Build a list of derived declarators + the final specifier & qualifier
-        let (quals, mut ty_id) = loop {
-            let node = ast.nodes.index(cur_index as usize);
+            // Build a list of derived declarators + the final specifier & qualifier
+            let (quals, ty_id) = loop {
+                let node = ast.nodes.index(cur_index as usize);
 
-            match node.kind {
-                // TODO: qualifiers
-                AstNodeKind::DerivedDeclarator(d) => derived.push((*d, node)),
+                match node.kind {
+                    // TODO: qualifiers
+                    AstNodeKind::DerivedDeclarator(d) => derived.push((*d, node)),
 
-                AstNodeKind::Declaration(d) => {
-                    let ty = node.read_data(d);
-                    break (ty.quals(), ty.ty_id());
+                    AstNodeKind::Declaration(d) => {
+                        let ty = node.read_data(d);
+                        break (ty.quals(), ty.ty_id());
+                    }
+                    AstNodeKind::FunctionDefinition(f) => {
+                        let ty = node.read_data(f);
+                        break (ty.quals(), ty.ty_id());
+                    }
+
+                    _ => panic!("invariant broken: didn't find a declaration for this declarator"),
                 }
-                AstNodeKind::FunctionDefinition(f) => {
-                    let ty = node.read_data(f);
-                    break (ty.quals(), ty.ty_id());
-                }
 
-                _ => panic!("wtf"),
-            }
+                cur_index = *node.parent;
+            };
 
-            cur_index = *node.parent;
+            // cur_index is now pointing to the parent
+            (cur_index, ty_db.add_type(ty_id, quals))
         };
-
-        ty_id = ty_db.add_type(ty_id, quals);
 
         // Use the list we created to add types to the type db
         for (kind, node) in derived {
             match kind {
                 AstDerivedDeclarator::Pointer => {
-                    ty_id = ty_db.add_ptr(ty_id, quals);
+                    ty_id = ty_db.add_ptr(ty_id, TyQuals::new());
                 }
 
                 AstDerivedDeclarator::Function => {
@@ -180,6 +183,7 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
         // 7. Validate that types make sense for function definitions
 
         ast.nodes.index_mut(index).write_data(&kind, ty_id);
+        ast.nodes.parent[index] = parent_idx;
     }
 
     return Ok(());
