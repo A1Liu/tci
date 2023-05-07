@@ -95,7 +95,9 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
                 (Double, Some(_)) => Some(Err(dup_type(*node.start))),
                 (Double, None) => Some(Ok(TyId::F64)),
 
-                // AstSpecifier::Ident | AstSpecifier::Struct(_) => unimplemented!(),
+                (Ident | Struct(_), _) => {
+                    throw!(NotImplemented "identifiers and structs not implemented yet" *node.start)
+                }
                 _ => throw!(NotImplemented "unsupported declaration specifier" *node.start),
             };
         }
