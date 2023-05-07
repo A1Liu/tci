@@ -2,7 +2,8 @@
 This module describes the AST created by the parser.
 */
 
-use crate::{api::*, SimpleAstNode};
+use crate::api::*;
+use crate::SimpleAstNode;
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
@@ -405,27 +406,4 @@ pub fn display_tree(ast: &[SimpleAstNode]) -> String {
     }
 
     return out;
-}
-
-#[bitfield(u8)]
-pub struct TyQuals {
-    pub const_: bool,
-    pub atomic_: bool,
-    pub volatile_: bool,
-    pub restrict_: bool,
-
-    #[bits(4)]
-    a: usize,
-}
-
-impl From<u64> for TyQuals {
-    fn from(value: u64) -> Self {
-        Self::from(value as u8)
-    }
-}
-
-impl Into<u64> for TyQuals {
-    fn into(self) -> u64 {
-        u8::from(self) as u64
-    }
 }

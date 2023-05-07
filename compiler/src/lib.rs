@@ -31,6 +31,7 @@ pub mod api {
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
+    pub use super::pass::types::{TyDb, TyQuals};
 
     pub use super::run_compiler_test_case;
 
