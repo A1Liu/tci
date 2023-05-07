@@ -46,8 +46,11 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                 (Void, Some(_)) => Some(Err(dup_type(*node.start))),
                 (Void, None) => Some(Ok(TyId::Void)),
 
-                (Char, Some(TyId::S32)) if tracker.has_int => Some(Err(dup_type(*node.start))),
+                (Char, Some(TyId::S32 | TyId::U32)) if tracker.has_int => {
+                    Some(Err(dup_type(*node.start)))
+                }
                 (Char, Some(TyId::S32)) => Some(Ok(TyId::S8)),
+                (Char, Some(TyId::U32)) => Some(Ok(TyId::U8)),
                 (Char, Some(_)) => Some(Err(dup_type(*node.start))),
                 (Char, None) => Some(Ok(TyId::S8)),
 
