@@ -7,7 +7,7 @@ use codespan_reporting::term::termcolor::*;
 use codespan_reporting::term::*;
 use compiler::{parse_test_case, single_file_db, StageOutput};
 
-#[derive(clap::ValueEnum, Clone, Copy)]
+#[derive(clap::ValueEnum, Clone, Copy, PartialEq)]
 enum Stage {
     Lex,
     Macro,
@@ -26,7 +26,6 @@ struct Cli {
     print_ast: bool,
 
     #[clap(
-        short,
         long,
         value_delimiter = ',',
         help = "a stage to ignore",
@@ -38,6 +37,10 @@ Examples:
     )]
     #[arg(value_enum)]
     ignore: Vec<Stage>,
+
+    #[clap(long, help = "the only stage that should run")]
+    #[arg(value_enum)]
+    only: Option<Stage>,
 
     #[clap(
         short,
@@ -55,7 +58,7 @@ fn main() {
     #[cfg(debug_assertions)]
     std::env::set_var("RUST_BACKTRACE", "1");
 
-    let args = Cli::parse();
+    let mut args = Cli::parse();
 
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");
@@ -68,6 +71,16 @@ fn main() {
     let (db, file_id) = single_file_db(source.to_string());
 
     let mut result = compiler::run_compiler_for_testing(&db, file_id);
+
+    if let Some(only) = args.only {
+        for stage in [Stage::Lex, Stage::Macro, Stage::Parse, Stage::Validate] {
+            if stage == only {
+                continue;
+            }
+
+            args.ignore.push(stage);
+        }
+    }
 
     for stage in args.ignore {
         match stage {
