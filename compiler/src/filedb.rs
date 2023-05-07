@@ -209,6 +209,8 @@ impl<'a> Files<'a> for FileDb {
 #[non_exhaustive]
 #[repr(u32)]
 pub enum Symbol {
+    // TODO: Make this a struct instead of an enum; Rust really really really doesn't
+    // like enums that at runtime can have a different value.
     Include = 0,
 
     Defined,
