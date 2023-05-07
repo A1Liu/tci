@@ -54,6 +54,8 @@ Examples:
 }
 
 fn main() {
+    let main_begin = std::time::Instant::now();
+
     // Rust backtraces are useful and it seems dumb to disable them by default, especially in debug mode.
     #[cfg(debug_assertions)]
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -68,9 +70,13 @@ fn main() {
 
     let (source, expected) = parse_test_case(&test_case);
 
+    let begin = std::time::Instant::now();
+
     let (db, file_id) = single_file_db(source.to_string());
 
     let mut result = compiler::run_compiler_for_testing(&db, file_id);
+
+    let elapsed = begin.elapsed();
 
     if let Some(only) = args.only {
         for stage in [Stage::Lex, Stage::Macro, Stage::Parse, Stage::Validate] {
@@ -120,4 +126,8 @@ fn main() {
     } else {
         print!("{}", text);
     }
+
+    eprintln!("");
+    eprintln!("Compiler Time: {:.3?}", elapsed);
+    eprintln!("Total Time: {:.3?}", main_begin.elapsed());
 }

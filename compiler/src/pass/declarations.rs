@@ -1,3 +1,5 @@
+use rayon::iter::Either;
+
 use crate::api::*;
 
 #[derive(Default)]
@@ -131,7 +133,7 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
         };
     }
 
-    let mut ty_db = TyDb::new();
+    let ty_db = TyDb::new();
 
     // TODO: abstract declarators
     let mut ranges = Vec::new();
@@ -141,66 +143,97 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
         }
     }
 
-    let range = ranges.into_iter().flat_map(|f| f);
+    let mut range: Vec<_> = ranges
+        .into_iter()
+        .flat_map(|f| f.clone().into_iter())
+        .collect();
+    let mut loop_count = 0;
+    while loop_count < 20 {
+        loop_count += 1;
 
-    for index in range {
-        let node = ast.nodes.index(index);
+        let (left, right): (Vec<_>, Vec<_>) = range.into_par_iter().partition_map(|index| {
+            let node = ast.nodes.index(index);
 
-        let mut derived = Vec::new();
-        let (parent_idx, mut ty_id) = {
-            let mut cur_index = *node.parent;
+            let mut derived = Vec::new();
+            let (parent_idx, mut ty_id) = {
+                let mut cur_index = *node.parent;
 
-            // Build a list of derived declarators + the final specifier & qualifier
-            let (quals, ty_id) = loop {
-                let node = ast.nodes.index(cur_index as usize);
+                // Build a list of derived declarators + the final specifier & qualifier
+                let (quals, ty_id) = loop {
+                    let node = ast.nodes.index(cur_index as usize);
 
-                match node.kind {
-                    // TODO: qualifiers
-                    AstNodeKind::DerivedDeclarator(d) => derived.push((*d, node)),
+                    match node.kind {
+                        // TODO: qualifiers
+                        AstNodeKind::DerivedDeclarator(d) => derived.push((*d, node)),
 
-                    // TODO: Add ParamDecl
-                    AstNodeKind::Declaration(d) => {
-                        let ty = node.read_data(d);
-                        break (ty.quals(), ty.ty_id());
+                        // TODO: Add ParamDecl
+                        AstNodeKind::Declaration(d) => {
+                            let ty = node.read_data(d);
+                            break (ty.quals(), ty.ty_id());
+                        }
+                        AstNodeKind::FunctionDefinition(f) => {
+                            let ty = node.read_data(f);
+                            break (ty.quals(), ty.ty_id());
+                        }
+
+                        _ => panic!(
+                            "invariant broken: didn't find a declaration for this declarator"
+                        ),
                     }
-                    AstNodeKind::FunctionDefinition(f) => {
-                        let ty = node.read_data(f);
-                        break (ty.quals(), ty.ty_id());
-                    }
 
-                    _ => panic!("invariant broken: didn't find a declaration for this declarator"),
-                }
+                    cur_index = *node.parent;
+                };
 
-                cur_index = *node.parent;
+                // cur_index is now pointing to the parent
+                (cur_index, ty_db.add_type(ty_id, quals))
             };
 
-            // cur_index is now pointing to the parent
-            (cur_index, ty_db.add_type(ty_id, quals))
-        };
+            // Use the list we created to add types to the type db
+            for (kind, node) in derived {
+                match kind {
+                    AstDerivedDeclarator::Pointer => {
+                        ty_id = ty_db.add_ptr(ty_id, TyQuals::new());
+                    }
 
-        // partition_map
+                    AstDerivedDeclarator::Function => {
+                        // ????
+                        return Either::Right(index);
+                    }
 
-        // Use the list we created to add types to the type db
-        for (kind, node) in derived {
-            match kind {
-                AstDerivedDeclarator::Pointer => {
-                    ty_id = ty_db.add_ptr(ty_id, TyQuals::new());
+                    _ => {
+                        return Either::Left(Err(
+                            error!(NotImplemented "most derived declarators" *node.start),
+                        ))
+                    }
                 }
-
-                AstDerivedDeclarator::Function => {
-                    // ????
-                }
-
-                _ => throw!(NotImplemented "most derived declarators" *node.start),
             }
+
+            return Either::Left(Ok((index, ty_id, parent_idx)));
+
+            // 7. Validate that types make sense for function definitions
+        });
+
+        let mut errors = Vec::new();
+        for res in left {
+            let (index, ty_id, parent_idx) = match res {
+                Ok(o) => o,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            };
+
+            ast.nodes
+                .index_mut(index)
+                .write_data(&AstDeclarator::Ident, ty_id);
+            ast.nodes.parent[index] = parent_idx;
         }
 
-        // 7. Validate that types make sense for function definitions
+        if right.len() == 0 {
+            break;
+        }
 
-        ast.nodes
-            .index_mut(index)
-            .write_data(&AstDeclarator::Ident, ty_id);
-        ast.nodes.parent[index] = parent_idx;
+        range = right;
     }
 
     return Ok(());

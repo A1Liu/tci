@@ -168,7 +168,7 @@ pub enum AstDerivedDeclarator {
     ArrayStaticExpression,
 
     /// x(int param1, char, long param3)
-    /// children: AstParameterDeclarators
+    /// children: AstParameterDeclaration*
     Function,
 
     /// x(int param1, char, long param3, ...)

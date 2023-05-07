@@ -95,7 +95,7 @@ impl Into<u64> for TyId {
 }
 
 pub struct TyDb {
-    types: TypeInfoVec,
+    types: std::sync::Mutex<TypeInfoVec>,
     param_values: Vec<TyId>,
 }
 
@@ -111,19 +111,21 @@ impl TyDb {
         }
 
         return Self {
-            types,
+            types: std::sync::Mutex::new(types),
             param_values: Vec::new(),
         };
     }
 
-    fn add(&mut self, kind: TypeKind, qualifiers: TyQuals) -> TyId {
-        let next_id = self.types.len() as u32;
-        self.types.push(TypeInfo { kind, qualifiers });
+    fn add(&self, kind: TypeKind, qualifiers: TyQuals) -> TyId {
+        let mut types = self.types.lock().unwrap();
+
+        let next_id = types.len() as u32;
+        types.push(TypeInfo { kind, qualifiers });
 
         return TyId(next_id);
     }
 
-    pub fn add_type(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
+    pub fn add_type(&self, id: TyId, qualifiers: TyQuals) -> TyId {
         if u8::from(qualifiers) == 0 {
             return id;
         }
@@ -131,7 +133,7 @@ impl TyDb {
         return self.add(TypeKind::Qualified(id), qualifiers);
     }
 
-    pub fn add_ptr(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
+    pub fn add_ptr(&self, id: TyId, qualifiers: TyQuals) -> TyId {
         if let Some(TyIdInfo { ptr: Some(i), .. }) = TY_ID_INFO.get(id.0 as usize) {
             return *i;
         }
