@@ -20,7 +20,7 @@ later.
 // experience writing compiler passes with this AST structure,
 // and at the very least I need the practice.
 
-use crate::api::*;
+use crate::{api::*, ast::AstParamDecl};
 use std::cell::Cell;
 
 struct ParserTracker {
@@ -194,7 +194,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     node.child(parse_declarator(p)?);
 
     if let DeclarationKind::Param = kind {
-        return Ok(Some(p.push(node, AstDeclaration)));
+        return Ok(Some(p.push(node, AstParamDecl)));
     }
 
     if node.child_opt(parse_block(p)?) {

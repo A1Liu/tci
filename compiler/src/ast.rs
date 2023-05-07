@@ -47,6 +47,7 @@ pub enum AstNodeKind {
     Declarator(AstDeclarator),
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
+    ParamDecl(AstParamDecl),
     FunctionDefinition(AstFunctionDefinition),
 
     // TODO: maybe we wanna delete stuff from the AST later
@@ -215,6 +216,14 @@ pub enum AstSpecifier {
     Ident,                     // data: Symbol
 }
 
+/// A parameter declaration
+///
+/// Children:
+/// - AstSpecifier+, one for each specifier
+/// - AstDerivedDeclarator | AstDeclarator
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AstParamDecl;
+
 /// A typical declaration; this is a stand-in for
 /// `int *i[1] = {NULL};` or something similar
 ///
@@ -241,6 +250,10 @@ pub struct DeclSpecifiers {
 
     #[bits(28)]
     _asdf2: u64,
+}
+
+impl AstInterpretData for AstParamDecl {
+    type AstData = DeclSpecifiers;
 }
 
 impl AstInterpretData for AstDeclaration {

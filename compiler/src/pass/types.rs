@@ -96,7 +96,7 @@ impl Into<u64> for TyId {
 
 pub struct TyDb {
     types: std::sync::Mutex<TypeInfoVec>,
-    param_values: Vec<TyId>,
+    param_values: std::sync::Mutex<Vec<TyId>>,
 }
 
 impl TyDb {
@@ -112,7 +112,7 @@ impl TyDb {
 
         return Self {
             types: std::sync::Mutex::new(types),
-            param_values: Vec::new(),
+            param_values: std::sync::Mutex::new(Vec::new()),
         };
     }
 
@@ -139,6 +139,21 @@ impl TyDb {
         }
 
         return self.add(TypeKind::Pointer(id), qualifiers);
+    }
+
+    pub fn add_func(&self, ret_type: TyId, params: &[TyId]) -> TyId {
+        let mut param_values = self.param_values.lock().unwrap();
+        let begin = param_values.len() as u32;
+        param_values.push(ret_type);
+        param_values.extend(params.into_iter());
+
+        return self.add(
+            TypeKind::Function {
+                params_begin_index: begin,
+                len: params.len() as u16,
+            },
+            TyQuals::new(),
+        );
     }
 }
 

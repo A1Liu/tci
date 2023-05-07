@@ -14,7 +14,16 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
+    // for (id, kind) in ast.nodes.kind.iter().enumerate() {
+    //     eprintln!(
+    //         "node: {} {:?} -> {}",
+    //         id, kind, ast.nodes.parent[id as usize]
+    //     );
+    // }
+    // eprintln!("");
+
     let mut trackers = HashMap::<u32, SpecifierTracker>::new();
+    let mut param_counters: HashMap<u32, (u32, Vec<(u32, TyId)>)> = HashMap::new();
 
     // Build summary of all specifiers for each node with a specifier
     for (kind, range) in &ast.by_kind_in_order {
@@ -122,10 +131,15 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
         // add them to their parent's data field
         match *node.kind {
             AstNodeKind::Declaration(decl) => {
-                node.write_data(&decl, ast::DeclSpecifiers::new().with_ty_id(spec))
+                node.write_data(&decl, ast::DeclSpecifiers::new().with_ty_id(spec));
             }
             AstNodeKind::FunctionDefinition(func) => {
-                node.write_data(&func, ast::FuncDefSpecifiers::new().with_ty_id(spec))
+                node.write_data(&func, ast::FuncDefSpecifiers::new().with_ty_id(spec));
+            }
+            AstNodeKind::ParamDecl(p) => {
+                node.write_data(&p, ast::DeclSpecifiers::new().with_ty_id(spec));
+
+                param_counters.entry(*node.parent).or_default().0 += 1;
             }
 
             _ => throw!(Tci "specifier attached to non-declaration" *node.start),
@@ -134,33 +148,23 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
 
     let ty_db = TyDb::new();
 
-    // TODO: abstract declarators
-    let mut ranges = Vec::new();
-    for &k in &[AstDeclarator::Ident, AstDeclarator::Abstract] {
-        if let Some(s) = ast.by_kind.get(&k.into()) {
-            ranges.push(s.clone());
-        }
-    }
-
-    let mut range: Vec<_> = ranges
+    let mut range: Vec<_> = [AstDeclarator::Ident, AstDeclarator::Abstract]
         .into_iter()
-        .flat_map(|f| f.clone().into_iter())
+        .filter_map(|k| ast.by_kind.get(&k.into()))
+        .flat_map(|r| r.clone().into_iter())
         .collect();
+
     let mut loop_count = 0;
     while loop_count < 20 {
         loop_count += 1;
 
         let (left, right): (Vec<_>, Vec<_>) = range
             .into_par_iter()
-            .partition_map(|index| type_for_declarator(index, ast, &ty_db));
+            .partition_map(|index| type_for_declarator(index, ast, &ty_db, &param_counters));
 
         let mut errors = Vec::new();
         for res in left {
-            let DeclaratorData {
-                index,
-                ty_id,
-                parent_index,
-            } = match res {
+            let data = match res {
                 Ok(o) => o,
                 Err(e) => {
                     errors.push(e);
@@ -168,10 +172,22 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                 }
             };
 
-            ast.nodes
-                .index_mut(index)
-                .write_data(&AstDeclarator::Ident, ty_id);
-            ast.nodes.parent[index] = parent_index;
+            let mut node = ast.nodes.index_mut(data.index);
+            node.write_data(&AstDeclarator::Ident, data.ty_id);
+            *node.parent = data.parent_index;
+
+            let parent = ast.nodes.index(data.parent_index as usize);
+            if let AstNodeKind::ParamDecl(_) = parent.kind {
+                param_counters
+                    .get_mut(parent.parent)
+                    .unwrap()
+                    .1
+                    .push((*parent.post_order, data.ty_id));
+            }
+        }
+
+        if errors.len() > 0 {
+            return Err(errors.pop().unwrap());
         }
 
         if right.len() == 0 {
@@ -181,7 +197,7 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
         range = right;
     }
 
-    if loop_count == 20 {
+    if loop_count >= 20 {
         panic!("didn't finish");
     }
 
@@ -198,6 +214,7 @@ fn type_for_declarator(
     index: usize,
     ast: &ByKindAst,
     ty_db: &TyDb,
+    param_counters: &HashMap<u32, (u32, Vec<(u32, TyId)>)>,
 ) -> Either<Result<DeclaratorData, Error>, usize> {
     let node = ast.nodes.index(index);
 
@@ -211,11 +228,14 @@ fn type_for_declarator(
 
             match node.kind {
                 // TODO: qualifiers
-                AstNodeKind::DerivedDeclarator(d) => derived.push((*d, node)),
+                AstNodeKind::DerivedDeclarator(d) => derived.push((*d, cur_index)),
 
-                // TODO: Add ParamDecl
                 AstNodeKind::Declaration(d) => {
                     let ty = node.read_data(d);
+                    break (ty.quals(), ty.ty_id());
+                }
+                AstNodeKind::ParamDecl(p) => {
+                    let ty = node.read_data(p);
                     break (ty.quals(), ty.ty_id());
                 }
                 AstNodeKind::FunctionDefinition(f) => {
@@ -234,15 +254,32 @@ fn type_for_declarator(
     };
 
     // Use the list we created to add types to the type db
-    for (kind, node) in derived {
+    for (kind, node_index) in derived {
+        let node = ast.nodes.index(node_index as usize);
         match kind {
             AstDerivedDeclarator::Pointer => {
                 ty_id = ty_db.add_ptr(ty_id, TyQuals::new());
             }
 
+            // TODO: abstract declarators
             AstDerivedDeclarator::Function => {
-                // ????
-                return Either::Right(index);
+                let dummy = (0, Vec::new());
+                let (param_count, params) = match param_counters.get(&node_index) {
+                    Some(s) => s,
+
+                    // if the derived declarator has no paramers, the param_counters object won't have any information on it
+                    None => &dummy,
+                };
+
+                // eprintln!("func: {} {:?} {:?}", node_index, param_count, params);
+                if params.len() < (*param_count as usize) {
+                    return Either::Right(index);
+                }
+
+                let mut params = params.clone();
+                params.sort_by_key(|p| p.0);
+                let params: Vec<_> = params.into_iter().map(|p| p.1).collect();
+                ty_id = ty_db.add_func(ty_id, &params);
             }
 
             _ => {
