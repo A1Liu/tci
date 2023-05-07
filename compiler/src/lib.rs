@@ -42,7 +42,7 @@ pub mod api {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum StageOutput<T> {
     Ok(Vec<T>),
-    Err(crate::error::ErrorKind),
+    Err(crate::error::Error),
     Ignore,
 }
 
@@ -85,6 +85,27 @@ pub struct PipelineData {
     pub ast_validation: StageOutput<SimpleAstNode>,
 }
 
+impl PipelineData {
+    fn errors(&self) -> Vec<&error::Error> {
+        let mut errors = Vec::new();
+
+        macro_rules! add_err {
+            ($id:ident) => {
+                if let StageOutput::Err(e) = &self.$id {
+                    errors.push(e);
+                }
+            };
+        }
+
+        add_err!(lexer);
+        add_err!(macro_expansion);
+        add_err!(parsed_ast);
+        add_err!(ast_validation);
+
+        return errors;
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 pub struct SimpleAstNode {
     pub kind: ast::AstNodeKind,
@@ -123,10 +144,10 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
     let file = &files.files[file_id as usize];
 
     let mut out = PipelineData {
-        lexer: StageOutput::Err(ErrorKind::DidntRun),
-        macro_expansion: StageOutput::Err(ErrorKind::DidntRun),
-        parsed_ast: StageOutput::Err(ErrorKind::DidntRun),
-        ast_validation: StageOutput::Err(ErrorKind::DidntRun),
+        lexer: StageOutput::Err(error!(DidntRun)),
+        macro_expansion: StageOutput::Err(error!(DidntRun)),
+        parsed_ast: StageOutput::Err(error!(DidntRun)),
+        ast_validation: StageOutput::Err(error!(DidntRun)),
     };
 
     let lexer_res = match lex(&files, file) {
@@ -136,7 +157,7 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
                 print(&files, &e.translation_unit, &e.error);
             }
 
-            out.lexer = StageOutput::Err(e.error.kind);
+            out.lexer = StageOutput::Err(e.error);
             return out;
         }
     };
@@ -154,7 +175,7 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
                 print(&files, &tu, &e);
             }
 
-            out.parsed_ast = StageOutput::Err(e.kind);
+            out.parsed_ast = StageOutput::Err(e);
             return out;
         }
     };
@@ -176,7 +197,7 @@ pub fn run_compiler_for_testing(mut source: String, print_err: Option<PrintFunc>
                 print(&files, &tu, &e);
             }
 
-            out.ast_validation = StageOutput::Err(e.kind);
+            out.ast_validation = StageOutput::Err(e);
             return out;
         }
     }

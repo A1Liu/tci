@@ -12,6 +12,7 @@ enum Stage {
     Lex,
     Macro,
     Parse,
+    Validation,
 }
 
 /// Run
@@ -80,6 +81,7 @@ fn main() {
             Stage::Lex => result.lexer = StageOutput::Ignore,
             Stage::Macro => result.macro_expansion = StageOutput::Ignore,
             Stage::Parse => result.parsed_ast = StageOutput::Ignore,
+            Stage::Validation => result.ast_validation = StageOutput::Ignore,
         }
     }
 

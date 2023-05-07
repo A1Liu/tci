@@ -195,7 +195,7 @@ pub fn validate_declaration_nodes(ast: &mut ByKindAst) -> Result<(), Error> {
                 (Double, None) => Some(Ok(Ty::Double)),
 
                 // AstSpecifier::Ident | AstSpecifier::Struct(_) => unimplemented!(),
-                _ => unimplemented!(),
+                _ => throw!(NotImplemented "unsupported declaration specifier" *node.start),
             };
         }
     }

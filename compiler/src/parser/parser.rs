@@ -204,7 +204,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     match p.peek_kind() {
         TokenKind::Comma | TokenKind::Semicolon => {}
 
-        x => throw!(todo "bad character after declartor" p.start_index()),
+        x => throw!(todo "bad character after declarator" p.start_index()),
     }
 
     while p.peek_kind() == TokenKind::Comma {
@@ -222,10 +222,27 @@ fn parse_declaration_specifier(p: &mut Parser) -> Option<NodeResult> {
     let node = &mut p.track_node();
 
     let specifier = match p.peek_kind() {
+        TokenKind::Void => ast::AstSpecifier::Void,
+
         TokenKind::Char => ast::AstSpecifier::Char,
         TokenKind::Short => ast::AstSpecifier::Short,
         TokenKind::Int => ast::AstSpecifier::Int,
         TokenKind::Long => ast::AstSpecifier::Long,
+
+        TokenKind::Unsigned => ast::AstSpecifier::Unsigned,
+        TokenKind::Signed => ast::AstSpecifier::Signed,
+
+        TokenKind::Float => ast::AstSpecifier::Float,
+        TokenKind::Double => ast::AstSpecifier::Double,
+
+        TokenKind::Static => ast::AstSpecifier::Static,
+        TokenKind::Extern => ast::AstSpecifier::Extern,
+        TokenKind::Register => ast::AstSpecifier::Register,
+        TokenKind::Inline => ast::AstSpecifier::Inline,
+
+        TokenKind::Volatile => ast::AstSpecifier::Volatile,
+        TokenKind::Const => ast::AstSpecifier::Const,
+        TokenKind::Restrict => ast::AstSpecifier::Restrict,
 
         _ => return None,
     };
@@ -317,7 +334,22 @@ fn parse_star_declarator(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
 fn parse_array_declarator(p: &mut Parser, child: NodeResult) -> Result<Option<NodeResult>, Error> {
     let node = &mut p.track_node();
 
-    return Ok(None);
+    match p.peek_kind() {
+        TokenKind::LBracket => p.index += 1,
+        _ => return Ok(None),
+    }
+
+    while node.child_opt(parse_declaration_specifier(p)) {}
+
+    let kind = match p.peek_kind() {
+        TokenKind::RBracket => {
+            p.index += 1;
+            AstDerivedDeclarator::ArrayUnknown
+        }
+        _ => throw!(NotImplemented "haven't implemented array declarators fully yet" node.start),
+    };
+
+    return Ok(Some(p.push(node, kind)));
 }
 
 enum FuncDeclKind {
