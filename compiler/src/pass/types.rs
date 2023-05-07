@@ -1,25 +1,46 @@
-#[non_exhaustive]
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TyId {
-    Untyped = 0,
-    CheckFailure,
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TyId(u32);
 
-    Void,
-    VoidPtr,
+#[allow(non_upper_case_globals)]
+impl TyId {
+    pub const Untyped: Self = TyId(0);
+    pub const CheckFailure: Self = TyId(1);
+    pub const Void: Self = TyId(2);
+    pub const VoidPtr: Self = TyId(3);
+    pub const U8: Self = TyId(4);
+    pub const U16: Self = TyId(5);
+    pub const U32: Self = TyId(6);
+    pub const U64: Self = TyId(7);
+    pub const S8: Self = TyId(8);
+    pub const S16: Self = TyId(9);
+    pub const S32: Self = TyId(10);
+    pub const S64: Self = TyId(11);
+    pub const F32: Self = TyId(12);
+    pub const F64: Self = TyId(13);
+}
 
-    U8,
-    U16,
-    U32,
-    U64,
+impl core::fmt::Debug for TyId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            TyId::Untyped => f.write_str("Untyped"),
+            TyId::CheckFailure => f.write_str("Untyped"),
+            TyId::Void => f.write_str("Void"),
+            TyId::VoidPtr => f.write_str("VoidPtr"),
+            TyId::U8 => f.write_str("u8"),
+            TyId::U16 => f.write_str("u16"),
+            TyId::U32 => f.write_str("u32"),
+            TyId::U64 => f.write_str("u64"),
+            TyId::S8 => f.write_str("s8"),
+            TyId::S16 => f.write_str("s16"),
+            TyId::S32 => f.write_str("s32"),
+            TyId::S64 => f.write_str("s64"),
+            TyId::F32 => f.write_str("F32"),
+            TyId::F64 => f.write_str("F64"),
 
-    S8,
-    S16,
-    S32,
-    S64,
-
-    F32,
-    F64,
+            _ => write!(f, "TyId({})", self.0),
+        }
+    }
 }
 
 impl Default for TyId {
@@ -30,13 +51,13 @@ impl Default for TyId {
 
 impl From<u64> for TyId {
     fn from(value: u64) -> Self {
-        unsafe { core::mem::transmute(value as u32) }
+        Self(value as u32)
     }
 }
 
 impl Into<u64> for TyId {
     fn into(self) -> u64 {
-        self as u64
+        self.0 as u64
     }
 }
 

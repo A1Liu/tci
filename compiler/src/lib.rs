@@ -2,6 +2,7 @@
 #![allow(unused_variables)]
 #![allow(incomplete_features)]
 
+use api::AstNode;
 use error::TranslationUnitDebugInfo;
 
 #[macro_use]
@@ -88,10 +89,10 @@ pub struct PipelineData {
     pub macro_expansion: StageOutput<parser::TokenKind>,
 
     #[serde(default)]
-    pub parsed_ast: StageOutput<SimpleAstNode>,
+    pub parsed_ast: StageOutput<AstNode>,
 
     #[serde(default)]
-    pub ast_validation: StageOutput<SimpleAstNode>,
+    pub ast_validation: StageOutput<AstNode>,
 }
 
 impl PartialEq for PipelineData {
@@ -121,25 +122,6 @@ impl PipelineData {
         add_err!(ast_validation);
 
         return errors;
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
-pub struct SimpleAstNode {
-    pub kind: ast::AstNodeKind,
-    pub parent: u32,
-    pub post_order: u32,
-    pub height: u16,
-}
-
-impl<'a> From<ast::AstNodeRef<'a>> for SimpleAstNode {
-    fn from(node: ast::AstNodeRef) -> Self {
-        return Self {
-            kind: *node.kind,
-            parent: *node.parent,
-            post_order: *node.post_order,
-            height: *node.height,
-        };
     }
 }
 
@@ -197,13 +179,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
         }
     };
 
-    out.parsed_ast = StageOutput::Ok(
-        parsed_ast
-            .as_slice()
-            .into_iter()
-            .map(SimpleAstNode::from)
-            .collect(),
-    );
+    out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
     let mut parsed_ast = parsed_ast;
     {
@@ -215,13 +191,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
         }
     }
 
-    out.ast_validation = StageOutput::Ok(
-        parsed_ast
-            .as_slice()
-            .into_iter()
-            .map(SimpleAstNode::from)
-            .collect(),
-    );
+    out.ast_validation = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
     return out;
 }

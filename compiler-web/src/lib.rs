@@ -9,7 +9,7 @@ static GLOBAL: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 pub struct PipelineOutput {
     lexer: Option<Vec<TokenKind>>,
     macro_expansion: Option<Vec<TokenKind>>,
-    parsed_ast: Option<Vec<compiler::SimpleAstNode>>,
+    parsed_ast: Option<Vec<AstNode>>,
     errors: Option<Vec<String>>,
 }
 

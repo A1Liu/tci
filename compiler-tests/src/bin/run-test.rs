@@ -103,7 +103,9 @@ fn main() {
         }
     }
 
-    if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
+    if let (StageOutput::Ok(ast), true) = (&result.ast_validation, args.print_ast) {
+        eprintln!("{}", compiler::ast::display_tree(ast));
+    } else if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
         eprintln!("{}", compiler::ast::display_tree(ast));
     }
 

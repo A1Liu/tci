@@ -3,17 +3,19 @@ This module describes the AST created by the parser.
 */
 
 use crate::api::*;
-use crate::SimpleAstNode;
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
 }
 
-#[derive(Debug, Clone, Copy, StructOfArray)]
+#[derive(Debug, Clone, Copy, StructOfArray, serde::Serialize, serde::Deserialize)]
 pub struct AstNode {
     pub kind: AstNodeKind,
-    pub start: u32,
     pub height: u16,
+
+    #[serde(skip)]
+    pub start: u32,
+
     pub data: u64,
 
     /// refers to the post_order index of the node that's the parent
@@ -23,6 +25,16 @@ pub struct AstNode {
     /// The post-order index of this node. The parser returns nodes in post-order,
     /// so these will also be the index in the AST after parsing.
     pub post_order: u32,
+}
+
+impl PartialEq for AstNode {
+    fn eq(&self, other: &Self) -> bool {
+        return self.kind == other.kind
+            && self.height == other.height
+            && self.data == other.data
+            && self.parent == other.parent
+            && self.post_order == other.post_order;
+    }
 }
 
 macro_attr! {
@@ -331,6 +343,16 @@ impl<'a> AstNodeRefMut<'a> {
     }
 }
 
+impl AstNode {
+    pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
+        return T::AstData::from(self.data);
+    }
+
+    pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
+        self.data = data.into();
+    }
+}
+
 /// Prints the tree in a text format, so that it's a lil easier to read.
 /// Output right now looks like this:
 ///
@@ -351,7 +373,7 @@ impl<'a> AstNodeRefMut<'a> {
 /// | └ Statement(Ret)                                                             
 /// | | └ Expr(StringLit)
 /// ```
-pub fn display_tree(ast: &[SimpleAstNode]) -> String {
+pub fn display_tree(ast: &[AstNode]) -> String {
     let mut children = Vec::<Vec<usize>>::with_capacity(ast.len());
     children.resize_with(ast.len(), || Vec::new());
 
@@ -380,7 +402,15 @@ pub fn display_tree(ast: &[SimpleAstNode]) -> String {
             out += "└ ";
         }
 
-        out += &format!("{:?}\n", ast[node_id].kind);
+        let node = &ast[node_id];
+        out += &format!("{:?}", node.kind);
+
+        match node.kind {
+            AstNodeKind::Declarator(d) => {
+                out += &format!(" {:?}\n", node.read_data(&d));
+            }
+            _ => out.push('\n'),
+        }
 
         for id in children[node_id].iter().rev() {
             parent_stack.push((depth + 1, *id));
