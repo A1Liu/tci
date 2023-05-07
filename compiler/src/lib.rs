@@ -31,7 +31,10 @@ pub mod api {
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
-    pub use super::pass::types::{TyDb, TyId, TyQuals};
+    pub use super::pass::{
+        types::{TyDb, TyId, TyQuals},
+        ByKindAst,
+    };
 
     pub use super::run_compiler_test_case;
 
@@ -206,7 +209,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     {
         let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
 
-        if let Err(e) = pass::validate_declaration_nodes(&mut by_kind) {
+        if let Err(e) = pass::declarations::validate_declaration_nodes(&mut by_kind) {
             out.ast_validation = StageOutput::Err(e);
             return out;
         }

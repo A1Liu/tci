@@ -7,14 +7,6 @@ use crate::SimpleAstNode;
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
-
-    fn read(field: &u64) -> Self::AstData {
-        return Self::AstData::from(*field);
-    }
-
-    fn write(field: &mut u64, value: Self::AstData) {
-        *field = value.into();
-    }
 }
 
 #[derive(Debug, Clone, Copy, StructOfArray)]
@@ -283,24 +275,14 @@ impl From<u64> for TypeSpecifier {
 
 #[bitfield(u64)]
 pub struct DeclSpecifiers {
-    // Inline doesn't make sense for non-definitions
-    pub static_: bool,
-    pub extern_: bool,
-    pub noreturn_: bool,
-    pub register_: bool,
-    pub typedef_: bool,
-
     #[bits(4)]
     pub quals: TyQuals,
-
-    #[bits(15)]
-    _asdf2: u16,
 
     #[bits(8)]
     pub specifier: TypeSpecifier,
 
-    #[bits(32)]
-    pub symbol: Symbol,
+    #[bits(52)]
+    _asdf2: u64,
 }
 
 impl AstInterpretData for AstDeclaration {
@@ -334,14 +316,18 @@ impl AstInterpretData for AstDerivedDeclarator {
     type AstData = TyQuals;
 }
 
+impl AstInterpretData for AstDeclarator {
+    type AstData = TyId;
+}
+
 impl<'a> AstNodeRef<'a> {
     pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
-        return T::read(self.data);
+        return T::AstData::from(*self.data);
     }
 }
 impl<'a> AstNodeRefMut<'a> {
     pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
-        T::write(&mut self.data, data);
+        *self.data = data.into();
     }
 }
 

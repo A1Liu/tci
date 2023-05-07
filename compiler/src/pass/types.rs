@@ -22,6 +22,24 @@ pub enum TyId {
     F64,
 }
 
+impl Default for TyId {
+    fn default() -> Self {
+        Self::Untyped
+    }
+}
+
+impl From<u64> for TyId {
+    fn from(value: u64) -> Self {
+        unsafe { core::mem::transmute(value as u32) }
+    }
+}
+
+impl Into<u64> for TyId {
+    fn into(self) -> u64 {
+        self as u64
+    }
+}
+
 pub struct TyDb {
     types: TypeInfoVec,
 }
@@ -65,6 +83,16 @@ impl TyDb {
         let next_id = self.types.len() as u32;
         self.types.push(TypeInfo {
             kind: TypeKind::Qualified(id),
+            qualifiers,
+        });
+
+        return unsafe { core::mem::transmute(next_id) };
+    }
+
+    pub fn add_ptr(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
+        let next_id = self.types.len() as u32;
+        self.types.push(TypeInfo {
+            kind: TypeKind::Pointer(id),
             qualifiers,
         });
 
