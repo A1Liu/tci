@@ -1,17 +1,17 @@
 use crate::api::*;
 
+#[derive(Default)]
+struct SpecifierTracker {
+    type_specifier: Option<Result<TyId, Error>>,
+    has_int: bool,
+    has_sign: bool,
+}
+
 // validate declarations -> produce declaration types
 // Declaration specifiers need to make sense for the kind of declaration theyre on
 pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
-
-    #[derive(Default)]
-    struct SpecifierTracker {
-        type_specifier: Option<Result<TyId, Error>>,
-        has_int: bool,
-        has_sign: bool,
-    }
 
     let mut trackers = HashMap::<u32, SpecifierTracker>::new();
 
@@ -46,6 +46,8 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                 (Void, Some(_)) => Some(Err(dup_type(*node.start))),
                 (Void, None) => Some(Ok(TyId::Void)),
 
+                (Char, Some(TyId::S32)) if tracker.has_int => Some(Err(dup_type(*node.start))),
+                (Char, Some(TyId::S32)) => Some(Ok(TyId::S8)),
                 (Char, Some(_)) => Some(Err(dup_type(*node.start))),
                 (Char, None) => Some(Ok(TyId::S8)),
 
@@ -57,35 +59,34 @@ pub fn validate_declarations(ast: &mut ByKindAst) -> Result<(), Error> {
                 (Long, Some(TyId::U32)) => Some(Ok(TyId::U64)),
                 (Long, Some(_)) => Some(Err(dup_type(*node.start))),
 
-                (Int, Some(t @ (TyId::U32 | TyId::S64 | TyId::U64 | TyId::S16 | TyId::U16))) => {
+                (
+                    Int,
+                    t @ (Some(TyId::U32 | TyId::S64 | TyId::U64 | TyId::S16 | TyId::U16) | None),
+                ) => {
                     if tracker.has_int {
                         Some(Err(dup_type(*node.start)))
                     } else {
                         tracker.has_int = true;
-                        Some(Ok(t))
+                        Some(Ok(t.unwrap_or(TyId::S32)))
                     }
                 }
                 (Int, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Int, None) => {
-                    tracker.has_int = true;
-                    Some(Ok(TyId::S32))
-                }
 
+                // If we've already said "signed", then we shouldn't allow another sign-edness marker
+                // NOTE: if we've said "unsigned", that'll be represented in the TyId, so we don't need
+                // to use the `has_sign` field for that purpose.
                 (Unsigned | Signed, _) if tracker.has_sign => Some(Err(dup_type(*node.start))),
 
+                // Translate signed types to unsigned
                 (Unsigned, None | Some(TyId::S32)) => Some(Ok(TyId::U32)),
+                (Unsigned, Some(TyId::S8)) => Some(Ok(TyId::U8)),
                 (Unsigned, Some(TyId::S16)) => Some(Ok(TyId::U16)),
                 (Unsigned, Some(TyId::S64)) => Some(Ok(TyId::U64)),
-                (Unsigned, Some(TyId::S8)) => Some(Ok(TyId::U8)),
                 (Unsigned, Some(_)) => Some(Err(dup_type(*node.start))),
 
-                (Signed, None) => {
+                (Signed, t @ (Some(TyId::S8 | TyId::S16 | TyId::S32 | TyId::S64) | None)) => {
                     tracker.has_sign = true;
-                    Some(Ok(TyId::S32))
-                }
-                (Signed, Some(t @ (TyId::S16 | TyId::S64 | TyId::S8))) => {
-                    tracker.has_sign = true;
-                    Some(Ok(t))
+                    Some(Ok(t.unwrap_or(TyId::S32)))
                 }
                 (Signed, Some(_)) => Some(Err(dup_type(*node.start))),
 
