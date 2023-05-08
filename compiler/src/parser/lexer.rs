@@ -416,9 +416,10 @@ fn lex_tok_from_bytes<'a>(global_index: u32, data: &'a [u8]) -> Result<LexedTok,
                 let mut i = 1;
                 let mut prev = 0u8;
                 loop {
-                    let b = *data
-                        .get(index + i)
-                        .ok_or(error!(todo "EOF while inside a block comment" global_index))?;
+                    let b = *data.get(index + i).ok_or(error!(
+                        todo,
+                        "EOF while inside a block comment", global_index
+                    ))?;
                     i += 1;
 
                     // Consume until we hit the suffix
@@ -538,7 +539,7 @@ fn lex_tok_from_bytes<'a>(global_index: u32, data: &'a [u8]) -> Result<LexedTok,
         b'\"' => return lex_character(TokenKind::StringLit, b'\"', global_index, index, data),
         b'\'' => return lex_character(TokenKind::CharLit, b'\'', global_index, index, data),
 
-        x => throw!(todo "invalid character" global_index),
+        x => throw!(todo, "invalid character", global_index),
     }
 }
 
@@ -596,7 +597,7 @@ fn lex_character(
     while index < data.len() {
         let cur = data[index];
         if !cur.is_ascii() {
-            throw!(todo "character is not valid ascii" global_index);
+            throw!(todo, "character is not valid ascii", global_index);
         }
 
         if cur == surround {
@@ -608,7 +609,11 @@ fn lex_character(
 
         // handle early newline
         if cur == b'\n' || cur == b'\r' {
-            throw!(todo "invalid character found when parsing string literal" global_index);
+            throw!(
+                todo,
+                "invalid character found when parsing string literal",
+                global_index
+            );
         }
 
         // handle escape cases
@@ -627,7 +632,11 @@ fn lex_character(
         index += 1;
     }
 
-    throw!(todo "File ended before ohe string was closed" global_index);
+    throw!(
+        todo,
+        "File ended before ohe string was closed",
+        global_index
+    );
 }
 
 struct IncludeResult<'a> {
@@ -648,7 +657,7 @@ fn lex_include_line(global_index: u32, data: &[u8]) -> Result<IncludeResult, Err
     let (end_quote, file_type) = match data[index] {
         b'"' => (b'"', FileType::User),
         b'<' => (b'>', FileType::System),
-        _ => throw!(todo "expected a file string" global_index),
+        _ => throw!(todo, "expected a file string", global_index),
     };
 
     index += 1;
@@ -658,10 +667,14 @@ fn lex_include_line(global_index: u32, data: &[u8]) -> Result<IncludeResult, Err
     loop {
         match data.get(index) {
             None => {
-                throw!(todo "file ended before include file string was done" global_index)
+                throw!(
+                    todo,
+                    "file ended before include file string was done",
+                    global_index
+                )
             }
             Some(b'\n') | Some(b'\r') => {
-                throw!(todo "line ended before file string was done" global_index)
+                throw!(todo, "line ended before file string was done", global_index)
             }
 
             Some(x) if *x == end_quote => break,
@@ -687,7 +700,7 @@ fn lex_include_line(global_index: u32, data: &[u8]) -> Result<IncludeResult, Err
         (b'\n', _) => 1,
         (b'\r', _) => 1,
 
-        _ => throw!(todo "extra stuff after include file name" global_index),
+        _ => throw!(todo, "extra stuff after include file name", global_index),
     };
 
     index += increment;

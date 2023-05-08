@@ -327,7 +327,7 @@ impl AstNodeVec {
         }
     }
 
-    pub fn collect_to_parents<T: Default + Send>(
+    pub fn collect_to_parents<T: Send>(
         &self,
         range: impl RangeBounds<usize>,
         extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<T> + Sync,

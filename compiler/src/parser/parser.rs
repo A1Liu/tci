@@ -175,7 +175,11 @@ fn parse_global(p: &mut Parser) -> Result<(), Error> {
         return Ok(());
     };
 
-    throw!(NotImplemented "a global that's not a declaration" p.start_index());
+    throw!(
+        NotImplemented,
+        "a global that's not a declaration",
+        p.start_index()
+    );
 }
 
 enum DeclarationKind {
@@ -205,7 +209,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     match p.peek_kind() {
         TokenKind::Comma | TokenKind::Semicolon => {}
 
-        x => throw!(todo "bad character after declarator" p.start_index()),
+        x => throw!(todo, "bad character after declarator", p.start_index()),
     }
 
     while p.peek_kind() == TokenKind::Comma {
@@ -283,7 +287,11 @@ fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
                 let child = parse_declarator(p)?;
 
                 if p.peek_kind() != TokenKind::RParen {
-                    throw!(todo "nested declarator didn't have closing paren" p.start_index());
+                    throw!(
+                        todo,
+                        "nested declarator didn't have closing paren",
+                        p.start_index()
+                    );
                 }
 
                 p.index += 1;
@@ -348,7 +356,11 @@ fn parse_array_declarator(p: &mut Parser, child: NodeResult) -> Result<Option<No
             p.index += 1;
             AstDerivedDeclarator::ArrayUnknown
         }
-        _ => throw!(NotImplemented "haven't implemented array declarators fully yet" node.start),
+        _ => throw!(
+            NotImplemented,
+            "haven't implemented array declarators fully yet",
+            node.start
+        ),
     };
 
     return Ok(Some(p.push(node, kind)));
@@ -405,7 +417,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
 
         if !node.child_opt(parse_declaration(p, DeclarationKind::Param)?) {
             p.index -= 1;
-            throw!(todo "parameter list has extra comma at the end" p.start_index());
+            throw!(
+                todo,
+                "parameter list has extra comma at the end",
+                p.start_index()
+            );
         }
     }
 
@@ -418,7 +434,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
     };
 
     if p.peek_kind() != TokenKind::RParen {
-        throw!(todo "missing closing paren for func declarator" p.start_index());
+        throw!(
+            todo,
+            "missing closing paren for func declarator",
+            p.start_index()
+        );
     }
 
     p.index += 1;
@@ -610,7 +630,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
         TokenKind::StringLit => AstExpr::StringLit,
 
-        _ => throw!(todo "unrecognized atom token" p.start_index()),
+        _ => throw!(todo, "unrecognized atom token", p.start_index()),
     };
 
     p.index += 1;
@@ -619,7 +639,7 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
 fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
     if p.peek_kind() != TokenKind::Semicolon {
-        throw!(todo "expected a semicolon" p.start_index());
+        throw!(todo, "expected a semicolon", p.start_index());
     }
 
     while p.peek_kind() == TokenKind::Semicolon {

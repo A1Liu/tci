@@ -26,7 +26,6 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
-    /*
     let mut specifier_range = None;
     for (kind, range) in &ast.by_kind_in_order {
         match kind {
@@ -58,112 +57,116 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
         );
     }
 
-    let specifiers = ast.nodes.collect_to_parents(range, extract);
-    */
+    let specifiers = match specifier_range {
+        None => HashMap::new(),
+        Some(range) => ast.nodes.collect_to_parents(range, |node| match node.kind {
+            AstNodeKind::Specifier(k) => Some((*k, *node.id)),
+            _ => None,
+        }),
+    };
 
-    let mut trackers = HashMap::<u32, SpecifierTracker>::new();
-    let mut param_counters: HashMap<u32, Params> = HashMap::new();
+    // let mut trackers = HashMap::<u32, SpecifierTracker>::new();
 
     // Build summary of all specifiers for each node with a specifier
-    for (kind, range) in &ast.by_kind_in_order {
-        let kind = match kind {
-            AstNodeKind::Specifier(k) => *k,
-            _ => continue,
-        };
-
-        for node in ast.nodes.as_slice().index(range.clone()) {
+    let trackers: HashMap<_, _> = specifiers
+        .into_par_iter()
+        .map(|(parent_index, specifiers)| {
             use AstSpecifier::*;
 
-            let tracker = trackers
-                .entry(*node.parent)
-                .or_insert(SpecifierTracker::default());
+            let mut tracker = SpecifierTracker::default();
 
-            let spec = match tracker.type_specifier.take().transpose() {
-                Ok(s) => s,
-                Err(e) => {
-                    tracker.type_specifier = Some(Err(e));
-                    continue;
-                }
-            };
+            for (kind, node_index) in specifiers {
+                let spec = match &tracker.type_specifier {
+                    Some(Err(e)) => return (parent_index, tracker),
+                    Some(Ok(s)) => Some(*s),
+                    None => None,
+                };
 
-            fn dup_type(start: u32) -> Error {
-                return error!(todo "two or more types for a single declaration" start);
-            }
+                let node = ast.nodes.index(node_index as usize);
 
-            // ensure the combined specifiers are valid for the declaration
-            tracker.type_specifier = match (kind, spec) {
-                (Void, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Void, None) => Some(Ok(TyId::Void)),
+                // ensure the combined specifiers are valid for the declaration
+                tracker.type_specifier = match (kind, spec.clone()) {
+                    (Void, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Void, None) => Some(Ok(TyId::Void)),
 
-                (Char, Some(TyId::S32 | TyId::U32)) if tracker.has_int => {
-                    Some(Err(dup_type(*node.start)))
-                }
-                (Char, Some(TyId::S32)) => Some(Ok(TyId::S8)),
-                (Char, Some(TyId::U32)) => Some(Ok(TyId::U8)),
-                (Char, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Char, None) => Some(Ok(TyId::S8)),
-
-                (Short, Some(TyId::S32) | None) => Some(Ok(TyId::S16)),
-                (Short, Some(TyId::U32)) => Some(Ok(TyId::U16)),
-                (Short, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Long, Some(TyId::S32) | None) => Some(Ok(TyId::S64)),
-                (Long, Some(TyId::U32)) => Some(Ok(TyId::U64)),
-                (Long, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (
-                    Int,
-                    t @ (Some(TyId::U32 | TyId::S64 | TyId::U64 | TyId::S16 | TyId::U16) | None),
-                ) => {
-                    if tracker.has_int {
+                    (Char, Some(TyId::S32 | TyId::U32)) if tracker.has_int => {
                         Some(Err(dup_type(*node.start)))
-                    } else {
-                        tracker.has_int = true;
+                    }
+                    (Char, Some(TyId::S32)) => Some(Ok(TyId::S8)),
+                    (Char, Some(TyId::U32)) => Some(Ok(TyId::U8)),
+                    (Char, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Char, None) => Some(Ok(TyId::S8)),
+
+                    (Short, Some(TyId::S32) | None) => Some(Ok(TyId::S16)),
+                    (Short, Some(TyId::U32)) => Some(Ok(TyId::U16)),
+                    (Short, Some(_)) => Some(Err(dup_type(*node.start))),
+
+                    (Long, Some(TyId::S32) | None) => Some(Ok(TyId::S64)),
+                    (Long, Some(TyId::U32)) => Some(Ok(TyId::U64)),
+                    (Long, Some(_)) => Some(Err(dup_type(*node.start))),
+
+                    (
+                        Int,
+                        t
+                        @ (Some(TyId::U32 | TyId::S64 | TyId::U64 | TyId::S16 | TyId::U16) | None),
+                    ) => {
+                        if tracker.has_int {
+                            Some(Err(dup_type(*node.start)))
+                        } else {
+                            tracker.has_int = true;
+                            Some(Ok(t.unwrap_or(TyId::S32)))
+                        }
+                    }
+                    (Int, Some(_)) => Some(Err(dup_type(*node.start))),
+
+                    // If we've already said "signed", then we shouldn't allow another sign-edness marker
+                    // NOTE: if we've said "unsigned", that'll be represented in the TyId, so we don't need
+                    // to use the `has_sign` field for that purpose.
+                    (Unsigned | Signed, _) if tracker.has_sign => Some(Err(dup_type(*node.start))),
+
+                    // Translate signed types to unsigned
+                    (Unsigned, None | Some(TyId::S32)) => Some(Ok(TyId::U32)),
+                    (Unsigned, Some(TyId::S8)) => Some(Ok(TyId::U8)),
+                    (Unsigned, Some(TyId::S16)) => Some(Ok(TyId::U16)),
+                    (Unsigned, Some(TyId::S64)) => Some(Ok(TyId::U64)),
+                    (Unsigned, Some(_)) => Some(Err(dup_type(*node.start))),
+
+                    (Signed, t @ (Some(TyId::S8 | TyId::S16 | TyId::S32 | TyId::S64) | None)) => {
+                        tracker.has_sign = true;
                         Some(Ok(t.unwrap_or(TyId::S32)))
                     }
-                }
-                (Int, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Signed, Some(_)) => Some(Err(dup_type(*node.start))),
 
-                // If we've already said "signed", then we shouldn't allow another sign-edness marker
-                // NOTE: if we've said "unsigned", that'll be represented in the TyId, so we don't need
-                // to use the `has_sign` field for that purpose.
-                (Unsigned | Signed, _) if tracker.has_sign => Some(Err(dup_type(*node.start))),
+                    (Float, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Float, None) => Some(Ok(TyId::F32)),
 
-                // Translate signed types to unsigned
-                (Unsigned, None | Some(TyId::S32)) => Some(Ok(TyId::U32)),
-                (Unsigned, Some(TyId::S8)) => Some(Ok(TyId::U8)),
-                (Unsigned, Some(TyId::S16)) => Some(Ok(TyId::U16)),
-                (Unsigned, Some(TyId::S64)) => Some(Ok(TyId::U64)),
-                (Unsigned, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Double, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Double, None) => Some(Ok(TyId::F64)),
 
-                (Signed, t @ (Some(TyId::S8 | TyId::S16 | TyId::S32 | TyId::S64) | None)) => {
-                    tracker.has_sign = true;
-                    Some(Ok(t.unwrap_or(TyId::S32)))
-                }
-                (Signed, Some(_)) => Some(Err(dup_type(*node.start))),
+                    (Ident | Struct(_), _) => Some(Err(error!(
+                        NotImplemented,
+                        "identifiers and structs not implemented yet", *node.start
+                    ))),
 
-                (Float, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Float, None) => Some(Ok(TyId::F32)),
+                    _ => Some(Err(error!(
+                        NotImplemented,
+                        "unsupported declaration specifier", *node.start
+                    ))),
+                };
+            }
 
-                (Double, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Double, None) => Some(Ok(TyId::F64)),
+            return (parent_index, tracker);
+        })
+        .collect();
 
-                (Ident | Struct(_), _) => {
-                    throw!(NotImplemented "identifiers and structs not implemented yet" *node.start)
-                }
-
-                _ => throw!(NotImplemented "unsupported declaration specifier" *node.start),
-            };
-        }
-    }
-
+    let mut param_counters: HashMap<u32, Params> = HashMap::new();
     for (node_id, specifiers) in trackers {
         // ensure the specifiers' parent is a declaration of some kind
         let mut node = ast.nodes.index_mut(node_id as usize);
 
         let spec = match specifiers.type_specifier {
             Some(s) => s?,
-            None => throw!(todo "no type provided" *node.start),
+            None => throw!(todo, "no type provided", *node.start),
         };
 
         // TODO: ensure the combined declaration specifiers are valid for each kind of declaration
@@ -181,7 +184,7 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
                 param_counters.entry(*node.parent).or_default().count += 1;
             }
 
-            _ => throw!(Tci "specifier attached to non-declaration" *node.start),
+            _ => throw!(Tci, "specifier attached to non-declaration", *node.start),
         };
     }
 
@@ -339,9 +342,10 @@ fn type_for_declarator(
             }
 
             _ => {
-                return Either::Left(Err(
-                    error!(NotImplemented "most derived declarators" *node.start),
-                ))
+                return Either::Left(Err(error!(
+                    NotImplemented,
+                    "most derived declarators", *node.start
+                )))
             }
         }
     }
@@ -353,4 +357,8 @@ fn type_for_declarator(
         ty_id,
         parent_index,
     }));
+}
+
+fn dup_type(start: u32) -> Error {
+    return error!(todo, "two or more types for a single declaration", start);
 }
