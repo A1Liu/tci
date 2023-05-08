@@ -345,6 +345,7 @@ impl AstNodeVec {
 
         return (begin..end)
             .into_par_iter()
+            .with_min_len(128)
             .fold(
                 || HashMap::<u32, Vec<T>>::new(),
                 |mut map, index| {
@@ -360,10 +361,16 @@ impl AstNodeVec {
             )
             .reduce(
                 || HashMap::new(),
-                |mut left, right| {
+                |left, right| {
+                    let (mut large, small) = if left.len() < right.len() {
+                        (right, left)
+                    } else {
+                        (left, right)
+                    };
+
                     use std::collections::hash_map::Entry;
-                    for (k, v) in right {
-                        match left.entry(k) {
+                    for (k, v) in small {
+                        match large.entry(k) {
                             Entry::Occupied(mut l) => {
                                 l.get_mut().extend(v);
                             }
@@ -373,7 +380,7 @@ impl AstNodeVec {
                         }
                     }
 
-                    return left;
+                    return large;
                 },
             );
     }

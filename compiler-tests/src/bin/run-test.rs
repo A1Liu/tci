@@ -22,6 +22,9 @@ struct Cli {
     #[clap(help = "a path to a test case")]
     test_case: std::path::PathBuf,
 
+    #[clap(long, help = "parallelism for the compiler")]
+    parallel: Option<u8>,
+
     #[clap(long, help = "print a nested version of the AST")]
     print_ast: bool,
 
@@ -61,6 +64,13 @@ fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
 
     let mut args = Cli::parse();
+
+    if let Some(threads) = args.parallel {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads as usize)
+            .build_global()
+            .unwrap();
+    }
 
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");

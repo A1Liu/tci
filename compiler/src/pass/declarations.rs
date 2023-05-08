@@ -200,6 +200,7 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
 
         let (left, right): (Vec<_>, Vec<_>) = range
             .into_par_iter()
+            .with_min_len(256)
             .partition_map(|index| type_for_declarator(index, ast, ty_db, &param_counters));
 
         let mut errors = Vec::new();
