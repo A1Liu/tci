@@ -10,6 +10,7 @@ pub trait AstInterpretData {
 
 #[derive(Debug, Clone, Copy, StructOfArray, serde::Serialize, serde::Deserialize)]
 pub struct AstNode {
+    pub id: u32,
     pub kind: AstNodeKind,
     pub height: u16,
 
@@ -307,6 +308,21 @@ impl AstNode {
 
     pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
         self.data = data.into();
+    }
+}
+
+impl AstNodeVec {
+    pub fn rebuild_ids(&mut self) {
+        let mut ids = vec![0u32; self.len()];
+
+        for (index, id) in self.id.iter_mut().enumerate() {
+            ids[*id as usize] = index as u32;
+            *id = index as u32;
+        }
+
+        for parent in &mut self.parent {
+            *parent = ids[*parent as usize];
+        }
     }
 }
 

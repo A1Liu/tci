@@ -123,6 +123,7 @@ impl<'a> Parser<'a> {
         let post_order = tracker.ast.len() as u32;
 
         let ast_node = AstNode {
+            id: post_order,
             kind: kind.into(),
             start: node.start,
             height: node.height,

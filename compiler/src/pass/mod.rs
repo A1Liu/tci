@@ -66,14 +66,7 @@ impl<'a> ByKindAst<'a> {
             }
         });
 
-        for (index, &order) in ast.post_order.iter().enumerate() {
-            indices[order as usize] = index as u32;
-        }
-
-        // Rebuild parent indices
-        for parent in &mut ast.parent {
-            *parent = indices[*parent as usize];
-        }
+        ast.rebuild_ids();
     }
 }
 
@@ -84,19 +77,10 @@ impl<'a> Drop for ByKindAst<'a> {
 }
 
 pub fn sort_by_postorder(ast: &mut AstNodeVec) {
-    let mut indices = Vec::with_capacity(ast.len());
-
-    for &order in &ast.post_order {
-        indices.push(order);
-    }
-
     // Sort by post_order
     ast.as_mut_slice().sort_by_key(|r| *r.post_order);
 
-    // Rebuild parent indices
-    for parent in &mut ast.parent {
-        *parent = indices[*parent as usize];
-    }
+    ast.rebuild_ids();
 }
 
 // validate declarators relative to their scopes
