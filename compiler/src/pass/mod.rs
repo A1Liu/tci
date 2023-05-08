@@ -50,11 +50,6 @@ impl<'a> ByKindAst<'a> {
 
     // NOTE: Assumes that the input was originally sorted by post-order
     fn sort_by_kind(ast: &mut AstNodeVec) {
-        let mut indices = Vec::with_capacity(ast.len());
-        for _ in 0..ast.len() {
-            indices.push(u32::MAX);
-        }
-
         // Sort by kind,height,post_order
         ast.as_mut_slice().sort_by(|a, b| {
             let kind_cmp = a.kind.cmp(b.kind);
