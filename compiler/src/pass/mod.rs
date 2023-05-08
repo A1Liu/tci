@@ -77,13 +77,3 @@ pub fn sort_by_postorder(ast: &mut AstNodeVec) {
 
     ast.rebuild_ids();
 }
-
-// validate declarators relative to their scopes
-//          -> produce scopes
-// validate identifiers
-//          -> produce types for the identifiers
-//          -> track which identifiers are pointer-referenced, and when each declaration is last used
-// produce global symbols?
-pub fn validate_scopes(ast: &mut ByKindAst) -> Result<(), Error> {
-    return Ok(());
-}

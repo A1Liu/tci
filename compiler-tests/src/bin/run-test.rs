@@ -15,6 +15,8 @@ enum Stage {
     Validate,
 }
 
+const STAGES: &[Stage] = &[Stage::Lex, Stage::Macro, Stage::Parse, Stage::Validate];
+
 /// Run
 #[derive(Parser)]
 #[clap(author = "Albert Liu", about = "Test runner for TCI.")]
@@ -40,6 +42,9 @@ Examples:
     )]
     #[arg(value_enum)]
     ignore: Vec<Stage>,
+
+    #[clap(long, help = "run the compiler, but ignore all stage outputs")]
+    ignore_all: bool,
 
     #[clap(long, help = "the only stage that should run")]
     #[arg(value_enum)]
@@ -88,15 +93,13 @@ fn main() {
 
     let elapsed = begin.elapsed();
 
-    if let Some(only) = args.only {
-        for stage in [Stage::Lex, Stage::Macro, Stage::Parse, Stage::Validate] {
-            if stage == only {
-                continue;
-            }
-
-            args.ignore.push(stage);
-        }
-    }
+    args.ignore = if args.ignore_all {
+        STAGES.iter().map(|s| *s).collect()
+    } else if let Some(only) = args.only {
+        STAGES.iter().map(|s| *s).filter(|s| *s != only).collect()
+    } else {
+        args.ignore
+    };
 
     for stage in args.ignore {
         match stage {

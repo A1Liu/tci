@@ -209,7 +209,7 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
 
         let (left, right): (Vec<_>, Vec<_>) = range
             .into_par_iter()
-            .with_min_len(256)
+            .with_min_len(128)
             .partition_map(|index| type_for_declarator(index, ast, ty_db, &param_counters));
 
         let mut errors = Vec::new();
@@ -334,6 +334,9 @@ fn type_for_declarator(
                     None => &dummy,
                 };
 
+                // We haven't finished collecting all the parameter types for this function;
+                // we save our place in the tree so that there's not any extra types created,
+                // and wait for the next loop to hopefully get more information.
                 if collected_params.len() < (*count as usize) {
                     return Either::Right(DeclaratorData {
                         index,
@@ -371,4 +374,14 @@ fn type_for_declarator(
 
 fn dup_type(start: u32) -> Error {
     return error!(todo, "two or more types for a single declaration", start);
+}
+
+// validate declarators relative to their scopes
+//          -> produce scopes
+// validate identifiers
+//          -> produce types for the identifiers
+//          -> track which identifiers are pointer-referenced, and when each declaration is last used
+// produce global symbols?
+fn validate_scopes(ast: &mut ByKindAst) -> Result<(), Error> {
+    return Ok(());
 }
