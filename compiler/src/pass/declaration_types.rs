@@ -1,12 +1,15 @@
 /*!
- * This module is responsible for the following:
- *
- * - Validate declaration types - check the declaration specifiers and type specifier on each declaration
- * - Validate derived declarators - check that type qualifiers make sense for each declarator
- * - Add types to declarators - Fill the `data` field of `AstDeclarator` with the `TyId`
- * - Move `AstDeclarator` up the tree - Make the parent of `AstDeclarator` its actual declaration
- * - Build `TyDb` with references to type definitions, function definitions, etc; these references
- *   won't necessarily be resolved yet, but they will at least exist.
+Checks things about individual declarations.
+
+This includes:
+- Validate declaration types - check the declaration specifiers and type specifier on each declaration
+- Validate derived declarators - check that type qualifiers make sense for each declarator
+- Add types to declarators - Fill the `data` field of `AstDeclarator` with the `TyId`
+- Move `AstDeclarator` up the tree - Make the parent of `AstDeclarator` its actual declaration
+- Build `TyDb` - Add references to type definitions, function definitions, etc; these references
+  won't necessarily be resolved yet, but they will at least exist.
+- Validate that declaration AST locations - Since the parser is incredibly lenient, we also need to ensure
+     that e.g. structs don't have function definitions.
  */
 
 use crate::api::*;
@@ -369,19 +372,4 @@ fn type_for_declarator(
 
 fn dup_type(start: u32) -> Error {
     return error!(todo, "two or more types for a single declaration", start);
-}
-
-// validate declarators relative to their scopes
-//          -> produce scopes
-// validate identifiers
-//          -> produce types for the identifiers
-//          -> track which identifiers are pointer-referenced, and when each declaration is last used
-// produce global symbols?
-fn validate_scopes(ast: &mut ByKindAst) -> Result<(), Error> {
-    // collapse declarators into their scopes
-    // Probably decide on slots, and do lifetime analysis?
-    // NOTE: the statements in a function are a child of a block node,
-    // and then that block node is the child of the function definition node
-
-    return Ok(());
 }

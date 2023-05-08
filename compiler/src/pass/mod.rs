@@ -1,6 +1,11 @@
+/*!
+Passes over the AST to validate and transform it.
+ */
+
 use crate::api::*;
 use core::ops::Range;
 
+pub mod declaration_scopes;
 pub mod declaration_types;
 pub mod types;
 
