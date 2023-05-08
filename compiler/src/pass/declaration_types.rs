@@ -10,6 +10,10 @@ This includes:
   won't necessarily be resolved yet, but they will at least exist.
 - Validate that declaration AST locations - Since the parser is incredibly lenient, we also need to ensure
      that e.g. structs don't have function definitions.
+
+ Some side effects and invariants after this pass completes successfully runs:
+ - All `AstDerivedDeclarator` nodes are likely completely useless once this pass runs.
+ - `AstDeclarator` nodes now have their `type_id` available via `AstNodeRef::read_data`
  */
 
 use crate::api::*;
