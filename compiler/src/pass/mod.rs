@@ -68,6 +68,43 @@ impl<'a> ByKindAst<'a> {
 
         ast.rebuild_ids();
     }
+
+    pub fn matching_range(
+        &self,
+        matcher: impl for<'b> Fn(&'b AstNodeKind) -> bool,
+    ) -> core::ops::Range<usize> {
+        let mut final_range = None;
+        for (kind, range) in &self.by_kind_in_order {
+            if !matcher(kind) {
+                continue;
+            }
+
+            let prev = match final_range {
+                Some(prev) => prev,
+                None => {
+                    final_range = Some(range.clone());
+                    continue;
+                }
+            };
+
+            if range.end == prev.start {
+                final_range = Some(range.start..prev.end);
+                continue;
+            }
+
+            if prev.end == range.start {
+                final_range = Some(prev.start..range.end);
+                continue;
+            }
+
+            panic!(
+                "matcher matched against ranges that were not consecutive {:?} {:?}",
+                range, prev
+            );
+        }
+
+        return final_range.unwrap_or(0..0);
+    }
 }
 
 impl<'a> Drop for ByKindAst<'a> {

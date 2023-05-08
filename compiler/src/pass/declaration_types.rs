@@ -38,44 +38,13 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
-    let mut specifier_range = None;
-    for (kind, range) in &ast.by_kind_in_order {
-        match kind {
-            AstNodeKind::Specifier(_) => {}
-            _ => continue,
-        }
-
-        let prev = match specifier_range {
-            Some(prev) => prev,
-            None => {
-                specifier_range = Some(range.clone());
-                continue;
-            }
-        };
-
-        if range.end == prev.start {
-            specifier_range = Some(range.start..prev.end);
-            continue;
-        }
-
-        if prev.end == range.start {
-            specifier_range = Some(prev.start..range.end);
-            continue;
-        }
-
-        panic!(
-            "wtf, we're supposed to be by-kind right now {:?} {:?}",
-            range, prev
-        );
-    }
-
-    let specifiers = match specifier_range {
-        None => HashMap::new(),
-        Some(range) => ast.nodes.collect_to_parents(range, |node| match node.kind {
+    let specifier_range = ast.matching_range(|kind| matches!(kind, AstNodeKind::Specifier(_)));
+    let specifiers = ast
+        .nodes
+        .collect_to_parents(specifier_range, |node| match node.kind {
             AstNodeKind::Specifier(k) => Some((*k, *node.id)),
             _ => None,
-        }),
-    };
+        });
 
     // let mut trackers = HashMap::<u32, SpecifierTracker>::new();
 
@@ -198,10 +167,9 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
         };
     }
 
-    let mut range: Vec<_> = [AstDeclarator::Ident, AstDeclarator::Abstract]
+    let mut range: Vec<_> = ast
+        .matching_range(|k| matches!(k, AstNodeKind::Declarator(_)))
         .into_par_iter()
-        .filter_map(|k| ast.by_kind.get(&k.into()))
-        .flat_map(|r| r.clone().into_iter())
         .map(|index| {
             let parent_index = ast.nodes.parent[index];
             let mut cur_index = parent_index;
@@ -243,16 +211,16 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
         .collect();
 
     let mut loop_count = 0;
-    while loop_count < 20 {
+    while loop_count < 20 && range.len() > 0 {
         loop_count += 1;
 
-        let (left, right): (Vec<_>, Vec<_>) = range
+        let (done, ongoing): (Vec<_>, Vec<_>) = range
             .into_par_iter()
             .with_min_len(128)
             .partition_map(|index| type_for_declarator(index, ast, ty_db, &param_counters));
 
         let mut errors = Vec::new();
-        for res in left {
+        for res in done {
             let data = match res {
                 Ok(o) => o,
                 Err(e) => {
@@ -282,11 +250,7 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
             return Err(errors.pop().unwrap());
         }
 
-        if right.len() == 0 {
-            break;
-        }
-
-        range = right;
+        range = ongoing;
     }
 
     if loop_count >= 20 {
