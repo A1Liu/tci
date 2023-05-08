@@ -1,3 +1,12 @@
+/*!
+ * This module is responsible for the following:
+ *
+ * - Validate declarations - check the declaration specifiers and type specifier on each declaration
+ * - Validate derived declarators - check that type qualifiers make sense for each declarator
+ * - Add types to declarators - Fill the `data` field of `AstDeclarator` with the `TyId`
+ * - Move `AstDeclarator` up the tree - Make the parent of `AstDeclarator` its actual declaration
+ */
+
 use crate::api::*;
 use rayon::iter::Either;
 
