@@ -1,7 +1,7 @@
 use crate::api::*;
 use core::ops::Range;
 
-pub mod declarations;
+pub mod declaration_types;
 pub mod types;
 
 // TODO: how do we do node insertions and node deletions?

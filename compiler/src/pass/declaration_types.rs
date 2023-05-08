@@ -1,10 +1,12 @@
 /*!
  * This module is responsible for the following:
  *
- * - Validate declarations - check the declaration specifiers and type specifier on each declaration
+ * - Validate declaration types - check the declaration specifiers and type specifier on each declaration
  * - Validate derived declarators - check that type qualifiers make sense for each declarator
  * - Add types to declarators - Fill the `data` field of `AstDeclarator` with the `TyId`
  * - Move `AstDeclarator` up the tree - Make the parent of `AstDeclarator` its actual declaration
+ * - Build `TyDb` with references to type definitions, function definitions, etc; these references
+ *   won't necessarily be resolved yet, but they will at least exist.
  */
 
 use crate::api::*;
@@ -29,8 +31,6 @@ struct Params {
     collected_params: Vec<Param>,
 }
 
-// validate declarations -> produce declaration types
-// Declaration specifiers need to make sense for the kind of declaration theyre on
 pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Error> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
@@ -196,9 +196,47 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
     }
 
     let mut range: Vec<_> = [AstDeclarator::Ident, AstDeclarator::Abstract]
-        .into_iter()
+        .into_par_iter()
         .filter_map(|k| ast.by_kind.get(&k.into()))
         .flat_map(|r| r.clone().into_iter())
+        .map(|index| {
+            let parent_index = ast.nodes.parent[index];
+            let mut cur_index = parent_index;
+
+            let (quals, ty_id) = loop {
+                let node = ast.nodes.index(cur_index as usize);
+
+                match node.kind {
+                    // TODO: qualifiers
+                    AstNodeKind::DerivedDeclarator(d) => {}
+
+                    AstNodeKind::Declaration(d) => {
+                        let ty = node.read_data(d);
+                        break (ty.quals(), ty.ty_id());
+                    }
+                    AstNodeKind::ParamDecl(p) => {
+                        let ty = node.read_data(p);
+                        break (ty.quals(), ty.ty_id());
+                    }
+                    AstNodeKind::FunctionDefinition(f) => {
+                        let ty = node.read_data(f);
+                        break (ty.quals(), ty.ty_id());
+                    }
+
+                    _ => panic!("invariant broken: didn't find a declaration for this declarator"),
+                }
+
+                cur_index = *node.parent;
+            };
+
+            let ty_id = ty_db.add_type(ty_id, quals);
+
+            DeclaratorData {
+                index,
+                ty_id,
+                node_index: parent_index,
+            }
+        })
         .collect();
 
     let mut loop_count = 0;
@@ -222,9 +260,9 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
 
             let mut node = ast.nodes.index_mut(data.index);
             node.write_data(&AstDeclarator::Ident, data.ty_id);
-            *node.parent = data.parent_index;
+            *node.parent = data.node_index;
 
-            let parent = ast.nodes.index(data.parent_index as usize);
+            let parent = ast.nodes.index(data.node_index as usize);
             if let AstNodeKind::ParamDecl(_) = parent.kind {
                 param_counters
                     .get_mut(parent.parent)
@@ -245,14 +283,7 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
             break;
         }
 
-        range = Vec::with_capacity(right.len());
-        for data in right {
-            range.push(data.index);
-
-            // let mut node = ast.nodes.index_mut(data.index);
-            // node.write_data(&AstDeclarator::Ident, data.ty_id);
-            // *node.parent = data.parent_index;
-        }
+        range = right;
     }
 
     if loop_count >= 20 {
@@ -265,54 +296,21 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
 struct DeclaratorData {
     index: usize,
     ty_id: TyId,
-    parent_index: u32,
+    node_index: u32,
 }
 
 fn type_for_declarator(
-    index: usize,
+    decl_data: DeclaratorData,
     ast: &ByKindAst,
     ty_db: &TyDb,
     param_counters: &HashMap<u32, Params>,
 ) -> Either<Result<DeclaratorData, Error>, DeclaratorData> {
-    let node = ast.nodes.index(index);
-
-    let mut derived = Vec::new();
-    let (parent_index, mut ty_id) = {
-        let mut cur_index = *node.parent;
-
-        // Build a list of derived declarators + the final specifier & qualifier
-        let (quals, ty_id) = loop {
-            let node = ast.nodes.index(cur_index as usize);
-
-            match node.kind {
-                // TODO: qualifiers
-                AstNodeKind::DerivedDeclarator(d) => derived.push((*d, cur_index)),
-
-                AstNodeKind::Declaration(d) => {
-                    let ty = node.read_data(d);
-                    break (ty.quals(), ty.ty_id());
-                }
-                AstNodeKind::ParamDecl(p) => {
-                    let ty = node.read_data(p);
-                    break (ty.quals(), ty.ty_id());
-                }
-                AstNodeKind::FunctionDefinition(f) => {
-                    let ty = node.read_data(f);
-                    break (ty.quals(), ty.ty_id());
-                }
-
-                _ => panic!("invariant broken: didn't find a declaration for this declarator"),
-            }
-
-            cur_index = *node.parent;
-        };
-
-        // cur_index is now pointing to the parent
-        (cur_index, ty_db.add_type(ty_id, quals))
-    };
+    let node = ast.nodes.index(decl_data.index);
+    let mut ty_id = decl_data.ty_id;
 
     // Use the list we created to add types to the type db
-    for (kind, node_index) in derived {
+    let mut node_index = *node.parent;
+    while let AstNodeKind::DerivedDeclarator(kind) = ast.nodes.kind[node_index as usize] {
         let node = ast.nodes.index(node_index as usize);
         match kind {
             AstDerivedDeclarator::Pointer => {
@@ -322,24 +320,21 @@ fn type_for_declarator(
             // TODO: abstract declarators
             AstDerivedDeclarator::Function => {
                 let dummy = Params::default();
+
+                // if the derived declarator has no paramers, the param_counters object won't have any information on it
                 let Params {
                     count,
                     collected_params,
-                } = match param_counters.get(&node_index) {
-                    Some(s) => s,
-
-                    // if the derived declarator has no paramers, the param_counters object won't have any information on it
-                    None => &dummy,
-                };
+                } = param_counters.get(&node_index).unwrap_or(&dummy);
 
                 // We haven't finished collecting all the parameter types for this function;
                 // we save our place in the tree so that there's not any extra types created,
                 // and wait for the next loop to hopefully get more information.
                 if collected_params.len() < (*count as usize) {
                     return Either::Right(DeclaratorData {
-                        index,
+                        index: decl_data.index,
                         ty_id,
-                        parent_index: node_index,
+                        node_index,
                     });
                 }
 
@@ -359,14 +354,16 @@ fn type_for_declarator(
                 )))
             }
         }
+
+        node_index = ast.nodes.parent[node_index as usize];
     }
 
     // 7. Validate that types make sense for function definitions
 
     return Either::Left(Ok(DeclaratorData {
-        index,
+        index: decl_data.index,
         ty_id,
-        parent_index,
+        node_index,
     }));
 }
 

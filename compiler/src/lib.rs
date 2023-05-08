@@ -187,7 +187,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     {
         let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
 
-        if let Err(e) = pass::declarations::validate_declarations(&mut by_kind, &out.ty_db) {
+        if let Err(e) = pass::declaration_types::validate_declarations(&mut by_kind, &out.ty_db) {
             out.ast_validation = StageOutput::Err(e);
             return out;
         }
