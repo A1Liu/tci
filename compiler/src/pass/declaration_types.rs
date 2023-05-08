@@ -2,13 +2,14 @@
 Checks things about individual declarations.
 
 This includes:
-- Validate declaration types - check the declaration specifiers and type specifier on each declaration
+- Validate declaration specifiers - check the declaration specifiers and type specifier on each declaration
 - Validate derived declarators - check that type qualifiers make sense for each declarator
 - Add types to declarators - Fill the `data` field of `AstDeclarator` with the `TyId`
 - Move `AstDeclarator` up the tree - Make the parent of `AstDeclarator` its actual declaration
 - Build `TyDb` - Add references to type definitions, function definitions, etc; these references
   won't necessarily be resolved yet, but they will at least exist.
-- Validate that declaration AST locations - Since the parser is incredibly lenient, we also need to ensure
+- TODO: validate declaration types - E.g. function definitions need to be functions
+- TODO: Validate declaration AST locations - Since the parser is incredibly lenient, we also need to ensure
      that e.g. structs don't have function definitions.
 
  Some side effects and invariants after this pass completes successfully runs:
