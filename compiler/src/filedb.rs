@@ -206,40 +206,36 @@ impl<'a> Files<'a> for FileDb {
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-#[non_exhaustive]
-#[repr(u32)]
-pub enum Symbol {
+#[repr(transparent)]
+pub struct Symbol(u32);
+
+#[allow(non_upper_case_globals)]
+impl Symbol {
     // TODO: Make this a struct instead of an enum; Rust really really really doesn't
     // like enums that at runtime can have a different value.
-    Include = 0,
+    pub const Include: Symbol = Symbol(0);
 
-    Defined,
-    Main,
+    pub const Defined: Symbol = Symbol(1);
+    pub const Main: Symbol = Symbol(2);
 
-    BuiltinPush,
-    BuiltinOp,
+    pub const BuiltinPush: Symbol = Symbol(3);
+    pub const BuiltinOp: Symbol = Symbol(4);
 
-    VaCurrent,
-    BuiltinVaStart,
+    pub const VaCurrent: Symbol = Symbol(5);
+    pub const BuiltinVaStart: Symbol = Symbol(6);
 
-    NullSymbol = !0,
+    pub const NullSymbol: Symbol = Symbol(!0);
 }
 
 impl Into<u64> for Symbol {
     fn into(self) -> u64 {
-        return self as u64;
+        return self.0 as u64;
     }
 }
 
 impl From<u64> for Symbol {
     fn from(value: u64) -> Self {
-        return Self::from_u32(value as u32);
-    }
-}
-
-impl Symbol {
-    fn from_u32(id: u32) -> Self {
-        return unsafe { core::mem::transmute(id) };
+        Self(value as u32)
     }
 }
 
@@ -299,7 +295,7 @@ impl SymbolTable {
     }
 
     pub fn to_str(&self, id: Symbol) -> Option<&str> {
-        return self.to_name.get(id as usize).map(|a| &**a);
+        return self.to_name.get(id.0 as usize).map(|a| &**a);
     }
 }
 
