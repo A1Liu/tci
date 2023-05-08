@@ -2,6 +2,8 @@
 This module describes the AST created by the parser.
 */
 
+use std::ops::RangeBounds;
+
 use crate::api::*;
 
 pub trait AstInterpretData {
@@ -323,6 +325,57 @@ impl AstNodeVec {
         for parent in &mut self.parent {
             *parent = ids[*parent as usize];
         }
+    }
+
+    pub fn collect_to_parents<T: Default + Send>(
+        &self,
+        range: impl RangeBounds<usize>,
+        extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<T> + Sync,
+    ) -> HashMap<u32, Vec<T>> {
+        let begin = match range.start_bound() {
+            std::ops::Bound::Included(x) => *x,
+            std::ops::Bound::Excluded(x) => *x + 1,
+            std::ops::Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            std::ops::Bound::Included(x) => *x + 1,
+            std::ops::Bound::Excluded(x) => *x,
+            std::ops::Bound::Unbounded => self.len(),
+        };
+
+        return (begin..end)
+            .into_par_iter()
+            .fold(
+                || HashMap::<u32, Vec<T>>::new(),
+                |mut map, index| {
+                    let node = self.index(index);
+
+                    let value = map.entry(*node.parent).or_default();
+                    if let Some(s) = extract(node) {
+                        value.push(s);
+                    }
+
+                    return map;
+                },
+            )
+            .reduce(
+                || HashMap::new(),
+                |mut left, right| {
+                    use std::collections::hash_map::Entry;
+                    for (k, v) in right {
+                        match left.entry(k) {
+                            Entry::Occupied(mut l) => {
+                                l.get_mut().extend(v);
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(v);
+                            }
+                        }
+                    }
+
+                    return left;
+                },
+            );
     }
 }
 

@@ -26,6 +26,41 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
+    /*
+    let mut specifier_range = None;
+    for (kind, range) in &ast.by_kind_in_order {
+        match kind {
+            AstNodeKind::Specifier(_) => {}
+            _ => continue,
+        }
+
+        let prev = match specifier_range {
+            Some(prev) => prev,
+            None => {
+                specifier_range = Some(range.clone());
+                continue;
+            }
+        };
+
+        if range.end == prev.start {
+            specifier_range = Some(range.start..prev.end);
+            continue;
+        }
+
+        if prev.end == range.start {
+            specifier_range = Some(prev.start..range.end);
+            continue;
+        }
+
+        panic!(
+            "wtf, we're supposed to be by-kind right now {:?} {:?}",
+            range, prev
+        );
+    }
+
+    let specifiers = ast.nodes.collect_to_parents(range, extract);
+    */
+
     let mut trackers = HashMap::<u32, SpecifierTracker>::new();
     let mut param_counters: HashMap<u32, Params> = HashMap::new();
 
