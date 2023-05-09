@@ -60,27 +60,40 @@ pub enum AstNodeKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstExpr {
-    IntLit,     // data: i32
-    LongLit,    // data: i64
-    ULit,       // data: u32
-    ULongLit,   // data: u64
-    FloatLit,   // data: f32
-    DoubleLit,  // data: f64
-    CharLit,    // data: i8
-    StringLit,  // data: end of string text
-    Ident,      // data: Symbol
-    Assign,     // children: expression being assigned to, expression being assigned
-    SizeofExpr, // children: expression that's being queried
-    SizeofTy,   // children: type that's being queried
-    Cast,       // children: expression being cased and type being cast to
-    Member,     // data: field name ; children: base of expression
-    PtrMember,  // data: field name ; children: base of expression
-    Call,       // data: id of function parameter, children: function and children
-    Ternary,    // data: id of condition parameter, children: condition, if_true, and if_false
+    IntLit,              // data: i32
+    LongLit,             // data: i64
+    ULit,                // data: u32
+    ULongLit,            // data: u64
+    FloatLit,            // data: f32
+    DoubleLit,           // data: f64
+    CharLit,             // data: i8
+    StringLit,           // data: end of string text
+    Ident(AstIdentExpr), // data: Symbol
+    Assign,              // children: expression being assigned to, expression being assigned
+    SizeofExpr,          // children: expression that's being queried
+    SizeofTy,            // children: type that's being queried
+    Cast,                // children: expression being cased and type being cast to
+    Member,              // data: field name ; children: base of expression
+    PtrMember,           // data: field name ; children: base of expression
+    Call,                // data: id of function parameter, children: function and children
+    Ternary, // data: id of condition parameter, children: condition, if_true, and if_false
 
     UnaryOp(UnaryOp),   // children: expression that's operated on
     BinOp(BinOp),       // children: operands
     BinOpAssign(BinOp), // children: expression being assigned to, expression being assigned
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AstIdentExpr;
+
+impl AstInterpretData for AstIdentExpr {
+    type AstData = Symbol;
+}
+
+impl Into<AstNodeKind> for AstIdentExpr {
+    fn into(self) -> AstNodeKind {
+        return AstNodeKind::Expr(AstExpr::Ident(self));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -288,8 +301,17 @@ impl AstInterpretData for AstDerivedDeclarator {
     type AstData = TyQuals;
 }
 
+#[bitfield(u64)]
+pub struct DeclaratorInfo {
+    #[bits(32)]
+    pub symbol: Symbol,
+
+    #[bits(32)]
+    pub ty_id: TyId,
+}
+
 impl AstInterpretData for AstDeclarator {
-    type AstData = TyId;
+    type AstData = DeclaratorInfo;
 }
 
 impl<'a> AstNodeRef<'a> {
@@ -298,6 +320,10 @@ impl<'a> AstNodeRef<'a> {
     }
 }
 impl<'a> AstNodeRefMut<'a> {
+    pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
+        return T::AstData::from(*self.data);
+    }
+
     pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
         *self.data = data.into();
     }
@@ -330,7 +356,7 @@ impl AstNodeVec {
     pub fn collect_to_parents<T: Send>(
         &self,
         range: impl RangeBounds<usize>,
-        extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<T> + Sync,
+        extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<(u32, T)> + Sync,
     ) -> HashMap<u32, Vec<T>> {
         let begin = match range.start_bound() {
             std::ops::Bound::Included(x) => *x,
@@ -351,8 +377,8 @@ impl AstNodeVec {
                 |mut map, index| {
                     let node = self.index(index);
 
-                    let value = map.entry(*node.parent).or_default();
-                    if let Some(s) = extract(node) {
+                    if let Some((parent, s)) = extract(node) {
+                        let value = map.entry(parent).or_default();
                         value.push(s);
                     }
 
@@ -369,10 +395,16 @@ impl AstNodeVec {
                     };
 
                     use std::collections::hash_map::Entry;
-                    for (k, v) in small {
+                    for (k, mut v) in small {
                         match large.entry(k) {
                             Entry::Occupied(mut l) => {
-                                l.get_mut().extend(v);
+                                let left = l.get_mut();
+                                if left.len() >= v.len() {
+                                    left.extend(v);
+                                } else {
+                                    v.append(left);
+                                    *left = v;
+                                }
                             }
                             Entry::Vacant(entry) => {
                                 entry.insert(v);
@@ -444,11 +476,11 @@ pub fn display_tree(ast: &[AstNode], ty_db: Option<&TyDb>) -> String {
             AstNodeKind::Declarator(d) => {
                 out += " ";
 
-                let ty = node.read_data(&d);
+                let info = node.read_data(&d);
                 if let Some(ty_db) = ty_db {
-                    ty_db.write(&mut out, ty);
+                    ty_db.write(&mut out, info.ty_id());
                 } else {
-                    write!(out, "{:?}", ty).unwrap();
+                    write!(out, "{:?}", info.ty_id()).unwrap();
                 }
 
                 out += "\n";

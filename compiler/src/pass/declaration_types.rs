@@ -47,7 +47,7 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
     let specifiers = ast
         .nodes
         .collect_to_parents(specifier_range, |node| match node.kind {
-            AstNodeKind::Specifier(k) => Some((*k, *node.id)),
+            AstNodeKind::Specifier(k) => Some((*node.parent, (*k, *node.id))),
             _ => None,
         });
 
@@ -235,7 +235,8 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
             };
 
             let mut node = ast.nodes.index_mut(data.index);
-            node.write_data(&AstDeclarator::Ident, data.ty_id);
+            let info = node.read_data(&AstDeclarator::Ident);
+            node.write_data(&AstDeclarator::Ident, info.with_ty_id(data.ty_id));
             *node.parent = data.node_index;
 
             let parent = ast.nodes.index(data.node_index as usize);
