@@ -188,18 +188,6 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     let parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
     out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
-    let mut parsed_ast = parsed_ast;
-    {
-        let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
-
-        if let Err(e) = pass::declaration_types::validate_declarations(&mut by_kind, &out.ty_db) {
-            out.ast_validation = StageOutput::Err(e);
-            return out;
-        }
-    }
-
-    out.ast_validation = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
-
     return out;
 }
 

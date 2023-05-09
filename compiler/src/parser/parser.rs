@@ -147,6 +147,8 @@ impl<'a> Parser<'a> {
             start: node.start,
             height: node.height,
 
+            ty_id: TyId::Untyped,
+
             // Root nodes have themselves as their own parent.
             parent: post_order,
 
@@ -660,7 +662,6 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
     let expr = match kind {
         TokenKind::Ident => {
-
             return Ok(p.push_data(node, AstIdentExpr, (*data).into()));
         }
 

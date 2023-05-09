@@ -17,6 +17,9 @@ pub struct AstNode {
     #[serde(skip)]
     pub start: u32,
 
+    #[serde(skip)]
+    pub ty_id: TyId,
+
     pub data: u64,
 
     /// refers to the post_order index of the node that's the parent
