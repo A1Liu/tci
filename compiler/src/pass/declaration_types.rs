@@ -5,7 +5,6 @@ This includes:
 - Validate declaration specifiers - check the declaration specifiers and type specifier on each declaration
 - Validate derived declarators - check that type qualifiers make sense for each declarator
 - Add types to declarators - Fill the `data` field of `AstDeclarator` with the `TyId`
-- Move `AstDeclarator` up the tree - Make the parent of `AstDeclarator` its actual declaration
 - Build `TyDb` - Add references to type definitions, function definitions, etc; these references
   won't necessarily be resolved yet, but they will at least exist.
 - TODO: validate declaration types - E.g. function definitions need to be functions
@@ -15,6 +14,10 @@ This includes:
  Some side effects and invariants after this pass completes successfully runs:
  - All `AstDerivedDeclarator` nodes are likely completely useless once this pass runs.
  - `AstDeclarator` nodes now have their `type_id` available via `AstNodeRef::read_data`
+
+ In the future, it may be useful to move `AstDeclarator` nodes up the tree,
+ and remove the in-between `AstDerivedDeclarator` nodes. However, right now,
+ structural AST modifications are a bit too much.
  */
 
 use crate::api::*;
@@ -237,7 +240,6 @@ pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Er
             let mut node = ast.nodes.index_mut(data.index);
             let info = node.read_data(&AstDeclarator::Ident);
             node.write_data(&AstDeclarator::Ident, info.with_ty_id(data.ty_id));
-            *node.parent = data.node_index;
 
             let parent = ast.nodes.index(data.node_index as usize);
             if let AstNodeKind::ParamDecl(_) = parent.kind {

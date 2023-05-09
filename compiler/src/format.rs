@@ -1,5 +1,7 @@
 use crate::api::*;
 
+// TODO: build state machine-y thing for the traversal
+
 /// Prints the tree in a text format, so that it's a lil easier to read.
 /// Output right now looks like this:
 ///
