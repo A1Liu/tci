@@ -1,7 +1,12 @@
+/*!
+Passes over the AST to validate and transform it.
+ */
+
 use crate::api::*;
 use core::ops::Range;
 
-pub mod declarations;
+pub mod declaration_scopes;
+pub mod declaration_types;
 pub mod types;
 
 // TODO: how do we do node insertions and node deletions?
@@ -50,11 +55,6 @@ impl<'a> ByKindAst<'a> {
 
     // NOTE: Assumes that the input was originally sorted by post-order
     fn sort_by_kind(ast: &mut AstNodeVec) {
-        let mut indices = Vec::with_capacity(ast.len());
-        for _ in 0..ast.len() {
-            indices.push(u32::MAX);
-        }
-
         // Sort by kind,height,post_order
         ast.as_mut_slice().sort_by(|a, b| {
             let kind_cmp = a.kind.cmp(b.kind);
@@ -66,14 +66,44 @@ impl<'a> ByKindAst<'a> {
             }
         });
 
-        for (index, &order) in ast.post_order.iter().enumerate() {
-            indices[order as usize] = index as u32;
+        ast.rebuild_ids();
+    }
+
+    pub fn matching_range(
+        &self,
+        matcher: impl for<'b> Fn(&'b AstNodeKind) -> bool,
+    ) -> core::ops::Range<usize> {
+        let mut final_range = None;
+        for (kind, range) in &self.by_kind_in_order {
+            if !matcher(kind) {
+                continue;
+            }
+
+            let prev = match final_range {
+                Some(prev) => prev,
+                None => {
+                    final_range = Some(range.clone());
+                    continue;
+                }
+            };
+
+            if range.end == prev.start {
+                final_range = Some(range.start..prev.end);
+                continue;
+            }
+
+            if prev.end == range.start {
+                final_range = Some(prev.start..range.end);
+                continue;
+            }
+
+            panic!(
+                "matcher matched against ranges that were not consecutive {:?} {:?}",
+                range, prev
+            );
         }
 
-        // Rebuild parent indices
-        for parent in &mut ast.parent {
-            *parent = indices[*parent as usize];
-        }
+        return final_range.unwrap_or(0..0);
     }
 }
 
@@ -84,27 +114,8 @@ impl<'a> Drop for ByKindAst<'a> {
 }
 
 pub fn sort_by_postorder(ast: &mut AstNodeVec) {
-    let mut indices = Vec::with_capacity(ast.len());
-
-    for &order in &ast.post_order {
-        indices.push(order);
-    }
-
     // Sort by post_order
     ast.as_mut_slice().sort_by_key(|r| *r.post_order);
 
-    // Rebuild parent indices
-    for parent in &mut ast.parent {
-        *parent = indices[*parent as usize];
-    }
-}
-
-// validate declarators relative to their scopes
-//          -> produce scopes
-// validate identifiers
-//          -> produce types for the identifiers
-//          -> track which identifiers are pointer-referenced, and when each declaration is last used
-// produce global symbols?
-pub fn validate_scopes(ast: &mut ByKindAst) -> Result<(), Error> {
-    return Ok(());
+    ast.rebuild_ids();
 }

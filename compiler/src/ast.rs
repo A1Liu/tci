@@ -10,6 +10,7 @@ pub trait AstInterpretData {
 
 #[derive(Debug, Clone, Copy, StructOfArray, serde::Serialize, serde::Deserialize)]
 pub struct AstNode {
+    pub id: u32,
     pub kind: AstNodeKind,
     pub height: u16,
 
@@ -47,6 +48,7 @@ pub enum AstNodeKind {
     Declarator(AstDeclarator),
     Specifier(AstSpecifier),
     Declaration(AstDeclaration),
+    ParamDecl(AstParamDecl),
     FunctionDefinition(AstFunctionDefinition),
 
     // TODO: maybe we wanna delete stuff from the AST later
@@ -56,27 +58,40 @@ pub enum AstNodeKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstExpr {
-    IntLit,     // data: i32
-    LongLit,    // data: i64
-    ULit,       // data: u32
-    ULongLit,   // data: u64
-    FloatLit,   // data: f32
-    DoubleLit,  // data: f64
-    CharLit,    // data: i8
-    StringLit,  // data: end of string text
-    Ident,      // data: Symbol
-    Assign,     // children: expression being assigned to, expression being assigned
-    SizeofExpr, // children: expression that's being queried
-    SizeofTy,   // children: type that's being queried
-    Cast,       // children: expression being cased and type being cast to
-    Member,     // data: field name ; children: base of expression
-    PtrMember,  // data: field name ; children: base of expression
-    Call,       // data: id of function parameter, children: function and children
-    Ternary,    // data: id of condition parameter, children: condition, if_true, and if_false
+    IntLit,              // data: i32
+    LongLit,             // data: i64
+    ULit,                // data: u32
+    ULongLit,            // data: u64
+    FloatLit,            // data: f32
+    DoubleLit,           // data: f64
+    CharLit,             // data: i8
+    StringLit,           // data: end of string text
+    Ident(AstIdentExpr), // data: Symbol
+    Assign,              // children: expression being assigned to, expression being assigned
+    SizeofExpr,          // children: expression that's being queried
+    SizeofTy,            // children: type that's being queried
+    Cast,                // children: expression being cased and type being cast to
+    Member,              // data: field name ; children: base of expression
+    PtrMember,           // data: field name ; children: base of expression
+    Call,                // data: id of function parameter, children: function and children
+    Ternary, // data: id of condition parameter, children: condition, if_true, and if_false
 
     UnaryOp(UnaryOp),   // children: expression that's operated on
     BinOp(BinOp),       // children: operands
     BinOpAssign(BinOp), // children: expression being assigned to, expression being assigned
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AstIdentExpr;
+
+impl AstInterpretData for AstIdentExpr {
+    type AstData = Symbol;
+}
+
+impl Into<AstNodeKind> for AstIdentExpr {
+    fn into(self) -> AstNodeKind {
+        return AstNodeKind::Expr(AstExpr::Ident(self));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -168,7 +183,7 @@ pub enum AstDerivedDeclarator {
     ArrayStaticExpression,
 
     /// x(int param1, char, long param3)
-    /// children: AstParameterDeclarators
+    /// children: AstParameterDeclaration*
     Function,
 
     /// x(int param1, char, long param3, ...)
@@ -215,6 +230,14 @@ pub enum AstSpecifier {
     Ident,                     // data: Symbol
 }
 
+/// A parameter declaration
+///
+/// Children:
+/// - AstSpecifier+, one for each specifier
+/// - AstDerivedDeclarator | AstDeclarator
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AstParamDecl;
+
 /// A typical declaration; this is a stand-in for
 /// `int *i[1] = {NULL};` or something similar
 ///
@@ -241,6 +264,10 @@ pub struct DeclSpecifiers {
 
     #[bits(28)]
     _asdf2: u64,
+}
+
+impl AstInterpretData for AstParamDecl {
+    type AstData = DeclSpecifiers;
 }
 
 impl AstInterpretData for AstDeclaration {
@@ -272,8 +299,17 @@ impl AstInterpretData for AstDerivedDeclarator {
     type AstData = TyQuals;
 }
 
+#[bitfield(u64)]
+pub struct DeclaratorInfo {
+    #[bits(32)]
+    pub symbol: Symbol,
+
+    #[bits(32)]
+    pub ty_id: TyId,
+}
+
 impl AstInterpretData for AstDeclarator {
-    type AstData = TyId;
+    type AstData = DeclaratorInfo;
 }
 
 impl<'a> AstNodeRef<'a> {
@@ -282,6 +318,10 @@ impl<'a> AstNodeRef<'a> {
     }
 }
 impl<'a> AstNodeRefMut<'a> {
+    pub fn read_data<T: AstInterpretData>(&self, kind: &T) -> T::AstData {
+        return T::AstData::from(*self.data);
+    }
+
     pub fn write_data<T: AstInterpretData>(&mut self, kind: &T, data: T::AstData) {
         *self.data = data.into();
     }
@@ -297,69 +337,70 @@ impl AstNode {
     }
 }
 
-/// Prints the tree in a text format, so that it's a lil easier to read.
-/// Output right now looks like this:
-///
-/// ```text
-/// FunctionDefinition(AstFunctionDefinition)                                  
-/// └ Specifier(Int)                                                               
-/// └ Declarator(Ident)                                                            
-/// | └ DerivedDeclarator(Function)                                                
-/// | | └ Declaration(AstDeclaration)                                              
-/// | | | └ Specifier(Int)                                                         
-/// | | | └ Declarator(Ident)                                                      
-/// | | └ Declaration(AstDeclaration)                                              
-/// | | | └ Specifier(Char)                                                        
-/// | | | └ Declarator(Ident)                                                      
-/// | | | | └ DerivedDeclarator(Pointer)                                           
-/// | | | | └ DerivedDeclarator(Pointer)                                           
-/// └ Statement(Block)                                                             
-/// | └ Statement(Ret)                                                             
-/// | | └ Expr(StringLit)
-/// ```
-pub fn display_tree(ast: &[AstNode]) -> String {
-    let mut children = Vec::<Vec<usize>>::with_capacity(ast.len());
-    children.resize_with(ast.len(), || Vec::new());
+impl AstNodeVec {
+    pub fn rebuild_ids(&mut self) {
+        let mut ids = vec![0u32; self.len()];
 
-    let mut roots = Vec::new();
+        for (index, id) in self.id.iter_mut().enumerate() {
+            ids[*id as usize] = index as u32;
+            *id = index as u32;
+        }
 
-    for node in ast.into_iter() {
-        if node.post_order != node.parent {
-            children[node.parent as usize].push(node.post_order as usize);
-        } else {
-            roots.push(node.post_order);
+        for parent in &mut self.parent {
+            *parent = ids[*parent as usize];
         }
     }
 
-    let mut parent_stack = Vec::with_capacity(roots.len());
-    for root in roots.iter().rev() {
-        parent_stack.push((0u32, *root as usize));
+    pub fn collect_to_parents<T: Send>(
+        &self,
+        range: core::ops::Range<usize>,
+        extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<(u32, T)> + Sync,
+    ) -> HashMap<u32, Vec<T>> {
+        return range
+            .into_par_iter()
+            .with_min_len(128)
+            .fold(
+                || HashMap::<u32, Vec<T>>::new(),
+                |mut map, index| {
+                    let node = self.index(index);
+
+                    if let Some((parent, s)) = extract(node) {
+                        let value = map.entry(parent).or_default();
+                        value.push(s);
+                    }
+
+                    return map;
+                },
+            )
+            .reduce(
+                || HashMap::new(),
+                |left, right| {
+                    let (mut large, small) = if left.len() < right.len() {
+                        (right, left)
+                    } else {
+                        (left, right)
+                    };
+
+                    use std::collections::hash_map::Entry;
+                    for (k, mut v) in small {
+                        match large.entry(k) {
+                            Entry::Occupied(mut l) => {
+                                let left = l.get_mut();
+                                if left.len() >= v.len() {
+                                    left.extend(v);
+                                } else {
+                                    v.append(left);
+                                    *left = v;
+                                }
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(v);
+                            }
+                        }
+                    }
+
+                    return large;
+                },
+            );
     }
-
-    let mut out = String::new();
-    while let Some((depth, node_id)) = parent_stack.pop() {
-        if depth > 0 {
-            for _ in 0..(depth - 1) {
-                out += "| ";
-            }
-
-            out += "└ ";
-        }
-
-        let node = &ast[node_id];
-        out += &format!("{:?}", node.kind);
-
-        match node.kind {
-            AstNodeKind::Declarator(d) => {
-                out += &format!(" {:?}\n", node.read_data(&d));
-            }
-            _ => out.push('\n'),
-        }
-
-        for id in children[node_id].iter().rev() {
-            parent_stack.push((depth + 1, *id));
-        }
-    }
-
-    return out;
 }

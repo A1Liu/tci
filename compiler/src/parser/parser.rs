@@ -20,7 +20,10 @@ later.
 // experience writing compiler passes with this AST structure,
 // and at the very least I need the practice.
 
-use crate::api::*;
+use crate::{
+    api::*,
+    ast::{AstIdentExpr, AstParamDecl},
+};
 use std::cell::Cell;
 
 struct ParserTracker {
@@ -44,7 +47,7 @@ struct Parser<'a> {
 /// It can be "dereferenced" to get the depth value
 /// in the current parsing function.
 struct NodeTracker {
-    used: bool,
+    used: Option<()>,
     children: Vec<u32>,
     start: u32,
     height: u16,
@@ -77,7 +80,7 @@ impl<'a> Parser<'a> {
         let start = self.tokens.start[self.index];
 
         return NodeTracker {
-            used: false,
+            used: Some(()),
             start,
             children: Vec::new(),
             height: 0,
@@ -86,7 +89,7 @@ impl<'a> Parser<'a> {
 
     fn track_node_from(&mut self, start: u32) -> NodeTracker {
         return NodeTracker {
-            used: false,
+            used: Some(()),
             start,
             children: Vec::new(),
             height: 0,
@@ -109,12 +112,28 @@ impl<'a> Parser<'a> {
         return *self.tokens.index(self.index).start;
     }
 
+    fn push_data<T: Into<AstNodeKind> + AstInterpretData>(
+        &mut self,
+        node: &mut NodeTracker,
+        kind: T,
+        data: T::AstData,
+    ) -> NodeResult {
+        return self.push_data_raw(node, kind, data.into());
+    }
+
     fn push<T: Into<AstNodeKind>>(&mut self, node: &mut NodeTracker, kind: T) -> NodeResult {
-        if node.used {
+        return self.push_data_raw(node, kind, 0);
+    }
+
+    fn push_data_raw<T: Into<AstNodeKind>>(
+        &mut self,
+        node: &mut NodeTracker,
+        kind: T,
+        data: u64,
+    ) -> NodeResult {
+        if node.used.take().is_none() {
             panic!("used a node twice");
         }
-
-        node.used = true;
 
         let mut tracker = self.tracker.replace(ParserTracker {
             ast: AstNodeVec::new(),
@@ -123,6 +142,7 @@ impl<'a> Parser<'a> {
         let post_order = tracker.ast.len() as u32;
 
         let ast_node = AstNode {
+            id: post_order,
             kind: kind.into(),
             start: node.start,
             height: node.height,
@@ -131,14 +151,14 @@ impl<'a> Parser<'a> {
             parent: post_order,
 
             post_order,
-            data: 0,
+            data,
         };
 
         tracker.ast.push(ast_node);
 
         // Fix-up the parent fields of the children of this node.
-        for id in &node.children {
-            tracker.ast.parent[*id as usize] = post_order;
+        for &id in &node.children {
+            tracker.ast.parent[id as usize] = post_order;
         }
 
         self.tracker.replace(tracker);
@@ -174,7 +194,11 @@ fn parse_global(p: &mut Parser) -> Result<(), Error> {
         return Ok(());
     };
 
-    throw!(NotImplemented "a global that's not a declaration" p.start_index());
+    throw!(
+        NotImplemented,
+        "a global that's not a declaration",
+        p.start_index()
+    );
 }
 
 enum DeclarationKind {
@@ -194,7 +218,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     node.child(parse_declarator(p)?);
 
     if let DeclarationKind::Param = kind {
-        return Ok(Some(p.push(node, AstDeclaration)));
+        return Ok(Some(p.push(node, AstParamDecl)));
     }
 
     if node.child_opt(parse_block(p)?) {
@@ -204,7 +228,7 @@ fn parse_declaration(p: &mut Parser, kind: DeclarationKind) -> Result<Option<Nod
     match p.peek_kind() {
         TokenKind::Comma | TokenKind::Semicolon => {}
 
-        x => throw!(todo "bad character after declarator" p.start_index()),
+        x => throw!(todo, "bad character after declarator", p.start_index()),
     }
 
     while p.peek_kind() == TokenKind::Comma {
@@ -282,7 +306,11 @@ fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
                 let child = parse_declarator(p)?;
 
                 if p.peek_kind() != TokenKind::RParen {
-                    throw!(todo "nested declarator didn't have closing paren" p.start_index());
+                    throw!(
+                        todo,
+                        "nested declarator didn't have closing paren",
+                        p.start_index()
+                    );
                 }
 
                 p.index += 1;
@@ -291,12 +319,21 @@ fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
             }
 
             TokenKind::Ident => {
+                let data = p.tokens.symbol[p.index];
                 p.index += 1;
 
-                p.push(node, AstDeclarator::Ident)
+                p.push_data(
+                    node,
+                    AstDeclarator::Ident,
+                    ast::DeclaratorInfo::new().with_symbol(data),
+                )
             }
 
-            _ => p.push(node, AstDeclarator::Abstract),
+            _ => p.push_data(
+                node,
+                AstDeclarator::Ident,
+                ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+            ),
         }
     };
 
@@ -347,7 +384,11 @@ fn parse_array_declarator(p: &mut Parser, child: NodeResult) -> Result<Option<No
             p.index += 1;
             AstDerivedDeclarator::ArrayUnknown
         }
-        _ => throw!(NotImplemented "haven't implemented array declarators fully yet" node.start),
+        _ => throw!(
+            NotImplemented,
+            "haven't implemented array declarators fully yet",
+            node.start
+        ),
     };
 
     return Ok(Some(p.push(node, kind)));
@@ -378,7 +419,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
 
         let child = match kind {
             FuncDeclKind::Child(c) => c,
-            FuncDeclKind::CreateAbstract => p.push(abstract_decl_node, AstDeclarator::Abstract),
+            FuncDeclKind::CreateAbstract => p.push_data(
+                abstract_decl_node,
+                AstDeclarator::Abstract,
+                ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+            ),
         };
         node.child(child);
 
@@ -395,7 +440,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
 
     let child = match kind {
         FuncDeclKind::Child(c) => c,
-        FuncDeclKind::CreateAbstract => p.push(abstract_decl_node, AstDeclarator::Abstract),
+        FuncDeclKind::CreateAbstract => p.push_data(
+            abstract_decl_node,
+            AstDeclarator::Abstract,
+            ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+        ),
     };
     node.child(child);
 
@@ -404,7 +453,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
 
         if !node.child_opt(parse_declaration(p, DeclarationKind::Param)?) {
             p.index -= 1;
-            throw!(todo "parameter list has extra comma at the end" p.start_index());
+            throw!(
+                todo,
+                "parameter list has extra comma at the end",
+                p.start_index()
+            );
         }
     }
 
@@ -417,7 +470,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
     };
 
     if p.peek_kind() != TokenKind::RParen {
-        throw!(todo "missing closing paren for func declarator" p.start_index());
+        throw!(
+            todo,
+            "missing closing paren for func declarator",
+            p.start_index()
+        );
     }
 
     p.index += 1;
@@ -597,11 +654,15 @@ fn parse_postfix_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
-    let expr = match p.peek_kind() {
+    let kind = p.peek_kind();
+    let data = &p.tokens.symbol[p.index];
+    p.index += 1;
+
+    let expr = match kind {
         TokenKind::Ident => {
             // TODO: Set data field
 
-            AstExpr::Ident
+            return Ok(p.push_data(node, AstIdentExpr, *data));
         }
 
         // TODO: Remove this and replace with actually reasonable logic
@@ -609,16 +670,15 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
 
         TokenKind::StringLit => AstExpr::StringLit,
 
-        _ => throw!(todo "unrecognized atom token" p.start_index()),
+        _ => throw!(todo, "unrecognized atom token", node.start),
     };
 
-    p.index += 1;
     return Ok(p.push(node, expr));
 }
 
 fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
     if p.peek_kind() != TokenKind::Semicolon {
-        throw!(todo "expected a semicolon" p.start_index());
+        throw!(todo, "expected a semicolon", p.start_index());
     }
 
     while p.peek_kind() == TokenKind::Semicolon {

@@ -60,14 +60,14 @@ pub enum ErrorKind {
 }
 
 macro_rules! error {
-    (todo $str:literal $index:expr) => {
+    (todo, $str:literal, $index:expr) => {
         Error::new(crate::error::ErrorKind::Todo {
             message: $str.to_string(),
             index: $index,
         })
     };
 
-    ($id:ident $str:literal $index:expr) => {
+    ($id:ident, $str:literal, $index:expr) => {
         Error::new(crate::error::ErrorKind::$id {
             message: $str.to_string(),
             index: $index,

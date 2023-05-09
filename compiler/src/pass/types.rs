@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TyId(u32);
@@ -5,12 +7,12 @@ pub struct TyId(u32);
 macro_rules! ty_id_defns {
     ($idx:expr ; ) => {};
 
-    ($idx:expr ; $id:ident $(, $rest:ident )* ) => {
+    ($idx:expr ; $id:ident $(, $rest:tt )* ) => {
         pub const $id : TyId = TyId($idx);
         ty_id_defns!($idx + 1 ; $( $rest ),* );
     };
 
-    ($($id:ident),* ) => {
+    ( $( ($id:ident, $fmt:literal ) ),* ) => {
         struct TyIdInfo {
             id: TyId,
             name: &'static str,
@@ -27,7 +29,7 @@ macro_rules! ty_id_defns {
         $(
             TyIdInfo {
                 id: TyId::$id,
-                name: stringify!($id),
+                name: $fmt,
                 ptr: if TyId::$id.0 % 2 == 0 && TyId::$id.0 > 1 { Some(TyId(TyId::$id.0 + 1)) } else { None },
                 deref: if TyId::$id.0 % 2 == 1 && TyId::$id.0 > 1 { Some(TyId(TyId::$id.0 - 1)) } else { None },
             },
@@ -38,30 +40,30 @@ macro_rules! ty_id_defns {
 }
 
 ty_id_defns!(
-    Untyped,
-    CheckFailure,
-    Void,
-    PtrVoid,
-    U8,
-    PtrU8,
-    U16,
-    PtrU16,
-    U32,
-    PtrU32,
-    U64,
-    PtrU64,
-    S8,
-    PtrS8,
-    S16,
-    PtrS16,
-    S32,
-    PtrS32,
-    S64,
-    PtrS64,
-    F32,
-    PtrF32,
-    F64,
-    PtrF64
+    (Untyped, "untyped"),
+    (CheckFailure, "fail"),
+    (Void, "void"),
+    (PtrVoid, "*void"),
+    (U8, "u8"),
+    (PtrU8, "*u8"),
+    (U16, "u16"),
+    (PtrU16, "*u16"),
+    (U32, "u32"),
+    (PtrU32, "*u32"),
+    (U64, "u64"),
+    (PtrU64, "*u64"),
+    (S8, "s8"),
+    (PtrS8, "*s8"),
+    (S16, "s16"),
+    (PtrS16, "*s16"),
+    (S32, "s32"),
+    (PtrS32, "*s32"),
+    (S64, "s64"),
+    (PtrS64, "*s64"),
+    (F32, "f32"),
+    (PtrF32, "*f32"),
+    (F64, "f64"),
+    (PtrF64, "*f64")
 );
 
 impl core::fmt::Debug for TyId {
@@ -95,7 +97,20 @@ impl Into<u64> for TyId {
 }
 
 pub struct TyDb {
-    types: TypeInfoVec,
+    types: Mutex<TypeInfoVec>,
+    param_values: Mutex<Vec<TyId>>,
+}
+
+impl core::fmt::Debug for TyDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TyDb()")
+    }
+}
+
+impl Default for TyDb {
+    fn default() -> Self {
+        return Self::new();
+    }
 }
 
 impl TyDb {
@@ -109,17 +124,22 @@ impl TyDb {
             })
         }
 
-        return Self { types };
+        return Self {
+            types: Mutex::new(types),
+            param_values: Mutex::new(Vec::new()),
+        };
     }
 
-    fn add(&mut self, kind: TypeKind, qualifiers: TyQuals) -> TyId {
-        let next_id = self.types.len() as u32;
-        self.types.push(TypeInfo { kind, qualifiers });
+    fn add(&self, kind: TypeKind, qualifiers: TyQuals) -> TyId {
+        let mut types = self.types.lock().unwrap();
+
+        let next_id = types.len() as u32;
+        types.push(TypeInfo { kind, qualifiers });
 
         return TyId(next_id);
     }
 
-    pub fn add_type(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
+    pub fn add_type(&self, id: TyId, qualifiers: TyQuals) -> TyId {
         if u8::from(qualifiers) == 0 {
             return id;
         }
@@ -127,12 +147,91 @@ impl TyDb {
         return self.add(TypeKind::Qualified(id), qualifiers);
     }
 
-    pub fn add_ptr(&mut self, id: TyId, qualifiers: TyQuals) -> TyId {
+    pub fn add_ptr(&self, id: TyId, qualifiers: TyQuals) -> TyId {
         if let Some(TyIdInfo { ptr: Some(i), .. }) = TY_ID_INFO.get(id.0 as usize) {
             return *i;
         }
 
         return self.add(TypeKind::Pointer(id), qualifiers);
+    }
+
+    pub fn add_func(&self, ret_type: TyId, params: &[TyId]) -> TyId {
+        let mut param_values = self.param_values.lock().unwrap();
+        let begin = param_values.len() as u32;
+        param_values.push(ret_type);
+        param_values.extend(params.into_iter());
+
+        // TODO: length check
+
+        return self.add(
+            TypeKind::Function {
+                params_begin_index: begin,
+                param_count: params.len().try_into().unwrap(),
+            },
+            TyQuals::new(),
+        );
+    }
+
+    pub fn format(&self, id: TyId) -> String {
+        let mut out = String::new();
+
+        self.write(&mut out, id);
+
+        return out;
+    }
+
+    pub fn write(&self, out: &mut String, id: TyId) {
+        if let Some(info) = TY_ID_INFO.get(id.0 as usize) {
+            *out += info.name;
+            return;
+        }
+
+        let ty = {
+            // take mutex for as little time as possible
+            let types = self.types.lock().unwrap();
+            types.get(id.0 as usize).unwrap().to_owned()
+        };
+
+        match ty.kind {
+            TypeKind::Qualified(t) => self.write(out, t),
+            TypeKind::Pointer(p) => {
+                out.push('*');
+                self.write(out, p);
+            }
+            TypeKind::Function {
+                params_begin_index,
+                param_count,
+            } => {
+                let param_count = param_count as usize;
+                let begin = params_begin_index as usize;
+
+                // Extra slot for the return type
+                let end = begin + param_count + 1;
+
+                let (ret, params) = {
+                    let params = self.param_values.lock().unwrap();
+                    let params = &params.as_slice()[begin..end];
+
+                    (params[0], params[1..].to_owned())
+                };
+
+                out.push('(');
+
+                let mut comma = false;
+                for t in params {
+                    if comma {
+                        out.push(',');
+                    }
+
+                    self.write(out, t);
+                    comma = true;
+                }
+
+                out.push_str(") => ");
+
+                self.write(out, ret);
+            }
+        }
     }
 }
 
@@ -146,6 +245,10 @@ pub struct TypeInfo {
 pub enum TypeKind {
     Qualified(TyId),
     Pointer(TyId),
+    Function {
+        params_begin_index: u32,
+        param_count: u16,
+    },
 }
 
 #[bitfield(u8)]

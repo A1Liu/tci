@@ -5,7 +5,7 @@ extern crate compiler;
 use clap::Parser;
 use codespan_reporting::term::termcolor::*;
 use codespan_reporting::term::*;
-use compiler::{parse_test_case, single_file_db, StageOutput};
+use compiler::{api::display_tree, parse_test_case, single_file_db, StageOutput};
 
 #[derive(clap::ValueEnum, Clone, Copy, PartialEq)]
 enum Stage {
@@ -15,12 +15,17 @@ enum Stage {
     Validate,
 }
 
+const STAGES: &[Stage] = &[Stage::Lex, Stage::Macro, Stage::Parse, Stage::Validate];
+
 /// Run
 #[derive(Parser)]
 #[clap(author = "Albert Liu", about = "Test runner for TCI.")]
 struct Cli {
     #[clap(help = "a path to a test case")]
     test_case: std::path::PathBuf,
+
+    #[clap(long, help = "parallelism for the compiler")]
+    parallel: Option<u8>,
 
     #[clap(long, help = "print a nested version of the AST")]
     print_ast: bool,
@@ -38,6 +43,9 @@ Examples:
     #[arg(value_enum)]
     ignore: Vec<Stage>,
 
+    #[clap(long, help = "run the compiler, but ignore all stage outputs")]
+    ignore_all: bool,
+
     #[clap(long, help = "the only stage that should run")]
     #[arg(value_enum)]
     only: Option<Stage>,
@@ -54,11 +62,20 @@ Examples:
 }
 
 fn main() {
+    let main_begin = std::time::Instant::now();
+
     // Rust backtraces are useful and it seems dumb to disable them by default, especially in debug mode.
     #[cfg(debug_assertions)]
     std::env::set_var("RUST_BACKTRACE", "1");
 
     let mut args = Cli::parse();
+
+    if let Some(threads) = args.parallel {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads as usize)
+            .build_global()
+            .unwrap();
+    }
 
     let test_case =
         std::fs::read_to_string(&args.test_case).expect("file should exist and be a valid string");
@@ -68,19 +85,21 @@ fn main() {
 
     let (source, expected) = parse_test_case(&test_case);
 
+    let begin = std::time::Instant::now();
+
     let (db, file_id) = single_file_db(source.to_string());
 
     let mut result = compiler::run_compiler_for_testing(&db, file_id);
 
-    if let Some(only) = args.only {
-        for stage in [Stage::Lex, Stage::Macro, Stage::Parse, Stage::Validate] {
-            if stage == only {
-                continue;
-            }
+    let elapsed = begin.elapsed();
 
-            args.ignore.push(stage);
-        }
-    }
+    args.ignore = if args.ignore_all {
+        STAGES.iter().map(|s| *s).collect()
+    } else if let Some(only) = args.only {
+        STAGES.iter().map(|s| *s).filter(|s| *s != only).collect()
+    } else {
+        args.ignore
+    };
 
     for stage in args.ignore {
         match stage {
@@ -104,9 +123,9 @@ fn main() {
     }
 
     if let (StageOutput::Ok(ast), true) = (&result.ast_validation, args.print_ast) {
-        eprintln!("{}", compiler::ast::display_tree(ast));
+        eprintln!("{}", display_tree(ast, Some(&result.ty_db)));
     } else if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
-        eprintln!("{}", compiler::ast::display_tree(ast));
+        eprintln!("{}", display_tree(ast, None));
     }
 
     assert_eq!(result, expected);
@@ -120,4 +139,8 @@ fn main() {
     } else {
         print!("{}", text);
     }
+
+    eprintln!("");
+    eprintln!("Compiler Time: {:.3?}", elapsed);
+    eprintln!("Total Time: {:.3?}", main_begin.elapsed());
 }
