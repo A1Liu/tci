@@ -54,13 +54,14 @@ fn validate_scopes<'a>(
             }
         }
 
-        return Some((
-            ast.parent[index as usize],
-            DeclInfo {
-                id: *node.id,
-                symbol: info.symbol(),
-            },
-        ));
+        let parent = ast.parent[index as usize];
+        let scope_id = if parent == index { !0 } else { parent };
+        let info = DeclInfo {
+            id: *node.id,
+            symbol: info.symbol(),
+        };
+
+        return Some((scope_id, info));
     });
 
     let (scopes, error): (HashMap<_, _>, HashMap<_, _>) =
