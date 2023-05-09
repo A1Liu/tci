@@ -5,9 +5,9 @@ Passes over the AST to validate and transform it.
 use crate::api::*;
 use core::ops::Range;
 
-pub mod declaration_scopes;
-pub mod declaration_types;
-pub mod expr_types;
+pub mod old_declaration_scopes;
+pub mod old_declaration_types;
+pub mod old_expr_types;
 pub mod types;
 
 // TODO: how do we do node insertions and node deletions?
