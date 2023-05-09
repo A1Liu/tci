@@ -160,36 +160,32 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
         ast_validation: StageOutput::Err(error!(DidntRun)),
     };
 
-    let lexer_res = match lex(&files, file) {
-        Ok(res) => res,
-        Err(e) => {
-            out.translation_unit = e.translation_unit;
-            out.lexer = StageOutput::Err(e.error);
-            return out;
-        }
-    };
-
-    out.translation_unit = lexer_res.translation_unit;
-    out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
-
-    let macro_expansion_res =
-        match expand_macros(lexer_res.tokens.as_slice(), files, &out.translation_unit) {
-            Ok(res) => res,
-            Err(e) => {
-                out.macro_expansion = StageOutput::Err(e);
-                return out;
+    macro_rules! run_stage {
+        ($id:ident, $e:expr) => {
+            match $e {
+                Ok(res) => res,
+                Err(e) => {
+                    out.$id = StageOutput::Err(e);
+                    return out;
+                }
             }
         };
+    }
+
+    let (translation_unit, lexer_res) = lex(&files, file);
+    out.translation_unit = translation_unit;
+
+    let lexer_res = run_stage!(lexer, lexer_res);
+
+    out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
+
+    let macro_expansion_res = run_stage!(
+        macro_expansion,
+        expand_macros(lexer_res.tokens.as_slice(), files, &out.translation_unit)
+    );
     out.macro_expansion = StageOutput::Ok(macro_expansion_res.kind.clone());
 
-    let parsed_ast = match parse(&macro_expansion_res) {
-        Ok(res) => res,
-        Err(e) => {
-            out.parsed_ast = StageOutput::Err(e);
-            return out;
-        }
-    };
-
+    let parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
     out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
     let mut parsed_ast = parsed_ast;

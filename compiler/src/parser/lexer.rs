@@ -191,7 +191,6 @@ struct TokInfo<'a> {
 }
 
 pub struct LexResult {
-    pub translation_unit: TranslationUnitDebugInfo,
     pub symbols: SymbolTable,
     pub tokens: TokenVec,
 }
@@ -202,15 +201,16 @@ pub struct LexError {
     pub error: Error,
 }
 
-pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
+pub fn lex(files: &FileDb, file: &File) -> (TranslationUnitDebugInfo, Result<LexResult, Error>) {
+    let mut translation_unit = TranslationUnitDebugInfo {
+        file_starts: vec![FileStarts {
+            index: 0,
+            file: file.id,
+            file_index: 0,
+        }],
+    };
+
     let mut result = LexResult {
-        translation_unit: TranslationUnitDebugInfo {
-            file_starts: vec![FileStarts {
-                index: 0,
-                file: file.id,
-                file_index: 0,
-            }],
-        },
         symbols: SymbolTable::new(),
         tokens: TokenVec::new(),
     };
@@ -227,7 +227,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
             None => break,
         };
 
-        result.translation_unit.file_starts.push(FileStarts {
+        translation_unit.file_starts.push(FileStarts {
             file: input.file_id,
             index: index,
             file_index: input.index,
@@ -254,12 +254,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
             let data = &input.contents[input.index..];
             let res = match lex_tok_from_bytes(index, data) {
                 Ok(res) => res,
-                Err(error) => {
-                    return Err(LexError {
-                        translation_unit: result.translation_unit,
-                        error,
-                    })
-                }
+                Err(error) => return (translation_unit, Err(error)),
             };
 
             let kind = res.kind;
@@ -288,12 +283,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
 
                 let res = match lex_include_line(index, &input.contents[input.index..]) {
                     Ok(res) => res,
-                    Err(error) => {
-                        return Err(LexError {
-                            translation_unit: result.translation_unit,
-                            error,
-                        })
-                    }
+                    Err(error) => return (translation_unit, Err(error)),
                 };
 
                 index += res.consumed as u32;
@@ -307,13 +297,13 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
                 let resolved = match resolved_result {
                     Ok(res) => res,
                     Err(e) => {
-                        return Err(LexError {
-                            translation_unit: result.translation_unit,
-                            error: Error::new(ErrorKind::Todo {
+                        return (
+                            translation_unit,
+                            Err(Error::new(ErrorKind::Todo {
                                 message: e.to_string(),
                                 index: begin,
-                            }),
-                        })
+                            })),
+                        )
                     }
                 };
 
@@ -338,12 +328,12 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
             was_hashtag = kind == TokenKind::Hashtag;
         }
 
-        if !token_count > 0 {
-            result.translation_unit.file_starts.pop().unwrap();
+        if token_count == 0 {
+            translation_unit.file_starts.pop().unwrap();
         }
     }
 
-    return Ok(result);
+    return (translation_unit, Ok(result));
 }
 
 struct LexedTok {
