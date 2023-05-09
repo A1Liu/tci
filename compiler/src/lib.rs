@@ -31,10 +31,7 @@ pub mod api {
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::format::display_tree;
     pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
-    pub use super::pass::{
-        types::{TyDb, TyId, TyQuals},
-        ByKindAst,
-    };
+    pub use super::pass::types::{TyDb, TyId, TyQuals};
 
     pub use super::run_compiler_test_case;
 

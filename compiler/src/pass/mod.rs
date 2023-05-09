@@ -2,16 +2,16 @@
 Passes over the AST to validate and transform it.
  */
 
-use crate::api::*;
-use core::ops::Range;
-
-pub mod old_declaration_scopes;
-pub mod old_declaration_types;
-pub mod old_expr_types;
+pub mod declaration_scopes;
 pub mod types;
+
+// pub mod old_declaration_scopes;
+// pub mod old_declaration_types;
+// pub mod old_expr_types;
 
 // TODO: how do we do node insertions and node deletions?
 
+/*
 pub struct ByKindAst<'a> {
     pub nodes: &'a mut AstNodeVec,
     pub by_kind: HashMap<AstNodeKind, Range<usize>>,
@@ -120,3 +120,4 @@ pub fn sort_by_postorder(ast: &mut AstNodeVec) {
 
     ast.rebuild_ids();
 }
+*/
