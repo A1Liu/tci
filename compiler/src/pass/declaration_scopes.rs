@@ -14,10 +14,19 @@ It may also eventually have some other responsibilities, like:
 - Assigning declaration slots/register
  */
 
+use rayon::iter::Either;
+
 use crate::api::*;
 
-struct Scopes<'a> {
-    symbols: &'a SymbolTable,
+pub struct Scopes<'a> {
+    pub symbols: &'a SymbolTable,
+    pub scope_tree: HashMap<u32, HashMap<Symbol, DeclInfo>>,
+}
+
+#[derive(Clone, Copy)]
+pub struct DeclInfo {
+    pub id: u32,
+    pub symbol: Symbol,
 }
 
 // validate declarators relative to their scopes
@@ -26,10 +35,14 @@ struct Scopes<'a> {
 //          -> produce types for the identifiers
 //          -> track which identifiers are pointer-referenced, and when each declaration is last used
 // produce global symbols?
-fn validate_scopes<'a>(ast: &mut ByKindAst, symbols: &'a SymbolTable) -> Result<Scopes<'a>, Error> {
+fn validate_scopes<'a>(
+    ast: &mut ByKindAst,
+    symbols: &'a SymbolTable,
+) -> Result<Scopes<'a>, Vec<Error>> {
     let declarators = ast.matching_range(|k| matches!(k, AstNodeKind::Declarator(_)));
 
     let scopes = ast.nodes.collect_to_parents(declarators, |node| {
+        let info = node.read_data(&AstDeclarator::Ident);
         let mut index = *node.parent;
         loop {
             match ast.nodes.kind[index as usize] {
@@ -38,12 +51,51 @@ fn validate_scopes<'a>(ast: &mut ByKindAst, symbols: &'a SymbolTable) -> Result<
             }
         }
 
-        return Some((ast.nodes.parent[index as usize], *node.id));
+        return Some((
+            ast.nodes.parent[index as usize],
+            DeclInfo {
+                id: *node.id,
+                symbol: info.symbol(),
+            },
+        ));
     });
+
+    let (scopes, error): (HashMap<_, _>, HashMap<_, _>) =
+        scopes.into_par_iter().partition_map(|(scope_id, decls)| {
+            let len = decls.len();
+
+            let mut decls_map = HashMap::new();
+            let mut errors = Vec::new();
+            for decl in decls {
+                if let Some(prev_decl) = decls_map.insert(decl.symbol, decl) {
+                    errors.push(error!(
+                        Todo,
+                        "duplicate identifier", ast.nodes.start[decl.id as usize]
+                    ));
+                }
+            }
+
+            if errors.len() != 0 {
+                return Either::Right((scope_id, errors));
+            }
+
+            return Either::Left((scope_id, decls_map));
+        });
+
+    if error.len() != 0 {
+        return Err(error
+            .into_iter()
+            .flat_map(|(_, errors)| errors.into_iter())
+            .collect());
+    }
+
     // collapse declarators into their scopes
     // Probably decide on slots, and do lifetime analysis?
     // NOTE: the statements in a function are a child of a block node,
     // and then that block node is the child of the function definition node
 
-    return Ok(Scopes { symbols });
+    return Ok(Scopes {
+        symbols,
+        scope_tree: scopes,
+    });
 }

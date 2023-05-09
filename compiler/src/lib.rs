@@ -18,6 +18,7 @@ pub mod error;
 
 pub mod ast;
 pub mod filedb;
+pub mod format;
 pub mod parser;
 pub mod pass;
 
@@ -28,6 +29,7 @@ pub mod api {
     };
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
+    pub use super::format::display_tree;
     pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
     pub use super::pass::{
         types::{TyDb, TyId, TyQuals},

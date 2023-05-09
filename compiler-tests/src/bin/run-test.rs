@@ -5,7 +5,7 @@ extern crate compiler;
 use clap::Parser;
 use codespan_reporting::term::termcolor::*;
 use codespan_reporting::term::*;
-use compiler::{parse_test_case, single_file_db, StageOutput};
+use compiler::{api::display_tree, parse_test_case, single_file_db, StageOutput};
 
 #[derive(clap::ValueEnum, Clone, Copy, PartialEq)]
 enum Stage {
@@ -123,9 +123,9 @@ fn main() {
     }
 
     if let (StageOutput::Ok(ast), true) = (&result.ast_validation, args.print_ast) {
-        eprintln!("{}", compiler::ast::display_tree(ast, Some(&result.ty_db)));
+        eprintln!("{}", display_tree(ast, Some(&result.ty_db)));
     } else if let (StageOutput::Ok(ast), true) = (&result.parsed_ast, args.print_ast) {
-        eprintln!("{}", compiler::ast::display_tree(ast, None));
+        eprintln!("{}", display_tree(ast, None));
     }
 
     assert_eq!(result, expected);
