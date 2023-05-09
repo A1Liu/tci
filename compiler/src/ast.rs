@@ -58,10 +58,7 @@ pub enum AstNodeKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstExpr {
-    IntLit,              // data: i32
-    LongLit,             // data: i64
-    ULit,                // data: u32
-    ULongLit,            // data: u64
+    IntLit(AstIntLit),   // data: i32
     FloatLit,            // data: f32
     DoubleLit,           // data: f64
     CharLit,             // data: i8
@@ -79,6 +76,28 @@ pub enum AstExpr {
     UnaryOp(UnaryOp),   // children: expression that's operated on
     BinOp(BinOp),       // children: operands
     BinOpAssign(BinOp), // children: expression being assigned to, expression being assigned
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AstIntLit {
+    S8,
+    S16,
+    S32,
+    S64,
+    U8,
+    U16,
+    U32,
+    U64,
+}
+
+impl AstInterpretData for AstIntLit {
+    type AstData = u64;
+}
+
+impl Into<AstNodeKind> for AstIntLit {
+    fn into(self) -> AstNodeKind {
+        return AstNodeKind::Expr(AstExpr::IntLit(self));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]

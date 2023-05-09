@@ -172,7 +172,14 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     out.translation_unit = lexer_res.translation_unit;
     out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
 
-    let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
+    let macro_expansion_res =
+        match expand_macros(lexer_res.tokens.as_slice(), files, &out.translation_unit) {
+            Ok(res) => res,
+            Err(e) => {
+                out.macro_expansion = StageOutput::Err(e);
+                return out;
+            }
+        };
     out.macro_expansion = StageOutput::Ok(macro_expansion_res.kind.clone());
 
     let parsed_ast = match parse(&macro_expansion_res) {

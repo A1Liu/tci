@@ -108,7 +108,7 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub start: u32,
-    pub symbol: Symbol,
+    pub data: u64,
 }
 
 lazy_static! {
@@ -331,7 +331,7 @@ pub fn lex(files: &FileDb, file: &File) -> Result<LexResult, LexError> {
             result.tokens.push(Token {
                 start,
                 kind,
-                symbol,
+                data: symbol.into(),
             });
 
             token_count += 1;

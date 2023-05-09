@@ -7,6 +7,7 @@ use core::ops::Range;
 
 pub mod declaration_scopes;
 pub mod declaration_types;
+pub mod expr_types;
 pub mod types;
 
 // TODO: how do we do node insertions and node deletions?
