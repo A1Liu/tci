@@ -189,7 +189,7 @@ impl TyDb {
         let ty = {
             // take mutex for as little time as possible
             let types = self.types.lock().unwrap();
-            types.get(id.0 as usize).unwrap().to_owned()
+            types.index(id.0 as usize).to_owned()
         };
 
         match ty.kind {

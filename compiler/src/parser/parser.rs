@@ -324,18 +324,10 @@ fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
                 let data: Symbol = p.tokens.data[p.index].into();
                 p.index += 1;
 
-                p.push_data(
-                    node,
-                    AstDeclarator::Ident,
-                    ast::DeclaratorInfo::new().with_symbol(data),
-                )
+                p.push_data(node, AstDeclarator::Ident, data)
             }
 
-            _ => p.push_data(
-                node,
-                AstDeclarator::Ident,
-                ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
-            ),
+            _ => p.push_data(node, AstDeclarator::Ident, Symbol::NullSymbol),
         }
     };
 
@@ -424,7 +416,7 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
             FuncDeclKind::CreateAbstract => p.push_data(
                 abstract_decl_node,
                 AstDeclarator::Abstract,
-                ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+                Symbol::NullSymbol,
             ),
         };
         node.child(child);
@@ -445,7 +437,7 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
         FuncDeclKind::CreateAbstract => p.push_data(
             abstract_decl_node,
             AstDeclarator::Abstract,
-            ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+            Symbol::NullSymbol,
         ),
     };
     node.child(child);

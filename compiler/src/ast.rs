@@ -276,62 +276,8 @@ pub struct AstDeclaration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
 
-#[bitfield(u64)]
-pub struct DeclSpecifiers {
-    #[bits(4)]
-    pub quals: TyQuals,
-
-    #[bits(32)]
-    pub ty_id: TyId,
-
-    #[bits(28)]
-    _asdf2: u64,
-}
-
-impl AstInterpretData for AstParamDecl {
-    type AstData = DeclSpecifiers;
-}
-
-impl AstInterpretData for AstDeclaration {
-    type AstData = DeclSpecifiers;
-}
-
-#[bitfield(u64)]
-pub struct FuncDefSpecifiers {
-    pub static_: bool,
-    pub extern_: bool,
-    pub inline_: bool,
-    pub noreturn_: bool,
-
-    #[bits(4)]
-    pub quals: TyQuals,
-
-    #[bits(32)]
-    pub ty_id: TyId,
-
-    #[bits(24)]
-    _asdf2: u64,
-}
-
-impl AstInterpretData for AstFunctionDefinition {
-    type AstData = FuncDefSpecifiers;
-}
-
-impl AstInterpretData for AstDerivedDeclarator {
-    type AstData = TyQuals;
-}
-
-#[bitfield(u64)]
-pub struct DeclaratorInfo {
-    #[bits(32)]
-    pub symbol: Symbol,
-
-    #[bits(32)]
-    pub ty_id: TyId,
-}
-
 impl AstInterpretData for AstDeclarator {
-    type AstData = DeclaratorInfo;
+    type AstData = Symbol;
 }
 
 impl<'a> AstNodeRef<'a> {

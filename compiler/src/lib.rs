@@ -182,8 +182,26 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     );
     out.macro_expansion = StageOutput::Ok(macro_expansion_res.kind.clone());
 
-    let parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
+    let mut parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
     out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
+
+    let scopes =
+        match pass::declaration_scopes::validate_scopes(&mut parsed_ast, &lexer_res.symbols) {
+            Ok(s) => s,
+            Err(e) => {
+                out.ast_validation = StageOutput::Err(e);
+                return out;
+            }
+        };
+
+    println!("scopes done");
+
+    if let Err(e) = pass::declaration_types::validate_declarations(&mut parsed_ast, &out.ty_db) {
+        out.ast_validation = StageOutput::Err(e);
+        return out;
+    }
+
+    out.ast_validation = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
     return out;
 }
