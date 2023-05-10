@@ -21,6 +21,7 @@ pub mod filedb;
 pub mod format;
 pub mod parser;
 pub mod pass;
+pub mod walrus_codegen;
 
 pub mod api {
     pub use super::ast::{
