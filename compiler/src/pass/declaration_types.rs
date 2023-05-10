@@ -43,8 +43,6 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
         _ => None,
     });
 
-    // let mut trackers = HashMap::<u32, SpecifierTracker>::new();
-
     // Build summary of all specifiers for each node with a specifier
     let mapper = |(parent_index, specifiers): (u32, Vec<(AstSpecifier, u32)>)| {
         let mut tracker = SpecifierTracker::default();
