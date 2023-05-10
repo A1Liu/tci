@@ -44,30 +44,28 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
     });
 
     // Build summary of all specifiers for each node with a specifier
-    let mapper = |(parent_index, specifiers): (u32, Vec<(AstSpecifier, u32)>)| {
-        let mut tracker = SpecifierTracker::default();
-
-        for (kind, node_index) in specifiers {
-            let node = ast.index(node_index as usize);
-            match tracker.consume_specifier(kind, node) {
-                Err(e) => return Either::Right(e),
-                Ok(_) => {}
-            }
-        }
-
-        match tracker.type_specifier {
-            Some(s) => return Either::Left((parent_index, s)),
-            None => {
-                return Either::Right(error!(
-                    Todo,
-                    "no type provided", ast.start[parent_index as usize]
-                ))
-            }
-        }
-    };
 
     let (trackers, mut errors): (HashMap<_, _>, Vec<_>) =
-        specifiers.into_par_iter().partition_map(mapper);
+        specifiers
+            .into_par_iter()
+            .partition_map(|(parent_index, specifiers)| {
+                let mut tracker = SpecifierTracker::default();
+
+                for (kind, node_index) in specifiers {
+                    let node = ast.index(node_index as usize);
+                    if let Err(e) = tracker.consume_specifier(kind, node) {
+                        return Either::Right(e);
+                    }
+                }
+
+                match tracker.type_specifier {
+                    Some(s) => Either::Left((parent_index, s)),
+                    None => Either::Right(error!(
+                        Todo,
+                        "no type provided", ast.start[parent_index as usize]
+                    )),
+                }
+            });
 
     if errors.len() > 0 {
         return Err(errors.pop().unwrap());
