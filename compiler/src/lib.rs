@@ -35,9 +35,9 @@ pub mod api {
 
     pub use super::run_compiler_test_case;
 
+    pub(crate) use itertools::{Either, Itertools};
     pub(crate) use rayon::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};
-    pub(crate) use itertools::{Either, Itertools};
     pub(crate) use std::collections::HashMap;
 
     #[cfg(test)]
@@ -195,9 +195,12 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
             }
         };
 
-    println!("scopes done");
-
     if let Err(e) = pass::declaration_types::validate_declarations(&mut parsed_ast, &out.ty_db) {
+        out.ast_validation = StageOutput::Err(e);
+        return out;
+    }
+
+    if let Err(e) = pass::expr_types::validate_exprs(&mut parsed_ast) {
         out.ast_validation = StageOutput::Err(e);
         return out;
     }

@@ -85,9 +85,8 @@ pub fn expand_macros(
                             buf_tmp.push(c);
                         }
 
-                        (' ' | '\t' | '\r' | '\n', _) => break,
-
-                        c => panic!("got weird character when parsing int: {:?}", c),
+                        _ => break,
+                        // c => panic!("got weird character when parsing int: {:?}", c),
                     }
 
                     file_index += 1;

@@ -1,3 +1,10 @@
+/*!
+Validate expressions.
+
+- Validate expressions and their children
+- Validate return statements
+ */
+
 use crate::api::*;
 
 pub fn validate_exprs(ast: &mut AstNodeVec) -> Result<(), Error> {
