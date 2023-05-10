@@ -37,6 +37,7 @@ pub mod api {
 
     pub(crate) use rayon::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};
+    pub(crate) use itertools::{Either, Itertools};
     pub(crate) use std::collections::HashMap;
 
     #[cfg(test)]

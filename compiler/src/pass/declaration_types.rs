@@ -21,7 +21,6 @@ This includes:
  */
 
 use crate::api::*;
-use rayon::iter::Either;
 
 #[derive(Default)]
 struct SpecifierTracker {
@@ -184,7 +183,7 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
         data: &ast.data,
     };
 
-    let mut range: Vec<_> = ast
+    let (mut done, mut ongoing): (Vec<_>, Vec<_>) = ast
         .ty_id
         .par_iter_mut()
         .enumerate()
@@ -221,48 +220,44 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
                 node_index: parent_index as usize,
             }
         })
-        .collect();
+        .partition_map(|index| type_for_declarator(index, info, ty_db, &param_counters));
 
     let mut loop_count = 0;
-    while loop_count < 20 && range.len() > 0 {
+    loop {
+        let (done_ok, done_err): (Vec<_>, Vec<_>) =
+            done.into_iter().partition_map(|res| match res {
+                Ok(o) => Either::Left(o),
+                Err(e) => Either::Right(e),
+            });
+
+        if done_err.len() > 0 {
+            return Err(errors.pop().unwrap());
+        }
+
+        for data in done_ok {
+            let decl = data.node_index;
+            if let AstNodeKind::ParamDecl(_) = info.kind[decl] {
+                let counter = param_counters.get_mut(&info.parent[decl]).unwrap();
+                counter.collected_params.push(Param {
+                    post_order: info.post_order[decl],
+                    ty_id: data.ty_id,
+                });
+            }
+        }
+
         loop_count += 1;
 
-        let (done, ongoing): (Vec<_>, Vec<_>) = range
+        (done, ongoing) = ongoing
             .into_par_iter()
             .with_min_len(128)
             .partition_map(|index| type_for_declarator(index, info, ty_db, &param_counters));
 
-        let mut errors = Vec::new();
-        for res in done {
-            let data = match res {
-                Ok(o) => o,
-                Err(e) => {
-                    errors.push(e);
-                    continue;
-                }
-            };
-
-            let decl_node = data.node_index;
-            if let AstNodeKind::ParamDecl(_) = info.kind[decl_node] {
-                param_counters
-                    .get_mut(&info.parent[decl_node])
-                    .unwrap()
-                    .collected_params
-                    .push(Param {
-                        post_order: info.post_order[decl_node],
-                        ty_id: data.ty_id,
-                    });
-            }
+        if loop_count >= 20 || ongoing.len() == 0 {
+            break;
         }
-
-        if errors.len() > 0 {
-            return Err(errors.pop().unwrap());
-        }
-
-        range = ongoing;
     }
 
-    if range.len() > 0 {
+    if ongoing.len() > 0 {
         panic!("didn't finish");
     }
 
