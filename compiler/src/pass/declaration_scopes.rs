@@ -89,10 +89,8 @@ pub fn validate_scopes<'a>(
                 }
             });
 
-    for es in errors {
-        for e in es {
-            return Err(e);
-        }
+    for e in errors.into_iter().flatten() {
+        return Err(e);
     }
 
     // collapse declarators into their scopes
