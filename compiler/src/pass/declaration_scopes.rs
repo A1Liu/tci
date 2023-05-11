@@ -45,7 +45,6 @@ pub fn validate_scopes<'a>(
             _ => return None,
         };
 
-        let symbol = node.read_data(kind);
         let mut index = *node.parent;
         loop {
             match ast.kind[index as usize] {
@@ -62,7 +61,7 @@ pub fn validate_scopes<'a>(
         let scope_id = if parent == index { !0 } else { parent };
         let info = DeclInfo {
             id: *node.id,
-            symbol,
+            symbol: node.read_data(kind),
         };
 
         return Some((scope_id, info));
