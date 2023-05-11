@@ -28,8 +28,6 @@ pub fn codegen(ast: &AstNodeVec) -> Vec<u8> {
         return Some(*current.id);
     });
 
-    eprintln!("err: {:?}", ranges);
-
     for (parent, range) in ranges {
         let mut func = FunctionBuilder::new(&mut module.types, &[], &[ValType::I32]);
 
