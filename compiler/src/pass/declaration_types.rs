@@ -38,8 +38,8 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
-    let specifiers = ast.collect_to_parents(0..ast.len(), |node| match node.kind {
-        AstNodeKind::Specifier(k) => Some((*node.parent, (*k, *node.id))),
+    let specifiers = ast.collect_to_parents_range(0..ast.len(), |node| match node.kind {
+        AstNodeKind::Specifier(k) => Some(*node.parent),
         _ => None,
     });
 
@@ -51,8 +51,13 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
             .partition_map(|(parent_index, specifiers)| {
                 let mut tracker = SpecifierTracker::default();
 
-                for (kind, node_index) in specifiers {
+                for node_index in specifiers {
                     let node = ast.index(node_index as usize);
+                    let kind = match *node.kind {
+                        AstNodeKind::Specifier(s) => s,
+                        _ => panic!("wtf"),
+                    };
+
                     if let Err(e) = tracker.consume_specifier(kind, node) {
                         return Either::Right(e);
                     }
