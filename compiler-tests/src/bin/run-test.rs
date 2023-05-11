@@ -50,15 +50,14 @@ Examples:
     #[arg(value_enum)]
     only: Option<Stage>,
 
-    #[clap(
-        short,
-        long,
-        help = "output the result to OUT_FILE. Overrides `--write`"
-    )]
+    #[clap(long, help = "output the result to OUT_FILE. Overrides `--write`")]
     out_file: Option<std::path::PathBuf>,
 
     #[clap(short, long, help = "write to the input file in-place")]
     write: bool,
+
+    #[clap(long, help = "output the binary to BIN_OUT")]
+    bin_out: Option<std::path::PathBuf>,
 }
 
 fn main() {
@@ -138,6 +137,13 @@ fn main() {
         std::fs::write(&args.test_case, text).expect("failed to write file");
     } else {
         print!("{}", text);
+    }
+
+    if let Some(bin_path) = &args.bin_out {
+        if result.wasm_out.len() == 0 {
+            eprintln!("Didn't output WASM binary - there wasn't any WASM to output");
+        }
+        std::fs::write(bin_path, result.wasm_out).expect("failed to output wasm");
     }
 
     eprintln!("");

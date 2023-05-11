@@ -95,6 +95,9 @@ pub struct PipelineData {
 
     #[serde(default)]
     pub ast_validation: StageOutput<ast::AstNode>,
+
+    #[serde(skip)]
+    pub wasm_out: Vec<u8>,
 }
 
 impl PartialEq for PipelineData {
@@ -157,6 +160,7 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
         macro_expansion: StageOutput::Err(error!(DidntRun)),
         parsed_ast: StageOutput::Err(error!(DidntRun)),
         ast_validation: StageOutput::Err(error!(DidntRun)),
+        wasm_out: Vec::new(),
     };
 
     macro_rules! run_stage {
@@ -207,6 +211,8 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     }
 
     out.ast_validation = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
+
+    out.wasm_out = walrus_codegen::codegen(&parsed_ast);
 
     return out;
 }

@@ -371,4 +371,59 @@ impl AstNodeVec {
                 },
             );
     }
+
+    pub fn collect_to_parents_range(
+        &self,
+        range: core::ops::Range<usize>,
+        extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<u32> + Sync,
+    ) -> HashMap<u32, core::ops::Range<usize>> {
+        return range
+            .into_par_iter()
+            .with_min_len(128)
+            .fold(
+                || HashMap::<u32, core::ops::Range<usize>>::new(),
+                |mut map, index| {
+                    let node = self.index(index);
+
+                    if let Some(parent) = extract(node) {
+                        let value = map.entry(parent).or_insert(index..(index + 1));
+                        let start = core::cmp::min(value.start, index as usize);
+                        let end = core::cmp::max(value.end, index as usize + 1);
+
+                        *value = start..end;
+                    }
+
+                    return map;
+                },
+            )
+            .reduce(
+                || HashMap::new(),
+                |left, right| {
+                    let (mut large, small) = if left.len() < right.len() {
+                        (right, left)
+                    } else {
+                        (left, right)
+                    };
+
+                    for (k, right) in small {
+                        use std::collections::hash_map::Entry;
+                        match large.entry(k) {
+                            Entry::Vacant(entry) => {
+                                entry.insert(right);
+                            }
+                            Entry::Occupied(mut l) => {
+                                let left = l.get_mut();
+
+                                let start = core::cmp::min(left.start, right.start);
+                                let end = core::cmp::max(left.end, right.end);
+
+                                *left = start..end;
+                            }
+                        }
+                    }
+
+                    return large;
+                },
+            );
+    }
 }
