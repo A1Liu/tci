@@ -58,7 +58,6 @@ In the UI:
 - [ ] Compiler errors/warnings pop up as messages in the editor
 
 ## Resources
-- Compiler Architecture - https://scholarworks.iu.edu/dspace/handle/2022/24749
 - Preprocessor General Info - https://gcc.gnu.org/onlinedocs/cpp/index.html
 - Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
 - Translation of C standard to AST types - https://github.com/vickenty/lang-c/blob/master/src/ast.rs
@@ -66,3 +65,11 @@ In the UI:
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
 - WASM interpreter to look into - https://github.com/paritytech/wasmi
+
+## Credits
+- [Aaron Hsu's PhD Thesis on Data-Parallel Compiler Architecture](https://scholarworks.iu.edu/dspace/handle/2022/24749) -
+  TCI's architecture is almost fully based on work done in 2019 by Aaron Hsu.
+- [`lang-c` by `vickenty`](https://github.com/vickenty/lang-c) -
+  TCI used the source of `lang-c` as a reference and as inspiration when designing the AST.
+  `lang-c` source code was also very useful as a point of reference for the C specification,
+  because specifications are difficult to read.
