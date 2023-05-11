@@ -72,27 +72,19 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
     }
 
     let mut param_counters: HashMap<u32, Params> = HashMap::new();
-    for (&node_id, &spec) in &trackers {
+    for (&node_id, &ty_id) in &trackers {
         // ensure the specifiers' parent is a declaration of some kind
         let node = ast.index_mut(node_id as usize);
 
         // TODO: ensure the combined declaration specifiers are valid for each kind of declaration
         // add them to their parent's data field
         match *node.kind {
-            AstNodeKind::Declaration(decl) => {
-                *node.ty_id = spec;
-            }
-            AstNodeKind::FunctionDefinition(func) => {
-                *node.ty_id = spec;
-            }
-            AstNodeKind::ParamDecl(p) => {
-                *node.ty_id = spec;
-
-                param_counters.entry(*node.parent).or_default().count += 1;
-            }
-
+            AstNodeKind::Declaration(_) | AstNodeKind::FunctionDefinition(_) => {}
+            AstNodeKind::ParamDecl(_) => param_counters.entry(*node.parent).or_default().count += 1,
             _ => throw!(Tci, "specifier attached to non-declaration", *node.start),
         };
+
+        *node.ty_id = ty_id;
     }
 
     let info = AstInfo {
