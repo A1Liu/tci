@@ -1,5 +1,7 @@
 [alias]
-wc = "check --target wasm32-unknown-unknown"
+wasm = "build --target wasm32-unknown-unknown"
+run-test = "run --bin run-test"
+run-test-release = "run --release --bin run-test"
 
 [build]
 target-dir = ".cargo/target"

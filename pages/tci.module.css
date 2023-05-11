@@ -1,0 +1,44 @@
+.nameBox {
+  display: flex;
+  justify-content: space-between;
+  height: 2.5rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom-width: 1px;
+}
+
+.name {
+  --text-opacity: 1;
+  color: #4299e1;
+  color: rgba(66, 153, 225, var(--text-opacity));
+}
+
+.name:hover {
+  --text-opacity: 1;
+  color: #fff;
+  color: rgba(255, 255, 255, var(--text-opacity));
+}
+
+.scrollBox {
+
+  border: 2px solid black;
+}
+
+.scrollBox .title {
+  position: absolute;
+  top: 0;
+  right: 2rem;
+  z-index: 3;
+}
+
+.scrollBox .text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  padding: 10px;
+  overflow-y: scroll;
+}
