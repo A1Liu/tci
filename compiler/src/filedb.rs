@@ -278,12 +278,7 @@ impl SymbolTable {
             return *id;
         }
 
-        let id: u32 = self.to_name.len() as u32;
-
-        // I can't figure out right now what exactly is making the Symbol enum not convert from integers.
-        // This works for now.
-        //              - Albert Liu, April 25, 2023 Tue 20:07
-        let id: Symbol = unsafe { std::mem::transmute(id) };
+        let id = Symbol(self.to_name.len() as u32);
 
         self.to_symbol.insert(s.to_string(), id);
         self.to_name.push(s.to_string());

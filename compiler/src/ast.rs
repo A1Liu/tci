@@ -17,6 +17,9 @@ pub struct AstNode {
     #[serde(skip)]
     pub start: u32,
 
+    #[serde(skip)]
+    pub ty_id: TyId,
+
     pub data: u64,
 
     /// refers to the post_order index of the node that's the parent
@@ -58,10 +61,7 @@ pub enum AstNodeKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AstExpr {
-    IntLit,              // data: i32
-    LongLit,             // data: i64
-    ULit,                // data: u32
-    ULongLit,            // data: u64
+    IntLit(AstIntLit),   // data: i32
     FloatLit,            // data: f32
     DoubleLit,           // data: f64
     CharLit,             // data: i8
@@ -79,6 +79,28 @@ pub enum AstExpr {
     UnaryOp(UnaryOp),   // children: expression that's operated on
     BinOp(BinOp),       // children: operands
     BinOpAssign(BinOp), // children: expression being assigned to, expression being assigned
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AstIntLit {
+    S8,
+    S16,
+    S32,
+    S64,
+    U8,
+    U16,
+    U32,
+    U64,
+}
+
+impl AstInterpretData for AstIntLit {
+    type AstData = u64;
+}
+
+impl Into<AstNodeKind> for AstIntLit {
+    fn into(self) -> AstNodeKind {
+        return AstNodeKind::Expr(AstExpr::IntLit(self));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -254,62 +276,8 @@ pub struct AstDeclaration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AstFunctionDefinition;
 
-#[bitfield(u64)]
-pub struct DeclSpecifiers {
-    #[bits(4)]
-    pub quals: TyQuals,
-
-    #[bits(32)]
-    pub ty_id: TyId,
-
-    #[bits(28)]
-    _asdf2: u64,
-}
-
-impl AstInterpretData for AstParamDecl {
-    type AstData = DeclSpecifiers;
-}
-
-impl AstInterpretData for AstDeclaration {
-    type AstData = DeclSpecifiers;
-}
-
-#[bitfield(u64)]
-pub struct FuncDefSpecifiers {
-    pub static_: bool,
-    pub extern_: bool,
-    pub inline_: bool,
-    pub noreturn_: bool,
-
-    #[bits(4)]
-    pub quals: TyQuals,
-
-    #[bits(32)]
-    pub ty_id: TyId,
-
-    #[bits(24)]
-    _asdf2: u64,
-}
-
-impl AstInterpretData for AstFunctionDefinition {
-    type AstData = FuncDefSpecifiers;
-}
-
-impl AstInterpretData for AstDerivedDeclarator {
-    type AstData = TyQuals;
-}
-
-#[bitfield(u64)]
-pub struct DeclaratorInfo {
-    #[bits(32)]
-    pub symbol: Symbol,
-
-    #[bits(32)]
-    pub ty_id: TyId,
-}
-
 impl AstInterpretData for AstDeclarator {
-    type AstData = DeclaratorInfo;
+    type AstData = Symbol;
 }
 
 impl<'a> AstNodeRef<'a> {
@@ -395,6 +363,61 @@ impl AstNodeVec {
                             }
                             Entry::Vacant(entry) => {
                                 entry.insert(v);
+                            }
+                        }
+                    }
+
+                    return large;
+                },
+            );
+    }
+
+    pub fn collect_to_parents_range(
+        &self,
+        range: core::ops::Range<usize>,
+        extract: impl for<'a> Fn(AstNodeRef<'a>) -> Option<u32> + Sync,
+    ) -> HashMap<u32, core::ops::Range<usize>> {
+        return range
+            .into_par_iter()
+            .with_min_len(128)
+            .fold(
+                || HashMap::<u32, core::ops::Range<usize>>::new(),
+                |mut map, index| {
+                    let node = self.index(index);
+
+                    if let Some(parent) = extract(node) {
+                        let value = map.entry(parent).or_insert(index..(index + 1));
+                        let start = core::cmp::min(value.start, index as usize);
+                        let end = core::cmp::max(value.end, index as usize + 1);
+
+                        *value = start..end;
+                    }
+
+                    return map;
+                },
+            )
+            .reduce(
+                || HashMap::new(),
+                |left, right| {
+                    let (mut large, small) = if left.len() < right.len() {
+                        (right, left)
+                    } else {
+                        (left, right)
+                    };
+
+                    for (k, right) in small {
+                        use std::collections::hash_map::Entry;
+                        match large.entry(k) {
+                            Entry::Vacant(entry) => {
+                                entry.insert(right);
+                            }
+                            Entry::Occupied(mut l) => {
+                                let left = l.get_mut();
+
+                                let start = core::cmp::min(left.start, right.start);
+                                let end = core::cmp::max(left.end, right.end);
+
+                                *left = start..end;
                             }
                         }
                     }

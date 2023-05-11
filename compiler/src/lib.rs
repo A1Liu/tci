@@ -21,6 +21,7 @@ pub mod filedb;
 pub mod format;
 pub mod parser;
 pub mod pass;
+pub mod walrus_codegen;
 
 pub mod api {
     pub use super::ast::{
@@ -31,13 +32,11 @@ pub mod api {
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::format::display_tree;
     pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
-    pub use super::pass::{
-        types::{TyDb, TyId, TyQuals},
-        ByKindAst,
-    };
+    pub use super::pass::types::{TyDb, TyId, TyQuals};
 
     pub use super::run_compiler_test_case;
 
+    pub(crate) use itertools::{Either, Itertools};
     pub(crate) use rayon::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};
     pub(crate) use std::collections::HashMap;
@@ -96,6 +95,9 @@ pub struct PipelineData {
 
     #[serde(default)]
     pub ast_validation: StageOutput<ast::AstNode>,
+
+    #[serde(skip)]
+    pub wasm_out: Vec<u8>,
 }
 
 impl PartialEq for PipelineData {
@@ -158,44 +160,59 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
         macro_expansion: StageOutput::Err(error!(DidntRun)),
         parsed_ast: StageOutput::Err(error!(DidntRun)),
         ast_validation: StageOutput::Err(error!(DidntRun)),
+        wasm_out: Vec::new(),
     };
 
-    let lexer_res = match lex(&files, file) {
-        Ok(res) => res,
-        Err(e) => {
-            out.translation_unit = e.translation_unit;
-            out.lexer = StageOutput::Err(e.error);
-            return out;
-        }
-    };
+    macro_rules! run_stage {
+        ($id:ident, $e:expr) => {
+            match $e {
+                Ok(res) => res,
+                Err(e) => {
+                    out.$id = StageOutput::Err(e);
+                    return out;
+                }
+            }
+        };
+    }
 
-    out.translation_unit = lexer_res.translation_unit;
+    let (translation_unit, lexer_res) = lex(&files, file);
+    out.translation_unit = translation_unit;
+
+    let lexer_res = run_stage!(lexer, lexer_res);
+
     out.lexer = StageOutput::Ok(lexer_res.tokens.kind.clone());
 
-    let macro_expansion_res = expand_macros(lexer_res.tokens.as_slice());
+    let macro_expansion_res = run_stage!(
+        macro_expansion,
+        expand_macros(lexer_res.tokens.as_slice(), files, &out.translation_unit)
+    );
     out.macro_expansion = StageOutput::Ok(macro_expansion_res.kind.clone());
 
-    let parsed_ast = match parse(&macro_expansion_res) {
-        Ok(res) => res,
-        Err(e) => {
-            out.parsed_ast = StageOutput::Err(e);
-            return out;
-        }
-    };
-
+    let mut parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
     out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
-    let mut parsed_ast = parsed_ast;
-    {
-        let mut by_kind = pass::ByKindAst::new(&mut parsed_ast);
+    let scopes =
+        match pass::declaration_scopes::validate_scopes(&mut parsed_ast, &lexer_res.symbols) {
+            Ok(s) => s,
+            Err(e) => {
+                out.ast_validation = StageOutput::Err(e);
+                return out;
+            }
+        };
 
-        if let Err(e) = pass::declaration_types::validate_declarations(&mut by_kind, &out.ty_db) {
-            out.ast_validation = StageOutput::Err(e);
-            return out;
-        }
+    if let Err(e) = pass::declaration_types::validate_declarations(&mut parsed_ast, &out.ty_db) {
+        out.ast_validation = StageOutput::Err(e);
+        return out;
+    }
+
+    if let Err(e) = pass::expr_types::validate_exprs(&mut parsed_ast) {
+        out.ast_validation = StageOutput::Err(e);
+        return out;
     }
 
     out.ast_validation = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
+
+    out.wasm_out = walrus_codegen::codegen(&parsed_ast);
 
     return out;
 }

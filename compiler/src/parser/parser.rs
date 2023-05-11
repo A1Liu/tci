@@ -147,6 +147,8 @@ impl<'a> Parser<'a> {
             start: node.start,
             height: node.height,
 
+            ty_id: TyId::Untyped,
+
             // Root nodes have themselves as their own parent.
             parent: post_order,
 
@@ -319,21 +321,13 @@ fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
             }
 
             TokenKind::Ident => {
-                let data = p.tokens.symbol[p.index];
+                let data: Symbol = p.tokens.data[p.index].into();
                 p.index += 1;
 
-                p.push_data(
-                    node,
-                    AstDeclarator::Ident,
-                    ast::DeclaratorInfo::new().with_symbol(data),
-                )
+                p.push_data(node, AstDeclarator::Ident, data)
             }
 
-            _ => p.push_data(
-                node,
-                AstDeclarator::Ident,
-                ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
-            ),
+            _ => p.push_data(node, AstDeclarator::Ident, Symbol::NullSymbol),
         }
     };
 
@@ -422,7 +416,7 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
             FuncDeclKind::CreateAbstract => p.push_data(
                 abstract_decl_node,
                 AstDeclarator::Abstract,
-                ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+                Symbol::NullSymbol,
             ),
         };
         node.child(child);
@@ -443,7 +437,7 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
         FuncDeclKind::CreateAbstract => p.push_data(
             abstract_decl_node,
             AstDeclarator::Abstract,
-            ast::DeclaratorInfo::new().with_symbol(Symbol::NullSymbol),
+            Symbol::NullSymbol,
         ),
     };
     node.child(child);
@@ -655,18 +649,18 @@ fn parse_atom_expr(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
     let kind = p.peek_kind();
-    let data = &p.tokens.symbol[p.index];
+    let data = &p.tokens.data[p.index];
     p.index += 1;
 
     let expr = match kind {
         TokenKind::Ident => {
-            // TODO: Set data field
-
-            return Ok(p.push_data(node, AstIdentExpr, *data));
+            return Ok(p.push_data(node, AstIdentExpr, (*data).into()));
         }
 
         // TODO: Remove this and replace with actually reasonable logic
-        TokenKind::PreprocessingNum => AstExpr::IntLit,
+        TokenKind::PreprocessingNum => {
+            return Ok(p.push_data(node, ast::AstIntLit::U64, *data));
+        }
 
         TokenKind::StringLit => AstExpr::StringLit,
 

@@ -56,21 +56,17 @@ pub fn display_tree(ast: &[AstNode], ty_db: Option<&TyDb>) -> String {
         let node = &ast[node_id];
         out += &format!("{:?}", node.kind);
 
-        match node.kind {
-            AstNodeKind::Declarator(d) => {
-                out += " ";
+        if node.ty_id != TyId::Untyped {
+            out += " ";
 
-                let info = node.read_data(&d);
-                if let Some(ty_db) = ty_db {
-                    ty_db.write(&mut out, info.ty_id());
-                } else {
-                    write!(out, "{:?}", info.ty_id()).unwrap();
-                }
-
-                out += "\n";
+            let ty = node.ty_id;
+            if let Some(ty_db) = ty_db {
+                ty_db.write(&mut out, ty);
+            } else {
+                write!(out, "{:?}", ty).unwrap();
             }
-            _ => out.push('\n'),
         }
+        out.push('\n');
 
         for id in children[node_id].iter().rev() {
             parent_stack.push((depth + 1, *id));

@@ -9,5 +9,6 @@
 pkg
 node_modules
 
-/test.c
+/*.c
+/*.wasm
 /a.out

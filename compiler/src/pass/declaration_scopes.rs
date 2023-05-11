@@ -35,32 +35,39 @@ pub struct DeclInfo {
 //          -> produce types for the identifiers
 //          -> track which identifiers are pointer-referenced, and when each declaration is last used
 // produce global symbols?
-fn validate_scopes<'a>(
-    ast: &mut ByKindAst,
+pub fn validate_scopes<'a>(
+    ast: &mut AstNodeVec,
     symbols: &'a SymbolTable,
-) -> Result<Scopes<'a>, Vec<Error>> {
-    let declarators = ast.matching_range(|k| matches!(k, AstNodeKind::Declarator(_)));
+) -> Result<Scopes<'a>, Error> {
+    let scopes = ast.collect_to_parents(0..ast.len(), |node| {
+        let kind = match node.kind {
+            AstNodeKind::Declarator(d) => d,
+            _ => return None,
+        };
 
-    let scopes = ast.nodes.collect_to_parents(declarators, |node| {
-        let info = node.read_data(&AstDeclarator::Ident);
+        let symbol = node.read_data(kind);
         let mut index = *node.parent;
         loop {
-            match ast.nodes.kind[index as usize] {
-                AstNodeKind::Declaration(_) | AstNodeKind::ParamDecl(_) => break,
-                _ => index = ast.nodes.parent[index as usize],
+            match ast.kind[index as usize] {
+                AstNodeKind::FunctionDefinition(_)
+                | AstNodeKind::Declaration(_)
+                | AstNodeKind::ParamDecl(_) => break,
+                AstNodeKind::DerivedDeclarator(_) => index = ast.parent[index as usize],
+                x => panic!("{:?}", x),
             }
         }
 
-        return Some((
-            ast.nodes.parent[index as usize],
-            DeclInfo {
-                id: *node.id,
-                symbol: info.symbol(),
-            },
-        ));
+        let parent = ast.parent[index as usize];
+        let scope_id = if parent == index { !0 } else { parent };
+        let info = DeclInfo {
+            id: *node.id,
+            symbol,
+        };
+
+        return Some((scope_id, info));
     });
 
-    let (scopes, error): (HashMap<_, _>, HashMap<_, _>) =
+    let (scopes, mut errors): (HashMap<_, _>, Vec<_>) =
         scopes.into_par_iter().partition_map(|(scope_id, decls)| {
             let len = decls.len();
 
@@ -70,23 +77,20 @@ fn validate_scopes<'a>(
                 if let Some(prev_decl) = decls_map.insert(decl.symbol, decl) {
                     errors.push(error!(
                         Todo,
-                        "duplicate identifier", ast.nodes.start[decl.id as usize]
+                        "duplicate identifier", ast.start[decl.id as usize]
                     ));
                 }
             }
 
             if errors.len() != 0 {
-                return Either::Right((scope_id, errors));
+                return Either::Right(errors);
             }
 
             return Either::Left((scope_id, decls_map));
         });
 
-    if error.len() != 0 {
-        return Err(error
-            .into_iter()
-            .flat_map(|(_, errors)| errors.into_iter())
-            .collect());
+    if errors.len() != 0 {
+        return Err(errors.pop().unwrap().pop().unwrap());
     }
 
     // collapse declarators into their scopes

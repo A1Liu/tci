@@ -21,14 +21,6 @@ This includes:
  */
 
 use crate::api::*;
-use rayon::iter::Either;
-
-#[derive(Default)]
-struct SpecifierTracker {
-    type_specifier: Option<Result<TyId, Error>>,
-    has_int: bool,
-    has_sign: bool,
-}
 
 #[derive(Clone)]
 struct Param {
@@ -42,251 +34,174 @@ struct Params {
     collected_params: Vec<Param>,
 }
 
-pub fn validate_declarations(ast: &mut ByKindAst, ty_db: &TyDb) -> Result<(), Error> {
+pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), Error> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
-    let specifier_range = ast.matching_range(|kind| matches!(kind, AstNodeKind::Specifier(_)));
-    let specifiers = ast
-        .nodes
-        .collect_to_parents(specifier_range, |node| match node.kind {
-            AstNodeKind::Specifier(k) => Some((*node.parent, (*k, *node.id))),
-            _ => None,
-        });
-
-    // let mut trackers = HashMap::<u32, SpecifierTracker>::new();
+    let specifiers = ast.collect_to_parents(0..ast.len(), |node| match node.kind {
+        AstNodeKind::Specifier(k) => Some((*node.parent, (*k, *node.id))),
+        _ => None,
+    });
 
     // Build summary of all specifiers for each node with a specifier
-    let mapper = |(parent_index, specifiers): (u32, Vec<(AstSpecifier, u32)>)| {
-        use AstSpecifier::*;
 
-        let mut tracker = SpecifierTracker::default();
+    let (trackers, mut errors): (HashMap<_, _>, Vec<_>) =
+        specifiers
+            .into_par_iter()
+            .partition_map(|(parent_index, specifiers)| {
+                let mut tracker = SpecifierTracker::default();
 
-        for (kind, node_index) in specifiers {
-            let spec = match &tracker.type_specifier {
-                Some(Err(e)) => return (parent_index, tracker),
-                Some(Ok(s)) => Some(*s),
-                None => None,
-            };
-
-            let node = ast.nodes.index(node_index as usize);
-
-            // ensure the combined specifiers are valid for the declaration
-            tracker.type_specifier = match (kind, spec.clone()) {
-                (Void, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Void, None) => Some(Ok(TyId::Void)),
-
-                (Char, Some(TyId::S32 | TyId::U32)) if tracker.has_int => {
-                    Some(Err(dup_type(*node.start)))
-                }
-                (Char, Some(TyId::S32)) => Some(Ok(TyId::S8)),
-                (Char, Some(TyId::U32)) => Some(Ok(TyId::U8)),
-                (Char, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Char, None) => Some(Ok(TyId::S8)),
-
-                (Short, Some(TyId::S32) | None) => Some(Ok(TyId::S16)),
-                (Short, Some(TyId::U32)) => Some(Ok(TyId::U16)),
-                (Short, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Long, Some(TyId::S32) | None) => Some(Ok(TyId::S64)),
-                (Long, Some(TyId::U32)) => Some(Ok(TyId::U64)),
-                (Long, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (
-                    Int,
-                    t @ (Some(TyId::U32 | TyId::S64 | TyId::U64 | TyId::S16 | TyId::U16) | None),
-                ) => {
-                    if tracker.has_int {
-                        Some(Err(dup_type(*node.start)))
-                    } else {
-                        tracker.has_int = true;
-                        Some(Ok(t.unwrap_or(TyId::S32)))
+                for (kind, node_index) in specifiers {
+                    let node = ast.index(node_index as usize);
+                    if let Err(e) = tracker.consume_specifier(kind, node) {
+                        return Either::Right(e);
                     }
                 }
-                (Int, Some(_)) => Some(Err(dup_type(*node.start))),
 
-                // If we've already said "signed", then we shouldn't allow another sign-edness marker
-                // NOTE: if we've said "unsigned", that'll be represented in the TyId, so we don't need
-                // to use the `has_sign` field for that purpose.
-                (Unsigned | Signed, _) if tracker.has_sign => Some(Err(dup_type(*node.start))),
-
-                // Translate signed types to unsigned
-                (Unsigned, None | Some(TyId::S32)) => Some(Ok(TyId::U32)),
-                (Unsigned, Some(TyId::S8)) => Some(Ok(TyId::U8)),
-                (Unsigned, Some(TyId::S16)) => Some(Ok(TyId::U16)),
-                (Unsigned, Some(TyId::S64)) => Some(Ok(TyId::U64)),
-                (Unsigned, Some(_)) => Some(Err(dup_type(*node.start))),
-
-                (Signed, t @ (Some(TyId::S8 | TyId::S16 | TyId::S32 | TyId::S64) | None)) => {
-                    tracker.has_sign = true;
-                    Some(Ok(t.unwrap_or(TyId::S32)))
+                match tracker.type_specifier {
+                    Some(s) => Either::Left((parent_index, s)),
+                    None => Either::Right(error!(
+                        Todo,
+                        "no type provided", ast.start[parent_index as usize]
+                    )),
                 }
-                (Signed, Some(_)) => Some(Err(dup_type(*node.start))),
+            });
 
-                (Float, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Float, None) => Some(Ok(TyId::F32)),
-
-                (Double, Some(_)) => Some(Err(dup_type(*node.start))),
-                (Double, None) => Some(Ok(TyId::F64)),
-
-                (Ident | Struct(_), _) => Some(Err(error!(
-                    NotImplemented,
-                    "identifiers and structs not implemented yet", *node.start
-                ))),
-
-                _ => Some(Err(error!(
-                    NotImplemented,
-                    "unsupported declaration specifier", *node.start
-                ))),
-            };
-        }
-
-        return (parent_index, tracker);
-    };
-
-    let trackers: HashMap<_, _> = specifiers.into_par_iter().map(mapper).collect();
+    if errors.len() > 0 {
+        return Err(errors.pop().unwrap());
+    }
 
     let mut param_counters: HashMap<u32, Params> = HashMap::new();
-    for (node_id, specifiers) in trackers {
+    for (&node_id, &ty_id) in &trackers {
         // ensure the specifiers' parent is a declaration of some kind
-        let mut node = ast.nodes.index_mut(node_id as usize);
-
-        let spec = match specifiers.type_specifier {
-            Some(s) => s?,
-            None => throw!(todo, "no type provided", *node.start),
-        };
+        let node = ast.index_mut(node_id as usize);
 
         // TODO: ensure the combined declaration specifiers are valid for each kind of declaration
         // add them to their parent's data field
         match *node.kind {
-            AstNodeKind::Declaration(decl) => {
-                node.write_data(&decl, ast::DeclSpecifiers::new().with_ty_id(spec));
-            }
-            AstNodeKind::FunctionDefinition(func) => {
-                node.write_data(&func, ast::FuncDefSpecifiers::new().with_ty_id(spec));
-            }
-            AstNodeKind::ParamDecl(p) => {
-                node.write_data(&p, ast::DeclSpecifiers::new().with_ty_id(spec));
-
-                param_counters.entry(*node.parent).or_default().count += 1;
-            }
-
+            AstNodeKind::Declaration(_) | AstNodeKind::FunctionDefinition(_) => {}
+            AstNodeKind::ParamDecl(_) => param_counters.entry(*node.parent).or_default().count += 1,
             _ => throw!(Tci, "specifier attached to non-declaration", *node.start),
         };
+
+        *node.ty_id = ty_id;
     }
 
-    let mut range: Vec<_> = ast
-        .matching_range(|k| matches!(k, AstNodeKind::Declarator(_)))
-        .into_par_iter()
-        .map(|index| {
-            let parent_index = ast.nodes.parent[index];
-            let mut cur_index = parent_index;
+    let info = AstInfo {
+        kind: &ast.kind,
+        parent: &ast.parent,
+        post_order: &ast.post_order,
+        start: &ast.start,
+        data: &ast.data,
+    };
 
-            let (quals, ty_id) = loop {
-                let node = ast.nodes.index(cur_index as usize);
+    let (mut done, mut ongoing): (Vec<_>, Vec<_>) = ast
+        .ty_id
+        .par_iter_mut()
+        .enumerate()
+        .filter(|(id, ty_slot)| matches!(info.kind[*id], AstNodeKind::Declarator(_)))
+        .map(|(index, ty_slot)| {
+            let parent_index = info.parent[index];
+            let mut cur_index = parent_index as usize;
 
-                match node.kind {
+            let ty_id = loop {
+                match info.kind[cur_index] {
                     // TODO: qualifiers
                     AstNodeKind::DerivedDeclarator(d) => {}
 
                     AstNodeKind::Declaration(d) => {
-                        let ty = node.read_data(d);
-                        break (ty.quals(), ty.ty_id());
+                        break trackers[&(cur_index as u32)];
                     }
                     AstNodeKind::ParamDecl(p) => {
-                        let ty = node.read_data(p);
-                        break (ty.quals(), ty.ty_id());
+                        break trackers[&(cur_index as u32)];
                     }
                     AstNodeKind::FunctionDefinition(f) => {
-                        let ty = node.read_data(f);
-                        break (ty.quals(), ty.ty_id());
+                        break trackers[&(cur_index as u32)];
                     }
 
                     _ => panic!("invariant broken: didn't find a declaration for this declarator"),
                 }
 
-                cur_index = *node.parent;
+                cur_index = info.parent[cur_index] as usize;
             };
-
-            let ty_id = ty_db.add_type(ty_id, quals);
 
             DeclaratorData {
                 index,
+                ty_slot,
                 ty_id,
-                node_index: parent_index,
+                node_index: parent_index as usize,
             }
         })
-        .collect();
+        .partition_map(|index| type_for_declarator(index, info, ty_db, &param_counters));
 
     let mut loop_count = 0;
-    while loop_count < 20 && range.len() > 0 {
-        loop_count += 1;
+    loop {
+        let (done_ok, done_err): (Vec<_>, Vec<_>) =
+            done.into_iter().partition_map(|res| match res {
+                Ok(o) => Either::Left(o),
+                Err(e) => Either::Right(e),
+            });
 
-        let (done, ongoing): (Vec<_>, Vec<_>) = range
-            .into_par_iter()
-            .with_min_len(128)
-            .partition_map(|index| type_for_declarator(index, ast, ty_db, &param_counters));
-
-        let mut errors = Vec::new();
-        for res in done {
-            let data = match res {
-                Ok(o) => o,
-                Err(e) => {
-                    errors.push(e);
-                    continue;
-                }
-            };
-
-            let mut node = ast.nodes.index_mut(data.index);
-            let info = node.read_data(&AstDeclarator::Ident);
-            node.write_data(&AstDeclarator::Ident, info.with_ty_id(data.ty_id));
-
-            let parent = ast.nodes.index(data.node_index as usize);
-            if let AstNodeKind::ParamDecl(_) = parent.kind {
-                param_counters
-                    .get_mut(parent.parent)
-                    .unwrap()
-                    .collected_params
-                    .push(Param {
-                        post_order: *parent.post_order,
-                        ty_id: data.ty_id,
-                    });
-            }
-        }
-
-        if errors.len() > 0 {
+        if done_err.len() > 0 {
             return Err(errors.pop().unwrap());
         }
 
-        range = ongoing;
+        for data in done_ok {
+            let decl = data.node_index;
+            if let AstNodeKind::ParamDecl(_) = info.kind[decl] {
+                let counter = param_counters.get_mut(&info.parent[decl]).unwrap();
+                counter.collected_params.push(Param {
+                    post_order: info.post_order[decl],
+                    ty_id: data.ty_id,
+                });
+            }
+        }
+
+        loop_count += 1;
+
+        (done, ongoing) = ongoing
+            .into_par_iter()
+            .with_min_len(128)
+            .partition_map(|index| type_for_declarator(index, info, ty_db, &param_counters));
+
+        if loop_count >= 20 || ongoing.len() == 0 {
+            break;
+        }
     }
 
-    if loop_count >= 20 {
+    if ongoing.len() > 0 {
         panic!("didn't finish");
     }
 
     return Ok(());
 }
 
-struct DeclaratorData {
-    index: usize,
-    ty_id: TyId,
-    node_index: u32,
+#[derive(Clone, Copy)]
+struct AstInfo<'a> {
+    kind: &'a [AstNodeKind],
+    parent: &'a [u32],
+    post_order: &'a [u32],
+    start: &'a [u32],
+    data: &'a [u64],
 }
 
-fn type_for_declarator(
-    decl_data: DeclaratorData,
-    ast: &ByKindAst,
+struct DeclaratorData<'a> {
+    ty_slot: &'a mut TyId,
+    index: usize,
+    ty_id: TyId,
+    node_index: usize,
+}
+
+fn type_for_declarator<'a>(
+    state: DeclaratorData<'a>,
+    info: AstInfo,
     ty_db: &TyDb,
     param_counters: &HashMap<u32, Params>,
-) -> Either<Result<DeclaratorData, Error>, DeclaratorData> {
-    let node = ast.nodes.index(decl_data.index);
-    let mut ty_id = decl_data.ty_id;
-
+) -> Either<Result<DeclaratorData<'a>, Error>, DeclaratorData<'a>> {
     // Use the list we created to add types to the type db
-    let mut node_index = *node.parent;
-    while let AstNodeKind::DerivedDeclarator(kind) = ast.nodes.kind[node_index as usize] {
-        let node = ast.nodes.index(node_index as usize);
+    let mut node_index = state.node_index;
+    let mut ty_id = state.ty_id;
+    while let AstNodeKind::DerivedDeclarator(kind) = info.kind[node_index] {
         match kind {
             AstDerivedDeclarator::Pointer => {
                 ty_id = ty_db.add_ptr(ty_id, TyQuals::new());
@@ -300,14 +215,15 @@ fn type_for_declarator(
                 let Params {
                     count,
                     collected_params,
-                } = param_counters.get(&node_index).unwrap_or(&dummy);
+                } = param_counters.get(&(node_index as u32)).unwrap_or(&dummy);
 
                 // We haven't finished collecting all the parameter types for this function;
                 // we save our place in the tree so that there's not any extra types created,
                 // and wait for the next loop to hopefully get more information.
                 if collected_params.len() < (*count as usize) {
                     return Either::Right(DeclaratorData {
-                        index: decl_data.index,
+                        index: state.index,
+                        ty_slot: state.ty_slot,
                         ty_id,
                         node_index,
                     });
@@ -325,18 +241,21 @@ fn type_for_declarator(
             _ => {
                 return Either::Left(Err(error!(
                     NotImplemented,
-                    "most derived declarators", *node.start
+                    "most derived declarators", info.start[node_index]
                 )))
             }
         }
 
-        node_index = ast.nodes.parent[node_index as usize];
+        node_index = info.parent[node_index] as usize;
     }
 
     // 7. Validate that types make sense for function definitions
 
+    *state.ty_slot = ty_id;
+
     return Either::Left(Ok(DeclaratorData {
-        index: decl_data.index,
+        index: state.index,
+        ty_slot: state.ty_slot,
         ty_id,
         node_index,
     }));
@@ -344,4 +263,93 @@ fn type_for_declarator(
 
 fn dup_type(start: u32) -> Error {
     return error!(todo, "two or more types for a single declaration", start);
+}
+
+#[derive(Default)]
+struct SpecifierTracker {
+    type_specifier: Option<TyId>,
+    has_int: bool,
+    has_sign: bool,
+}
+
+impl SpecifierTracker {
+    fn consume_specifier<'a>(
+        &mut self,
+        spec: AstSpecifier,
+        node: ast::AstNodeRef<'a>,
+    ) -> Result<(), Error> {
+        use AstSpecifier::*;
+
+        // ensure the combined specifiers are valid for the declaration
+        self.type_specifier = match (spec, self.type_specifier) {
+            (Void, Some(_)) => return Err(dup_type(*node.start)),
+            (Void, None) => Some(TyId::Void),
+
+            (Char, Some(TyId::S32 | TyId::U32)) if self.has_int => {
+                return Err(dup_type(*node.start))
+            }
+            (Char, Some(TyId::S32)) => Some(TyId::S8),
+            (Char, Some(TyId::U32)) => Some(TyId::U8),
+            (Char, Some(_)) => return Err(dup_type(*node.start)),
+            (Char, None) => Some(TyId::S8),
+
+            (Short, Some(TyId::S32) | None) => Some(TyId::S16),
+            (Short, Some(TyId::U32)) => Some(TyId::U16),
+            (Short, Some(_)) => return Err(dup_type(*node.start)),
+
+            (Long, Some(TyId::S32) | None) => Some(TyId::S64),
+            (Long, Some(TyId::U32)) => Some(TyId::U64),
+            (Long, Some(_)) => return Err(dup_type(*node.start)),
+
+            (Int, t @ (Some(TyId::U32 | TyId::S64 | TyId::U64 | TyId::S16 | TyId::U16) | None)) => {
+                if self.has_int {
+                    return Err(dup_type(*node.start));
+                } else {
+                    self.has_int = true;
+                    Some(t.unwrap_or(TyId::S32))
+                }
+            }
+            (Int, Some(_)) => return Err(dup_type(*node.start)),
+
+            // If we've already said "signed", then we shouldn't allow another sign-edness marker
+            // NOTE: if we've said "unsigned", that'll be represented in the TyId, so we don't need
+            // to use the `has_sign` field for that purpose.
+            (Unsigned | Signed, _) if self.has_sign => return Err(dup_type(*node.start)),
+
+            // Translate signed types to unsigned
+            (Unsigned, None | Some(TyId::S32)) => Some(TyId::U32),
+            (Unsigned, Some(TyId::S8)) => Some(TyId::U8),
+            (Unsigned, Some(TyId::S16)) => Some(TyId::U16),
+            (Unsigned, Some(TyId::S64)) => Some(TyId::U64),
+            (Unsigned, Some(_)) => return Err(dup_type(*node.start)),
+
+            (Signed, t @ (Some(TyId::S8 | TyId::S16 | TyId::S32 | TyId::S64) | None)) => {
+                self.has_sign = true;
+                Some(t.unwrap_or(TyId::S32))
+            }
+            (Signed, Some(_)) => return Err(dup_type(*node.start)),
+
+            (Float, Some(_)) => return Err(dup_type(*node.start)),
+            (Float, None) => Some(TyId::F32),
+
+            (Double, Some(_)) => return Err(dup_type(*node.start)),
+            (Double, None) => Some(TyId::F64),
+
+            (Ident | Struct(_), _) => {
+                return Err(error!(
+                    NotImplemented,
+                    "identifiers and structs not implemented yet", *node.start
+                ))
+            }
+
+            _ => {
+                return Err(error!(
+                    NotImplemented,
+                    "unsupported declaration specifier", *node.start
+                ))
+            }
+        };
+
+        Ok(())
+    }
 }
