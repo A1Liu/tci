@@ -61,7 +61,6 @@ In the UI:
 - Preprocessor General Info - https://gcc.gnu.org/onlinedocs/cpp/index.html
 - Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
 - Translation of C standard to AST types - https://github.com/vickenty/lang-c/blob/master/src/ast.rs
-- Precedence climbing method - https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
 - WASM interpreter to look into - https://github.com/paritytech/wasmi
@@ -76,3 +75,6 @@ In the UI:
 - [Precendence Climbing Explanation](https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing) -
   An explanation for precedence climbing with pseudo-code in Python that I use
   because I always forget the details.
+- GNU GCC's [Documentation](https://gcc.gnu.org/onlinedocs/cpp/index.html)
+  and [Internals Documentation](https://gcc.gnu.org/onlinedocs/cppinternals/index.html) - 
+  Documentation that acted as a reference when building the lexer/macro code
