@@ -73,3 +73,6 @@ In the UI:
   TCI used the source of `lang-c` as a reference and as inspiration when designing the AST.
   `lang-c` source code was also very useful as a point of reference for the C specification,
   because specifications are difficult to read.
+- [Precendence Climbing Explanation](https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing) -
+  An explanation for precedence climbing with pseudo-code in Python that I use
+  because I always forget the details.
