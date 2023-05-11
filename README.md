@@ -66,4 +66,3 @@ In the UI:
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
 - WASM interpreter to look into - https://github.com/paritytech/wasmi
-- WASM binary format
