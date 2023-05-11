@@ -39,7 +39,7 @@ pub fn validate_scopes<'a>(
     ast: &mut AstNodeVec,
     symbols: &'a SymbolTable,
 ) -> Result<Scopes<'a>, Error> {
-    let scopes = ast.collect_to_parents(0..ast.len(), |node| {
+    let scope_tree = ast.collect_to_parents(0..ast.len(), |node| {
         let kind = match node.kind {
             AstNodeKind::Declarator(d) => d,
             _ => return None,
@@ -52,6 +52,7 @@ pub fn validate_scopes<'a>(
                 AstNodeKind::FunctionDefinition(_)
                 | AstNodeKind::Declaration(_)
                 | AstNodeKind::ParamDecl(_) => break,
+
                 AstNodeKind::DerivedDeclarator(_) => index = ast.parent[index as usize],
                 x => panic!("{:?}", x),
             }
@@ -67,30 +68,31 @@ pub fn validate_scopes<'a>(
         return Some((scope_id, info));
     });
 
-    let (scopes, mut errors): (HashMap<_, _>, Vec<_>) =
-        scopes.into_par_iter().partition_map(|(scope_id, decls)| {
-            let len = decls.len();
+    let (scope_tree, errors): (HashMap<_, _>, Vec<_>) =
+        scope_tree
+            .into_par_iter()
+            .partition_map(|(scope_id, decls)| {
+                let mut decls_map = HashMap::new();
+                let (_, errors): ((), Vec<_>) = decls.into_iter().partition_map(|decl| {
+                    match decls_map.insert(decl.symbol, decl) {
+                        None => Either::Left(()),
+                        Some(prev_decl) => Either::Right(error!(
+                            Todo,
+                            "duplicate identifier", ast.start[decl.id as usize]
+                        )),
+                    }
+                });
 
-            let mut decls_map = HashMap::new();
-            let mut errors = Vec::new();
-            for decl in decls {
-                if let Some(prev_decl) = decls_map.insert(decl.symbol, decl) {
-                    errors.push(error!(
-                        Todo,
-                        "duplicate identifier", ast.start[decl.id as usize]
-                    ));
+                match errors.len() {
+                    0 => return Either::Left((scope_id, decls_map)),
+                    _ => return Either::Right(errors),
                 }
-            }
+            });
 
-            if errors.len() != 0 {
-                return Either::Right(errors);
-            }
-
-            return Either::Left((scope_id, decls_map));
-        });
-
-    if errors.len() != 0 {
-        return Err(errors.pop().unwrap().pop().unwrap());
+    for es in errors {
+        for e in es {
+            return Err(e);
+        }
     }
 
     // collapse declarators into their scopes
@@ -100,6 +102,6 @@ pub fn validate_scopes<'a>(
 
     return Ok(Scopes {
         symbols,
-        scope_tree: scopes,
+        scope_tree,
     });
 }
