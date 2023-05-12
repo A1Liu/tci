@@ -191,22 +191,8 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     let mut parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
     out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
-    let scopes =
-        match pass::declaration_scopes::validate_scopes(&mut parsed_ast, &lexer_res.symbols) {
-            Ok(s) => s,
-            Err(e) => {
-                out.ast_validation = StageOutput::Err(e);
-                return out;
-            }
-        };
-
-    if let Err(e) = pass::declaration_types::validate_declarations(&mut parsed_ast, &out.ty_db) {
-        out.ast_validation = StageOutput::Err(e);
-        return out;
-    }
-
-    if let Err(e) = pass::expr_types::validate_exprs(&mut parsed_ast) {
-        out.ast_validation = StageOutput::Err(e);
+    if let Err(mut e) = pass::validate(&mut parsed_ast, &out.ty_db, &lexer_res.symbols) {
+        out.ast_validation = StageOutput::Err(e.pop().unwrap());
         return out;
     }
 

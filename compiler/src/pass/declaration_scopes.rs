@@ -38,7 +38,7 @@ pub struct DeclInfo {
 pub fn validate_scopes<'a>(
     ast: &mut AstNodeVec,
     symbols: &'a SymbolTable,
-) -> Result<Scopes<'a>, Error> {
+) -> Result<Scopes<'a>, Vec<Error>> {
     let scope_tree = ast.collect_to_parents(0..ast.len(), |node| {
         let kind = match node.kind {
             AstNodeKind::Declarator(d) => d,
@@ -88,8 +88,10 @@ pub fn validate_scopes<'a>(
                 }
             });
 
-    for e in errors.into_iter().flatten() {
-        return Err(e);
+    let errors: Vec<_> = errors.into_iter().flatten().collect();
+
+    if errors.len() > 0 {
+        return Err(errors);
     }
 
     // collapse declarators into their scopes

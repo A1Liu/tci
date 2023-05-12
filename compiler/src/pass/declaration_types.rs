@@ -34,7 +34,7 @@ struct Params {
     collected_params: Vec<Param>,
 }
 
-pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), Error> {
+pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), Vec<Error>> {
     // NOTE: Going to early-return on the first error for now; ideally
     // we can return multiple errors instead though
 
@@ -45,7 +45,7 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
 
     // Build summary of all specifiers for each node with a specifier
 
-    let (trackers, mut errors): (HashMap<_, _>, Vec<_>) =
+    let (trackers, errors): (HashMap<_, _>, Vec<_>) =
         specifiers
             .into_par_iter()
             .partition_map(|(parent_index, specifiers)| {
@@ -73,10 +73,11 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
             });
 
     if errors.len() > 0 {
-        return Err(errors.pop().unwrap());
+        return Err(errors);
     }
 
     let mut param_counters: HashMap<u32, Params> = HashMap::new();
+    let mut errors = Vec::new();
     for (&node_id, &ty_id) in &trackers {
         // ensure the specifiers' parent is a declaration of some kind
         let node = ast.index_mut(node_id as usize);
@@ -86,10 +87,17 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
         match *node.kind {
             AstNodeKind::Declaration(_) | AstNodeKind::FunctionDefinition(_) => {}
             AstNodeKind::ParamDecl(_) => param_counters.entry(*node.parent).or_default().count += 1,
-            _ => throw!(Tci, "specifier attached to non-declaration", *node.start),
+            _ => errors.push(error!(
+                Tci,
+                "specifier attached to non-declaration", *node.start
+            )),
         };
 
         *node.ty_id = ty_id;
+    }
+
+    if errors.len() > 0 {
+        return Err(errors);
     }
 
     let info = AstInfo {
@@ -148,7 +156,7 @@ pub fn validate_declarations(ast: &mut AstNodeVec, ty_db: &TyDb) -> Result<(), E
             });
 
         if done_err.len() > 0 {
-            return Err(errors.pop().unwrap());
+            return Err(errors);
         }
 
         for data in done_ok {

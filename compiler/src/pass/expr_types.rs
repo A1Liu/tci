@@ -7,7 +7,7 @@ Validate expressions.
 
 use crate::api::*;
 
-pub fn validate_exprs(ast: &mut AstNodeVec) -> Result<(), Error> {
+pub fn validate_exprs(ast: &mut AstNodeVec) -> Result<(), Vec<Error>> {
     let kind = &ast.kind;
 
     let v: Vec<_> = ast

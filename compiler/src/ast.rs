@@ -426,4 +426,33 @@ impl AstNodeVec {
                 },
             );
     }
+
+    pub fn parent_chain<'a>(&'a self, start: usize) -> ParentIter<'a> {
+        return ParentIter {
+            ast: self,
+            index: Some(start),
+        };
+    }
+}
+
+// Eh maybe this isn't useful, not sure yet. It seemed useful but eh
+pub struct ParentIter<'a> {
+    ast: &'a AstNodeVec,
+    index: Option<usize>,
+}
+
+impl<'a> Iterator for ParentIter<'a> {
+    type Item = AstNodeRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.index?;
+
+        let parent = self.ast.parent[index] as usize;
+        self.index = match parent == index {
+            true => None,
+            false => Some(parent),
+        };
+
+        return Some(self.ast.index(index));
+    }
 }
