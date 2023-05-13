@@ -7,6 +7,7 @@ Validate expressions.
 
 use crate::api::*;
 
+// TODO: take in blocks, and run in series for each block
 pub fn validate_exprs(ast: &mut AstNodeVec) -> Result<(), Vec<Error>> {
     let kind = &ast.kind;
 
