@@ -22,7 +22,8 @@ pub fn validate(
     let blocks = cut_blocks::create_basic_blocks(ast);
 
     for block in blocks.blocks {
-        println!("{:?}", &ast.kind[block.range]);
+        // Should never have any control flow statements in it
+        dbg!("{:?}", &ast.kind[block.range]);
     }
 
     declaration_types::validate_declarations(ast, ty_db)?;
