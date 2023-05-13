@@ -5,10 +5,11 @@ Validate expressions.
 - Validate return statements
  */
 
+use super::cut_blocks::BBlockCuts;
 use crate::api::*;
 
-// TODO: take in blocks, and run in series for each block
-pub fn validate_exprs(ast: &mut AstNodeVec) -> Result<(), Vec<Error>> {
+// TODO: take in blocks, and run in series for each block, traversing using postorder semantics
+pub fn validate_exprs(ast: &mut AstNodeVec, blocks: &BBlockCuts) -> Result<(), Vec<Error>> {
     let kind = &ast.kind;
 
     let v: Vec<_> = ast

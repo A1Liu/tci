@@ -21,13 +21,13 @@ pub fn validate(
 
     let blocks = cut_blocks::create_basic_blocks(ast);
 
-    for block in blocks.blocks {
+    for block in &blocks.blocks {
         // Should never have any control flow statements in it
-        dbg!("{:?}", &ast.kind[block.range]);
+        dbg!(&ast.kind[block.range.clone()]);
     }
 
     declaration_types::validate_declarations(ast, ty_db)?;
-    expr_types::validate_exprs(ast)?;
+    expr_types::validate_exprs(ast, &blocks)?;
 
     return Ok(());
 }
