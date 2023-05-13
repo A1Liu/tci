@@ -456,3 +456,32 @@ impl<'a> Iterator for ParentIter<'a> {
         return Some(self.ast.index(index));
     }
 }
+
+/// Split a mut slice by ranges
+pub fn split_by_ranges<'a, T>(
+    mut values: &'a mut [T],
+    mut ranges: Vec<core::ops::Range<usize>>,
+) -> Vec<(usize, &'a mut [T])> {
+    let mut out = Vec::new();
+    ranges.sort_by_key(|r| r.start);
+
+    let mut current_index = 0;
+    for range in ranges {
+        if range.start >= range.end {
+            // Range is empty
+            continue;
+        }
+
+        if current_index > range.start {
+            panic!("ranges overlapped");
+        }
+
+        let (left, right) = values.split_at_mut(range.end - current_index);
+        values = right;
+
+        out.push((range.start, &mut left[(range.start - current_index)..]));
+        current_index = range.end;
+    }
+
+    return out;
+}
