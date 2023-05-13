@@ -3,6 +3,7 @@ Validate AST structure.
 
 - Ensure that function definitions are always global
 - Ensure that struct field declarators aren't abstract
+- TODO: Function definitions with non-function declarators, function definitions with abstract declarators
  */
 use crate::api::*;
 
