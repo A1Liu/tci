@@ -173,7 +173,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
+pub fn parse(tokens: &TokenVec) -> Result<(AstNodeVec, Scopes), Error> {
     let tracker = Cell::new(ParserTracker {
         ast: AstNodeVec::new(),
     });
@@ -190,7 +190,9 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
         parse_global(&mut parser)?;
     }
 
-    return Ok(tracker.into_inner().ast);
+    let scopes = parser.scope_builder.finish();
+
+    return Ok((tracker.into_inner().ast, scopes));
 }
 
 fn parse_global(p: &mut Parser) -> Result<(), Error> {
@@ -699,8 +701,8 @@ pub struct Scopes {
     // It can't be deallocated in one shot when compilation ends, but there is
     // some argument you could make that its unnecessary to get that behavior.
     // I think the size of this structure might not be so big, so maybe its fine.
-    scopes: BTreeMap<Scope, ScopeInfo>,
-    declarators: BTreeMap<u32, Scope>,
+    pub scopes: BTreeMap<Scope, ScopeInfo>,
+    pub declarators: BTreeMap<u32, Scope>,
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -721,12 +723,12 @@ impl From<u64> for Scope {
 
 #[derive(Clone)]
 pub struct ScopeInfo {
-    node_id: u32,
+    pub node_id: u32,
 
     // values reference declarators, which are stored in the declarators field of `Scopes`
-    symbols: BTreeMap<Symbol, u32>,
-    duplicates: Vec<(u32, Symbol)>,
-    parent: Scope,
+    pub symbols: BTreeMap<Symbol, u32>,
+    pub duplicates: Vec<(u32, Symbol)>,
+    pub parent: Scope,
 }
 
 struct ScopeBuilder {
