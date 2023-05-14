@@ -2,7 +2,7 @@
 This module describes the AST created by the parser.
 */
 
-use crate::api::*;
+use crate::{api::*, parser::Scope};
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
@@ -176,7 +176,7 @@ pub enum AstStatement {
     Goto,               // data: label ; children: statement that is being labelled
     Expr,               // children: expression
     Branch,             // children: condition, if_true body, if_false body
-    Block,              // children: statements; maybe this is unnecessary
+    Block(AstBlock),    // children: statements; maybe this is unnecessary
     For,                // children: start expression, condition, post expression, body
     ForDecl,            // children: declaration, condition, post expression, body
     While,              // children: condition expression, body
@@ -185,6 +185,19 @@ pub enum AstStatement {
     Ret,                // children: optional expression to return
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AstBlock;
+
+impl AstInterpretData for AstBlock {
+    type AstData = Scope;
+}
+
+impl Into<AstNodeKind> for AstBlock {
+    fn into(self) -> AstNodeKind {
+        AstNodeKind::Statement(AstStatement::Block(AstBlock))
+    }
 }
 
 /// A derived declarator. This is the `*const` part of

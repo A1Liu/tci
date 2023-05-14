@@ -61,6 +61,8 @@ In the UI:
 - (?) Use laziness in the lexer to reduce memory consumption
 - (?) Run scope computations in the parser
 - (?) Build indices during parsing
+- (?) Switch from `u64` data to `u32` data in the AST, and then anything
+  that needs 64 bits should use multiple nodes
 
 ## Resources
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor

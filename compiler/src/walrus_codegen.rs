@@ -52,7 +52,7 @@ pub fn codegen(ast: &AstNodeVec) -> Vec<u8> {
                 },
 
                 AstNodeKind::Statement(s) => match s {
-                    AstStatement::Block => continue,
+                    AstStatement::Block(_) => continue,
 
                     AstStatement::Ret => builder.return_(),
                     AstStatement::Expr => builder.drop(),
