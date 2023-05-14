@@ -57,6 +57,11 @@ In the UI:
 - [ ] User interface for runtime/compiler options
 - [ ] Compiler errors/warnings pop up as messages in the editor
 
+## Performance
+- (?) Use laziness in the lexer to reduce memory consumption
+- (?) Run scope computations in the parser
+- (?) Build indices during parsing
+
 ## Resources
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
