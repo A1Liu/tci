@@ -13,7 +13,7 @@ pub fn codegen(ast: &AstNodeVec) -> Vec<u8> {
             let is_global = parent == *current.id;
 
             match (*node.kind, is_global) {
-                // global declarations aren't part of generated runtime code
+                // global declarations aren't part of generated runtime code yet
                 (AstNodeKind::Declaration(_), true) => return None,
 
                 (_, true) => break,
@@ -27,6 +27,8 @@ pub fn codegen(ast: &AstNodeVec) -> Vec<u8> {
         return Some(*current.id);
     });
 
+    let mut local_map = HashMap::new();
+
     for (parent, range) in ranges {
         let mut func = FunctionBuilder::new(&mut module.types, &[], &[ValType::I32]);
 
@@ -39,14 +41,27 @@ pub fn codegen(ast: &AstNodeVec) -> Vec<u8> {
                 AstNodeKind::Specifier(_) => continue,
 
                 // TODO
-                AstNodeKind::Declarator(_) => continue,
                 AstNodeKind::DerivedDeclarator(_) => continue,
                 AstNodeKind::Declaration(_) => continue,
                 AstNodeKind::ParamDecl(_) => continue,
                 AstNodeKind::FunctionDefinition(_) => continue,
 
+                AstNodeKind::Declarator(_) => {
+                    let ty = *node.ty_id;
+                    if ty != TyId::S32 {
+                        unimplemented!();
+                    }
+
+                    let local_id = module.locals.add(ValType::I32);
+                    let prev_id = local_map.insert(id, local_id);
+
+                    debug_assert!(prev_id.is_none());
+                    continue;
+                }
+
                 AstNodeKind::Expr(e) => match e {
                     AstExpr::IntLit(i) => builder.i32_const(node.read_data(&i) as u32 as i32),
+
                     x => unimplemented!("Expr not implemented: {:?}", x),
                 },
 

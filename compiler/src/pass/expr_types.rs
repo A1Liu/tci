@@ -9,7 +9,11 @@ use super::cut_blocks::BBlockCuts;
 use crate::api::*;
 
 // TODO: take in blocks, and run in series for each block, traversing using postorder semantics
-pub fn validate_exprs(ast: &mut AstNodeVec, blocks: &BBlockCuts) -> Result<(), Vec<Error>> {
+pub fn validate_exprs(
+    ast: &mut AstNodeVec,
+    scopes: &Scopes,
+    blocks: &BBlockCuts,
+) -> Result<(), Vec<Error>> {
     let kind = &ast.kind;
 
     let block_ranges = ast::split_by_ranges(
@@ -17,10 +21,15 @@ pub fn validate_exprs(ast: &mut AstNodeVec, blocks: &BBlockCuts) -> Result<(), V
         blocks.blocks.iter().map(|b| b.range.clone()).collect(),
     );
 
-    block_ranges
+    let errors: Vec<_> = block_ranges
         .into_par_iter()
-        .for_each(|(start_index, type_slots)| {
-            let kinds = &ast.kind[start_index..(start_index + type_slots.len())];
+        .flat_map(|(start_index, type_slots)| {
+            let range = start_index..(start_index + type_slots.len());
+            let kinds = &ast.kind[range.clone()];
+            let starts = &ast.start[range.clone()];
+            let data = &ast.data[range.clone()];
+
+            let mut errors = Vec::new();
 
             let expr_kinds = kinds
                 .iter()
@@ -32,12 +41,34 @@ pub fn validate_exprs(ast: &mut AstNodeVec, blocks: &BBlockCuts) -> Result<(), V
                 });
 
             for (index, expr) in expr_kinds {
+                let node_index = index + start_index;
                 type_slots[index] = match expr {
                     AstExpr::IntLit(_) => TyId::S32,
-                    _ => panic!("OOOF"),
+                    AstExpr::Ident(i) => {
+                        let sym = i.read(data[index]);
+                        let scope = scopes.scope_for_id(node_index as u32);
+
+                        match scopes.search_for_symbol(scope, sym) {
+                            None => {
+                                errors.push(error!(Todo, "identifier not found", starts[index]));
+                                continue;
+                            }
+
+                            Some(id) => {
+                                // found symbol
+                            }
+                        }
+
+                        TyId::S32
+                    }
+
+                    b => panic!("OOOF {:?}", b),
                 };
             }
-        });
+
+            return errors.into_par_iter();
+        })
+        .collect();
 
     return Ok(());
 }

@@ -487,11 +487,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
 fn parse_statement(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
-    let res = 'stmt: {
-        if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
-            break 'stmt res;
-        }
+    if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
+        return Ok(res);
+    }
 
+    let res = 'stmt: {
         if let Some(res) = parse_block(p)? {
             break 'stmt res;
         }

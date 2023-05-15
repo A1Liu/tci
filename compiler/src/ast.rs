@@ -6,6 +6,10 @@ use crate::{api::*, parser::Scope};
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
+
+    fn read(&self, data: u64) -> Self::AstData {
+        return data.into();
+    }
 }
 
 #[derive(Debug, Clone, Copy, StructOfArray, serde::Serialize, serde::Deserialize)]

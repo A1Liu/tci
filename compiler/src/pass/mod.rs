@@ -13,7 +13,7 @@ pub mod types;
 pub fn validate(ast: &mut AstNodeVec, ty_db: &TyDb, scopes: &Scopes) -> Result<(), Vec<Error>> {
     ast_structure::validate_structure(ast)?;
 
-    let scopes = declaration_scopes::validate_scopes(ast, scopes)?;
+    declaration_scopes::validate_scopes(ast, scopes)?;
 
     let blocks = cut_blocks::create_basic_blocks(ast);
 
@@ -23,7 +23,7 @@ pub fn validate(ast: &mut AstNodeVec, ty_db: &TyDb, scopes: &Scopes) -> Result<(
     }
 
     declaration_types::validate_declarations(ast, ty_db)?;
-    expr_types::validate_exprs(ast, &blocks)?;
+    expr_types::validate_exprs(ast, scopes, &blocks)?;
 
     return Ok(());
 }
