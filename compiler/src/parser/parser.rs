@@ -515,7 +515,7 @@ fn parse_block(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
         return Ok(None);
     }
 
-    let scope = p.scope_builder.add_scope();
+    let scope = p.scope_builder.open_scope(p.index);
 
     p.index += 1;
 
@@ -702,7 +702,41 @@ pub struct Scopes {
     // some argument you could make that its unnecessary to get that behavior.
     // I think the size of this structure might not be so big, so maybe its fine.
     pub scopes: BTreeMap<Scope, ScopeInfo>,
+    pub scope_ranges: BTreeMap<usize, ScopeRangeInfo>,
     pub declarators: BTreeMap<u32, Scope>,
+}
+
+impl Scopes {
+    pub fn search_for_symbol(&self, starting_scope: Scope, sym: Symbol) -> Option<u32> {
+        let mut scope = starting_scope;
+
+        loop {
+            let scope_info = self.scopes.get(&scope).unwrap();
+
+            if let Some(sym_info) = scope_info.symbols.get(&sym) {
+                return Some(*sym_info);
+            }
+
+            if scope == GLOBAL_SCOPE {
+                break;
+            }
+
+            scope = scope_info.parent;
+        }
+
+        return None;
+    }
+
+    pub fn scope_for_id(&self, id: u32) -> Scope {
+        let id = id as usize;
+        for (key, info) in self.scope_ranges.range(..(id + 1)).rev() {
+            debug_assert!(*key <= id);
+
+            return info.scope;
+        }
+
+        unreachable!();
+    }
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -719,6 +753,11 @@ impl From<u64> for Scope {
     fn from(value: u64) -> Self {
         Self(value as u32)
     }
+}
+
+#[derive(Clone)]
+pub struct ScopeRangeInfo {
+    pub scope: Scope,
 }
 
 #[derive(Clone)]
@@ -752,6 +791,13 @@ impl ScopeBuilder {
             },
         );
 
+        scopes.scope_ranges.insert(
+            0,
+            ScopeRangeInfo {
+                scope: GLOBAL_SCOPE,
+            },
+        );
+
         return Self {
             scopes,
             next_scope_id: 0,
@@ -759,7 +805,7 @@ impl ScopeBuilder {
         };
     }
 
-    fn add_scope(&mut self) -> Scope {
+    fn open_scope(&mut self, index: usize) -> Scope {
         let scope = Scope(self.next_scope_id);
         self.next_scope_id += 1;
 
@@ -774,6 +820,12 @@ impl ScopeBuilder {
         );
 
         debug_assert!(prev.is_none(), "found duplicate scope");
+
+        self.scopes
+            .scope_ranges
+            .insert(index, ScopeRangeInfo { scope });
+
+        self.current_scope = scope;
 
         return scope;
     }

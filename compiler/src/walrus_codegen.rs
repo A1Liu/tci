@@ -1,6 +1,5 @@
-use walrus::*;
-
 use crate::api::*;
+use walrus::*;
 
 pub fn codegen(ast: &AstNodeVec) -> Vec<u8> {
     let config = ModuleConfig::new();
