@@ -729,6 +729,12 @@ impl Scopes {
 
     pub fn scope_for_id(&self, id: u32) -> Scope {
         let id = id as usize;
+
+        // This is just trying to get the maximum element lower than or equal to `id` ;
+        // `upper_bound` is still not in BTreeMap, and it still does weirdo cursor/iterator
+        // shit instead of simply returning the single value that I want. It's unclear if
+        // they will ever add such an API.
+        //                                - Albert Liu, May 17, 2023 Wed 01:40
         for (key, info) in self.scope_ranges.range(..(id + 1)).rev() {
             debug_assert!(*key <= id);
 

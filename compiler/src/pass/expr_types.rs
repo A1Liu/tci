@@ -72,3 +72,14 @@ pub fn validate_exprs(
 
     return Ok(());
 }
+
+struct ExprStackEntry {
+    id: u32,
+    ty_id: TyId,
+    l_value: Option<LValue>,
+}
+
+enum LValue {
+    Var,
+    Ptr,
+}

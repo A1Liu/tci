@@ -68,6 +68,7 @@ In the UI:
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
 - WASM interpreter to look into - https://github.com/paritytech/wasmi
+- Copy-and-Patch Technique to look into - https://github.com/sillycross/wasmnow
 
 ## Credits
 - [Aaron Hsu's PhD Thesis on Data-Parallel Compiler Architecture](https://scholarworks.iu.edu/dspace/handle/2022/24749) -
