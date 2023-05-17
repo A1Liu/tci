@@ -57,12 +57,29 @@ In the UI:
 - [ ] User interface for runtime/compiler options
 - [ ] Compiler errors/warnings pop up as messages in the editor
 
+## Performance
+- (?) Use laziness in the lexer to reduce memory consumption
+- (?) Run scope computations in the parser
+- (?) Build indices during parsing
+- (?) Switch from `u64` data to `u32` data in the AST, and then anything
+  that needs 64 bits should use multiple nodes
+
 ## Resources
-- Compiler Architecture - https://scholarworks.iu.edu/dspace/handle/2022/24749
-- Preprocessor General Info - https://gcc.gnu.org/onlinedocs/cpp/index.html
-- Macro Expansion Algo - https://gcc.gnu.org/onlinedocs/cppinternals/index.html
-- Translation of C standard to AST types - https://github.com/vickenty/lang-c/blob/master/src/ast.rs
-- Precedence climbing method - https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing
 - Monaco Editor Quick Fixes - https://stackoverflow.com/questions/57994101/show-quick-fix-for-an-error-in-monaco-editor
 - Fuzzer to look into - https://github.com/rust-fuzz/afl.rs
 - WASM interpreter to look into - https://github.com/paritytech/wasmi
+- Copy-and-Patch Technique to look into - https://github.com/sillycross/wasmnow
+
+## Credits
+- [Aaron Hsu's PhD Thesis on Data-Parallel Compiler Architecture](https://scholarworks.iu.edu/dspace/handle/2022/24749) -
+  TCI's architecture is almost fully based on work done in 2019 by Aaron Hsu.
+- [`lang-c` by `vickenty`](https://github.com/vickenty/lang-c) -
+  TCI used the source of `lang-c` as a reference and as inspiration when designing the AST.
+  `lang-c` source code was also very useful as a point of reference for the C specification,
+  because specifications are difficult to read.
+- [Precendence Climbing Explanation](https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing) -
+  An explanation for precedence climbing with pseudo-code in Python that I use
+  because I always forget the details.
+- GNU GCC's [Documentation](https://gcc.gnu.org/onlinedocs/cpp/index.html)
+  and [Internals Documentation](https://gcc.gnu.org/onlinedocs/cppinternals/index.html) - 
+  Documentation that acted as a reference when building the lexer/macro code

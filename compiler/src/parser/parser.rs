@@ -22,7 +22,7 @@ later.
 
 use crate::{
     api::*,
-    ast::{AstIdentExpr, AstParamDecl},
+    ast::{AstBlock, AstIdentExpr, AstParamDecl},
 };
 use std::cell::Cell;
 
@@ -37,6 +37,7 @@ struct Parser<'a> {
     // are shadowed
     tracker: &'a Cell<ParserTracker>,
 
+    scope_builder: ScopeBuilder,
     tokens: TokenSlice<'a>,
     index: usize,
 }
@@ -172,7 +173,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
+pub fn parse(tokens: &TokenVec) -> Result<(AstNodeVec, Scopes), Error> {
     let tracker = Cell::new(ParserTracker {
         ast: AstNodeVec::new(),
     });
@@ -180,6 +181,7 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
     let mut parser = Parser {
         tracker: &tracker,
 
+        scope_builder: ScopeBuilder::new(),
         tokens: tokens.as_slice(),
         index: 0,
     };
@@ -188,7 +190,9 @@ pub fn parse(tokens: &TokenVec) -> Result<AstNodeVec, Error> {
         parse_global(&mut parser)?;
     }
 
-    return Ok(tracker.into_inner().ast);
+    let scopes = parser.scope_builder.finish();
+
+    return Ok((tracker.into_inner().ast, scopes));
 }
 
 fn parse_global(p: &mut Parser) -> Result<(), Error> {
@@ -269,6 +273,7 @@ fn parse_declaration_specifier(p: &mut Parser) -> Option<NodeResult> {
         TokenKind::Volatile => ast::AstSpecifier::Volatile,
         TokenKind::Const => ast::AstSpecifier::Const,
         TokenKind::Restrict => ast::AstSpecifier::Restrict,
+        TokenKind::Typedef => ast::AstSpecifier::Typedef,
 
         _ => return None,
     };
@@ -324,10 +329,13 @@ fn parse_postfix_declarator(p: &mut Parser) -> Result<NodeResult, Error> {
                 let data: Symbol = p.tokens.data[p.index].into();
                 p.index += 1;
 
-                p.push_data(node, AstDeclarator::Ident, data)
+                let res = p.push_data(node, AstDeclarator::Ident, data);
+                p.scope_builder.add_name(res.post_order, data);
+
+                res
             }
 
-            _ => p.push_data(node, AstDeclarator::Ident, Symbol::NullSymbol),
+            _ => p.push_data(node, AstDeclarator::Abstract, Symbol::NullSymbol),
         }
     };
 
@@ -479,11 +487,11 @@ fn parse_func_declarator(p: &mut Parser, kind: FuncDeclKind) -> Result<Option<No
 fn parse_statement(p: &mut Parser) -> Result<NodeResult, Error> {
     let node = &mut p.track_node();
 
-    let res = 'stmt: {
-        if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
-            break 'stmt res;
-        }
+    if let Some(res) = parse_declaration(p, DeclarationKind::Variable)? {
+        return Ok(res);
+    }
 
+    let res = 'stmt: {
         if let Some(res) = parse_block(p)? {
             break 'stmt res;
         }
@@ -507,6 +515,8 @@ fn parse_block(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
         return Ok(None);
     }
 
+    let scope = p.scope_builder.open_scope(p.index);
+
     p.index += 1;
 
     while p.peek_kind() == TokenKind::Semicolon {
@@ -518,7 +528,10 @@ fn parse_block(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
     }
 
     p.index += 1;
-    return Ok(Some(p.push(node, AstStatement::Block)));
+    let res = p.push_data(node, AstBlock, scope);
+    p.scope_builder.end_scope(res);
+
+    return Ok(Some(res));
 }
 
 fn parse_return(p: &mut Parser) -> Result<Option<NodeResult>, Error> {
@@ -680,4 +693,165 @@ fn expect_semicolon(p: &mut Parser) -> Result<(), Error> {
     }
 
     return Ok(());
+}
+
+#[derive(Clone, Default)]
+pub struct Scopes {
+    // This data structure maybe doesn't need to be a btree? I don't like that
+    // It can't be deallocated in one shot when compilation ends, but there is
+    // some argument you could make that its unnecessary to get that behavior.
+    // I think the size of this structure might not be so big, so maybe its fine.
+    pub scopes: BTreeMap<Scope, ScopeInfo>,
+    pub scope_ranges: BTreeMap<usize, ScopeRangeInfo>,
+    pub declarators: BTreeMap<u32, Scope>,
+}
+
+impl Scopes {
+    pub fn search_for_symbol(&self, starting_scope: Scope, sym: Symbol) -> Option<u32> {
+        let mut scope = starting_scope;
+
+        loop {
+            let scope_info = self.scopes.get(&scope).unwrap();
+
+            if let Some(sym_info) = scope_info.symbols.get(&sym) {
+                return Some(*sym_info);
+            }
+
+            if scope == GLOBAL_SCOPE {
+                break;
+            }
+
+            scope = scope_info.parent;
+        }
+
+        return None;
+    }
+
+    pub fn scope_for_id(&self, id: u32) -> Scope {
+        let id = id as usize;
+
+        // This is just trying to get the maximum element lower than or equal to `id` ;
+        // `upper_bound` is still not in BTreeMap, and it still does weirdo cursor/iterator
+        // shit instead of simply returning the single value that I want. It's unclear if
+        // they will ever add such an API.
+        //                                - Albert Liu, May 17, 2023 Wed 01:40
+        for (key, info) in self.scope_ranges.range(..(id + 1)).rev() {
+            debug_assert!(*key <= id);
+
+            return info.scope;
+        }
+
+        unreachable!();
+    }
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Scope(u32);
+
+impl Into<u64> for Scope {
+    fn into(self) -> u64 {
+        self.0 as u64
+    }
+}
+
+impl From<u64> for Scope {
+    fn from(value: u64) -> Self {
+        Self(value as u32)
+    }
+}
+
+#[derive(Clone)]
+pub struct ScopeRangeInfo {
+    pub scope: Scope,
+}
+
+#[derive(Clone)]
+pub struct ScopeInfo {
+    pub node_id: u32,
+
+    // values reference declarators, which are stored in the declarators field of `Scopes`
+    pub symbols: BTreeMap<Symbol, u32>,
+    pub duplicates: Vec<(u32, Symbol)>,
+    pub parent: Scope,
+}
+
+struct ScopeBuilder {
+    scopes: Scopes,
+    current_scope: Scope,
+    next_scope_id: u32,
+}
+
+const GLOBAL_SCOPE: Scope = Scope(!0);
+
+impl ScopeBuilder {
+    fn new() -> Self {
+        let mut scopes = Scopes::default();
+        scopes.scopes.insert(
+            GLOBAL_SCOPE,
+            ScopeInfo {
+                node_id: !0, // What's supposed to be here?
+                symbols: BTreeMap::new(),
+                duplicates: Vec::new(),
+                parent: GLOBAL_SCOPE,
+            },
+        );
+
+        scopes.scope_ranges.insert(
+            0,
+            ScopeRangeInfo {
+                scope: GLOBAL_SCOPE,
+            },
+        );
+
+        return Self {
+            scopes,
+            next_scope_id: 0,
+            current_scope: GLOBAL_SCOPE,
+        };
+    }
+
+    fn open_scope(&mut self, index: usize) -> Scope {
+        let scope = Scope(self.next_scope_id);
+        self.next_scope_id += 1;
+
+        let prev = self.scopes.scopes.insert(
+            scope,
+            ScopeInfo {
+                node_id: !0,
+                symbols: BTreeMap::new(),
+                duplicates: Vec::new(),
+                parent: self.current_scope,
+            },
+        );
+
+        debug_assert!(prev.is_none(), "found duplicate scope");
+
+        self.scopes
+            .scope_ranges
+            .insert(index, ScopeRangeInfo { scope });
+
+        self.current_scope = scope;
+
+        return scope;
+    }
+
+    fn end_scope(&mut self, res: NodeResult) {
+        let info = self.scopes.scopes.get_mut(&self.current_scope).unwrap();
+        info.node_id = res.post_order;
+        self.current_scope = info.parent;
+    }
+
+    fn finish(self) -> Scopes {
+        return self.scopes;
+    }
+
+    fn add_name(&mut self, id: u32, symbol: Symbol) {
+        let info = self.scopes.scopes.get_mut(&self.current_scope).unwrap();
+        if let Some(prev) = info.symbols.insert(symbol, id) {
+            // This is probably invalid code, because a symbol was re-declared in the same scope.
+            // However, we don't *know* that for certain yet. We also don't really care yet.
+            info.duplicates.push((prev, symbol));
+        }
+    }
 }

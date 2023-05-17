@@ -2,10 +2,14 @@
 This module describes the AST created by the parser.
 */
 
-use crate::api::*;
+use crate::{api::*, parser::Scope};
 
 pub trait AstInterpretData {
     type AstData: From<u64> + Into<u64>;
+
+    fn read(&self, data: u64) -> Self::AstData {
+        return data.into();
+    }
 }
 
 #[derive(Debug, Clone, Copy, StructOfArray, serde::Serialize, serde::Deserialize)]
@@ -176,7 +180,7 @@ pub enum AstStatement {
     Goto,               // data: label ; children: statement that is being labelled
     Expr,               // children: expression
     Branch,             // children: condition, if_true body, if_false body
-    Block,              // children: statements; maybe this is unnecessary
+    Block(AstBlock),    // children: statements; maybe this is unnecessary
     For,                // children: start expression, condition, post expression, body
     ForDecl,            // children: declaration, condition, post expression, body
     While,              // children: condition expression, body
@@ -185,6 +189,19 @@ pub enum AstStatement {
     Ret,                // children: optional expression to return
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AstBlock;
+
+impl AstInterpretData for AstBlock {
+    type AstData = Scope;
+}
+
+impl Into<AstNodeKind> for AstBlock {
+    fn into(self) -> AstNodeKind {
+        AstNodeKind::Statement(AstStatement::Block(AstBlock))
+    }
 }
 
 /// A derived declarator. This is the `*const` part of
@@ -426,4 +443,62 @@ impl AstNodeVec {
                 },
             );
     }
+
+    pub fn parent_chain<'a>(&'a self, start: usize) -> ParentIter<'a> {
+        return ParentIter {
+            ast: self,
+            index: Some(start),
+        };
+    }
+}
+
+// Eh maybe this isn't useful, not sure yet. It seemed useful but eh
+pub struct ParentIter<'a> {
+    ast: &'a AstNodeVec,
+    index: Option<usize>,
+}
+
+impl<'a> Iterator for ParentIter<'a> {
+    type Item = AstNodeRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.index?;
+
+        let parent = self.ast.parent[index] as usize;
+        self.index = match parent == index {
+            true => None,
+            false => Some(parent),
+        };
+
+        return Some(self.ast.index(index));
+    }
+}
+
+/// Split a mut slice by ranges
+pub fn split_by_ranges<'a, T>(
+    mut values: &'a mut [T],
+    mut ranges: Vec<core::ops::Range<usize>>,
+) -> Vec<(usize, &'a mut [T])> {
+    let mut out = Vec::new();
+    ranges.sort_by_key(|r| r.start);
+
+    let mut current_index = 0;
+    for range in ranges {
+        if range.start >= range.end {
+            // Range is empty
+            continue;
+        }
+
+        if current_index > range.start {
+            panic!("ranges overlapped");
+        }
+
+        let (left, right) = values.split_at_mut(range.end - current_index);
+        values = right;
+
+        out.push((range.start, &mut left[(range.start - current_index)..]));
+        current_index = range.end;
+    }
+
+    return out;
 }

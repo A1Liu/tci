@@ -176,7 +176,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "soa_derive",
+ "soa_derive 0.13.0",
  "walrus",
 ]
 
@@ -189,7 +189,7 @@ dependencies = [
  "compiler",
  "ntest",
  "rayon",
- "soa_derive",
+ "soa_derive 0.12.0",
  "walkdir",
 ]
 
@@ -628,13 +628,34 @@ version = "0.12.0"
 source = "git+https://github.com/lumol-org/soa-derive#e81463f049ed64e236162f495c658e8abfb47bc6"
 dependencies = [
  "permutation",
- "soa_derive_internal",
+ "soa_derive_internal 0.12.0",
+]
+
+[[package]]
+name = "soa_derive"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe62159e5b5e7d6baa8674deaccce633e3d57c3196287530af1908e1e429ba57"
+dependencies = [
+ "permutation",
+ "soa_derive_internal 0.13.0",
 ]
 
 [[package]]
 name = "soa_derive_internal"
 version = "0.12.0"
 source = "git+https://github.com/lumol-org/soa-derive#e81463f049ed64e236162f495c658e8abfb47bc6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.15",
+]
+
+[[package]]
+name = "soa_derive_internal"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f64ef9ad271a92ed7d4547a275bcfeaf357dd143c5a7d634b8527d28452dbb9"
 dependencies = [
  "proc-macro2",
  "quote",

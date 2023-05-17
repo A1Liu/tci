@@ -205,7 +205,7 @@ impl<'a> Files<'a> for FileDb {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct Symbol(u32);
 

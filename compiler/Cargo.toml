@@ -7,9 +7,7 @@ description = "C compiler for students"
 license = "MIT"
 
 [dependencies]
-# Until 0.13.0 is released, gotta use the github version to get sorting and ToOwned 
-soa_derive = { git = "https://github.com/lumol-org/soa-derive" }
-
+soa_derive = "0.13.0"
 lazy_static = "1.4.0"
 codespan-reporting = "0.11.1"
 serde = { version = "1.0.59", features = ["derive"] }

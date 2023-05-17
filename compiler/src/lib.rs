@@ -31,7 +31,9 @@ pub mod api {
     pub use super::error::{Error, ErrorKind, FileStarts, TranslationUnitDebugInfo};
     pub use super::filedb::{File, FileDb, Symbol, SymbolTable};
     pub use super::format::display_tree;
-    pub use super::parser::{expand_macros, lex, parse, Token, TokenKind, TokenSlice, TokenVec};
+    pub use super::parser::{
+        expand_macros, lex, parse, Scopes, Token, TokenKind, TokenSlice, TokenVec,
+    };
     pub use super::pass::types::{TyDb, TyId, TyQuals};
 
     pub use super::run_compiler_test_case;
@@ -39,7 +41,7 @@ pub mod api {
     pub(crate) use itertools::{Either, Itertools};
     pub(crate) use rayon::prelude::*;
     pub(crate) use serde::{Deserialize, Serialize};
-    pub(crate) use std::collections::HashMap;
+    pub(crate) use std::collections::{BTreeMap, HashMap};
 
     #[cfg(test)]
     pub use ntest::*;
@@ -188,25 +190,11 @@ pub fn run_compiler_for_testing(files: &filedb::FileDb, file_id: u32) -> Pipelin
     );
     out.macro_expansion = StageOutput::Ok(macro_expansion_res.kind.clone());
 
-    let mut parsed_ast = run_stage!(parsed_ast, parse(&macro_expansion_res));
+    let (mut parsed_ast, scopes) = run_stage!(parsed_ast, parse(&macro_expansion_res));
     out.parsed_ast = StageOutput::Ok(parsed_ast.iter().map(|n| n.to_owned()).collect());
 
-    let scopes =
-        match pass::declaration_scopes::validate_scopes(&mut parsed_ast, &lexer_res.symbols) {
-            Ok(s) => s,
-            Err(e) => {
-                out.ast_validation = StageOutput::Err(e);
-                return out;
-            }
-        };
-
-    if let Err(e) = pass::declaration_types::validate_declarations(&mut parsed_ast, &out.ty_db) {
-        out.ast_validation = StageOutput::Err(e);
-        return out;
-    }
-
-    if let Err(e) = pass::expr_types::validate_exprs(&mut parsed_ast) {
-        out.ast_validation = StageOutput::Err(e);
+    if let Err(mut e) = pass::validate(&mut parsed_ast, &out.ty_db, &scopes) {
+        out.ast_validation = StageOutput::Err(e.pop().unwrap());
         return out;
     }
 
